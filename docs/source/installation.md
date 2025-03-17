@@ -1,23 +1,23 @@
 Installation
 ============
 
-**my-package** supports Python >= 3.8.
+**anri** supports Python >= 3.8.
 
 ## Installing with `pip`
 
-**my-package** is available [on PyPI](https://pypi.org/project/my-package/). Just run
+**anri** is available [on PyPI](https://pypi.org/project/anri/). Just run
 
 ```bash
-pip install my-package
+pip install anri
 ```
 
 ## Installing from source
 
-To install **my-package** from source, first clone [the repository](https://github.com/allenai/python-package-template):
+To install **anri** from source, first clone [the repository](https://github.com/jadball/anri):
 
 ```bash
-git clone https://github.com/allenai/python-package-template.git
-cd python-package-template
+git clone https://github.com/jadball/anri.git
+cd anri
 ```
 
 Then run

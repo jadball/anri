@@ -4,30 +4,30 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # See https://setuptools.pypa.io/en/latest/userguide/quickstart.html for more project configuration options.
-name = "my-package"
+name = "anri"
 dynamic = ["version"]
 readme = "README.md"
 classifiers = [
     "Intended Audience :: Science/Research",
-    "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: Apache Software License",
+    "Development Status :: 1 - Planning",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering",
 ]
 authors = [
-    {name = "Allen Institute for Artificial Intelligence", email = "contact@allenai.org"}
+    {name = "James Ball", email = "jadball@gmail.com"}
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 dependencies = [
   # Add your own dependencies here
 ]
 license = {file = "LICENSE"}
 
 [project.urls]
-Homepage = "https://github.com/allenai/python-package-template"
-Repository = "https://github.com/allenai/python-package-template"
-Changelog = "https://github.com/allenai/python-package-template/blob/main/CHANGELOG.md"
-# Documentation = "https://my-package.readthedocs.io/"
+Homepage = "https://github.com/jadball/anri"
+Repository = "https://github.com/jadball/anri"
+Changelog = "https://github.com/jadball/anri/blob/main/CHANGELOG.md"
+# Documentation = "https://anri.readthedocs.io/"
 
 [project.optional-dependencies]
 dev = [
