@@ -93,6 +93,10 @@ jobs:
           conda info
           conda list
 
+      - name: ${{ matrix.task.name }}
+        run: |
+          ${{ matrix.task.run }}
+      
       - name: Restore mypy cache
         if: matrix.task.name == 'Type check'
         uses: actions/cache@v4
