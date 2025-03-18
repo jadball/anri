@@ -18,6 +18,7 @@ runs:
         python-version: ${{ matrix.python }}
 
     - name: Get exact Python version
+      shell: bash -l {0}
       id: python-version
       run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
 
