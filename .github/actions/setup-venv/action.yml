@@ -12,11 +12,9 @@ inputs:
 runs:
   using: composite
   steps:
-
-    - shell: bash -l {0}
-      run: |
-        # Get the exact Python version to use in the cache key.
-        echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
+    - name: Get exact Python version
+      id: python-version
+      run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
 
     - name: Cache conda packages
       uses: actions/cache@v4
@@ -24,7 +22,7 @@ runs:
       with:
         path: ~/conda_pkgs_dir
         key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml') }}
-
+  
     - name: Setup Miniconda
       uses: conda-incubator/setup-miniconda@v3
       with:
@@ -33,7 +31,7 @@ runs:
         channels: conda-forge, defaults
         use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
         auto-update-conda: true
-        python-version: ${{ inputs.python-version }}
+        python-version: ${{ env.PYTHON_VERSION }}
 
     - name: Install dependencies with unidep
       shell: bash -l {0}

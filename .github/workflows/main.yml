@@ -36,25 +36,21 @@ jobs:
               pytest -v --color=yes tests/
 
         include:
-          - python: "3.11"
-            task:
+          - task:
               name: Lint and style
               run: |
                 ruff check .
 
-          - python: "3.11"
-            task:
+          - task:
               name: Type check
               run: mypy .
 
-          - python: "3.11"
-            task:
+          - task:
               name: Build
               run: |
                 python -m build
 
-          - python: "3.11"
-            task:
+          - task:
               name: Docs
               run: cd docs && make html
 
