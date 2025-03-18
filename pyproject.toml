@@ -50,6 +50,14 @@ dev = [
     "sphinx-autodoc-typehints==1.23.3",
     "packaging"
 ]
+sandbox = [
+  "numpy",
+  "matplotlib",
+  "ImageD11",
+  "ipykernel",
+  "ipympl",
+  "tqdm"
+]
 
 [tool.setuptools.packages.find]
 exclude = [
