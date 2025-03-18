@@ -37,21 +37,29 @@ jobs:
               pytest -v --color=yes tests/
 
         include:
-          - task:
+          - os: ubuntu-latest
+            python-version: "3.11"
+            task:
               name: Lint and style
               run: |
                 ruff check .
 
-          - task:
+          - os: ubuntu-latest
+            python-version: "3.11"
+            task:
               name: Type check
               run: mypy .
 
-          - task:
+          - os: ubuntu-latest
+            python-version: "3.11"
+            task:
               name: Build
               run: |
                 python -m build
 
-          - task:
+          - os: ubuntu-latest
+            python-version: "3.11"
+            task:
               name: Docs
               run: cd docs && make html
 
@@ -80,7 +88,7 @@ jobs:
 
       - name: ${{ matrix.task.name }}
         run: |
-          conda activate anri_venv
+          conda activate anaconda-client-env
           ${{ matrix.task.run }}
 
       - name: Upload package distribution files
