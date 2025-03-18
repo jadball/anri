@@ -12,41 +12,35 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Setup Miniconda
-      uses: conda-incubator/setup-miniconda@v3
-      with:
-        miniconda-version: "latest"
-        channels: conda-forge, defaults
-        use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
-        auto-update-conda: true
-        auto-activate-base: false
-        activate-environment: ${{ inputs.cache-prefix }}-env
-        python-version: ${{ inputs.python-version }}
 
     - shell: bash -l {0}
       run: |
         # Get the exact Python version to use in the cache key.
         echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
 
-    - uses: actions/cache@v4
-      id: virtualenv-cache
+    - name: Cache conda packages
+      uses: actions/cache@v4
+      id: conda-cache
       with:
-        path: ${{ inputs.cache-prefix }}-env
+        path: ~/conda_pkgs_dir
         key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml') }}
 
-    - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
-      shell: bash -l {0}
-      run: |
-        # Set up virtual environment without cache hit.
-        conda create -y --name ${{ inputs.cache-prefix }}-env python=${{ inputs.python-version }}
-        conda activate ${{ inputs.cache-prefix }}-env
-        # Set up prerequisites for the build environment
-        pip install --upgrade pip unidep
+    - name: Setup Miniconda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        activate-environment: anaconda-client-env
+        miniconda-version: "latest"
+        channels: conda-forge, defaults
+        use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
+        auto-update-conda: true
+        python-version: ${{ inputs.python-version }}
 
-    - if: steps.virtualenv-cache.outputs.cache-hit == 'true'
+    - name: Update environment
       shell: bash -l {0}
       run: |
-        conda activate ${{ inputs.cache-prefix }}-env
+        pip install --upgrade pip unidep
+        unidep install-all
+      if: steps.conda-cache.outputs.cache-hit != 'true'
     
     - shell: bash -l {0}
       run: |
