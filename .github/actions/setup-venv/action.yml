@@ -1,5 +1,5 @@
 name: Python virtualenv
-description: Set up a Python virtual environment with caching
+description: Set up a Python conda virtual environment with caching
 inputs:
   python-version:
     description: The Python version to use
@@ -8,49 +8,47 @@ inputs:
     description: Update this to invalidate the cache
     required: true
     default: v0
+
 runs:
+  defaults:
+    run:
+      shell: bash -l {0}
   using: composite
   steps:
-    - name: Setup Python
-      uses: actions/setup-python@v5
+    - name: Setup Miniconda
+      uses: conda-incubator/setup-miniconda@v3
       with:
+        miniconda-version: "latest"
+        channels: conda-forge, defaults
+        use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
+        auto-update-conda: true
+        auto-activate-base: true
         python-version: ${{ inputs.python-version }}
 
-    - shell: bash
-      run: |
+    - run: |
         # Install prerequisites.
-        pip install --upgrade pip setuptools wheel virtualenv
+        pip install --upgrade pip setuptools wheel unidep
 
-    - shell: bash
-      run: |
+    - run: |
         # Get the exact Python version to use in the cache key.
         echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
 
     - uses: actions/cache@v4
       id: virtualenv-cache
       with:
-        path: .venv
+        path: anri_venv
         key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml') }}
 
     - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
-      shell: bash
       run: |
         # Set up virtual environment without cache hit.
-        test -d .venv || virtualenv -p $(which python) --copies --reset-app-data .venv
-        . .venv/bin/activate
-        pip install -e .[dev]
+        conda create -y --name anri_venv anri python=${{ inputs.python-version }}
+        conda activate anri_venv
 
     - if: steps.virtualenv-cache.outputs.cache-hit == 'true'
-      shell: bash
       run: |
-        # Set up virtual environment from cache hit.
-        . .venv/bin/activate
-        pip install --no-deps -e .[dev]
-
-    - shell: bash
-      run: |
-        # Show environment info.
-        . .venv/bin/activate
-        echo "✓ Installed $(python --version) virtual environment to $(which python)"
-        echo "Packages:"
-        pip freeze
+        conda activate anri_venv
+    
+    - run: |
+        conda info
+        conda list

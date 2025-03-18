@@ -22,11 +22,15 @@ env:
 jobs:
   checks:
     name: Python ${{ matrix.python }} - ${{ matrix.task.name }}
-    runs-on: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -l {0}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
+        os: ["ubuntu-latest"]
         python: ["3.11"]
         task:
           - name: Test
@@ -58,12 +62,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Python environment
+      
+      - name: Setup Python environment with miniconda
         uses: ./.github/actions/setup-venv
         with:
+          auto-update-conda: true
           python-version: ${{ matrix.python }}
           cache-prefix: ${{ env.CACHE_PREFIX }}
+
+      - name: Install package and dependencies
+        run: |
+          unidep install-all
 
       - name: Restore mypy cache
         if: matrix.task.name == 'Type check'
@@ -77,7 +86,6 @@ jobs:
 
       - name: ${{ matrix.task.name }}
         run: |
-          . .venv/bin/activate
           ${{ matrix.task.run }}
 
       - name: Upload package distribution files
@@ -90,7 +98,6 @@ jobs:
       - name: Clean up
         if: always()
         run: |
-          . .venv/bin/activate
           pip uninstall -y anri
 
   release:
@@ -103,15 +110,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Python environment with miniconda
+        uses: ./.github/actions/setup-venv
         with:
+          auto-update-conda: true
           python-version: "3.11"
-
+          cache-prefix: ${{ env.CACHE_PREFIX }}
+    
       - name: Install requirements
         run: |
           pip install --upgrade pip setuptools wheel build
-          pip install -e .[dev]
+          pip install unidep
+          unidep install-all
 
       - name: Prepare environment
         run: |

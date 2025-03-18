@@ -55,7 +55,6 @@ def scale_bg(bg: np.ndarray, m_offset_thresh: int = 70, m_ratio_thresh: int = 15
             m_ratio: a boolean array of pixels > m_ratio_thresh.
             invbg: the inverse of the scaled background image masked to m_ratio.
     """
-
     cor = bg.copy()
 
     m_offset = cor < m_offset_thresh
@@ -255,7 +254,6 @@ def load_test_image(h5file) -> npt.NDArray:
     Args:
         h5file: H5 path.
     """
-
     with h5py.File(h5file, "r") as f:
         dataset = f.get("/1.1/measurement/frelon3")
         if dataset is not None and isinstance(dataset, h5py.Dataset):

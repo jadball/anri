@@ -23,7 +23,7 @@ if __name__ == "__main__":
     import numpy as np
 
     # Create a batch of random 3x3 matrices
-    batch_size = 10000
+    batch_size = 1_000_000
     matrices = np.random.rand(batch_size, 3, 3)
 
     # Convert to JAX array
