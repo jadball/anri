@@ -39,7 +39,6 @@ jobs:
               name: Lint and style
               run: |
                 ruff check .
-                ruff check . --select F --format --check
 
           - python: "3.11"
             task:
