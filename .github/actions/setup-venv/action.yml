@@ -15,11 +15,11 @@ runs:
     - name: Setup Python version we want
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python }}
+        python-version: ${{ inputs.python-version }}
 
     - name: Get exact Python version
       shell: bash -l {0}
-      id: python-version
+      id: get-python-version
       run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
 
     - name: Cache conda packages
