@@ -37,7 +37,7 @@ runs:
       shell: bash -l {0}
       run: |
         # Set up virtual environment without cache hit.
-        conda create -y --name anri_venv anri python=${{ inputs.python-version }}
+        conda create -y --name anri_venv python=${{ inputs.python-version }}
         conda activate anri_venv
 
     - if: steps.virtualenv-cache.outputs.cache-hit == 'true'

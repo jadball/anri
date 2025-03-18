@@ -65,7 +65,6 @@ jobs:
       - name: Setup Python environment with miniconda
         uses: ./.github/actions/setup-venv
         with:
-          auto-update-conda: true
           python-version: ${{ matrix.python }}
           cache-prefix: ${{ env.CACHE_PREFIX }}
 
