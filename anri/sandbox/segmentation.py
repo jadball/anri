@@ -1,16 +1,11 @@
-import sys
+from typing import Optional
 
-sys.path.insert(0, "/home/esrf/james1997a/Code/ImageD11")
-
-import fabio
 import h5py
 import numpy as np
 import numpy.typing as npt
-from matplotlib import pyplot as plt
-from typing import Optional
-from typing_extensions import override
 from ImageD11 import cImageD11
 from scipy.ndimage import gaussian_filter, uniform_filter
+from typing_extensions import override
 
 
 def simple_cut(image: np.ndarray, cut: float) -> npt.NDArray[np.bool_]:
@@ -97,6 +92,26 @@ class Corrector:
         return cor
 
 
+class SimpleThresholdCorrector(Corrector):
+    """Corrector class that applies a simple threshold to an image.
+
+    This class applies a simple threshold to an image, zeroing out all pixels below a certain value.
+
+    Attributes:
+        threshold: ADU below which to zero out image. Defaults to 100.
+    """
+
+    def __init__(self, threshold: int = 100, **kwargs):
+        super().__init__(**kwargs)
+        self.threshold = threshold
+
+    @override
+    def __call__(self, image: np.ndarray):
+        cor = image.copy()
+        cor[cor < self.threshold] = 0
+        return cor
+
+
 class LocalBGCorrector(Corrector):
     """Corrector class that applies per-peak background removal.
 
@@ -107,7 +122,7 @@ class LocalBGCorrector(Corrector):
     3. The image is corrected for flat and dark
     3. The offset determined in `scale_bg` is applied to the image
     4. Some more sophisticated background subtraction is applied
-    5. The image is smoothed via a Gaussian filter with sigma `smoothsigma``
+    5. The image is smoothed via a Gaussian filter with sigma `smoothsigma`
     6. The smoothed image is thresholded via `threshold`
     7. The smoothed image is labelled to locate peak positions
     8. The properties of each labelled region is computed
