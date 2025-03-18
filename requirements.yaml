@@ -4,7 +4,7 @@ channels:
 dependencies:
   - pip: tqdm
   - conda: cctbx
-optional-dependencies:
+optional_dependencies:
   dev:
     - pip: ruff
     - pip: mypy>=1.0,<2.0
