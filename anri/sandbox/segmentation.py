@@ -18,9 +18,7 @@ def simple_cut(image: np.ndarray, cut: float) -> npt.NDArray[np.bool_]:
     return image >= cut
 
 
-def correct_flat_dark(
-    image: np.ndarray, flat: Optional[np.ndarray] = None, dark: Optional[np.ndarray] = None
-):
+def correct_flat_dark(image: np.ndarray, flat: Optional[np.ndarray] = None, dark: Optional[np.ndarray] = None):
     """Scale image by flat and subtract dark if supplied.
 
     Args:
