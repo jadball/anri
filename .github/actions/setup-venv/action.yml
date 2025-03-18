@@ -10,9 +10,6 @@ inputs:
     default: v0
 
 runs:
-  defaults:
-    run:
-      shell: bash -l {0}
   using: composite
   steps:
     - name: Setup Miniconda
@@ -25,11 +22,8 @@ runs:
         auto-activate-base: true
         python-version: ${{ inputs.python-version }}
 
-    - run: |
-        # Install prerequisites.
-        pip install --upgrade pip setuptools wheel unidep
-
-    - run: |
+    - shell: bash -l {0}
+      run: |
         # Get the exact Python version to use in the cache key.
         echo "PYTHON_VERSION=$(python --version)" >> $GITHUB_ENV
 
@@ -40,15 +34,18 @@ runs:
         key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml') }}
 
     - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
+      shell: bash -l {0}
       run: |
         # Set up virtual environment without cache hit.
         conda create -y --name anri_venv anri python=${{ inputs.python-version }}
         conda activate anri_venv
 
     - if: steps.virtualenv-cache.outputs.cache-hit == 'true'
+      shell: bash -l {0}
       run: |
         conda activate anri_venv
     
-    - run: |
+    - shell: bash -l {0}
+      run: |
         conda info
         conda list
