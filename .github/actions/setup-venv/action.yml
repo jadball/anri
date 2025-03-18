@@ -20,6 +20,7 @@ runs:
         use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
         auto-update-conda: true
         auto-activate-base: false
+        activate-environment: ${{ inputs.cache-prefix }}-env
         python-version: ${{ inputs.python-version }}
 
     - shell: bash -l {0}
