@@ -35,11 +35,11 @@ runs:
         auto-update-conda: true
         python-version: ${{ inputs.python-version }}
 
-    - name: Update environment
+    - name: Install dependencies with unidep
       shell: bash -l {0}
       run: |
         pip install --upgrade pip unidep
-        unidep install-all
+        unidep install-all --skip-local
       if: steps.conda-cache.outputs.cache-hit != 'true'
     
     - shell: bash -l {0}
