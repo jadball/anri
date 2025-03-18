@@ -12,6 +12,11 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Setup Python version we want
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python }}
+
     - name: Get exact Python version
       id: python-version
       run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
