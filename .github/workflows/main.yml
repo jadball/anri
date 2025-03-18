@@ -95,6 +95,9 @@ jobs:
 
       - name: ${{ matrix.task.name }}
         run: |
+          conda activate anaconda-client-env
+          conda info
+          conda list
           ${{ matrix.task.run }}
       
       - name: Restore mypy cache
