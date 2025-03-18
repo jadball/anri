@@ -20,6 +20,7 @@ runs:
         use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
         auto-update-conda: true
         auto-activate-base: true
+        activate-environment: true
         python-version: ${{ inputs.python-version }}
 
     - shell: bash -l {0}
@@ -39,6 +40,8 @@ runs:
         # Set up virtual environment without cache hit.
         conda create -y --name anri_venv python=${{ inputs.python-version }}
         conda activate anri_venv
+        # Set up prerequisites for the build environment
+        pip install --upgrade pip unidep
 
     - if: steps.virtualenv-cache.outputs.cache-hit == 'true'
       shell: bash -l {0}
