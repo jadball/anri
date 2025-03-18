@@ -66,14 +66,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup Python environment with miniconda
-        uses: ./.github/actions/setup-venv
+      - name: Setup Python version we want
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Get exact Python version
+        shell: bash -l {0}
+        id: get-python-version
+        run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: anaconda-client-env
+          channels: conda-forge, defaults
+          auto-update-conda: true
+          python-version: ${{ env.PYTHON_VERSION }}
+
       - name: Install package and dependencies
+        shell: bash -l {0}
         run: |
+          pip install --upgrade pip unidep
           unidep install .[dev]
+
+      - shell: bash -l {0}
+        run: |
+          conda info
+          conda list
 
       - name: Restore mypy cache
         if: matrix.task.name == 'Type check'
@@ -84,11 +104,6 @@ jobs:
           restore-keys: |
             mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}-${{ github.ref }}
             mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}
-
-      - name: ${{ matrix.task.name }}
-        run: |
-          conda activate anaconda-client-env
-          ${{ matrix.task.run }}
 
       - name: Upload package distribution files
         if: matrix.task.name == 'Build'
@@ -116,12 +131,36 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Python environment with miniconda
-        uses: ./.github/actions/setup-venv
-        with:
-          auto-update-conda: true
-          python-version: "3.11"
-          cache-prefix: ${{ env.CACHE_PREFIX }}
-    
+        steps:
+          - name: Setup Python version we want
+            uses: actions/setup-python@v5
+            with:
+              python-version: "3.11"
+
+          - name: Get exact Python version
+            shell: bash -l {0}
+            id: get-python-version
+            run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
+
+          - name: Setup Miniconda
+            uses: conda-incubator/setup-miniconda@v3
+            with:
+              activate-environment: anaconda-client-env
+              channels: conda-forge, defaults
+              auto-update-conda: true
+              python-version: ${{ env.PYTHON_VERSION }}
+
+          - name: Install package and dependencies
+            shell: bash -l {0}
+            run: |
+              pip install --upgrade pip unidep
+              unidep install .[dev]
+
+          - shell: bash -l {0}
+            run: |
+              conda info
+              conda list
+
       - name: Install package and dependencies
         run: |
           unidep install-all
