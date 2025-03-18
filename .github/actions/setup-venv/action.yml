@@ -39,6 +39,8 @@ runs:
       shell: bash -l {0}
       run: |
         pip install --upgrade pip unidep
+        conda info
+        conda list
         unidep install-all --skip-local
       if: steps.conda-cache.outputs.cache-hit != 'true'
     
