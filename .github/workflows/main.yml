@@ -20,8 +20,8 @@ env:
 
 jobs:
   checks:
-    name: Python ${{ matrix.python }} - ${{ matrix.task.name }}
-    runs-on: [ubuntu-latest]
+    name: Python ${{ matrix.python-version }} - ${{ matrix.task.name }}
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash -l {0}
@@ -29,7 +29,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11"]
+        os: [ubuntu-latest]
+        python-version: ["3.11"]
         task:
           - name: Test
             run: |
@@ -60,7 +61,7 @@ jobs:
       - name: Setup Python environment with miniconda
         uses: ./.github/actions/setup-venv
         with:
-          python-version: ${{ matrix.python }}
+          python-version: ${{ matrix.python-version }}
           cache-prefix: ${{ env.CACHE_PREFIX }}
 
       - name: Install package and dependencies
