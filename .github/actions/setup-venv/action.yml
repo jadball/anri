@@ -34,7 +34,7 @@ runs:
       with:
         activate-environment: anaconda-client-env
         channels: conda-forge, defaults
-        use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
+        use-only-tar-bz2: false  # IMPORTANT: This needs to be set for caching to work properly!
         auto-update-conda: true
         python-version: ${{ env.PYTHON_VERSION }}
 
