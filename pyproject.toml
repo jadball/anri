@@ -56,7 +56,8 @@ sandbox = [
   "ImageD11",
   "ipykernel",
   "ipympl",
-  "tqdm"
+  "tqdm",
+  "jax[cuda12]"
 ]
 
 [tool.setuptools.packages.find]
