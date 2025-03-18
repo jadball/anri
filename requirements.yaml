@@ -3,7 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - pip: tqdm
-  - conda: cctbx=2025.2
+  - conda: cctbx
 optional-dependencies:
   dev:
     - pip: ruff

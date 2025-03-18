@@ -70,21 +70,20 @@ jobs:
         uses: ./.github/actions/setup-venv
         with:
           python-version: ${{ matrix.python-version }}
-          cache-prefix: ${{ env.CACHE_PREFIX }}
 
       - name: Install package and dependencies
         run: |
-          unidep install-all
+          unidep install .[dev]
 
       - name: Restore mypy cache
         if: matrix.task.name == 'Type check'
         uses: actions/cache@v4
         with:
           path: .mypy_cache
-          key: mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('*requirements.txt') }}-${{ github.ref }}-${{ github.sha }}
+          key: mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}-${{ github.ref }}-${{ github.sha }}
           restore-keys: |
-            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('*requirements.txt') }}-${{ github.ref }}
-            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('*requirements.txt') }}
+            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}-${{ github.ref }}
+            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}
 
       - name: ${{ matrix.task.name }}
         run: |
