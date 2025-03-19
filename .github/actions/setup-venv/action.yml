@@ -11,11 +11,13 @@ runs:
   using: composite
   steps:
     - name: Setup Python version we want
+      shell: bash -l {0}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
 
     - name: Get exact Python version
+      shell: bash -l {0}
       id: get-python-version
       run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
   
@@ -28,11 +30,13 @@ runs:
         python-version: ${{ inputs.PYTHON_VERSION }}
 
     - name: Install package and dependencies
+      shell: bash -l {0}
       run: |
         pip install --upgrade pip unidep
         unidep install .[dev]
     
     - name: Get Conda environment information
+      shell: bash -l {0}
       run: |
         conda info
         conda list
