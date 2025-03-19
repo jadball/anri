@@ -20,7 +20,7 @@ env:
 
 jobs:
   checks:
-    name: Python ${{ matrix.python-version }} - ${{ matrix.task.name }}
+    name: Python ${{ matrix.python-version }} - ${{ matrix.os }} - ${{ matrix.task.name }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
