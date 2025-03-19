@@ -4,11 +4,10 @@ inputs:
   python-version:
     description: The Python version to use
     required: true
-
+defaults:
+  run:
+    shell: bash -l {0}
 runs:
-  defaults:
-    run:
-      shell: bash -l {0}
   using: composite
   steps:
     - name: Setup Python version we want
