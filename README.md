@@ -1,6 +1,8 @@
 # anri
-
 Anri is a Python package for analysing Three-Dimensional X-Ray Diffraction data.
+
+# Dependencies
+We currently target all stable releases of Python. Today this is `3.9 - 3.13` on Windows, Mac and OSX (ARM and x86)
 
 # Installation
 ## From Conda
