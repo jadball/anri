@@ -1,5 +1,8 @@
 line-length = 120
-exclude = ["anri/sandbox"]
+exclude = [
+    "anri/sandbox",
+    "docs/",
+]
 
 [lint]
 # https://docs.astral.sh/ruff/settings/#select

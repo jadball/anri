@@ -1,8 +1,6 @@
 # encoding: utf-8
 
-"""
-Prepares markdown release notes for GitHub releases.
-"""
+"""Prepares markdown release notes for GitHub releases. From template https://github.com/allenai/python-package-template ."""
 
 import os
 from typing import List, Optional
@@ -11,13 +9,18 @@ import packaging.version
 
 TAG = os.environ["TAG"]
 
-ADDED_HEADER = "### Added 🎉"
-CHANGED_HEADER = "### Changed ⚠️"
-FIXED_HEADER = "### Fixed ✅"
-REMOVED_HEADER = "### Removed 👋"
+ADDED_HEADER = "### Added"
+CHANGED_HEADER = "### Changed"
+FIXED_HEADER = "### Fixed"
+REMOVED_HEADER = "### Removed"
 
 
 def get_change_log_notes() -> str:
+    """Get change log notes from CHANGELOG.md as a string.
+
+    Returns:
+        A string of "what's new" for this release.
+    """
     in_current_section = False
     current_section_notes: List[str] = []
     with open("CHANGELOG.md") as changelog:
@@ -44,6 +47,11 @@ def get_change_log_notes() -> str:
 
 
 def get_commit_history() -> str:
+    """Get commit history from git tags as a string.
+
+    Returns:
+        Git commit history tags, sorted by version, latest first, as a string.
+    """
     new_version = packaging.version.parse(TAG)
 
     # Pull all tags.
@@ -73,6 +81,7 @@ def get_commit_history() -> str:
 
 
 def main():
+    """Print change log notes and commit history."""
     print(get_change_log_notes())
     print(get_commit_history())
 

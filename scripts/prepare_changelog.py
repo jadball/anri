@@ -1,3 +1,5 @@
+"""Script to prepare changelog. From template https://github.com/allenai/python-package-template ."""
+
 from datetime import datetime
 from pathlib import Path
 
@@ -5,6 +7,11 @@ from anri.version import VERSION
 
 
 def main():
+    """Apply versioning to unreleased changes in CHANGELOG.md.
+
+    Raises:
+        RuntimeError: If no 'Unreleased' section found in CHANGELOG.md
+    """
     changelog = Path("CHANGELOG.md")
 
     with changelog.open() as f:

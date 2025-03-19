@@ -83,6 +83,10 @@ jobs:
           auto-update-conda: true
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Set UTF-8 Code Page (Windows only)
+        if: startsWith(matrix.os, 'windows')
+        run: chcp 65001
+
       - name: Install pip, unidep, dependencies and package
         run: |
           pip install --upgrade pip unidep
