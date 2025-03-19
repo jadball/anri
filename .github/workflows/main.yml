@@ -66,32 +66,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python version we want
-        uses: actions/setup-python@v5
+      - name: Setup Python environment with miniconda
+        uses: ./.github/actions/setup-venv
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Get exact Python version
-        id: get-python-version
-        run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
+      # - name: Setup Python version we want
+      #   uses: actions/setup-python@v5
+      #   with:
+      #     python-version: ${{ matrix.python-version }}
 
-      - name: Setup Miniconda
-        uses: conda-incubator/setup-miniconda@v3
-        with:
-          activate-environment: anaconda-client-env
-          channels: conda-forge, defaults
-          auto-update-conda: true
-          python-version: ${{ env.PYTHON_VERSION }}
+      # - name: Get exact Python version
+      #   id: get-python-version
+      #   run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
 
-      - name: Install package and dependencies
-        run: |
-          pip install --upgrade pip unidep
-          unidep install .[dev]
+      # - name: Setup Miniconda
+      #   uses: conda-incubator/setup-miniconda@v3
+      #   with:
+      #     activate-environment: anaconda-client-env
+      #     channels: conda-forge, defaults
+      #     auto-update-conda: true
+      #     python-version: ${{ env.PYTHON_VERSION }}
+
+      # - name: Install package and dependencies
+      #   run: |
+      #     pip install --upgrade pip unidep
+      #     unidep install .[dev]
       
-      - name: Get Conda environment information
-        run: |
-          conda info
-          conda list
+      # - name: Get Conda environment information
+      #   run: |
+      #     conda info
+      #     conda list
 
       - name: ${{ matrix.task.name }}
         run: |
