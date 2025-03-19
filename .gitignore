@@ -14,7 +14,10 @@ pip-wheel-metadata/
 .python-version
 .idea
 .venv/
-.vscode/
+.vscode/*
+!.vscode/
+!.vscode/settings.sample.json
+!.vscode/extensions.json
 /*.iml
 pyrightconfig.json
 
