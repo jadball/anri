@@ -1,4 +1,5 @@
 line-length = 120
+exclude = ["anri/sandbox"]
 
 [lint]
 # https://docs.astral.sh/ruff/settings/#select
