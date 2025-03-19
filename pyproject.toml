@@ -54,6 +54,9 @@ ignore = ["*"]
 ignore_missing_imports = true
 no_site_packages = true
 check_untyped_defs = true
+exclude = [
+    "^anri/sandbox/.*"
+]
 
 [[tool.mypy.overrides]]
 module = "tests.*"

@@ -2,27 +2,23 @@
 channels:
   - conda-forge
 dependencies:
-  - pip: tqdm
-  - conda: cctbx
 optional_dependencies:
   dev:
     - pip: ruff
-    - pip: mypy>=1.0,<2.0
-    - pip: black[jupyter]>=23.0,<25.0
-    - pip: isort>=5.12,<5.14
+    - pip: mypy
     - pip: pytest
     - pip: pytest-sphinx
     - pip: pytest-cov
-    - pip: twine>=1.11.0
+    - pip: twine
     - pip: build
     - pip: setuptools
     - pip: wheel
-    - pip: Sphinx>=6.0,<9.0
-    - pip: furo==2024.8.6
-    - pip: myst-parser>=1.0
+    - pip: Sphinx
+    - pip: furo
+    - pip: myst-parser
     - pip: sphinx-copybutton
     - pip: sphinx-autobuild
-    - pip: sphinx-autodoc-typehints==1.23.3
+    - pip: sphinx-autodoc-typehints
     - pip: packaging
   sandbox:
     - pip: numpy
@@ -32,4 +28,4 @@ optional_dependencies:
     - pip: ipympl
     - pip: tqdm
     - pip: jax[cuda12]
-    - cctbx
+    - conda: cctbx
