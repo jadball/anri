@@ -6,6 +6,9 @@ inputs:
     required: true
 
 runs:
+  defaults:
+    run:
+      shell: bash -l {0}
   using: composite
   steps:
     - name: Setup Python version we want
