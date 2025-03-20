@@ -14,7 +14,7 @@ default:
   image: gitlab-registry.esrf.fr/dau/ci/pyci/miniforge3
   before_script:
     - conda create -q -n ci-env python=$PYTHON_VERSION
-    - conda init bash
+    - conda init
     - source ~/.bashrc
     - conda activate ci-env
     - pip install --upgrade pip unidep
