@@ -1,0 +1,13 @@
+{
+    "recommendations": [
+        "njpwerner.autodocstring",
+        "ms-toolsai.jupyter",
+        "ms-toolsai.vscode-jupyter-cell-tags",
+        "ms-toolsai.jupyter-renderers",
+        "github.vscode-github-actions",
+        "ms-toolsai.jupyter-keymap",
+        "charliermarsh.ruff",
+        "njqdev.vscode-python-typehint",
+        "ms-python.vscode-pylance"
+    ]
+}

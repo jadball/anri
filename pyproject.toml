@@ -1,0 +1,73 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools", "wheel", "unidep"]
+
+[project]
+# See https://setuptools.pypa.io/en/latest/userguide/quickstart.html for more project configuration options.
+name = "anri"
+dynamic = ["version", "dependencies", "optional-dependencies"]
+readme = "README.md"
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Development Status :: 1 - Planning",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+authors = [
+    {name = "James Ball", email = "jadball@gmail.com"}
+]
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+
+[project.urls]
+Homepage = "https://github.com/jadball/anri"
+Repository = "https://github.com/jadball/anri"
+Changelog = "https://github.com/jadball/anri/blob/main/CHANGELOG.md"
+# Documentation = "https://anri.readthedocs.io/"
+
+[tool.setuptools.packages.find]
+exclude = [
+    "*.tests",
+    "*.tests.*",
+    "tests.*",
+    "tests",
+    "docs*",
+    "scripts*"
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+anri = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = {attr = "anri.version.VERSION"}
+
+# You can override these pyright settings by adding a personal pyrightconfig.json file.
+[tool.pyright]
+reportPrivateImportUsage = false
+ignore = ["*"]
+
+[tool.mypy]
+ignore_missing_imports = true
+no_site_packages = true
+check_untyped_defs = true
+exclude = [
+    "^anri/sandbox/.*",
+    "^build/.*"
+]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+strict_optional = false
+
+[tool.pytest.ini_options]
+testpaths = "tests/"
+python_classes = [
+  "Test*",
+  "*Test"
+]
+log_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+log_level = "DEBUG"

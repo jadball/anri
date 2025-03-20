@@ -1,0 +1,199 @@
+name: Main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+
+env:
+  # Change this to invalidate existing cache.
+  CACHE_PREFIX: v0
+
+jobs:
+  checks:
+    name: Python ${{ matrix.python-version }} - ${{ matrix.os }} - ${{ matrix.task.name }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -l {0}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-20.04, ubuntu-22.04, ubuntu-24.04, ubuntu-latest, windows-2019, windows-2022, windows-latest, macos-13, macos-14, macos-15]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        task:
+          - name: Test
+            run: |
+              pytest -v --color=yes tests/
+
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+            task:
+              name: Lint and style
+              run: |
+                ruff check .
+
+          - os: ubuntu-latest
+            python-version: "3.11"
+            task:
+              name: Type check
+              run: mypy .
+
+          - os: ubuntu-latest
+            python-version: "3.11"
+            task:
+              name: Build
+              run: |
+                python -m build
+
+          - os: ubuntu-latest
+            python-version: "3.11"
+            task:
+              name: Docs
+              run: cd docs && make html
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up system Python for Conda
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Get exact Python version
+        id: get-python-version
+        run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
+
+      - name: Set up Miniconda via conda-incubator
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: anaconda-client-env
+          channels: conda-forge, defaults
+          auto-update-conda: true
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set UTF-8 Code Page (Windows only)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          export PYTHONIOENCODING=utf-8
+          echo "PYTHONIOENCODING=utf-8" >> $GITHUB_ENV
+
+      - name: Install pip, unidep, dependencies and package
+        run: |
+          pip install --upgrade pip unidep
+          unidep install .[dev]
+      
+      - name: Get Conda environment information
+        run: |
+          conda info
+          conda list
+
+      - name: ${{ matrix.task.name }}
+        run: |
+          ${{ matrix.task.run }}
+      
+      - name: Restore mypy cache
+        if: matrix.task.name == 'Type check'
+        uses: actions/cache@v4
+        with:
+          path: .mypy_cache
+          key: mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}-${{ github.ref }}
+            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}
+
+      - name: Upload package distribution files
+        if: matrix.task.name == 'Build'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: dist
+
+      - name: Clean up
+        if: always()
+        run: |
+          pip uninstall -y anri
+
+  release:
+    name: Release
+    defaults:
+      run:
+        shell: bash -l {0}
+    runs-on: ubuntu-latest
+    needs: [checks]
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+        
+      - name: Setup Python version we want
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Get exact Python version
+        id: get-python-version
+        run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: anaconda-client-env
+          channels: conda-forge, defaults
+          auto-update-conda: true
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install package and dependencies
+        run: |
+          pip install --upgrade pip unidep
+          unidep install .[dev]
+
+      - name: Get Conda environment information
+        run: |
+          conda info
+          conda list
+
+      - name: Install package and dependencies
+        run: |
+          unidep install-all
+
+      - name: Prepare environment
+        run: |
+          echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+          echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Download package distribution files
+        uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: dist
+
+      - name: Generate release notes
+        run: |
+          python scripts/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
+
+      - name: Publish package to PyPI
+        run: |
+          twine upload -u '${{ secrets.PYPI_USERNAME }}' -p '${{ secrets.PYPI_PASSWORD }}' dist/*
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          body_path: ${{ github.workspace }}-RELEASE_NOTES.md
+          prerelease: ${{ contains(env.TAG, 'rc') }}
+          files: |
+            dist/*

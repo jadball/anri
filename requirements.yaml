@@ -1,0 +1,33 @@
+
+channels:
+  - conda-forge
+dependencies:
+  - pip: tqdm
+  - conda: cctbx
+optional_dependencies:
+  dev:
+    - pip: ruff
+    - pip: mypy
+    - pip: pytest
+    - pip: pytest-sphinx
+    - pip: pytest-cov
+    - pip: twine
+    - pip: build
+    - pip: setuptools
+    - pip: wheel
+    - pip: Sphinx
+    - pip: furo
+    - pip: myst-parser
+    - pip: sphinx-copybutton
+    - pip: sphinx-autobuild
+    - pip: sphinx-autodoc-typehints
+    - pip: packaging
+  sandbox:
+    - pip: numpy
+    - pip: matplotlib
+    - pip: ImageD11
+    - pip: ipykernel
+    - pip: ipympl
+    - pip: tqdm
+    - pip: jax[cuda12]
+    - conda: cctbx
