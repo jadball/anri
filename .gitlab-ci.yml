@@ -10,9 +10,9 @@ stages:
 default:
   image: gitlab-registry.esrf.fr/dau/ci/pyci/miniforge3
   before_script:
-    - /opt/conda/bin/conda init && source /root/.bashrc
-    - conda config --append channels conda-forge
-    - conda create -q -n ci-env python=$PYTHON_VERSION
+    - conda create -n ci-env python=$PYTHON_VERSION
+    - conda init bash
+    - source /root/.bashrc
     - conda activate ci-env
     - pip install --upgrade pip unidep
 
