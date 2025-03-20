@@ -1,0 +1,74 @@
+stages:
+  - setup
+  - test
+  - lint
+  - type_check
+  - build
+  - docs
+  - release
+
+variables:
+  CACHE_PREFIX: v0
+
+default:
+  image: gitlab-registry.esrf.fr/dau/ci/pyci/miniforge3
+  before_script:
+    - conda init bash
+    - source ~/.bashrc
+    - conda create -q -n ci-env python=$PYTHON_VERSION
+    - conda activate ci-env
+    - pip install --upgrade pip unidep
+
+setup:
+  stage: setup
+  script:
+    - unidep install .[dev]
+
+test:
+  stage: test
+  script:
+    - pytest -v --color=yes tests/
+  parallel:
+    matrix:
+      - PYTHON_VERSION: "3.9"
+      - PYTHON_VERSION: "3.10"
+      - PYTHON_VERSION: "3.11"
+      - PYTHON_VERSION: "3.12"
+
+lint:
+  stage: lint
+  script:
+    - ruff check .
+  only:
+    - master
+
+type_check:
+  stage: type_check
+  script:
+    - mypy .
+  only:
+    - master
+
+build:
+  stage: build
+  script:
+    - python -m build
+  artifacts:
+    paths:
+      - dist/
+  only:
+    - master
+
+docs:
+  stage: docs
+  script:
+    - cd docs && make html
+  only:
+    - master
+
+release:
+  stage: release
+  script:
+    - twine upload -u '${PYPI_USERNAME}' -p '${PYPI_PASSWORD}' dist/*
+  only:
+    - tags
