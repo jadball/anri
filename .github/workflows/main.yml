@@ -29,8 +29,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, ubuntu-22.04, ubuntu-24.04, ubuntu-latest, windows-2019, windows-2022, windows-latest, macos-13, macos-14, macos-15]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-20.04, ubuntu-latest, windows-latest, macos-13, macos-15]
+        python-version: ["3.9", "3.13"]
         task:
           - name: Test
             run: |
@@ -38,27 +38,27 @@ jobs:
 
         include:
           - os: ubuntu-latest
-            python-version: "3.11"
+            python-version: "3.13"
             task:
               name: Lint and style
               run: |
                 ruff check .
 
           - os: ubuntu-latest
-            python-version: "3.11"
+            python-version: "3.13"
             task:
               name: Type check
               run: mypy .
 
           - os: ubuntu-latest
-            python-version: "3.11"
+            python-version: "3.13"
             task:
               name: Build
               run: |
                 python -m build
 
           - os: ubuntu-latest
-            python-version: "3.11"
+            python-version: "3.13"
             task:
               name: Docs
               run: cd docs && make html
@@ -141,7 +141,7 @@ jobs:
       - name: Setup Python version we want
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Get exact Python version
         id: get-python-version
