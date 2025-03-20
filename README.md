@@ -34,6 +34,8 @@ unidep install .[dev]
 ```
 
 # Development
+## Repository layout
+This GitHub repository is based on the python package template by @allenai: [python-package-template](https://github.com/allenai/python-package-template).
 ## IDE
 [Visual Studio Code](https://code.visualstudio.com/) is recommended for development.  
 ## Linting, formatting and type checking
