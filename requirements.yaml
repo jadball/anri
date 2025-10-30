@@ -3,7 +3,6 @@ channels:
   - conda-forge
 dependencies:
   - pip: tqdm
-  - conda: cctbx
 optional_dependencies:
   dev:
     - pip: ruff
@@ -23,11 +22,12 @@ optional_dependencies:
     - pip: sphinx-autodoc-typehints
     - pip: packaging
   sandbox:
-    - pip: numpy
+    - pip: numpy<2
     - pip: matplotlib
     - pip: ImageD11
     - pip: ipykernel
     - pip: ipympl
     - pip: tqdm
     - pip: jax[cuda12]
-    - conda: cctbx
+#    - pip: silx[full]
+#    - conda: cctbx
