@@ -545,7 +545,7 @@ xyz_lab_to_k = jax.jit(jax.vmap(_xyz_lab_to_k, in_axes=[0, 0, None, None, None, 
 
 
 def _k_to_xyz_lab_direc(k, wavelength):
-    """Convert from k-vector to a vector parallel to s.
+    """Convert from k-vector to a vector parallel to s. Assumes diffraction from lab origin.
 
     Not quite the inverse of ImageD11/src/cdiffraction.c
     """
