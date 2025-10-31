@@ -189,8 +189,6 @@ def sample_to_lab(vec_sample, omega, wedge, chi):
         return jax.jit(jax.vmap(_sample_to_lab, in_axes=[0, 0, None, None]))(vec_sample, omega, wedge, chi)
 
 
-# sample_to_lab = jax.jit(jax.vmap(_sample_to_lab, in_axes=[0, 0, None, None]))
-
 ### LAB XYZ TO (TTH, ETA) TRANSFORMS
 
 
@@ -225,7 +223,7 @@ def xyz_lab_to_tth_eta(xyz_lab, omega, origin_sample, wedge, chi):
 ### K-VECTOR TO (TTH,ETA,OMEGA) TRANSFORMS
 
 
-def _tth_eta_to_k(tth, eta, wvln):
+def _tth_eta_to_k(tth, eta, wavelength):
     """Convert from (tth, eta) to k-vector.
 
     ImageD11.transform.compute_k_vectors
@@ -234,7 +232,7 @@ def _tth_eta_to_k(tth, eta, wvln):
     eta = jnp.radians(eta)
     c = jnp.cos(tth / 2)  # cos theta
     s = jnp.sin(tth / 2)  # sin theta
-    ds = 2 * s / wvln
+    ds = 2 * s / wavelength
 
     k1 = -ds * s  # this is negative x
     k2 = -ds * c * jnp.sin(eta)  # CHANGED eta to HFP convention 4-9-2007
@@ -246,14 +244,14 @@ def _tth_eta_to_k(tth, eta, wvln):
 tth_eta_to_k = jax.jit(jax.vmap(_tth_eta_to_k, in_axes=[0, 0, None]))
 
 
-def _k_to_tth_eta(k, wvln):
+def _k_to_tth_eta(k, wavelength):
     """Convert from k-vector to (tth, eta).
 
     Inverse of ImageD11.transform.compute_k_vectors
     """
     k1, k2, k3 = k
     ds = jnp.linalg.norm(k)
-    s = ds * wvln / 2.0  # sin(theta)
+    s = ds * wavelength / 2.0  # sin(theta)
     tth = 2.0 * jnp.degrees(jnp.arcsin(s))
     eta = jnp.degrees(jnp.arctan2(-k2, k3))
     return tth, eta
@@ -307,7 +305,7 @@ def _omega_solns_for_g(g, wavelength, axis, pre, post):
 omega_solns_for_g = jax.jit(jax.vmap(_omega_solns_for_g, in_axes=[0, None, None, None, None]))
 
 
-def _g_to_k_omega(g, wavelength, wedge, chi):
+def _g_to_k_omega(g, wedge, chi, wavelength):
     """Get k-vectors and omega angles from g-vectors.
 
     There are two solutions for k for each g-vector.
@@ -346,14 +344,14 @@ g_to_k_omega = jax.jit(
 # Below are cross-transforms
 
 
-def g_to_tth_eta_omega(g, wavelength, wedge, chi):
-    [k_one, k_two], [omega1, omega2], valid = g_to_k_omega(g, wavelength, wedge, chi)
+def g_to_tth_eta_omega(g, wedge, chi, wavelength):
+    [k_one, k_two], [omega1, omega2], valid = g_to_k_omega(g, wedge, chi, wavelength)
     tth, eta_one = k_to_tth_eta(k_one, wavelength)
     tth, eta_two = k_to_tth_eta(k_two, wavelength)
     return tth, [eta_one * valid, eta_two * valid], [omega1, omega2]
 
 
-def tth_eta_omega_to_g(tth, eta, omega, wavelength, wedge, chi):
+def tth_eta_omega_to_g(tth, eta, omega, wedge, chi, wavelength):
     k = tth_eta_to_k(tth, eta, wavelength)
     g = k_omega_to_g(k, omega, wedge, chi)
     return g
@@ -527,9 +525,6 @@ def tth_eta_omega_to_xyz_lab(
     return xyz_lab
 
 
-# there are faster ways to go from xl, yl, zl to k
-
-
 def _xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
     """Convert from lab (lx, ly, lz) coordinates to k-vector.
 
@@ -612,7 +607,7 @@ def xyz_lab_to_g(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
 
 
 def g_to_xyz_lab(g, omega, origin_sample, wedge, chi, wavelength):
-    [k_one, k_two], [omega1, omega2], _ = g_to_k_omega(g, wavelength, wedge, chi)
+    [k_one, k_two], [omega1, omega2], _ = g_to_k_omega(g, wedge, chi, wavelength)
     xyz_lab_one = k_to_xyz_lab(k_one, omega1, origin_sample, wedge, chi, wavelength)
     xyz_lab_two = k_to_xyz_lab(k_two, omega2, origin_sample, wedge, chi, wavelength)
 
@@ -624,6 +619,9 @@ def det_to_g(
     fc,
     omega,
     origin_sample,
+    wedge,
+    chi,
+    wavelength,
     y_center,
     y_size,
     tilt_y,
@@ -636,9 +634,6 @@ def det_to_g(
     o12,
     o21,
     o22,
-    wedge,
-    chi,
-    wavelength,
 ):
     """Convert detector (sc, fc) coordinates to g-vectors."""
     xyz_lab = det_to_xyz_lab(
@@ -666,6 +661,9 @@ def g_to_det(
     g,
     omega,
     origin_sample,
+    wedge,
+    chi,
+    wavelength,
     y_center,
     y_size,
     tilt_y,
@@ -678,13 +676,15 @@ def g_to_det(
     o12,
     o21,
     o22,
-    wedge,
-    chi,
-    wavelength,
 ):
-    xyz_lab_one, xyz_lab_two = g_to_xyz_lab(g, omega, origin_sample, wedge, chi, wavelength)
-    sc_one, fc_one = xyz_lab_to_det(
-        xyz_lab_one,
+    [k_one, k_two], [omega1, omega2], _ = g_to_k_omega(g, wedge, chi, wavelength)
+    sc_one, fc_one = k_to_det(
+        k_one,
+        omega1,
+        origin_sample,
+        wedge,
+        chi,
+        wavelength,
         y_center,
         y_size,
         tilt_y,
@@ -698,9 +698,13 @@ def g_to_det(
         o21,
         o22,
     )
-
-    sc_two, fc_two = xyz_lab_to_det(
-        xyz_lab_two,
+    sc_two, fc_two = k_to_det(
+        k_two,
+        omega2,
+        origin_sample,
+        wedge,
+        chi,
+        wavelength,
         y_center,
         y_size,
         tilt_y,
