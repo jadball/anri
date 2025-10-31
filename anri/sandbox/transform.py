@@ -100,12 +100,6 @@ def detector_transforms(y_center, y_size, tilt_y, z_center, z_size, tilt_z, tilt
     return M, beam_cen_shift, x_distance_shift
 
 
-### functions for vectorization (not jitted yet)
-# each of these are written for one vector only
-# private versions are for a single vector
-# public versions are for many vectors
-
-
 ### DETECTOR <-> LAB TRANSFORMS
 
 
@@ -186,18 +180,27 @@ def _lab_to_sample(vec_lab, omega, wedge, chi):
 lab_to_sample = jax.jit(jax.vmap(_lab_to_sample, in_axes=[0, 0, None, None]))
 
 
-sample_to_lab = jax.jit(jax.vmap(_sample_to_lab, in_axes=[0, 0, None, None]))
+def sample_to_lab(vec_sample, omega, wedge, chi):
+    if vec_sample.shape == (3,):
+        # just a 3-vector
+        return jax.jit(jax.vmap(_sample_to_lab, in_axes=[None, 0, None, None]))(vec_sample, omega, wedge, chi)
+    else:
+        # vec_sample is (N,3), omega is (N)
+        return jax.jit(jax.vmap(_sample_to_lab, in_axes=[0, 0, None, None]))(vec_sample, omega, wedge, chi)
+
+
+# sample_to_lab = jax.jit(jax.vmap(_sample_to_lab, in_axes=[0, 0, None, None]))
 
 ### LAB XYZ TO (TTH, ETA) TRANSFORMS
 
 
 def _xyz_lab_to_tth_eta(xyz_lab, omega, origin_sample, wedge, chi):
-    """Compute tth and eta from lab xyx coordinates on the detector and diffraction origins in the sample frame.
+    """Compute tth and eta from lab xyz coordinates on the detector and diffraction origins in the sample frame.
 
     ImageD11.transform.compute_xyz_from_tth_eta
     """
-    origin_sample = _sample_to_lab(origin_sample, omega, wedge, chi)
-    scatter_vec_lab = xyz_lab - origin_sample
+    origin_lab = _sample_to_lab(origin_sample, omega, wedge, chi)
+    scatter_vec_lab = xyz_lab - origin_lab
     eta = jnp.degrees(jnp.arctan2(-scatter_vec_lab[1], scatter_vec_lab[2]))
     s1_perp_x = jnp.sqrt(scatter_vec_lab[1] * scatter_vec_lab[1] + scatter_vec_lab[2] * scatter_vec_lab[2])
     tth = jnp.degrees(jnp.arctan2(s1_perp_x, scatter_vec_lab[0]))
@@ -250,7 +253,6 @@ def _k_to_tth_eta(k, wvln):
     """
     k1, k2, k3 = k
     ds = jnp.linalg.norm(k)
-    # ds = jnp.sqrt(k1 * k1 + k2 * k2 + k3 * k3)
     s = ds * wvln / 2.0  # sin(theta)
     tth = 2.0 * jnp.degrees(jnp.arcsin(s))
     eta = jnp.degrees(jnp.arctan2(-k2, k3))
@@ -357,13 +359,13 @@ def tth_eta_omega_to_g(tth, eta, omega, wavelength, wedge, chi):
     return g
 
 
-def _tth_eta_omega_to_det(
-    tth,
-    eta,
+def _k_to_det(
+    k,
     omega,
     origin_sample,
     wedge,
     chi,
+    wavelength,
     y_center,
     y_size,
     tilt_y,
@@ -379,15 +381,7 @@ def _tth_eta_omega_to_det(
 ):
     # xyz = unit vectors along the scattered vectors
 
-    rtth = jnp.radians(tth)
-    reta = jnp.radians(eta)
-
-    xyz = jnp.array([jnp.cos(rtth), -jnp.sin(rtth) * jnp.sin(reta), jnp.sin(rtth) * jnp.cos(reta)])
-
-    # xyz[0, :] = jnp.cos(rtth)
-    # #  eta = np.degrees(np.arctan2(-s1[1, :], s1[2, :]))
-    # xyz[1, :] = -jnp.sin(rtth) * jnp.sin(reta)
-    # xyz[2, :] = jnp.sin(rtth) * jnp.cos(reta)
+    xyz = _k_to_xyz_lab_direc(k, wavelength)
 
     # Find vectors in the fast, slow directions in the detector plane
     sc = jnp.array([1.0, 0.0, 0])
@@ -433,6 +427,14 @@ def _tth_eta_omega_to_det(
     return sc, fc
 
 
+k_to_det = jax.jit(
+    jax.vmap(
+        _k_to_det,
+        in_axes=[0, 0, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None],
+    )
+)
+
+
 def tth_eta_omega_to_det(
     tth,
     eta,
@@ -440,6 +442,7 @@ def tth_eta_omega_to_det(
     origin_sample,
     wedge,
     chi,
+    wavelength,
     y_center,
     y_size,
     tilt_y,
@@ -453,96 +456,29 @@ def tth_eta_omega_to_det(
     o21,
     o22,
 ):
-    if origin_sample.shape == (3,):
-        return jax.jit(
-            jax.vmap(
-                _tth_eta_omega_to_det,
-                in_axes=[
-                    0,
-                    0,
-                    0,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                ],
-            )
-        )(
-            tth,
-            eta,
-            omega,
-            origin_sample,
-            wedge,
-            chi,
-            y_center,
-            y_size,
-            tilt_y,
-            z_center,
-            z_size,
-            tilt_z,
-            tilt_x,
-            distance,
-            o11,
-            o12,
-            o21,
-            o22,
-        )
-    else:
-        return jax.jit(
-            jax.vmap(
-                _tth_eta_omega_to_det,
-                in_axes=[
-                    0,
-                    0,
-                    0,
-                    0,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                ],
-            )
-        )(
-            tth,
-            eta,
-            omega,
-            origin_sample,
-            wedge,
-            chi,
-            y_center,
-            y_size,
-            tilt_y,
-            z_center,
-            z_size,
-            tilt_z,
-            tilt_x,
-            distance,
-            o11,
-            o12,
-            o21,
-            o22,
-        )
+    k = tth_eta_to_k(tth, eta, wavelength)
+    sc, fc = k_to_det(
+        k,
+        omega,
+        origin_sample,
+        wedge,
+        chi,
+        wavelength,
+        y_center,
+        y_size,
+        tilt_y,
+        z_center,
+        z_size,
+        tilt_z,
+        tilt_x,
+        distance,
+        o11,
+        o12,
+        o21,
+        o22,
+    )
+
+    return sc, fc
 
 
 def tth_eta_omega_to_xyz_lab(
@@ -591,11 +527,35 @@ def tth_eta_omega_to_xyz_lab(
     return xyz_lab
 
 
-def xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
-    tth, eta = xyz_lab_to_tth_eta(xyz_lab, omega, origin_sample, wedge, chi)
-    k = tth_eta_to_k(tth, eta, wavelength)
+# there are faster ways to go from xl, yl, zl to k
+
+
+def _xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
+    """Convert from lab (lx, ly, lz) coordinates to k-vector.
+
+    ImageD11/src/cdiffraction.c
+    """
+    origin_lab = _sample_to_lab(origin_sample, omega, wedge, chi)
+    scatter_vec_lab = xyz_lab - origin_lab
+    # normalize this
+    scatter_vec_lab = scatter_vec_lab / jnp.linalg.norm(scatter_vec_lab)
+
+    s0 = jnp.array([1.0, 0.0, 0.0])
+    k = (scatter_vec_lab - s0) / wavelength
 
     return k
+
+
+xyz_lab_to_k = jax.jit(jax.vmap(_xyz_lab_to_k, in_axes=[0, 0, None, None, None, None]))
+
+
+def _k_to_xyz_lab_direc(k, wavelength):
+    """Convert from k-vector to a vector parallel to s.
+
+    Not quite the inverse of ImageD11/src/cdiffraction.c
+    """
+    scatter_vec_lab = k * wavelength + jnp.array([1.0, 0.0, 0.0])
+    return scatter_vec_lab / jnp.linalg.norm(scatter_vec_lab)
 
 
 def k_to_xyz_lab(
@@ -618,14 +578,13 @@ def k_to_xyz_lab(
     o21,
     o22,
 ):
-    tth, eta = _k_to_tth_eta(k, wavelength)
-    xyz_lab = tth_eta_omega_to_xyz_lab(
-        tth,
-        eta,
+    sc, fc = k_to_det(
+        k,
         omega,
         origin_sample,
         wedge,
         chi,
+        wavelength,
         y_center,
         y_size,
         tilt_y,
@@ -639,81 +598,23 @@ def k_to_xyz_lab(
         o21,
         o22,
     )
+    xyz_lab = det_to_xyz_lab(
+        sc, fc, y_center, y_size, tilt_y, z_center, z_size, tilt_z, tilt_x, distance, o11, o12, o21, o22
+    )
+
     return xyz_lab
 
 
 def xyz_lab_to_g(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
-    tth, eta = xyz_lab_to_tth_eta(xyz_lab, omega, origin_sample, wedge, chi)
-    k = tth_eta_to_k(tth, eta, wavelength)
+    k = xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength)
     g = k_omega_to_g(k, omega, wedge, chi)
     return g
 
 
-def g_to_xyz_lab(
-    g,
-    omega,
-    origin_sample,
-    wedge,
-    chi,
-    wavelength,
-    y_center,
-    y_size,
-    tilt_y,
-    z_center,
-    z_size,
-    tilt_z,
-    tilt_x,
-    distance,
-    o11,
-    o12,
-    o21,
-    o22,
-):
-    tth, [eta_one, eta_two], [omega1, omega2] = g_to_tth_eta_omega(g, wavelength, wedge, chi)
-
-    xyz_lab_one = tth_eta_omega_to_xyz_lab(
-        tth,
-        eta_one,
-        omega1,
-        origin_sample,
-        wedge,
-        chi,
-        wavelength,
-        y_center,
-        y_size,
-        tilt_y,
-        z_center,
-        z_size,
-        tilt_z,
-        tilt_x,
-        distance,
-        o11,
-        o12,
-        o21,
-        o22,
-    )
-
-    xyz_lab_two = tth_eta_omega_to_xyz_lab(
-        tth,
-        eta_two,
-        omega2,
-        origin_sample,
-        wedge,
-        chi,
-        wavelength,
-        y_center,
-        y_size,
-        tilt_y,
-        z_center,
-        z_size,
-        tilt_z,
-        tilt_x,
-        distance,
-        o11,
-        o12,
-        o21,
-        o22,
-    )
+def g_to_xyz_lab(g, omega, origin_sample, wedge, chi, wavelength):
+    [k_one, k_two], [omega1, omega2], _ = g_to_k_omega(g, wavelength, wedge, chi)
+    xyz_lab_one = k_to_xyz_lab(k_one, omega1, origin_sample, wedge, chi, wavelength)
+    xyz_lab_two = k_to_xyz_lab(k_two, omega2, origin_sample, wedge, chi, wavelength)
 
     return xyz_lab_one, xyz_lab_two
 
@@ -756,8 +657,7 @@ def det_to_g(
         o21,
         o22,
     )
-    tth, eta = xyz_lab_to_tth_eta(xyz_lab, omega, origin_sample, wedge, chi)
-    k = tth_eta_to_k(tth, eta, wavelength)
+    k = xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength)
     g = k_omega_to_g(k, omega, wedge, chi)
     return g
 
@@ -782,13 +682,9 @@ def g_to_det(
     chi,
     wavelength,
 ):
-    xyz_lab_one, xyz_lab_two = g_to_xyz_lab(
-        g,
-        omega,
-        origin_sample,
-        wedge,
-        chi,
-        wavelength,
+    xyz_lab_one, xyz_lab_two = g_to_xyz_lab(g, omega, origin_sample, wedge, chi, wavelength)
+    sc_one, fc_one = xyz_lab_to_det(
+        xyz_lab_one,
         y_center,
         y_size,
         tilt_y,
@@ -802,3 +698,21 @@ def g_to_det(
         o21,
         o22,
     )
+
+    sc_two, fc_two = xyz_lab_to_det(
+        xyz_lab_two,
+        y_center,
+        y_size,
+        tilt_y,
+        z_center,
+        z_size,
+        tilt_z,
+        tilt_x,
+        distance,
+        o11,
+        o12,
+        o21,
+        o22,
+    )
+
+    return (sc_one, fc_one), (sc_two, fc_two)
