@@ -272,7 +272,7 @@ def _tth_eta_omega_from_g(g, wavelength, wedge, chi):
     
     post = W @ C
 
-    omega1, omega2, valid = _k_from_g(g, wavelength, jnp.array([0,0,-1.]), jnp.eye(3), post)
+    omega1, omega2, valid = _omega_solns_for_g(g, wavelength, jnp.array([0,0,-1.]), jnp.eye(3), post)
 
     k_one = _lab_to_sample(g, omega1, wedge, chi)
     k_two = _lab_to_sample(g, omega2, wedge, chi)
