@@ -659,7 +659,6 @@ def det_to_g(
 
 def g_to_det(
     g,
-    omega,
     origin_sample,
     wedge,
     chi,
@@ -719,4 +718,4 @@ def g_to_det(
         o22,
     )
 
-    return (sc_one, fc_one), (sc_two, fc_two)
+    return (sc_one, fc_one), (sc_two, fc_two), (omega1, omega2)
