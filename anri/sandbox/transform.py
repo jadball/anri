@@ -144,9 +144,9 @@ xyz_lab_to_det = jax.jit(
 
 
 def _sample_to_lab(vec_sample, omega, wedge, chi):
-    """Convert from lab to sample coordinates (apply the diffractometer stack).
+    """Convert from sample to lab coordinates (apply the diffractometer stack).
 
-    v_sample = W.T @ C.T @ R.T @ v_lab
+    v_lab = W.T @ C.T @ R.T @ v_sample
     Adapted from ImageD11.transform.compute_g_from_k and compute_grain_origins
     """
     W = wedgemat(wedge)
@@ -160,9 +160,9 @@ def _sample_to_lab(vec_sample, omega, wedge, chi):
 
 
 def _lab_to_sample(vec_lab, omega, wedge, chi):
-    """Convert from sample to lab coordinates (apply the diffractometer stack).
+    """Convert from lab to sample coordinates (apply the diffractometer stack).
 
-    v_lab = R @ C @ W @ v_sample
+    v_sample = R @ C @ W @ v_lab
     Adapted from ImageD11.transform.compute_g_from_k and compute_grain_origins
     Equivalent to ImageD11.transform.compute_g_from_k
     t_x, t_y, t_z are in the sample frame!
