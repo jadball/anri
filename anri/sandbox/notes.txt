@@ -1,0 +1,9 @@
+# we need to define some functions before we can actually index
+
+# BTmat
+# quickorient
+
+# score: count g-vectors indexed by ubi within tol
+# score_and_refine: score then refine via paciorek
+# orient: generate single ubi from g-vector pair
+# orientrange: generate ubi list from g-vector pair (crange arg)

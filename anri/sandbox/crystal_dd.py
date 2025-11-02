@@ -68,7 +68,7 @@ class crystal(unitcell, symmetry):
         # such as h, k, l, ds, tth, intensity
         self._scatter_table = None
         
-    def make_hkls(self, dsmax, wavelength, expand_to_p1=True):
+    def make_hkls(self, dsmax, wavelength, expand_to_p1=True, tol=0.001):
         # make all hkls within a given dsmax
         # want to give max angle in d-star
         q_max = dif.functions_crystallography.dspace2q(1/dsmax)
@@ -90,9 +90,11 @@ class crystal(unitcell, symmetry):
         self._scatter_table['h'] = hkl[:, 0]
         self._scatter_table['k'] = hkl[:, 1]
         self._scatter_table['l'] = hkl[:, 2]
+        # self._scatter_table['len'] = np.sum(np.power(hkl, 2), axis=1)
         self._scatter_table['tth'] = tth
         self._scatter_table['ds'] = 1/dif.functions_crystallography.caldspace(tth, wavelength_a=wavelength)
-        self._scatter_table['ring_id'] = np.unique(tth, return_inverse=True)[1]
+        # self._scatter_table['ring_id'] = np.unique(tth, return_inverse=True)[1]
+        self._ring_ds_tol = tol
 
     @property
     def allhkls(self):
@@ -134,6 +136,21 @@ class grain(unitcell):
     def U(self):
         return self.UB @ np.linalg.inv(self.B)
 
+def groupby_isclose(series, atol=0, rtol=0):
+    # Sort values to make sure values are monotonically increasing:
+    s = series.sort_values()
+
+    # Calculate tolerance value:
+    tolerance = atol + rtol * s
+
+    # Calculate a monotonically increasing index that increase when the
+    # differnce between current and previous value changes:
+    by = s.diff().fillna(0).gt(tolerance).cumsum()
+    # s_old = s.shift().fillna(s)
+    # by = ((s - s_old).abs() > tolerance).cumsum().sort_index()
+
+    return by
+
 class structure(crystal):
     """dans_diffraction structure interface class - a crystal (unitcell + cymmetry) and atoms"""
     def __init__(self, dd_crystal):
@@ -157,7 +174,10 @@ class structure(crystal):
                 # get hkls with meaningful intensities
                 real_hkls = self._scatter_table[self._scatter_table.intensity > 0.01]
                 # group by and split into dicts
-                self._rings_dict = {ring_id:ring for ring_id, (refl_id, ring) in enumerate(list(real_hkls.groupby('ring_id')))}
+                # group by d-star with a tolerance of 0.0001
+                self._rings_dict = {ring_id:ring for ring_id, (refl_id, ring) in enumerate(list(real_hkls.groupby(by=groupby_isclose(real_hkls.ds, atol=self._ring_ds_tol))))}
+                # by = groupby_isclose(df.y, rtol=0.1)
+                # self._rings_dict = {ring_id:ring for ring_id, (refl_id, ring) in enumerate(list(real_hkls.groupby('ring_id')))}
             return self._rings_dict
 
     @property
