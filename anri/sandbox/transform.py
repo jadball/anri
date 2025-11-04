@@ -6,7 +6,7 @@ jax.config.update("jax_enable_x64", True)
 
 ### scalar functions
 
-
+@jax.jit
 def _rmat_from_axis_angle(axis, angle):
     """Return rotation matrix for rotation about axis by angle (degrees)."""
     rom = jnp.radians(angle)
@@ -102,7 +102,7 @@ def detector_transforms(y_center, y_size, tilt_y, z_center, z_size, tilt_z, tilt
 
 ### DETECTOR <-> LAB TRANSFORMS
 
-
+@jax.jit
 def _det_to_xyz_lab(sc, fc, y_center, y_size, tilt_y, z_center, z_size, tilt_z, tilt_x, distance, o11, o12, o21, o22):
     """Convert detector (sc, fc) coordinates to lab (lx, ly, lz) coordinates.
 
@@ -120,7 +120,7 @@ det_to_xyz_lab = jax.jit(
     jax.vmap(_det_to_xyz_lab, in_axes=[0, 0, None, None, None, None, None, None, None, None, None, None, None, None])
 )
 
-
+@jax.jit
 def _xyz_lab_to_det(
     xl, yl, zl, y_center, y_size, tilt_y, z_center, z_size, tilt_z, tilt_x, distance, o11, o12, o21, o22
 ):
@@ -135,14 +135,13 @@ def _xyz_lab_to_det(
     v_det = jnp.linalg.inv(M) @ (v_lab - x_distance_shift) - beam_cen_shift
     return v_det[:2]
 
-
 xyz_lab_to_det = jax.jit(
     jax.vmap(_xyz_lab_to_det, in_axes=[0, 0, 0, None, None, None, None, None, None, None, None, None, None, None, None])
 )
 
 ### LAB <-> SAMPLE TRANSFORMS
 
-
+@jax.jit
 def _sample_to_lab(vec_sample, omega, wedge, chi):
     """Convert from sample to lab coordinates (apply the diffractometer stack).
 
@@ -158,7 +157,7 @@ def _sample_to_lab(vec_sample, omega, wedge, chi):
 
     return vec_lab
 
-
+@jax.jit
 def _lab_to_sample(vec_lab, omega, wedge, chi):
     """Convert from lab to sample coordinates (apply the diffractometer stack).
 
@@ -179,7 +178,7 @@ def _lab_to_sample(vec_lab, omega, wedge, chi):
 
 lab_to_sample = jax.jit(jax.vmap(_lab_to_sample, in_axes=[0, 0, None, None]))
 
-
+@jax.jit
 def sample_to_lab(vec_sample, omega, wedge, chi):
     if vec_sample.shape == (3,):
         # just a 3-vector
@@ -191,7 +190,7 @@ def sample_to_lab(vec_sample, omega, wedge, chi):
 
 ### LAB XYZ TO (TTH, ETA) TRANSFORMS
 
-
+@jax.jit
 def _xyz_lab_to_tth_eta(xyz_lab, omega, origin_sample, wedge, chi):
     """Compute tth and eta from lab xyz coordinates on the detector and diffraction origins in the sample frame.
 
@@ -204,7 +203,7 @@ def _xyz_lab_to_tth_eta(xyz_lab, omega, origin_sample, wedge, chi):
     tth = jnp.degrees(jnp.arctan2(s1_perp_x, scatter_vec_lab[0]))
     return tth, eta
 
-
+@jax.jit
 def xyz_lab_to_tth_eta(xyz_lab, omega, origin_sample, wedge, chi):
     # origin_sample can either be a 3-vector or a (n, 3) array of origins same length as omega
     # if it's a 3-vector, we don't need to vectorize over it
@@ -222,7 +221,7 @@ def xyz_lab_to_tth_eta(xyz_lab, omega, origin_sample, wedge, chi):
 
 ### K-VECTOR TO (TTH,ETA,OMEGA) TRANSFORMS
 
-
+@jax.jit
 def _tth_eta_to_k(tth, eta, wavelength):
     """Convert from (tth, eta) to k-vector.
 
@@ -243,7 +242,7 @@ def _tth_eta_to_k(tth, eta, wavelength):
 
 tth_eta_to_k = jax.jit(jax.vmap(_tth_eta_to_k, in_axes=[0, 0, None]))
 
-
+@jax.jit
 def _k_to_tth_eta(k, wavelength):
     """Convert from k-vector to (tth, eta).
 
@@ -261,12 +260,12 @@ k_to_tth_eta = jax.jit(jax.vmap(_k_to_tth_eta, in_axes=[0, None]))
 
 ### K-VECTOR TO G-VECTOR TRANSFORMS
 
-
+@jax.jit
 def k_omega_to_g(k, omega, wedge, chi):
     """ImageD11.transform.compute_g_from_k."""
     return lab_to_sample(k, omega, wedge, chi)
 
-
+@jax.jit
 def _omega_solns_for_g(g, wavelength, axis, pre, post):
     """Computes omega rotation angles needed for each g to diffract."""
     rg = pre @ g
@@ -304,7 +303,7 @@ def _omega_solns_for_g(g, wavelength, axis, pre, post):
 
 omega_solns_for_g = jax.jit(jax.vmap(_omega_solns_for_g, in_axes=[0, None, None, None, None]))
 
-
+@jax.jit
 def _g_to_k_omega(g, wedge, chi, wavelength):
     """Get k-vectors and omega angles from g-vectors.
 
@@ -341,22 +340,20 @@ g_to_k_omega = jax.jit(
 )
 
 
-# Below are cross-transforms
-
-
+@jax.jit
 def g_to_tth_eta_omega(g, wedge, chi, wavelength):
     [k_one, k_two], [omega1, omega2], valid = g_to_k_omega(g, wedge, chi, wavelength)
     tth, eta_one = k_to_tth_eta(k_one, wavelength)
     tth, eta_two = k_to_tth_eta(k_two, wavelength)
     return tth, [eta_one * valid, eta_two * valid], [omega1, omega2]
 
-
+@jax.jit
 def tth_eta_omega_to_g(tth, eta, omega, wedge, chi, wavelength):
     k = tth_eta_to_k(tth, eta, wavelength)
     g = k_omega_to_g(k, omega, wedge, chi)
     return g
 
-
+@jax.jit
 def _k_to_det(
     k,
     omega,
@@ -432,7 +429,7 @@ k_to_det = jax.jit(
     )
 )
 
-
+@jax.jit
 def tth_eta_omega_to_det(
     tth,
     eta,
@@ -478,7 +475,7 @@ def tth_eta_omega_to_det(
 
     return sc, fc
 
-
+@jax.jit
 def tth_eta_omega_to_xyz_lab(
     tth,
     eta,
@@ -524,7 +521,7 @@ def tth_eta_omega_to_xyz_lab(
     )
     return xyz_lab
 
-
+@jax.jit
 def _xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
     """Convert from lab (lx, ly, lz) coordinates to k-vector.
 
@@ -543,7 +540,7 @@ def _xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
 
 xyz_lab_to_k = jax.jit(jax.vmap(_xyz_lab_to_k, in_axes=[0, 0, None, None, None, None]))
 
-
+@jax.jit
 def _k_to_xyz_lab_direc(k, wavelength):
     """Convert from k-vector to a vector parallel to s. Assumes diffraction from lab origin.
 
@@ -552,7 +549,7 @@ def _k_to_xyz_lab_direc(k, wavelength):
     scatter_vec_lab = k * wavelength + jnp.array([1.0, 0.0, 0.0])
     return scatter_vec_lab / jnp.linalg.norm(scatter_vec_lab)
 
-
+@jax.jit
 def k_to_xyz_lab(
     k,
     omega,
@@ -599,13 +596,13 @@ def k_to_xyz_lab(
 
     return xyz_lab
 
-
+@jax.jit
 def xyz_lab_to_g(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
     k = xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength)
     g = k_omega_to_g(k, omega, wedge, chi)
     return g
 
-
+@jax.jit
 def g_to_xyz_lab(g, omega, origin_sample, wedge, chi, wavelength):
     [k_one, k_two], [omega1, omega2], _ = g_to_k_omega(g, wedge, chi, wavelength)
     xyz_lab_one = k_to_xyz_lab(k_one, omega1, origin_sample, wedge, chi, wavelength)
@@ -613,7 +610,7 @@ def g_to_xyz_lab(g, omega, origin_sample, wedge, chi, wavelength):
 
     return xyz_lab_one, xyz_lab_two
 
-
+@jax.jit
 def det_to_g(
     sc,
     fc,
@@ -656,7 +653,7 @@ def det_to_g(
     g = k_omega_to_g(k, omega, wedge, chi)
     return g
 
-
+@jax.jit
 def g_to_det(
     g,
     origin_sample,
