@@ -157,7 +157,6 @@ def assign_hits(
     coses = jnp.where(bad, jnp.nan, coses)     # shape stays M*K
 
     # Normalize gv                
-    # gv_n = normalize(gv)  # (N,3)
     gv_n = unit_many(gv)
     
     # Masks for ring membership
@@ -206,6 +205,7 @@ def find(parents, x):
 
     return jax.lax.while_loop(cond, loop_body, x)
 
+@jax.jit
 def union(parents, x, y):
     px = find(parents, x)
     py = find(parents, y)
@@ -250,10 +250,10 @@ def test_combo(ga, gb, BT, gt):
     return npk == HKL0.shape[1]
 
 # vmap over the second axis (j)
-test_combo_right = jax.vmap(test_combo, in_axes=(None, None, 0, None))  # BT varies
+test_combo_right = jax.jit(jax.vmap(test_combo, in_axes=(None, None, 0, None)))  # BT varies
 
 # vmap over the first axis (i)
-test_combo_both = jax.vmap(test_combo_right,  in_axes=(0, 0, None, 0))  # gobs and gt vary
+test_combo_both = jax.jit(jax.vmap(test_combo_right,  in_axes=(0, 0, None, 0)))  # gobs and gt vary
 
 @jax.jit
 def derive_arrays(ha, hb, B, BI, HKL0):   
