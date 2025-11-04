@@ -63,75 +63,52 @@ def anglehkls(hkl1, hkl2, rmt):
     return cos_theta
 
 
+# @jax.jit
+# def build_frame_and_apply(v1, v2, A):
+#     """
+#     Build orthonormal frame from v1, v2 and apply matrix A.
+
+#     A: (3,3) matrix to multiply by
+#     v1, v2: input 3-vectors
+#     Returns: A @ [u1, u2, u3] (3x3)
+#     """
+#     g3 = jnp.cross(v1, v2)
+#     u1 = unit(v1)
+#     u3 = unit(g3)
+#     u2 = jnp.cross(u1, u3)
+#     # M = jnp.stack([u1, u2, u3], axis=1)
+#     M = jnp.array((u1, u2, u3))
+#     return A @ M
+
+
 @jax.jit
-def build_frame_and_apply(A, v1, v2):
+def get_rotmat(v1, v2):
     """
-    Build orthonormal frame from v1, v2 and apply matrix A.
+    Build orthonormal frame from v1, v2
 
-    A: (3,3) matrix to multiply by
     v1, v2: input 3-vectors
-    Returns: A @ [u1, u2, u3] (3x3)
+    Returns: [u1, u2, u3] (3x3)
     """
+    g3 = jnp.cross(v1, v2)
     u1 = unit(v1)
-    u3 = unit(jnp.cross(v1, v2))
+    u3 = unit(g3)
     u2 = jnp.cross(u1, u3)
-    M = jnp.stack([u1, u2, u3], axis=1)
-    return A @ M
+    M = jnp.array((u1, u2, u3))
+    return M
 
 
-# BTmat wrapper
 @jax.jit
 def BTmat(h1, h2, B, BI):
     g1 = B @ h1
     g2 = B @ h2
-    return build_frame_and_apply(BI, g1, g2)
+    M = get_rotmat(g1, g2)
+    return BI @ M.T
 
 
 @jax.jit
-def quickorient(ubi_sq, bt_sq):
-    """
-    ubi_sq: jnp array of shape (3,3) 
-    bt_sq: jnp array of shape (3,3)
-    """
-    UBI = ubi_sq.ravel()
-    BT = bt_sq.ravel()
-    
-    # Compute g1 x g2
-    M6 = UBI[1] * UBI[5] - UBI[2] * UBI[4]
-    M7 = UBI[2] * UBI[3] - UBI[0] * UBI[5]
-    M8 = UBI[0] * UBI[4] - UBI[1] * UBI[3]
-
-    # Normalize g0
-    t0 = jnp.sqrt(UBI[0]**2 + UBI[1]**2 + UBI[2]**2)
-    M0 = UBI[0] / t0
-    M1 = UBI[1] / t0
-    M2 = UBI[2] / t0
-
-    # Normalize g1 x g2
-    t1 = jnp.sqrt(M6**2 + M7**2 + M8**2)
-    M6 /= t1
-    M7 /= t1
-    M8 /= t1
-
-    # Compute u2 = u1 x u3
-    M3 = M1 * M8 - M2 * M7
-    M4 = M2 * M6 - M0 * M8
-    M5 = M0 * M7 - M1 * M6
-
-    # Compute UBI = BT @ M (manual dot)
-    UBI_new = jnp.array([
-        BT[0] * M0 + BT[1] * M3 + BT[2] * M6,
-        BT[0] * M1 + BT[1] * M4 + BT[2] * M7,
-        BT[0] * M2 + BT[1] * M5 + BT[2] * M8,
-        BT[3] * M0 + BT[4] * M3 + BT[5] * M6,
-        BT[3] * M1 + BT[4] * M4 + BT[5] * M7,
-        BT[3] * M2 + BT[4] * M5 + BT[5] * M8,
-        BT[6] * M0 + BT[7] * M3 + BT[8] * M6,
-        BT[6] * M1 + BT[7] * M4 + BT[8] * M7,
-        BT[6] * M2 + BT[7] * M5 + BT[8] * M8
-    ])
-    
-    return UBI_new.reshape(3,3)
+def quickorient(g1, g2, BT):
+    M = get_rotmat(g1, g2)
+    return BT @ M
 
 
 @jax.jit
@@ -215,3 +192,139 @@ def assign_hits(
         "mask": hit_mask.astype(jnp.bool_),         # (N,)
         "coses": coses
     }
+
+
+@jax.jit
+def find(parents, x):
+    # Path compression
+    def loop_body(val):
+        px = val
+        return parents[px]
+    
+    def cond(val):
+        return parents[val] != val
+
+    return jax.lax.while_loop(cond, loop_body, x)
+
+def union(parents, x, y):
+    px = find(parents, x)
+    py = find(parents, y)
+    parents = parents.at[px].set(py)
+    return parents
+
+@jax.jit
+def connected_components(adj):
+    n = adj.shape[0]
+    parents = jnp.arange(n)
+
+    def body_fun(i, parents):
+        def inner_body(j, parents):
+            parents = jax.lax.cond(adj[i, j] == 1,
+                               lambda p: union(p, i, j),
+                               lambda p: p,
+                               parents)
+            return parents
+        parents = jax.lax.fori_loop(0, n, inner_body, parents)
+        return parents
+
+    parents = jax.lax.fori_loop(0, n, body_fun, parents)
+    
+    # Flatten parents
+    def compress_parent(i, parents):
+        return parents.at[i].set(find(parents, i))
+    parents = jax.lax.fori_loop(0, n, compress_parent, parents)
+    
+    return jnp.unique(parents, size=n, fill_value=-1)
+
+HKL0 = jnp.array([[0, 0, 1, 1, -1, 1, -1, 0, 0, 1, -1, 1, 1, 3, 11],
+                 [0, 1, 0, 1, 1, 0, 0, 1, -1, 1, 1, -1, 1, 2, 12],
+                 [1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, -1, 1, 13]],)  # first unit cell
+
+@jax.jit
+def test_combo(ga, gb, BT, gt):
+    # (ga, gb) from the left
+    # BT from the right
+    # gt from the left
+    UBI = quickorient(ga, gb, BT)
+    npk = score(UBI, gt, 1e-6)
+    return npk == HKL0.shape[1]
+
+# vmap over the second axis (j)
+test_combo_right = jax.vmap(test_combo, in_axes=(None, None, 0, None))  # BT varies
+
+# vmap over the first axis (i)
+test_combo_both = jax.vmap(test_combo_right,  in_axes=(0, 0, None, 0))  # gobs and gt vary
+
+@jax.jit
+def derive_arrays(ha, hb, B, BI, HKL0):   
+    BT = BTmat(ha, hb, B, BI)
+    ga = jnp.dot(B, ha)
+    gb = jnp.dot(B, hb)
+    UBI = quickorient(ga, gb, BT)
+    UB = jnp.linalg.inv(UBI)
+    gtest = (UB @ HKL0).T
+    return BT, ga, gb, gtest
+
+derive_arrays_2d = jax.jit(jax.vmap(jax.vmap(derive_arrays, in_axes=[None, 0, None, None, None]), in_axes=[0, None, None, None, None]))
+
+@jax.jit
+def mask_hkl_indices(hkl_indices, disallow):
+    i_idx, j_idx = hkl_indices
+    n = i_idx.size  # flatten for iteration
+
+    # flatten arrays for easier indexing
+    i_flat = i_idx.ravel()
+    j_flat = j_idx.ravel()
+
+    def body_fun(k, vals):
+        i_arr, j_arr = vals
+        i = i_arr[k]
+        j = j_arr[k]
+        # only update if i,j are not nan
+        i_arr = i_arr.at[k].set(jnp.where(jnp.isnan(i) | jnp.isnan(j), i,
+                                         jnp.where(disallow[i.astype(int), j.astype(int)], jnp.nan, i)))
+        j_arr = j_arr.at[k].set(jnp.where(jnp.isnan(i) | jnp.isnan(j), j,
+                                         jnp.where(disallow[i.astype(int), j.astype(int)], jnp.nan, j)))
+        return i_arr, j_arr
+
+    i_flat, j_flat = jax.lax.fori_loop(0, n, body_fun, (i_flat, j_flat))
+
+    # reshape back
+    return i_flat.reshape(i_idx.shape), j_flat.reshape(j_idx.shape)
+
+
+@jax.jit
+def filter_pairs(hkls1, hkls2, c2a, B, BI, tol=1e-5):
+    """ remove duplicate pairs for orientation searches
+    h1 = reflections of ring1, N1 peaks
+    h2 = reflections of ring2, N2 peaks
+    c2a  = cos angle between them, N1xN2
+    B = B matrix in reciprocal space
+    BI = inverse in real space
+    """
+
+    N1 = hkls1.shape[0]
+    N2 = hkls2.shape[0]
+    M = N1 * N2
+
+    btmats, ga, gb, gtest = derive_arrays_2d(hkls1, hkls2, B, BI, HKL0)
+    ga_flat = ga.reshape((M, 3))
+    gb_flat = gb.reshape((M, 3))
+    bt_flat = btmats.reshape((M, 3, 3))
+    gt_flat = gtest.reshape((M, -1, 3))
+
+    # test each (gobs and gtest) from the left with (bt) from the right
+    adj = test_combo_both(ga_flat, gb_flat, bt_flat, gt_flat)
+    # see if they're the same angle
+    same_ang = jnp.isclose(c2a.ravel()[:, None], c2a.ravel()[None, :])
+
+    both = adj & same_ang
+
+    # get isolated components
+    components = connected_components(both)
+    components = jnp.where(components > -1, components, jnp.nan)
+    hkl_indices = jnp.unravel_index(components, (hkls1.shape[0], hkls2.shape[0]))
+
+    disallow = jnp.abs(c2a) > 0.98
+
+    return jnp.array(mask_hkl_indices(hkl_indices, disallow)).T

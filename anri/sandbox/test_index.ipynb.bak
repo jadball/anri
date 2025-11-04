@@ -818,7 +818,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 293,
+   "execution_count": 52,
    "id": "779ec644-46f5-4d36-9571-43e367535d1e",
    "metadata": {},
    "outputs": [
@@ -828,7 +828,7 @@
        "<module 'index' from '/home/esrf/james1997a/Code/Anri/anri/sandbox/index.py'>"
       ]
      },
-     "execution_count": 293,
+     "execution_count": 52,
      "metadata": {},
      "output_type": "execute_result"
     }
@@ -840,7 +840,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 294,
+   "execution_count": 53,
    "id": "21670614-2a93-4334-ba5f-6424bc754d53",
    "metadata": {},
    "outputs": [],
@@ -850,7 +850,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 295,
+   "execution_count": 54,
    "id": "0bd61c0f-dc71-41da-a1b8-6f33f9db476b",
    "metadata": {},
    "outputs": [
@@ -858,8 +858,8 @@
      "name": "stdout",
      "output_type": "stream",
      "text": [
-      "CPU times: user 36.1 ms, sys: 8.08 ms, total: 44.2 ms\n",
-      "Wall time: 33.7 ms\n"
+      "CPU times: user 41.5 ms, sys: 0 ns, total: 41.5 ms\n",
+      "Wall time: 32.1 ms\n"
      ]
     }
    ],
@@ -872,7 +872,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 296,
+   "execution_count": 55,
    "id": "a7dbec80-1d20-4ab4-9a12-0fe83b3e3612",
    "metadata": {},
    "outputs": [],
@@ -882,7 +882,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 297,
+   "execution_count": 56,
    "id": "78ec793d-2e26-4f99-b014-32f439660e1b",
    "metadata": {},
    "outputs": [
@@ -890,8 +890,8 @@
      "name": "stdout",
      "output_type": "stream",
      "text": [
-      "CPU times: user 295 μs, sys: 0 ns, total: 295 μs\n",
-      "Wall time: 249 μs\n"
+      "CPU times: user 478 μs, sys: 0 ns, total: 478 μs\n",
+      "Wall time: 366 μs\n"
      ]
     }
    ],
@@ -904,7 +904,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 298,
+   "execution_count": 57,
    "id": "63031e8f-d843-429d-b37f-789091dd103b",
    "metadata": {},
    "outputs": [
@@ -912,8 +912,8 @@
      "name": "stdout",
      "output_type": "stream",
      "text": [
-      "CPU times: user 43.1 ms, sys: 0 ns, total: 43.1 ms\n",
-      "Wall time: 21.2 ms\n"
+      "CPU times: user 43.8 ms, sys: 0 ns, total: 43.8 ms\n",
+      "Wall time: 22.9 ms\n"
      ]
     }
    ],
@@ -924,7 +924,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 299,
+   "execution_count": 58,
    "id": "f8a892de-df06-4921-8f15-78261abcd28d",
    "metadata": {},
    "outputs": [],
@@ -934,7 +934,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 300,
+   "execution_count": 59,
    "id": "568c0f7f-6b6d-4ee7-a9b6-962fffe89cd2",
    "metadata": {},
    "outputs": [
@@ -972,7 +972,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 301,
+   "execution_count": 61,
    "id": "db541665-02ed-4c8a-a700-cabade597f09",
    "metadata": {},
    "outputs": [
@@ -980,8 +980,8 @@
      "name": "stdout",
      "output_type": "stream",
      "text": [
-      "CPU times: user 53.6 ms, sys: 0 ns, total: 53.6 ms\n",
-      "Wall time: 28.8 ms\n"
+      "CPU times: user 52 ms, sys: 271 μs, total: 52.2 ms\n",
+      "Wall time: 35.1 ms\n"
      ]
     }
    ],
@@ -993,7 +993,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 302,
+   "execution_count": 62,
    "id": "5d5b7bcc-49fc-4d8b-bc4e-795568cd9a86",
    "metadata": {},
    "outputs": [
@@ -1001,7 +1001,7 @@
      "name": "stdout",
      "output_type": "stream",
      "text": [
-      "CPU times: user 5 μs, sys: 1e+03 ns, total: 6 μs\n",
+      "CPU times: user 0 ns, sys: 6 μs, total: 6 μs\n",
       "Wall time: 11.4 μs\n"
      ]
     }
@@ -1014,7 +1014,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 303,
+   "execution_count": 63,
    "id": "c7ab37d5-3162-4432-9587-d473e2b2640a",
    "metadata": {},
    "outputs": [],
@@ -1024,7 +1024,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 304,
+   "execution_count": 64,
    "id": "b9a0f9ef-646d-4666-84e0-f9cb87ce6640",
    "metadata": {},
    "outputs": [],
@@ -1037,7 +1037,7 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 305,
+   "execution_count": 66,
    "id": "2da28a96-8400-4956-a4aa-70f4b61c7d68",
    "metadata": {},
    "outputs": [],
@@ -1047,95 +1047,6 @@
     "ImageD11.cImageD11.quickorient(UBI_out_id11, bt_me)\n",
     "UBI_me = myidx.quickorient(gobs_in[0], gobs_in[1], bt_me)\n",
     "assert np.allclose(UBI_me, UBI_out_id11)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 308,
-   "id": "6ad4f542-5956-4305-b7a3-7148fb0324e5",
-   "metadata": {},
-   "outputs": [
-    {
-     "name": "stdout",
-     "output_type": "stream",
-     "text": [
-      "[[5 5]\n",
-      " [5 4]]\n",
-      "(array([0., 1., 0.]), array([-2.,  0.,  0.]))\n",
-      "(array([0., 1., 0.]), array([-2.,  2.,  0.]))\n",
-      "-0.4999999999999998\n",
-      "0.5\n",
-      "[[-1.94535253e-16  2.95111000e+00 -2.46845395e-16]\n",
-      " [ 2.55573623e+00 -1.47555500e+00  1.80703371e-16]\n",
-      " [ 0.00000000e+00  0.00000000e+00  4.68433000e+00]]\n",
-      "[[-1.94535253e-16  2.95111000e+00 -2.46845395e-16]\n",
-      " [ 2.55573623e+00 -1.47555500e+00  1.80703371e-16]\n",
-      " [ 0.00000000e+00  0.00000000e+00  4.68433000e+00]]\n",
-      "0 106\n",
-      "1 106\n",
-      " \n",
-      "#####\n",
-      " \n",
-      "(array([ 1., -1.,  0.]), array([-2.,  0.,  0.]))\n",
-      "(array([ 0., -1.,  0.]), array([-2.,  0.,  0.]))\n",
-      "-0.5000000000000003\n",
-      "0.4999999999999998\n",
-      "[[ 2.55573623e+00  1.47555500e+00  2.46845395e-16]\n",
-      " [-2.55573623e+00  1.47555500e+00 -1.80703371e-16]\n",
-      " [ 0.00000000e+00  0.00000000e+00 -4.68433000e+00]]\n",
-      "[[ 2.22044605e-16  2.95111000e+00  2.46845395e-16]\n",
-      " [-2.55573623e+00 -1.47555500e+00 -1.80703371e-16]\n",
-      " [ 0.00000000e+00  0.00000000e+00 -4.68433000e+00]]\n",
-      "0 106\n",
-      "1 106\n"
-     ]
-    }
-   ],
-   "source": [
-    "hkl_indices = myidx.filter_pairs(hkls1, hkls2, cangs_id11, B, BI)\n",
-    "hkl_indices = np.array([(int(i), int(j)) for (i, j) in hkl_indices if not jnp.isnan(i)])\n",
-    "\n",
-    "angs = np.array([cangs_me[i, j] for (i, j) in hkl_indices])\n",
-    "\n",
-    "hkl_indices = hkl_indices[np.argsort(angs)]\n",
-    "\n",
-    "mats = [myidx.BTmat(hkls1[i], hkls2[j], B, BI) for (i, j) in hkl_indices]\n",
-    "hkl_pairs = np.array([(hkls1[i], hkls2[j]) for (i, j) in hkl_indices])\n",
-    "angs = angs[np.argsort(angs)]\n",
-    "\n",
-    "print(hkl_indices)\n",
-    "print(*[tuple(pair) for pair in hkl_pairs], sep='\\n')\n",
-    "print(*angs, sep='\\n')\n",
-    "print(*mats, sep='\\n')\n",
-    "\n",
-    "\n",
-    "for i in range(len(hkl_indices)):\n",
-    "    h1, h2 = hkl_pairs[i]\n",
-    "    BT = mats[i]\n",
-    "    g1 = gve[ra == idx.ring_1][gi1]\n",
-    "    g2 = gve[ra == idx.ring_2][gi2]\n",
-    "    UBI = myidx.quickorient(g1, g2, BT)\n",
-    "    # print(UBI)\n",
-    "    print(i, cImageD11.score(UBI, gve, 1e-8))\n",
-    "\n",
-    "print(' ')\n",
-    "print('#####')\n",
-    "print(' ')\n",
-    "\n",
-    "hab, c2ab, matrs = ImageD11.unitcell.filter_pairs(hkls1, hkls2, np.array(cangs_me), B, BI, tol=1e-5)\n",
-    "\n",
-    "print(*[tuple(pair) for pair in hab], sep='\\n')\n",
-    "print(*c2ab, sep='\\n')\n",
-    "print(*matrs, sep='\\n')\n",
-    "\n",
-    "for i in range(len(hab)):\n",
-    "    h1, h2 = hab[i]\n",
-    "    BT = matrs[i]\n",
-    "    g1 = gve[ra == idx.ring_1][gi1]\n",
-    "    g2 = gve[ra == idx.ring_2][gi2]\n",
-    "    UBI = myidx.quickorient(g1, g2, BT)\n",
-    "    # print(UBI)\n",
-    "    print(i, cImageD11.score(UBI, gve, 1e-8))"
    ]
   },
   {
@@ -1222,52 +1133,11 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 250,
+   "execution_count": 140,
    "id": "507e08a3-fad5-4155-bde9-7c9cb7eaf20d",
    "metadata": {},
    "outputs": [],
    "source": [
-    "def find(parents, x):\n",
-    "    # Path compression\n",
-    "    def loop_body(val):\n",
-    "        px = val\n",
-    "        return parents[px]\n",
-    "    \n",
-    "    def cond(val):\n",
-    "        return parents[val] != val\n",
-    "\n",
-    "    return lax.while_loop(cond, loop_body, x)\n",
-    "\n",
-    "def union(parents, x, y):\n",
-    "    px = find(parents, x)\n",
-    "    py = find(parents, y)\n",
-    "    parents = parents.at[px].set(py)\n",
-    "    return parents\n",
-    "\n",
-    "@jit\n",
-    "def connected_components(adj):\n",
-    "    n = adj.shape[0]\n",
-    "    parents = jnp.arange(n)\n",
-    "\n",
-    "    def body_fun(i, parents):\n",
-    "        def inner_body(j, parents):\n",
-    "            parents = lax.cond(adj[i, j] == 1,\n",
-    "                               lambda p: union(p, i, j),\n",
-    "                               lambda p: p,\n",
-    "                               parents)\n",
-    "            return parents\n",
-    "        parents = lax.fori_loop(0, n, inner_body, parents)\n",
-    "        return parents\n",
-    "\n",
-    "    parents = lax.fori_loop(0, n, body_fun, parents)\n",
-    "    \n",
-    "    # Flatten parents\n",
-    "    def compress_parent(i, parents):\n",
-    "        return parents.at[i].set(find(parents, i))\n",
-    "    parents = lax.fori_loop(0, n, compress_parent, parents)\n",
-    "    \n",
-    "    return jnp.unique(parents, size=n, fill_value=-1)\n",
-    "\n",
     "@jax.jit\n",
     "def test_combo(ga, gb, BT, gt):\n",
     "    # (ga, gb) from the left\n",
@@ -1294,32 +1164,6 @@
     "    return BT, ga, gb, gtest\n",
     "\n",
     "derive_arrays_2d = jax.jit(jax.vmap(jax.vmap(derive_arrays, in_axes=[None, 0, None, None, None]), in_axes=[0, None, None, None, None]))\n",
-    "\n",
-    "@jax.jit\n",
-    "def mask_hkl_indices(hkl_indices, disallow):\n",
-    "    i_idx, j_idx = hkl_indices\n",
-    "    n = i_idx.size  # flatten for iteration\n",
-    "\n",
-    "    # flatten arrays for easier indexing\n",
-    "    i_flat = i_idx.ravel()\n",
-    "    j_flat = j_idx.ravel()\n",
-    "\n",
-    "    def body_fun(k, vals):\n",
-    "        i_arr, j_arr = vals\n",
-    "        i = i_arr[k]\n",
-    "        j = j_arr[k]\n",
-    "        # only update if i,j are not nan\n",
-    "        i_arr = i_arr.at[k].set(jnp.where(jnp.isnan(i) | jnp.isnan(j), i,\n",
-    "                                         jnp.where(disallow[i.astype(int), j.astype(int)], jnp.nan, i)))\n",
-    "        j_arr = j_arr.at[k].set(jnp.where(jnp.isnan(i) | jnp.isnan(j), j,\n",
-    "                                         jnp.where(disallow[i.astype(int), j.astype(int)], jnp.nan, j)))\n",
-    "        return i_arr, j_arr\n",
-    "\n",
-    "    i_flat, j_flat = jax.lax.fori_loop(0, n, body_fun, (i_flat, j_flat))\n",
-    "\n",
-    "    # reshape back\n",
-    "    return i_flat.reshape(i_idx.shape), j_flat.reshape(j_idx.shape)\n",
-    "\n",
     "\n",
     "@jax.jit\n",
     "def filter_pairs_jax(hkls1, hkls2, c2a, B, BI, tol=1e-5):\n",
@@ -1349,23 +1193,14 @@
     "    # see if they're the same angle\n",
     "    same_ang = jnp.isclose(c2a.ravel()[:, None], c2a.ravel()[None, :])\n",
     "\n",
-    "    both = adj & same_ang\n",
-    "\n",
-    "    # get isolated components\n",
-    "    components = connected_components(both)\n",
-    "    components = jnp.where(components > -1, components, np.nan)\n",
-    "    hkl_indices = jnp.unravel_index(components, (hkls1.shape[0], hkls2.shape[0]))\n",
-    "\n",
     "    disallow = jnp.abs(c2a) > 0.98\n",
     "    \n",
-    "    # return hkl_indices, disallow\n",
-    "\n",
-    "    return jnp.array(mask_hkl_indices(hkl_indices, disallow)).T"
+    "    return adj & same_ang, disallow"
    ]
   },
   {
    "cell_type": "code",
-   "execution_count": 251,
+   "execution_count": 141,
    "id": "2dafc9b1-e3c2-4172-88b2-91656d9291c0",
    "metadata": {},
    "outputs": [],
@@ -1377,14 +1212,31 @@
   },
   {
    "cell_type": "code",
-   "execution_count": 263,
-   "id": "8bd25403-d0f7-4f5c-96de-7a0fe5550e94",
+   "execution_count": 142,
+   "id": "4c293bc3-a10b-42bc-a2a0-801066e41ed1",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# fig, ax = plt.subplots()\n",
+    "# nx.draw(G)\n",
+    "# plt.show()\n",
+    "\n",
+    "\n",
+    "# angs = angs[np.argsort(angs)]\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 187,
+   "id": "32708b34-66b7-45f7-9f63-25986206fa79",
    "metadata": {},
    "outputs": [
     {
      "name": "stdout",
      "output_type": "stream",
      "text": [
+      "8\n",
+      "[21 23 27 29 30 31 34 35]\n",
       "0 106\n",
       "1 106\n",
       " \n",
@@ -1396,8 +1248,19 @@
     }
    ],
    "source": [
-    "hkl_indices = filter_pairs_jax(hkls1, hkls2, cangs_id11, B, BI)\n",
-    "hkl_indices = np.array([(int(i), int(j)) for (i, j) in hkl_indices if not jnp.isnan(i)])\n",
+    "gi1 = 1\n",
+    "gi2 = 5\n",
+    "\n",
+    "# adj = filter_pairs_jax(hkls1, hkls2, cangs_id11, B, BI)\n",
+    "adj, disallow = filter_pairs_jax(hkls1, hkls2, cangs_id11, B, BI)\n",
+    "import networkx as nx\n",
+    "G = nx.from_numpy_array(adj)\n",
+    "\n",
+    "adj_indices = [max(C) for C in nx.connected_components(G)]\n",
+    "hkl_indices = np.array([np.unravel_index(idx, (hkls1.shape[0], hkls2.shape[0])) for idx in adj_indices])\n",
+    "hkl_indices = np.array([(i, j) for (i, j) in hkl_indices if not disallow[i, j]])\n",
+    "print(len(list(nx.connected_components(G))))\n",
+    "print(np.sort(adj_indices))\n",
     "\n",
     "angs = np.array([cangs_me[i, j] for (i, j) in hkl_indices])\n",
     "\n",
@@ -1439,135 +1302,6 @@
     "    UBI = myidx.quickorient(g1, g2, BT)\n",
     "    # print(UBI)\n",
     "    print(i, cImageD11.score(UBI, gve, 1e-8))"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 260,
-   "id": "acfe1b02-36a8-43af-ad3b-b10c72c97349",
-   "metadata": {},
-   "outputs": [
-    {
-     "data": {
-      "text/plain": [
-       "[Array([5., 4.], dtype=float64), Array([5., 5.], dtype=float64)]"
-      ]
-     },
-     "execution_count": 260,
-     "metadata": {},
-     "output_type": "execute_result"
-    }
-   ],
-   "source": [
-    "hkl_indices"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 228,
-   "id": "32708b34-66b7-45f7-9f63-25986206fa79",
-   "metadata": {},
-   "outputs": [
-    {
-     "ename": "NonConcreteBooleanIndexError",
-     "evalue": "Array boolean indices must be concrete; got ShapedArray(bool[36])\n\nSee https://jax.readthedocs.io/en/latest/errors.html#jax.errors.NonConcreteBooleanIndexError",
-     "output_type": "error",
-     "traceback": [
-      "\u001b[0;31m---------------------------------------------------------------------------\u001b[0m",
-      "\u001b[0;31mNonConcreteBooleanIndexError\u001b[0m              Traceback (most recent call last)",
-      "\u001b[0;32m/tmp/ipykernel_337850/198271705.py\u001b[0m in \u001b[0;36m?\u001b[0;34m()\u001b[0m\n\u001b[1;32m      1\u001b[0m \u001b[0mgi1\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0;36m1\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m      2\u001b[0m \u001b[0mgi2\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0;36m5\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m      3\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m      4\u001b[0m \u001b[0;31m# adj = filter_pairs_jax(hkls1, hkls2, cangs_id11, B, BI)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m----> 5\u001b[0;31m \u001b[0midxtest\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mfilter_pairs_jax\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mhkls1\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mhkls2\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mcangs_id11\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mB\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mBI\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m      6\u001b[0m \u001b[0;31m# import networkx as nx\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m      7\u001b[0m \u001b[0;31m# G = nx.from_numpy_array(adj)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m      8\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n",
-      "    \u001b[0;31m[... skipping hidden 11 frame]\u001b[0m\n",
-      "\u001b[0;32m/tmp/ipykernel_337850/1640507348.py\u001b[0m in \u001b[0;36m?\u001b[0;34m(hkls1, hkls2, c2a, B, BI, tol)\u001b[0m\n\u001b[1;32m    111\u001b[0m     \u001b[0mj_idx_int\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mj_idx\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mastype\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mint\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    112\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    113\u001b[0m     \u001b[0;31m# Apply disallow only to valid indices\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    114\u001b[0m     \u001b[0mmask\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mjnp\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mzeros_like\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mvalid_mask\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mdtype\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0mbool\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m--> 115\u001b[0;31m     \u001b[0mmask\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mmask\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mat\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0mvalid_mask\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mset\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mdisallow\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0mi_idx_int\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0mvalid_mask\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mj_idx_int\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0mvalid_mask\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m    116\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    117\u001b[0m     \u001b[0;31m# Set invalid entries to NaN\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m    118\u001b[0m     \u001b[0mi_idx\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mjnp\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mwhere\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mmask\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mjnp\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mnan\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mi_idx\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
-      "\u001b[0;32m/cvmfs/hpc.esrf.fr/software/packages/linux/x86_64/jupyter-slurm/2025.04.2/envs/jupyter-slurm/lib/python3.12/site-packages/jax/_src/numpy/array_methods.py\u001b[0m in \u001b[0;36m?\u001b[0;34m(self, *args)\u001b[0m\n\u001b[1;32m   1049\u001b[0m   \u001b[0;32mdef\u001b[0m \u001b[0mop\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mself\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0;34m*\u001b[0m\u001b[0margs\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m-> 1050\u001b[0;31m     \u001b[0;32mreturn\u001b[0m \u001b[0mgetattr\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mself\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0maval\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0;34mf\"\u001b[0m\u001b[0;34m_\u001b[0m\u001b[0;34m{\u001b[0m\u001b[0mname\u001b[0m\u001b[0;34m}\u001b[0m\u001b[0;34m\"\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mself\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0;34m*\u001b[0m\u001b[0margs\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m",
-      "\u001b[0;32m/cvmfs/hpc.esrf.fr/software/packages/linux/x86_64/jupyter-slurm/2025.04.2/envs/jupyter-slurm/lib/python3.12/site-packages/jax/_src/numpy/array_methods.py\u001b[0m in \u001b[0;36m?\u001b[0;34m(self, item)\u001b[0m\n\u001b[1;32m    645\u001b[0m \u001b[0;32mdef\u001b[0m \u001b[0m_getitem\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mself\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mitem\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m--> 646\u001b[0;31m   \u001b[0;32mreturn\u001b[0m \u001b[0mlax_numpy\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0m_rewriting_take\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mself\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mitem\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m",
-      "\u001b[0;32m/cvmfs/hpc.esrf.fr/software/packages/linux/x86_64/jupyter-slurm/2025.04.2/envs/jupyter-slurm/lib/python3.12/site-packages/jax/_src/numpy/lax_numpy.py\u001b[0m in \u001b[0;36m?\u001b[0;34m(arr, idx, indices_are_sorted, unique_indices, mode, fill_value)\u001b[0m\n\u001b[1;32m  11406\u001b[0m           \u001b[0;32mnot\u001b[0m \u001b[0mdtypes\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0missubdtype\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0maval\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mdtype\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mdtypes\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mbool_\u001b[0m\u001b[0;34m)\u001b[0m \u001b[0;32mand\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11407\u001b[0m           \u001b[0misinstance\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0marr\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mshape\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;36m0\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mint\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11408\u001b[0m         \u001b[0;32mreturn\u001b[0m \u001b[0mlax\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mdynamic_index_in_dim\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0marr\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0midx\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mkeepdims\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0;32mFalse\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11409\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m> 11410\u001b[0;31m   \u001b[0mtreedef\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mstatic_idx\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mdynamic_idx\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0m_split_index_for_jit\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0midx\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0marr\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mshape\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m  11411\u001b[0m   return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,\n\u001b[1;32m  11412\u001b[0m                  \u001b[0munique_indices\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mmode\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mfill_value\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
-      "\u001b[0;32m/cvmfs/hpc.esrf.fr/software/packages/linux/x86_64/jupyter-slurm/2025.04.2/envs/jupyter-slurm/lib/python3.12/site-packages/jax/_src/numpy/lax_numpy.py\u001b[0m in \u001b[0;36m?\u001b[0;34m(idx, shape)\u001b[0m\n\u001b[1;32m  11491\u001b[0m     \u001b[0;32mraise\u001b[0m \u001b[0mTypeError\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34mf\"\u001b[0m\u001b[0;34mJAX does not support string indexing; got \u001b[0m\u001b[0;34m{\u001b[0m\u001b[0midx\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0;34m}\u001b[0m\u001b[0;34m\"\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11492\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11493\u001b[0m   \u001b[0;31m# Expand any (concrete) boolean indices. We can then use advanced integer\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11494\u001b[0m   \u001b[0;31m# indexing logic to handle them.\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m> 11495\u001b[0;31m   \u001b[0midx\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0m_expand_bool_indices\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0midx\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mshape\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m  11496\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11497\u001b[0m   \u001b[0mleaves\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mtreedef\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mtree_flatten\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0midx\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11498\u001b[0m   \u001b[0mdynamic\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0;34m[\u001b[0m\u001b[0;32mNone\u001b[0m\u001b[0;34m]\u001b[0m \u001b[0;34m*\u001b[0m \u001b[0mlen\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mleaves\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
-      "\u001b[0;32m/cvmfs/hpc.esrf.fr/software/packages/linux/x86_64/jupyter-slurm/2025.04.2/envs/jupyter-slurm/lib/python3.12/site-packages/jax/_src/numpy/lax_numpy.py\u001b[0m in \u001b[0;36m?\u001b[0;34m(idx, shape)\u001b[0m\n\u001b[1;32m  11789\u001b[0m         \u001b[0mabstract_i\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mcore\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mget_aval\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mi\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11790\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11791\u001b[0m       \u001b[0;32mif\u001b[0m \u001b[0;32mnot\u001b[0m \u001b[0mtype\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mabstract_i\u001b[0m\u001b[0;34m)\u001b[0m \u001b[0;32mis\u001b[0m \u001b[0mConcreteArray\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11792\u001b[0m         \u001b[0;31m# TODO(mattjj): improve this error by tracking _why_ the indices are not concrete\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m> 11793\u001b[0;31m         \u001b[0;32mraise\u001b[0m \u001b[0merrors\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mNonConcreteBooleanIndexError\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mabstract_i\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m  11794\u001b[0m       \u001b[0;32melif\u001b[0m \u001b[0m_ndim\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mi\u001b[0m\u001b[0;34m)\u001b[0m \u001b[0;34m==\u001b[0m \u001b[0;36m0\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11795\u001b[0m         \u001b[0mout\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mappend\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mbool\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mi\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m  11796\u001b[0m       \u001b[0;32melse\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
-      "\u001b[0;31mNonConcreteBooleanIndexError\u001b[0m: Array boolean indices must be concrete; got ShapedArray(bool[36])\n\nSee https://jax.readthedocs.io/en/latest/errors.html#jax.errors.NonConcreteBooleanIndexError"
-     ]
-    }
-   ],
-   "source": [
-    "gi1 = 1\n",
-    "gi2 = 5\n",
-    "\n",
-    "# adj = filter_pairs_jax(hkls1, hkls2, cangs_id11, B, BI)\n",
-    "# idxtest = filter_pairs_jax(hkls1, hkls2, cangs_id11, B, BI)\n",
-    "# import networkx as nx\n",
-    "# G = nx.from_numpy_array(adj)\n",
-    "\n",
-    "# adj_indices = [max(C) for C in nx.connected_components(G)]\n",
-    "# hkl_indices = np.array([np.unravel_index(idx, (hkls1.shape[0], hkls2.shape[0])) for idx in adj_indices])\n",
-    "# hkl_indices = np.array([(i, j) for (i, j) in hkl_indices if not disallow[i, j]])\n",
-    "# print(len(list(nx.connected_components(G))))\n",
-    "# print(np.sort(adj_indices))\n",
-    "\n",
-    "# angs = np.array([cangs_me[i, j] for (i, j) in hkl_indices])\n",
-    "\n",
-    "# hkl_indices = hkl_indices[np.argsort(angs)]\n",
-    "\n",
-    "# mats = [myidx.BTmat(hkls1[i], hkls2[j], B, BI) for (i, j) in hkl_indices]\n",
-    "# hkl_pairs = np.array([(hkls1[i], hkls2[j]) for (i, j) in hkl_indices])\n",
-    "\n",
-    "# # print(hkl_indices)\n",
-    "# # print(*[tuple(pair) for pair in hkl_pairs], sep='\\n')\n",
-    "# # print(*angs, sep='\\n')\n",
-    "# # print(*mats, sep='\\n')\n",
-    "\n",
-    "\n",
-    "# for i in range(len(hkl_indices)):\n",
-    "#     h1, h2 = hkl_pairs[i]\n",
-    "#     BT = mats[i]\n",
-    "#     g1 = gve[ra == idx.ring_1][gi1]\n",
-    "#     g2 = gve[ra == idx.ring_2][gi2]\n",
-    "#     UBI = myidx.quickorient(g1, g2, BT)\n",
-    "#     # print(UBI)\n",
-    "#     print(i, cImageD11.score(UBI, gve, 1e-8))\n",
-    "\n",
-    "# print(' ')\n",
-    "# print('#####')\n",
-    "# print(' ')\n",
-    "\n",
-    "# hab, c2ab, matrs = ImageD11.unitcell.filter_pairs(hkls1, hkls2, np.array(cangs_me), B, BI, tol=1e-5)\n",
-    "\n",
-    "# # print(*[tuple(pair) for pair in hab], sep='\\n')\n",
-    "# # print(*c2ab, sep='\\n')\n",
-    "# # print(*matrs, sep='\\n')\n",
-    "\n",
-    "# for i in range(len(hab)):\n",
-    "#     h1, h2 = hab[i]\n",
-    "#     BT = matrs[i]\n",
-    "#     g1 = gve[ra == idx.ring_1][gi1]\n",
-    "#     g2 = gve[ra == idx.ring_2][gi2]\n",
-    "#     UBI = myidx.quickorient(g1, g2, BT)\n",
-    "#     # print(UBI)\n",
-    "#     print(i, cImageD11.score(UBI, gve, 1e-8))"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 220,
-   "id": "d3d647e0-6b2c-48d2-9e00-c0761fcda03b",
-   "metadata": {},
-   "outputs": [
-    {
-     "data": {
-      "text/plain": [
-       "(Array([ 3.,  3.,  4.,  4.,  5.,  5.,  5.,  5., nan, nan, nan, nan, nan,\n",
-       "        nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan,\n",
-       "        nan, nan, nan, nan, nan, nan, nan, nan, nan, nan], dtype=float64),\n",
-       " Array([ 3.,  5.,  3.,  5.,  0.,  1.,  4.,  5., nan, nan, nan, nan, nan,\n",
-       "        nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan, nan,\n",
-       "        nan, nan, nan, nan, nan, nan, nan, nan, nan, nan],      dtype=float64, weak_type=True))"
-      ]
-     },
-     "execution_count": 220,
-     "metadata": {},
-     "output_type": "execute_result"
-    }
-   ],
-   "source": [
-    "idxtest"
    ]
   },
   {
