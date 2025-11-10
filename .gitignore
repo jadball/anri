@@ -52,3 +52,9 @@ __pycache__
 
 docs/build
 site/
+
+# local packages
+anri/sandbox/jaxkd
+
+# local test data
+tests/data/sandbox/refine

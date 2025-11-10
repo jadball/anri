@@ -178,8 +178,19 @@ def _lab_to_sample(vec_lab, omega, wedge, chi):
 
 lab_to_sample = jax.jit(jax.vmap(_lab_to_sample, in_axes=[0, 0, None, None]))
 
+
 @jax.jit
 def sample_to_lab(vec_sample, omega, wedge, chi):
+    """
+    Jake Vanderplas:
+    jit is compatible with if statements whose truth or falsehood is decidable at trace time. x is None fits this criterion, because it concerns the identity of the Python variable.
+    
+    Other statements that can be used within if statements are static attributes of the an array, such as shape, size, or dtype.
+    
+    What will not work within JIT is attempting to branch based on dynamic quantites, such as values within arrays.
+
+    https://github.com/jax-ml/jax/discussions/14224#discussioncomment-4831741
+    """
     if vec_sample.shape == (3,):
         # just a 3-vector
         return jax.jit(jax.vmap(_sample_to_lab, in_axes=[None, 0, None, None]))(vec_sample, omega, wedge, chi)
@@ -539,6 +550,19 @@ def _xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
 
 
 xyz_lab_to_k = jax.jit(jax.vmap(_xyz_lab_to_k, in_axes=[0, 0, None, None, None, None]))
+
+@jax.jit
+def xyz_lab_to_k(xyz_lab, omega, origin_sample, wedge, chi, wavelength):
+    if origin_sample.shape == (3,):
+        # just a 3-vector
+        return jax.jit(jax.vmap(_xyz_lab_to_k, in_axes=[0, 0, None, None, None, None]))(
+            xyz_lab, omega, origin_sample, wedge, chi, wavelength
+        )
+    else:
+        # array of origins
+        return jax.jit(jax.vmap(_xyz_lab_to_k, in_axes=[0, 0, 0, None, None, None]))(
+            xyz_lab, omega, origin_sample, wedge, chi, wavelength
+        )
 
 @jax.jit
 def _k_to_xyz_lab_direc(k, wavelength):

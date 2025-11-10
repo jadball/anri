@@ -154,8 +154,24 @@ def quickorient(g1, g2, BT):
 
 
 @jax.jit
-def score(ubi, gv, tol):
-    """Count the number of g-vectors indexed by UBI within tolerance.
+def gv_ubi_to_hkl(ubi, gv):
+    # Transform gv by ubi
+    # ubi: (3,3)
+    # gv: (N,3)
+    gv = jnp.atleast_2d(gv)  # (N,3)
+    hkl = jnp.einsum('ij,nj->ni', ubi, gv)
+
+    return hkl
+
+@jax.jit
+def gv_ubi_to_hkl_int(ubi, gv):
+    hkl = gv_ubi_to_hkl(ubi, gv)
+    hkl_int = jnp.round(hkl)
+    return hkl, hkl_int
+
+@jax.jit
+def score_mask(ubi, gv, tol):
+    """Make a mask of g-vectors indexed by UBI within tolerance.
 
     JAX JIT implementation of ImageD11.cImageD11.score()
 
@@ -165,19 +181,25 @@ def score(ubi, gv, tol):
         tol: scalar tolerance
 
     Returns:
-        n: integer number of peaks within tolerance
+        mask: (N,) mask where g-vectors index the UBI
     """
-    # Transform gv by ubi
-    hkl = gv @ ubi.T  # shape (N,3)
-
-    # Compute distance to nearest integer
-    dhkl = hkl - jnp.round(hkl)
+    hkl, hkl_int = gv_ubi_to_hkl_int(ubi, gv)
+    dhkl = hkl - hkl_int
 
     # Squared distance
     drlv2 = jnp.sum(dhkl**2, axis=1)
 
+    mask = drlv2 < tol**2
+    return mask
+
+
+@jax.jit
+def score(ubi, gv, tol):
+    # get mask where gv scored by ubi
+    sm = score_mask(ubi, gv, tol)
+
     # Count peaks where drlv2 < tol^2
-    n = jnp.sum(drlv2 < tol**2)
+    n = jnp.sum(sm)
     return n
 
 
