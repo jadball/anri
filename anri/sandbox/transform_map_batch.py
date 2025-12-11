@@ -39,9 +39,6 @@ def _rmat_from_axis_angle(axis, angle):
     return Q
 
 
-rmat_from_axis_angle = jax.jit(jax.vmap(_rmat_from_axis_angle, in_axes=[None, 0]))
-
-
 @jax.jit
 def detector_rotation_matrix(tilt_x, tilt_y, tilt_z):
     """Return rotation matrix for detector tilts about x, y, z axes.
@@ -127,9 +124,6 @@ def _det_to_lab(sc, fc, det_trans, beam_cen_shift, x_distance_shift):
     return v_lab
 
 
-det_to_lab = jax.jit(jax.vmap(_det_to_lab, in_axes=[0, 0, None, None, None]))
-
-
 @jax.jit
 def _lab_to_det(xl, yl, zl, det_trans, beam_cen_shift, x_distance_shift):
     """Convert lab (lx, ly, lz) coordinates to detector (sc, fc) coordinates.
@@ -139,9 +133,6 @@ def _lab_to_det(xl, yl, zl, det_trans, beam_cen_shift, x_distance_shift):
     v_lab = jnp.array([xl, yl, zl])
     v_det = jnp.linalg.inv(det_trans) @ (v_lab - x_distance_shift) - beam_cen_shift
     return v_det[:2]
-
-
-lab_to_det = jax.jit(jax.vmap(_lab_to_det, in_axes=[0, 0, 0, None, None, None]))
 
 
 ### LAB <-> SAMPLE TRANSFORMS
@@ -165,23 +156,6 @@ def _sample_to_lab(v_sample, omega, wedge, chi):
 
 
 @jax.jit
-def sample_to_lab(v_sample, omega, wedge, chi):
-    """As per Jake Vanderplas.
-
-    jit is compatible with if statements whose truth or falsehood is decidable at trace time. x is None fits this criterion, because it concerns the identity of the Python variable.
-    Other statements that can be used within if statements are static attributes of the an array, such as shape, size, or dtype.
-    What will not work within JIT is attempting to branch based on dynamic quantites, such as values within arrays.
-    https://github.com/jax-ml/jax/discussions/14224#discussioncomment-4831741
-    """
-    if v_sample.shape == (3,):
-        # just a 3-vector
-        return jax.jit(jax.vmap(_sample_to_lab, in_axes=[None, 0, None, None]))(v_sample, omega, wedge, chi)
-    else:
-        # vec_sample is (N,3), omega is (N)
-        return jax.jit(jax.vmap(_sample_to_lab, in_axes=[0, 0, None, None]))(v_sample, omega, wedge, chi)
-
-
-@jax.jit
 def _lab_to_sample(v_lab, omega, wedge, chi):
     """Convert from lab to sample coordinates (apply the diffractometer stack).
 
@@ -200,13 +174,10 @@ def _lab_to_sample(v_lab, omega, wedge, chi):
     return v_sample
 
 
-lab_to_sample = jax.jit(jax.vmap(_lab_to_sample, in_axes=[0, 0, None, None]))
-
-
 @jax.jit
-def q_lab_to_q_sample(q_lab, omega, wedge, chi):
+def _q_lab_to_q_sample(q_lab, omega, wedge, chi):
     """Convert from q-vector in lab frame to q-vector in sample frame."""
-    q_sample = lab_to_sample(q_lab, omega, wedge, chi)
+    q_sample = _lab_to_sample(q_lab, omega, wedge, chi)
     return q_sample
 
 
@@ -222,9 +193,6 @@ def _scale_norm_k(k_vec, wavelength):
     return k_vec_scaled
 
 
-scale_norm_k = jax.jit(jax.vmap(_scale_norm_k, in_axes=[0, None]))
-
-
 @jax.jit
 def _k_to_q_lab(k_in, k_out):
     """Convert from scaled normalised (k_in, k_out) to q-vector in the lab frame.
@@ -233,9 +201,6 @@ def _k_to_q_lab(k_in, k_out):
     """
     q_lab = k_out - k_in
     return q_lab
-
-
-k_to_q_lab = jax.jit(jax.vmap(_k_to_q_lab, in_axes=[None, 0]))
 
 
 @jax.jit
@@ -248,17 +213,14 @@ def _q_lab_to_k_out(q_lab, k_in):
     return k_out
 
 
-q_lab_to_k_out = jax.jit(jax.vmap(_q_lab_to_k_out, in_axes=[0, None]))
-
-
 @jax.jit
-def peak_lab_to_k_out(peak_lab, origin_lab, wavelength):
+def _peak_lab_to_k_out(peak_lab, origin_lab, wavelength):
     """Convert from vector of peak in lab frame to normalised scaled k_out in the lab frame.
 
     We determine k_out = peak_lab - origin_lab
     """
     k_out_vec = peak_lab - origin_lab  # unscaled, un-normalised
-    k_out = scale_norm_k(k_out_vec, wavelength)
+    k_out = _scale_norm_k(k_out_vec, wavelength)
     return k_out
 
 
@@ -281,18 +243,7 @@ def _tth_eta_to_k_out(tth, eta, wavelength):
 
     k_out = _scale_norm_k(k_out_vec, wavelength)
 
-    # c = jnp.cos(tth / 2)  # cos theta
-    # s = jnp.sin(tth / 2)  # sin theta
-    # ds = 2 * s / wavelength
-
-    # k1 = -ds * s  # this is negative x
-    # k2 = -ds * c * jnp.sin(eta)  # CHANGED eta to HFP convention 4-9-2007
-    # k3 = ds * c * jnp.cos(eta)
-
     return k_out
-
-
-tth_eta_to_k_out = jax.jit(jax.vmap(_tth_eta_to_k_out, in_axes=[0, 0, None]))
 
 
 @jax.jit
@@ -307,156 +258,6 @@ def _q_lab_to_tth_eta(q_lab, wavelength):
     tth = 2.0 * jnp.degrees(jnp.arcsin(s))
     eta = jnp.degrees(jnp.arctan2(-q2, q3))
     return tth, eta
-
-
-q_lab_to_tth_eta = jax.jit(jax.vmap(_q_lab_to_tth_eta, in_axes=[0, None]))
-
-# adapted from ImageD11 version - krot is incorrect.
-# @jax.jit
-# def _omega_solns(q_sample, k_in, wavelength, axis, pre, post):
-#     """Computes omega rotation angles needed for each g to diffract."""
-#     # rg is rotated g-vector
-#     # this is identity normally
-#     rg = pre @ q_sample
-
-#     krot = jnp.array([[-1.0, 0, 0], [0, 1, 0], [0, 0, 1]])
-#     beam = krot @ k_in
-
-#     # Jon version
-#     # beam = -jnp.array([-1.0 / wavelength, 0, 0])
-
-#     # post: normally W @ C
-#     # post.T is (W @ C).T = C.T @ W.T
-
-#     rb = jnp.dot(post.T, beam)
-
-#     # local orthogonal coordinate system
-#     # 1 vector is along rotation axis
-#     #
-#     a1 = jnp.cross(axis, rg)  # orthogonal to rotation axis and scattering vector
-#     a2 = jnp.cross(a1, axis)  # perpendicular to a1 and rotation axis
-#     a0 = rg - a2  # component of rg along rotation axis
-
-#     # rotated beam dot a(0,1,2)
-#     rbda0 = rb @ a0
-#     rbda1 = rb @ a1
-#     rbda2 = rb @ a2
-
-#     # k * k_in
-#     kdotbeam = -jnp.sum(q_sample * q_sample) / 2.0
-
-#     phi = jnp.arctan2(rbda2, rbda1)
-#     den = jnp.sqrt(rbda1 * rbda1 + rbda2 * rbda2)  # denominator
-
-#     quot = (kdotbeam - rbda0) / den  # quotient
-#     valid = (quot >= -1) & (quot <= 1)
-#     quot = jnp.where(valid, quot, 0)
-#     x_plus_p = jnp.arcsin(quot)
-#     sol1 = x_plus_p + phi
-#     sol2 = jnp.pi - x_plus_p + phi
-
-#     # map into -pi to pi
-#     angmod_sol1 = jnp.arctan2(jnp.sin(sol1), jnp.cos(sol1))
-#     angmod_sol2 = jnp.arctan2(jnp.sin(sol2), jnp.cos(sol2))
-
-#     return jnp.degrees(angmod_sol1), jnp.degrees(angmod_sol2), valid
-
-
-# better solution
-# @jax.jit
-# def _omega_solns(q_sample, k_in, axis, wedge, chi):
-#     """Computes omega rotation angles needed for each g to diffract."""
-#     # We solve this in the sample frame
-#     # convert k_in into the sample frame
-#     k_in_sample = _lab_to_sample(k_in, 0.0, wedge, chi)
-
-#     Q0 = q_sample
-
-#     # Q = k_out - k_in
-#     # so k_out = Q + k_in
-#     # Ewald condition: |k_out| = |k_in| = 1/wavelength
-#     # square both sides:
-#     # |k_out|^2 = |k_in|^2 = 1/(wavelength^2)
-#     # sub in k_out = Q + k_in on LHS
-#     # |Q + k_in|^2 = 1/(wavelength^2)
-#     # expand LHS
-#     # |Q|^2 + 2 Q . k_in + |k_in|^2 = 1/(wavelength^2)
-#     # subtract |k_in|^2 from both sides
-#     # |Q|^2 + 2 Q . k_in = 0
-#     # rearrange
-#     # Q . k_in = -|Q|^2 / 2
-#     # now the game is to find a given Q_L such that this is satisfied for k_in (also lab frame)
-
-#     # split Q into components parallel and perpendicular to rotation axis
-#     # when we rotate, only the perpendicular component changes
-
-#     Q_par = jnp.dot(Q0, axis) * axis
-#     Q_perp = Q0 - Q_par
-
-#     # Q(w) = R(w) @ Q0
-#     # R(w) rotates Q_perp about axis by w, leaves Q_par unchanged
-#     # decompose Q into new basis vectors:
-#     # Q(w) = [Q_perp] cos(w) + [axis x Q_perp] sin(w) + [Q_par]
-#     # dot with k_in
-#     # k_in . Q(w) = [k_in . Q_perp] cos(w) + [k_in . (axis x Q_perp)] sin(w) + [k_in . Q_par]
-#     # there are some constants here:
-#     # alpha = [k_in . Q_perp]
-#     # beta = [k_in . (axis x Q_perp)]
-#     # gamma = [k_in . Q_par]
-
-#     # now we can rewrite:
-#     # k_in . Q(w) = [alpha] cos(w) + [beta] sin(w) + gamma
-#     # set equal to -|Q|^2 / 2
-#     # [alpha] cos(w) + [beta] sin(w) + gamma = -|Q|^2 / 2
-#     # subtract gamma
-#     # [alpha] cos(w) + [beta] sin(w) = -|Q|^2 / 2 - gamma
-#     # let delta = -|Q|^2 / 2 - gamma
-
-#     alpha = jnp.dot(k_in_sample, Q_perp)
-#     beta = jnp.dot(k_in_sample, jnp.cross(axis, Q_perp))
-#     gamma = jnp.dot(k_in_sample, Q_par)
-#     delta = -jnp.sum(Q0 * Q0) / 2.0 - gamma
-
-#     # trig identity (phased cosine wave):
-#     # https://en.wikipedia.org/wiki/List_of_trigonometric_identities#Sine_and_cosine
-#     # alpha cos(w) + beta sin(w) = R * cos(w + phi)
-#     # where
-#     # R = sgn(alpha) * sqrt(alpha^2 + beta^2)
-#     # phi = arctan2(-beta, alpha)
-
-#     # delta = alpha cos(w) + beta sin(w)
-#     # delta = R * cos(w + phi)
-#     # therefore:
-#     # delta/R = cos(w + phi)
-#     # w1 + phi = acos(delta / R)
-#     # -(w2 + phi) = acos(delta / R)  cos(x) = cos(-x)
-#     # so:
-#     # w1 = acos(delta / R) - phi
-#     # w2 = -acos(delta / R) - phi
-
-#     phi = jnp.arctan2(-beta, alpha)
-#     R = jnp.sign(alpha) * jnp.sqrt(alpha * alpha + beta * beta)
-#     # handle cases where R is very close to zero
-#     eps = 1e-12
-#     R_safe = jnp.where(R < eps, eps, R)
-#     # valid solutions occur if |delta / R| <= 1
-#     quot = delta / R_safe
-
-#     valid = jnp.where(
-#         R < eps,
-#         jnp.abs(delta) < eps,  # any w works only if delta≈0
-#         (quot >= -1.0) & (quot <= 1.0),
-#     )
-
-#     # acos only valid for -1 <= quot <= 1
-#     acos_term = jnp.where(valid, jnp.arccos(jnp.clip(quot, -1.0, 1.0)), 0.0)
-#     omega1 = acos_term - phi
-#     omega2 = -acos_term - phi
-
-#     # map into -pi to pi
-#     angmod_omega1 = jnp.arctan2(jnp.sin(omega1), jnp.cos(omega1))
-#     angmod_omega2 = jnp.arctan2(jnp.sin(omega2), jnp.cos(omega2))
-#     return jnp.degrees(angmod_omega1), jnp.degrees(angmod_omega2), valid
 
 
 @jax.jit
@@ -562,10 +363,6 @@ def _omega_solns(q_sample, k_in, axis, wedge, chi):
     return jnp.degrees(angmod_omega1), jnp.degrees(angmod_omega2), valid
 
 
-omega_solns = jax.jit(jax.vmap(_omega_solns, in_axes=[0, None, None, None, None]))
-
-
-# fully working
 @jax.jit
 def _q_lab_to_det(q_lab, omega, origin_lab, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift):
     # xyz = unit vectors along the scattered vectors
@@ -582,16 +379,18 @@ def _q_lab_to_det(q_lab, omega, origin_lab, k_in, wavelength, det_trans, beam_ce
     sc = jnp.array([1.0, 0.0, 0])
     fc = jnp.array([0.0, 1.0, 0])
 
-    dxyzl = det_to_lab(sc, fc, det_trans, beam_cen_shift, x_distance_shift).T
+    sc_lab = _det_to_lab(sc[0], fc[0], det_trans, beam_cen_shift, x_distance_shift)
+    fc_lab = _det_to_lab(sc[1], fc[1], det_trans, beam_cen_shift, x_distance_shift)
+    norm_lab = _det_to_lab(sc[2], fc[2], det_trans, beam_cen_shift, x_distance_shift)
 
     # == [xpos, ypos, zpos] shape (3,n)
     #
     # This was based on the recipe from Thomas in Acta Cryst ...
     #  ... Modern Equations of ...
 
-    ds = dxyzl[:, 0] - dxyzl[:, 2]  # 1,0 in plane is (1,0)-(0,0)
-    df = dxyzl[:, 1] - dxyzl[:, 2]  # 0,1 in plane
-    dO = dxyzl[:, 2]  # origin pixel
+    ds = sc_lab - norm_lab  # 1,0 in plane is (1,0)-(0,0)
+    df = fc_lab - norm_lab  # 0,1 in plane
+    dO = norm_lab  # origin pixel
 
     # Cross products to get the detector normal
     # Thomas uses an inverse matrix, but then divides out the determinant anyway
@@ -619,73 +418,21 @@ def _q_lab_to_det(q_lab, omega, origin_lab, k_in, wavelength, det_trans, beam_ce
     return sc, fc
 
 
-q_lab_to_det = jax.jit(jax.vmap(_q_lab_to_det, in_axes=[0, 0, 0, None, None, None, None, None]))
-
 ### Cross-transforms graveyard
 
 
 @jax.jit
-def tth_eta_to_q_lab(tth, eta, k_in, wavelength):
-    k_out = tth_eta_to_k_out(tth, eta, wavelength)
-    q_lab = k_to_q_lab(k_in, k_out)
+def _peak_lab_to_q_lab(peak_lab, origin_lab, k_in, wavelength):
+    k_out = _peak_lab_to_k_out(peak_lab, origin_lab, wavelength)
+    q_lab = _k_to_q_lab(k_in, k_out)
     return q_lab
 
 
 @jax.jit
-def peak_lab_to_q_lab(peak_lab, origin_lab, k_in, wavelength):
-    k_out = peak_lab_to_k_out(peak_lab, origin_lab, wavelength)
-    q_lab = k_to_q_lab(k_in, k_out)
+def _tth_eta_to_q_lab(tth, eta, k_in, wavelength):
+    k_out = _tth_eta_to_k_out(tth, eta, wavelength)
+    q_lab = _k_to_q_lab(k_in, k_out)
     return q_lab
-
-
-@jax.jit
-def q_lab_to_peak_lab(q_lab, omega, origin_lab, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift):
-    sc, fc = q_lab_to_det(q_lab, omega, origin_lab, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift)
-    peak_lab = det_to_lab(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
-    return peak_lab
-
-
-@jax.jit
-def peak_lab_to_q_sample(peak_lab, omega, origin_lab, k_in, wedge, chi, wavelength):
-    k_out = peak_lab_to_k_out(peak_lab, origin_lab)
-    q_lab = k_to_q_lab(k_in, k_out, wavelength)
-    q_sample = q_lab_to_q_sample(q_lab, omega, wedge, chi)
-    return q_sample
-
-
-# @jax.jit
-# def _q_sample_to_q_lab(q_sample, k_in, wedge, chi, wavelength):
-#     """Get Q in the lab frame from Q in the sample frame.
-
-#     There are two solutions for Q_lab for each Q_sample.
-
-#     ImageD11.gv_general.g_to_k
-#     """
-#     # wedge and chi matrices
-#     W = wedgemat(wedge)
-#     C = chimat(chi)
-
-#     post = W @ C
-
-#     # work out valid omega angles for g-vectors given a wavelength and rotation axis
-#     omega1, omega2, valid = _omega_solns(
-#         q_sample,
-#         k_in,
-#         wavelength,
-#         jnp.array([0, 0, -1.0]),  # axis - this just factors in omegasign for our normal diffractometer
-#         jnp.eye(3),  # pre
-#         post,  # post
-#     )
-
-#     # invalidate incorrect omega angles
-#     omega1 = jnp.where(valid, omega1, jnp.nan)
-#     omega2 = jnp.where(valid, omega2, jnp.nan)
-
-#     # now get q_lab
-#     q_lab1 = _sample_to_lab(q_sample, omega1, wedge, chi)
-#     q_lab2 = _sample_to_lab(q_sample, omega2, wedge, chi)
-
-#     return [q_lab1, q_lab2], [omega1, omega2], valid
 
 
 @jax.jit
@@ -719,79 +466,129 @@ def _q_sample_to_q_lab(q_sample, k_in, wedge, chi):
     return [q_lab1, q_lab2], [omega1, omega2], valid
 
 
-q_sample_to_q_lab = jax.jit(jax.vmap(_q_sample_to_q_lab, in_axes=[0, None, None, None]))
-
-
 @jax.jit
-def q_sample_to_det(q_sample, origin_lab, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift):
-    [q_lab1, q_lab2], [omega1, omega2], valid = q_sample_to_q_lab(q_sample, k_in, wedge, chi)
-    sc1, fc1 = q_lab_to_det(q_lab1, omega1, origin_lab, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift)
-    sc2, fc2 = q_lab_to_det(q_lab2, omega2, origin_lab, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift)
+def _q_sample_to_det(q_sample, origin_lab, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift):
+    [q_lab1, q_lab2], [omega1, omega2], valid = _q_sample_to_q_lab(q_sample, k_in, wedge, chi)
+    sc1, fc1 = _q_lab_to_det(q_lab1, omega1, origin_lab, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift)
+    sc2, fc2 = _q_lab_to_det(q_lab2, omega2, origin_lab, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift)
 
     return [sc1, sc2], [fc1, fc2], [omega1, omega2], valid
 
 
-def q_and_origin_sample_to_det(
+@jax.jit
+def _q_and_origin_sample_to_det(
     q_sample, origin_sample, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift
 ):
     """Like q_sample_to_det, but origin is given in sample frame. Useful for forward simulating."""
-    [q_lab1, q_lab2], [omega1, omega2], valid = q_sample_to_q_lab(q_sample, k_in, wedge, chi)
+    [q_lab1, q_lab2], [omega1, omega2], valid = _q_sample_to_q_lab(q_sample, k_in, wedge, chi)
     # now we have omega angles, we can get origin_lab
-    origin_lab_1 = sample_to_lab(origin_sample, omega1, wedge, chi)
-    origin_lab_2 = sample_to_lab(origin_sample, omega2, wedge, chi)
-    sc1, fc1 = q_lab_to_det(q_lab1, omega1, origin_lab_1, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift)
-    sc2, fc2 = q_lab_to_det(q_lab2, omega2, origin_lab_2, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift)
+    origin_lab_1 = _sample_to_lab(origin_sample, omega1, wedge, chi)
+    origin_lab_2 = _sample_to_lab(origin_sample, omega2, wedge, chi)
+    sc1, fc1 = _q_lab_to_det(
+        q_lab1, omega1, origin_lab_1, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift
+    )
+    sc2, fc2 = _q_lab_to_det(
+        q_lab2, omega2, origin_lab_2, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift
+    )
 
     return [sc1, sc2], [fc1, fc2], [omega1, omega2], valid
 
 
 @jax.jit
-def q_sample_to_peak_lab(
+def _q_sample_to_peak_lab(
     q_sample, origin_lab, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift
 ):
-    [sc1, sc2], [fc1, fc2], [omega1, omega2], valid = q_sample_to_det(
+    [sc1, sc2], [fc1, fc2], [omega1, omega2], valid = _q_sample_to_det(
         q_sample, origin_lab, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift
     )
-    peak_lab1 = det_to_lab(sc1, fc1, det_trans, beam_cen_shift, x_distance_shift)
-    peak_lab2 = det_to_lab(sc2, fc2, det_trans, beam_cen_shift, x_distance_shift)
+    peak_lab1 = _det_to_lab(sc1, fc1, det_trans, beam_cen_shift, x_distance_shift)
+    peak_lab2 = _det_to_lab(sc2, fc2, det_trans, beam_cen_shift, x_distance_shift)
     return [peak_lab1, peak_lab2], [omega1, omega2], valid
 
 
 @jax.jit
-def peak_lab_to_tth_eta(
+def _peak_lab_to_tth_eta(
     peak_lab,
     origin_lab,
     k_in,
     wavelength,
 ):
-    q_lab = peak_lab_to_q_lab(peak_lab, origin_lab, k_in, wavelength)
-    tth, eta = q_lab_to_tth_eta(q_lab, wavelength)
+    q_lab = _peak_lab_to_q_lab(peak_lab, origin_lab, k_in, wavelength)
+    tth, eta = _q_lab_to_tth_eta(q_lab, wavelength)
     return tth, eta
 
 
 @jax.jit
-def q_sample_to_tth_eta_omega(q_sample, k_in, wedge, chi, wavelength):
-    [q_lab1, q_lab2], [omega1, omega2], valid = q_sample_to_q_lab(q_sample, k_in, wedge, chi)
-    tth1, eta1 = q_lab_to_tth_eta(q_lab1, wavelength)
-    tth2, eta2 = q_lab_to_tth_eta(q_lab2, wavelength)
+def _q_sample_to_tth_eta_omega(q_sample, k_in, wedge, chi, wavelength):
+    [q_lab1, q_lab2], [omega1, omega2], valid = _q_sample_to_q_lab(q_sample, k_in, wedge, chi)
+    tth1, eta1 = _q_lab_to_tth_eta(q_lab1, wavelength)
+    tth2, eta2 = _q_lab_to_tth_eta(q_lab2, wavelength)
     return tth1, [eta1, eta2], [omega1, omega2], valid
 
 
 @jax.jit
-def tth_eta_omega_to_q_sample(tth, eta, omega, k_in, wedge, chi, wavelength):
-    q_lab = tth_eta_to_q_lab(tth, eta, k_in, wavelength)
-    q_sample = q_lab_to_q_sample(q_lab, omega, wedge, chi)
+def _tth_eta_omega_to_q_sample(tth, eta, omega, k_in, wedge, chi, wavelength):
+    q_lab = _tth_eta_to_q_lab(tth, eta, k_in, wavelength)
+    q_sample = _q_lab_to_q_sample(q_lab, omega, wedge, chi)
     return q_sample
 
 
 @jax.jit
-def det_to_q_lab(sc, fc, omega, origin_lab, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift):
-    peak_lab = det_to_lab(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
-    q_lab = peak_lab_to_q_lab(peak_lab, origin_lab, k_in, wavelength)
+def _det_to_q_lab(sc, fc, omega, origin_lab, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift):
+    peak_lab = _det_to_lab(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
+    q_lab = _peak_lab_to_q_lab(peak_lab, origin_lab, k_in, wavelength)
     return q_lab
 
 
 @jax.jit
+def _det_to_q_sample(
+    sc,
+    fc,
+    omega,
+    origin_lab,
+    k_in,
+    wedge,
+    chi,
+    wavelength,
+    det_trans,
+    beam_cen_shift,
+    x_distance_shift,
+):
+    q_lab = _det_to_q_lab(
+        sc,
+        fc,
+        omega,
+        origin_lab,
+        k_in,
+        wedge,
+        chi,
+        wavelength,
+        det_trans,
+        beam_cen_shift,
+        x_distance_shift,
+    )
+    q_sample = _q_lab_to_q_sample(q_lab, omega, wedge, chi)
+    return q_sample
+
+
+### now we go fast
+
+
+def q_and_origin_sample_to_det(
+    q_samples, origin_samples, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift
+):
+    # Define a closure that captures the constant scalars
+    def kernel(args):
+        # lax.map passes one "row" of the zipped arrays as a tuple
+        q_s, o_s = args
+        return _q_and_origin_sample_to_det(
+            q_s, o_s, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift
+        )
+
+    # We map over a tuple of the large (N, 3) arrays
+    return jax.lax.map(kernel, (q_samples, origin_samples), batch_size=1024)
+
+
 def det_to_q_sample(
     sc,
     fc,
@@ -805,38 +602,13 @@ def det_to_q_sample(
     beam_cen_shift,
     x_distance_shift,
 ):
-    q_lab = det_to_q_lab(
-        sc,
-        fc,
-        omega,
-        origin_lab,
-        k_in,
-        wedge,
-        chi,
-        wavelength,
-        det_trans,
-        beam_cen_shift,
-        x_distance_shift,
-    )
-    q_sample = q_lab_to_q_sample(q_lab, omega, wedge, chi)
-    return q_sample
+    # Define a closure that captures the constant scalars
+    def kernel(args):
+        # lax.map passes one "row" of the zipped arrays as a tuple
+        sc_s, fc_s, omega_s, origin_lab_s = args
+        return _det_to_q_sample(
+            sc_s, fc_s, omega_s, origin_lab_s, k_in, wedge, chi, wavelength, det_trans, beam_cen_shift, x_distance_shift
+        )
 
-
-@jax.jit
-def tth_eta_omega_to_det(
-    tth,
-    eta,
-    omega,
-    origin_lab,
-    k_in,
-    wedge,
-    chi,
-    wavelength,
-    det_trans,
-    beam_cen_shift,
-    x_distance_shift,
-):
-    q_lab = tth_eta_to_q_lab(tth, eta, k_in, wavelength)
-    sc, fc = q_lab_to_det(q_lab, omega, origin_lab, k_in, wavelength, det_trans, beam_cen_shift, x_distance_shift)
-
-    return sc, fc
+    # We map over a tuple of the large (N, 3) arrays
+    return jax.lax.map(kernel, (sc, fc, omega, origin_lab), batch_size=1024)
