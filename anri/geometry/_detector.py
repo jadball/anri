@@ -1,12 +1,11 @@
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float
 
 from ._utils import rmat_from_axis_angle
 
 
 @jax.jit
-def detector_orientation_matrix(o11: float, o12: float, o21: float, o22: float) -> Float[Array, "3 3"]:
+def detector_orientation_matrix(o11: float, o12: float, o21: float, o22: float) -> jax.Array:
     """Return (3D) detector orientation matrix from 2D orientation elements.
 
     In ImageD11.transform.compute_xyz_lab
@@ -15,7 +14,7 @@ def detector_orientation_matrix(o11: float, o12: float, o21: float, o22: float) 
 
 
 @jax.jit
-def detector_rotation_matrix(tilt_x: float, tilt_y: float, tilt_z: float) -> Float[Array, "3 3"]:
+def detector_rotation_matrix(tilt_x: float, tilt_y: float, tilt_z: float) -> jax.Array:
     """Return rotation matrix for detector tilts about x, y, z axes.
 
     R1 = Z, R2 = Y, R3 = X
@@ -46,7 +45,7 @@ def detector_transforms(
     o12: float,
     o21: float,
     o22: float,
-) -> tuple[Float[Array, "3 3"], Float[Array, "3"], Float[Array, "3"]]:
+) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Return required transformation matrices and shifts to convert between detector and lab coordinates.
 
     v_lab = (det_tilts @ (cob_matrix @ (det_flips @ (pixel_size_scale @ (v_det + beam_cen_shift))))) + x_distance_shift

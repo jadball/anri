@@ -3,14 +3,15 @@ channels:
   - conda-forge
 dependencies:
   - pip: tqdm
+  - pip: jax
 optional_dependencies:
   dev:
     - pip: ruff
     - pip: ty
-    - pip: jaxtyping
     - pip: pytest
     - pip: pytest-sphinx
     - pip: pytest-cov
+    - pip: ImageD11  # for testing
     - pip: twine
     - pip: build
     - pip: setuptools
@@ -30,6 +31,6 @@ optional_dependencies:
     - pip: ipykernel
     - pip: ipympl
     - pip: tqdm
-    - pip: jax[cuda12]
+    - pip: jax
 #    - pip: silx[full]
 #    - conda: cctbx
