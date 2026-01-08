@@ -79,7 +79,7 @@ jobs:
         uses: conda-incubator/setup-miniconda@v3
         with:
           activate-environment: anaconda-client-env
-          channels: conda-forge, defaults
+          channels: conda-forge
           mamba-version: "*"
           use-mamba: true
           python-version: ${{ matrix.python-version }}
