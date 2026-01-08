@@ -11,6 +11,7 @@ optional_dependencies:
     - pip: pytest
     - pip: pytest-sphinx
     - pip: pytest-cov
+    - conda: numba  # ImageD11 needs numba, and there are more Numba/llvmlite builds for more platforms on conda than on pip.
     - pip: ImageD11  # for testing
     - pip: twine
     - pip: build
