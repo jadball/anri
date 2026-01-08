@@ -10,6 +10,7 @@ exclude = [
 # default for select is ["E4", "E7", "E9", "F"]
 # we add D for docstrings, and N for naming conventions
 extend-select = ["D", "N", "F841"]
+ignore = ["N806"]  # allow uppercase variable names
 
 [lint.per-file-ignores]
 "tests/*" = ["D"]  # Ignore "D" (Docstrings) in the tests folder

@@ -9,7 +9,8 @@ from anri.version import VERSION
 def main():
     """Apply versioning to unreleased changes in CHANGELOG.md.
 
-    Raises:
+    Raises
+    ------
         RuntimeError: If no 'Unreleased' section found in CHANGELOG.md
     """
     changelog = Path("CHANGELOG.md")

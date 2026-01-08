@@ -18,7 +18,8 @@ REMOVED_HEADER = "### Removed"
 def get_change_log_notes() -> str:
     """Get change log notes from CHANGELOG.md as a string.
 
-    Returns:
+    Returns
+    -------
         A string of "what's new" for this release.
     """
     in_current_section = False
@@ -49,7 +50,8 @@ def get_change_log_notes() -> str:
 def get_commit_history() -> str:
     """Get commit history from git tags as a string.
 
-    Returns:
+    Returns
+    -------
         Git commit history tags, sorted by version, latest first, as a string.
     """
     new_version = packaging.version.parse(TAG)
