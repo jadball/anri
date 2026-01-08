@@ -82,6 +82,7 @@ jobs:
           channels: conda-forge
           mamba-version: "*"
           use-mamba: true
+          conda-remove-defaults: true
           python-version: ${{ matrix.python-version }}
 
       - name: Set UTF-8 Code Page (Windows only)
