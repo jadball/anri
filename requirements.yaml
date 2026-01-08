@@ -4,6 +4,7 @@ channels:
 dependencies:
   - pip: tqdm
   - pip: jax
+  - pip: jaxlib
 optional_dependencies:
   dev:
     - pip: ruff
