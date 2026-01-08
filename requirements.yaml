@@ -3,8 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - pip: tqdm
-  - pip: jax
-  - pip: jaxlib
+  - conda: jax  # there are more builds for jax on Conda than on pip (better OS/python support)
 optional_dependencies:
   dev:
     - pip: ruff
