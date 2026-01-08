@@ -92,7 +92,7 @@ jobs:
 
       - name: Install pip, unidep, dependencies and package
         run: |
-          pip install --upgrade pip unidep
+          python -m pip install --upgrade pip unidep
           unidep install .[dev]
       
       - name: Get Conda environment information
