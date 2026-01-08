@@ -29,8 +29,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, ubuntu-latest, windows-latest, macos-13, macos-15]
-        python-version: ["3.9", "3.13"]
+        os: [ubuntu-22.04, ubuntu-latest, windows-latest, macos-14, macos-15-intel, macos-15-arm64]
+        python-version: ["3.9", "3.14"]
         task:
           - name: Test
             run: |
@@ -38,36 +38,36 @@ jobs:
 
         include:
           - os: ubuntu-latest
-            python-version: "3.13"
+            python-version: "3.14"
             task:
               name: Lint and style
               run: |
                 ruff check .
 
           - os: ubuntu-latest
-            python-version: "3.13"
+            python-version: "3.14"
             task:
               name: Type check
               run: ty check .
 
           - os: ubuntu-latest
-            python-version: "3.13"
+            python-version: "3.14"
             task:
               name: Build
               run: |
                 python -m build
 
           - os: ubuntu-latest
-            python-version: "3.13"
+            python-version: "3.14"
             task:
               name: Docs
               run: cd docs && make html
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up system Python for Conda
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -125,14 +125,14 @@ jobs:
     needs: [checks]
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
         
       - name: Setup Python version we want
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Get exact Python version
         id: get-python-version
