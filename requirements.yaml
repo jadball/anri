@@ -6,7 +6,8 @@ dependencies:
 optional_dependencies:
   dev:
     - pip: ruff
-    - pip: mypy
+    - pip: ty
+    - pip: jaxtyping
     - pip: pytest
     - pip: pytest-sphinx
     - pip: pytest-cov
@@ -20,6 +21,7 @@ optional_dependencies:
     - pip: sphinx-copybutton
     - pip: sphinx-autobuild
     - pip: sphinx-autodoc-typehints
+    - pip: sphinx_math_dollar
     - pip: packaging
   sandbox:
     - pip: numpy<2

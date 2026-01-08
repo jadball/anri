@@ -48,7 +48,7 @@ jobs:
             python-version: "3.13"
             task:
               name: Type check
-              run: mypy .
+              run: ty check .
 
           - os: ubuntu-latest
             python-version: "3.13"
@@ -80,7 +80,8 @@ jobs:
         with:
           activate-environment: anaconda-client-env
           channels: conda-forge, defaults
-          auto-update-conda: true
+          mamba-version: "*"
+          use-mamba: true
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set UTF-8 Code Page (Windows only)
@@ -102,16 +103,6 @@ jobs:
       - name: ${{ matrix.task.name }}
         run: |
           ${{ matrix.task.run }}
-      
-      - name: Restore mypy cache
-        if: matrix.task.name == 'Type check'
-        uses: actions/cache@v4
-        with:
-          path: .mypy_cache
-          key: mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}-${{ github.ref }}-${{ github.sha }}
-          restore-keys: |
-            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}-${{ github.ref }}
-            mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('*requirements.yaml') }}
 
       - name: Upload package distribution files
         if: matrix.task.name == 'Build'

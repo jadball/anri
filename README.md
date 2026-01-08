@@ -9,7 +9,7 @@ We currently target all stable releases of Python. Today this is `3.9 - 3.13` on
 ## From Conda
 Coming soon!
 ## From source (for developers)
-Anri will (eventually) rely on packages from both `conda` and `pip`.  
+Anri may (eventually) rely on packages from both `conda` and `pip`.  
 For ease of installation, it is recommended to use [unidep](https://github.com/basnijholt/unidep) which can install packages from both sources.
 ### Clone the repository
 ```bash

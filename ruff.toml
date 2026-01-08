@@ -2,13 +2,18 @@ line-length = 120
 exclude = [
 #   "anri/sandbox",
     "docs/",
+    # "tests/"
 ]
 
 [lint]
 # https://docs.astral.sh/ruff/settings/#select
 # default for select is ["E4", "E7", "E9", "F"]
 # we add D for docstrings, and N for naming conventions
-extend-select = ["D", "N"]
+extend-select = ["D", "N", "F841"]
+
+[lint.per-file-ignores]
+"tests/*" = ["D"]  # Ignore "D" (Docstrings) in the tests folder
+"__init__.py" = ["F401"] # Ignore unused imports in init files
 
 [lint.pydocstyle]
-convention = "google"
+convention = "numpy"

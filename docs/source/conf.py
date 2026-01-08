@@ -23,8 +23,8 @@ from anri import VERSION, VERSION_SHORT  # noqa: E402
 # -- Project information -----------------------------------------------------
 
 project = "anri"
-copyright = f"{datetime.today().year}, Allen Institute for Artificial Intelligence"
-author = "Allen Institute for Artificial Intelligence"
+copyright = f"{datetime.today().year}, James A. D. Ball"
+author = "James A. D. Ball"
 version = VERSION_SHORT
 release = VERSION
 
@@ -36,6 +36,8 @@ release = VERSION
 # ones.
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx_math_dollar",
+    "sphinx.ext.mathjax",
     "sphinx.ext.napoleon",
     "myst_parser",
     "sphinx.ext.intersphinx",
@@ -62,6 +64,8 @@ source_suffix = [".rst", ".md"]
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
+    "jax": ("https://jax.readthedocs.io/en/latest/", None),
+    "numpy": ("https://numpy.org/doc/stable/", None),
     # Uncomment these if you use them in your codebase:
     #  "torch": ("https://pytorch.org/docs/stable", None),
     #  "datasets": ("https://huggingface.co/docs/datasets/master/en", None),
@@ -74,6 +78,20 @@ autodoc_member_order = "groupwise"
 # Include default values when documenting parameter types.
 typehints_defaults = "comma"
 
+mathjax3_config = {
+    'loader': {'load': ['[tex]/ams']},
+    'tex': {
+        'macros': {
+            'vec': [r'\mathbf{#1}', 1],
+            'abs': [r'\lvert #1 \rvert', 1],
+        }
+    }
+}
+
+napoleon_numpy_docstring = True
+napoleon_use_rtype = False
+napoleon_preprocess_types = True
+typehints_use_rtype = False
 
 # -- Options for HTML output -------------------------------------------------
 
@@ -119,3 +137,35 @@ class ShutupSphinxAutodocTypehintsFilter(logging.Filter):
 
 
 logging.getLogger("sphinx.sphinx_autodoc_typehints").addFilter(ShutupSphinxAutodocTypehintsFilter())
+
+
+import sphinx.ext.apidoc
+
+def run_apidoc(_):
+    # This is exactly where conf.py lives: Anri/docs/source/
+    conf_dir = os.path.abspath(os.path.dirname(__file__))
+    
+    # Force the output into Anri/docs/source/api/
+    api_output_dir = os.path.join(conf_dir, "api")
+    
+    # Project root is two levels up from docs/source: Anri/
+    project_root = os.path.abspath(os.path.join(conf_dir, "../../"))
+    
+    # The actual code folder: Anri/anri/
+    package_dir = os.path.join(project_root, "anri")
+    
+    # The sandbox to ignore: Anri/anri/sandbox/
+    sandbox_dir = os.path.join(package_dir, "sandbox")
+
+    argv = [
+        "--force",
+        # "--module-first",
+        "-o", api_output_dir,
+        package_dir,
+        sandbox_dir,
+    ]
+    
+    sphinx.ext.apidoc.main(argv)
+
+def setup(app):
+    app.connect('builder-inited', run_apidoc)

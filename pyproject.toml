@@ -45,23 +45,14 @@ anri = ["py.typed"]
 [tool.setuptools.dynamic]
 version = {attr = "anri.version.VERSION"}
 
-# You can override these pyright settings by adding a personal pyrightconfig.json file.
-[tool.pyright]
-reportPrivateImportUsage = false
-ignore = ["*"]
-
-[tool.mypy]
-ignore_missing_imports = true
-no_site_packages = true
-check_untyped_defs = true
-exclude = [
-    "^anri/sandbox/.*",
-    "^build/.*"
+[tool.ty.src]
+include = [
+    "anri",
+    "scripts"
 ]
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-strict_optional = false
+exclude = [
+    "anri/sandbox",
+]
 
 [tool.pytest.ini_options]
 testpaths = "tests/"

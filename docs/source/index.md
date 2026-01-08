@@ -7,6 +7,7 @@
 
 installation
 overview
+api/modules
 ```
 
 ```{toctree}
