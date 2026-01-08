@@ -1,6 +1,6 @@
 line-length = 120
 exclude = [
-#   "anri/sandbox",
+    "anri/sandbox",
     "docs/",
     # "tests/"
 ]
