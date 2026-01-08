@@ -4,6 +4,9 @@ channels:
 dependencies:
   - pip: tqdm
   - conda: jax  # there are more builds for jax on Conda than on pip (better OS/python support)
+  - pip: jax    # [win]
+  - pip: jaxlib # [win]
+  # ^ there are missing jax/jaxlib builds on conda-forge for windows
 optional_dependencies:
   dev:
     - pip: ruff
