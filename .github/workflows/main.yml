@@ -57,11 +57,11 @@ jobs:
               run: |
                 python -m build
 
-          - os: ubuntu-latest
-            python-version: "3.14"
-            task:
-              name: Docs
-              run: cd docs && make html
+          # - os: ubuntu-latest
+          #   python-version: "3.14"
+          #   task:
+          #     name: Docs
+          #     run: cd docs && make html
 
     steps:
       - uses: actions/checkout@v6
@@ -116,6 +116,52 @@ jobs:
         if: always()
         run: |
           pip uninstall -y anri
+
+  deploy-docs:
+    name: Deploy Documentation
+    needs: checks
+    # Only deploy on pushes to main, not on PRs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: docs-env
+          channels: conda-forge
+          python-version: "3.11" # Stable version for docs
+          use-mamba: true
+          conda-remove-defaults: true
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip unidep
+          unidep install .[dev]
+
+      - name: Build HTML
+        run: |
+          cd docs
+          make html
+          # Create .nojekyll to ensure GitHub doesn't ignore files starting with underscores
+          touch _build/html/.nojekyll
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
   release:
     name: Release
