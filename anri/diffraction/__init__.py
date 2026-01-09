@@ -1,3 +1,5 @@
+"""Diffraction-related utilities and functions."""
+
 from ._scattering import (
     k_to_q_lab,
     omega_solns,

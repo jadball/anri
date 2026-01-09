@@ -1,3 +1,5 @@
+"""Geometry transforms to and from laboratory, detector, and sample frames."""
+
 from ._detector import (
     det_to_lab,
     detector_basis_vectors_lab,
