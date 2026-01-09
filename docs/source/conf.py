@@ -28,14 +28,10 @@ author = "James A. D. Ball"
 version = VERSION_SHORT
 release = VERSION
 
-
-# -- General configuration ---------------------------------------------------
-
-# Add any Sphinx extension module names here, as strings. They can be
-# extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
-# ones.
+# Sphinx extensions
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx.ext.autosummary",
     "sphinx_math_dollar",
     "sphinx.ext.mathjax",
     "sphinx.ext.napoleon",
@@ -45,23 +41,10 @@ extensions = [
     "sphinx.ext.doctest",
     "sphinx_copybutton",
     "sphinx_autodoc_typehints",
+    "nbsphinx",
 ]
 
-# Tell myst-parser to assign header anchors for h1-h3.
-myst_heading_anchors = 3
-
-suppress_warnings = ["myst.header"]
-
-# Add any paths that contain templates here, relative to this directory.
-templates_path = ["_templates"]
-
-# List of patterns, relative to source directory, that match files and
-# directories to ignore when looking for source files.
-# This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = ["_build"]
-
-source_suffix = [".rst", ".md"]
-
+# Intersphinx
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "jax": ("https://jax.readthedocs.io/en/latest/", None),
@@ -72,34 +55,22 @@ intersphinx_mapping = {
     #  "transformers": ("https://huggingface.co/docs/transformers/master/en", None),
 }
 
-# By default, sort documented members by type within classes and modules.
-autodoc_member_order = "groupwise"
+# Add any paths that contain templates here, relative to this directory.
+templates_path = ["../_templates"]
 
-# Include default values when documenting parameter types.
-typehints_defaults = "comma"
+# Myst-parser options
+# Tell myst-parser to assign header anchors for h1-h3.
+myst_heading_anchors = 3
+suppress_warnings = ["myst.header"]
 
-mathjax3_config = {
-    'loader': {'load': ['[tex]/ams']},
-    'tex': {
-        'macros': {
-            'vec': [r'\mathbf{#1}', 1],
-            'abs': [r'\lvert #1 \rvert', 1],
-        }
-    }
-}
 
-napoleon_numpy_docstring = True
-napoleon_use_rtype = False
-napoleon_preprocess_types = True
-typehints_use_rtype = False
+# List of patterns, relative to source directory, that match files and
+# directories to ignore when looking for source files.
+# This pattern also affects html_static_path and html_extra_path.
+exclude_patterns = ["_build"]
 
-# -- Options for HTML output -------------------------------------------------
-
-# The theme to use for HTML and HTML Help pages.  See the documentation for
-# a list of builtin themes.
-#
-html_theme = "furo"
-
+# HTML stuff
+html_theme = "pydata_sphinx_theme"
 html_title = f"anri v{VERSION}"
 
 # Add any paths that contain custom static files (such as style sheets) here,
@@ -126,46 +97,79 @@ html_theme_options = {
     ],
 }
 
+# -- sphinx.ext.autodoc
+# https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html
+# By default, sort documented members by type within classes and modules.
+autosummary_ignore_module_all = False
+autosummary_imported_members = True
+autodoc_typehints_format = "short"
+autodoc_default_options = {
+    "show-inheritance": True,
+}
+autosummary_generate = True
+
+# sphinx_autodoc_typehints
+# Include default values when documenting parameter types.
+typehints_defaults = "comma"
+
+# -- sphinx.ext.mathjax
+mathjax3_config = {
+    'loader': {'load': ['[tex]/ams']},
+    'tex': {
+        'macros': {
+            'vec': [r'\mathbf{#1}', 1],
+            'abs': [r'\lvert #1 \rvert', 1],
+        }
+    }
+}
+
+# -- sphinx.ext.napoleon
+napoleon_numpy_docstring = True
+napoleon_use_rtype = False
+napoleon_preprocess_types = True
+typehints_use_rtype = False
+
 # -- Hack to get rid of stupid warnings from sphinx_autodoc_typehints --------
-
-
 class ShutupSphinxAutodocTypehintsFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if "Cannot resolve forward reference" in record.msg:
             return False
         return True
-
-
 logging.getLogger("sphinx.sphinx_autodoc_typehints").addFilter(ShutupSphinxAutodocTypehintsFilter())
 
 
-import sphinx.ext.apidoc
 
-def run_apidoc(_):
-    # This is exactly where conf.py lives: Anri/docs/source/
-    conf_dir = os.path.abspath(os.path.dirname(__file__))
-    
-    # Force the output into Anri/docs/source/api/
-    api_output_dir = os.path.join(conf_dir, "api")
-    
-    # Project root is two levels up from docs/source: Anri/
-    project_root = os.path.abspath(os.path.join(conf_dir, "../../"))
-    
-    # The actual code folder: Anri/anri/
-    package_dir = os.path.join(project_root, "anri")
-    
-    # The sandbox to ignore: Anri/anri/sandbox/
-    sandbox_dir = os.path.join(package_dir, "sandbox")
 
-    argv = [
-        "--force",
-        # "--module-first",
-        "-o", api_output_dir,
-        package_dir,
-        sandbox_dir,
-    ]
-    
-    sphinx.ext.apidoc.main(argv)
+# import sphinx.ext.apidoc
 
-def setup(app):
-    app.connect('builder-inited', run_apidoc)
+# def run_apidoc(_):
+#     # This is exactly where conf.py lives: Anri/docs/source/
+#     conf_dir = os.path.abspath(os.path.dirname(__file__))
+    
+#     # Force the output into Anri/docs/source/reference/
+#     api_output_dir = os.path.join(conf_dir, "reference")
+    
+#     # Project root is two levels up from docs/source: Anri/
+#     project_root = os.path.abspath(os.path.join(conf_dir, "../../"))
+    
+#     # The actual code folder: Anri/anri/
+#     package_dir = os.path.join(project_root, "anri")
+    
+#     # The sandbox to ignore: Anri/anri/sandbox/
+#     sandbox_dir = os.path.join(package_dir, "sandbox")
+
+#     argv = [
+#         "--force",
+#         # "--module-first",
+#         "-o", api_output_dir,
+#         package_dir,
+#         sandbox_dir,
+#     ]
+    
+#     sphinx.ext.apidoc.main(argv)
+
+# def setup(app):
+#     app.connect('builder-inited', run_apidoc)
+
+# source_suffix = [".rst", ".md"]
+# autodoc_member_order = "groupwise"

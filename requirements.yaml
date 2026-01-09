@@ -22,8 +22,9 @@ optional_dependencies:
     - pip: setuptools
     - pip: wheel
     - pip: Sphinx
-    - pip: furo
+    - pip: pydata-sphinx-theme
     - pip: myst-parser
+    - pip: nbsphinx
     - pip: sphinx-copybutton
     - pip: sphinx-autobuild
     - pip: sphinx-autodoc-typehints

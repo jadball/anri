@@ -1,0 +1,1 @@
+Everything in this _templates folder was pinched from orix https://github.com/pyxem/orix/

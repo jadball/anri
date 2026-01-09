@@ -3,7 +3,7 @@ Anri is a Python package for analysing Three-Dimensional X-Ray Diffraction data.
 Anri is in the very early stages of development and is not yet ready to use for experimental analysis.
 
 # Dependencies
-We currently target all stable releases of Python. Today this is `3.9 - 3.13` on Windows, ubuntu and OSX (ARM and x86).
+We currently target all stable releases of Python. Today this is `3.9 - 3.14` on Windows, ubuntu and OSX (ARM and x86).
 
 # Installation
 ## From Conda
@@ -40,7 +40,7 @@ This GitHub repository is based on the python package template by @allenai: [pyt
 ## IDE
 [Visual Studio Code](https://code.visualstudio.com/) is recommended for development.  
 ## Linting, formatting and type checking
-`anri` uses `ruff` to lint and format, and `mypy` for type-checking.  
+`anri` uses `ruff` to lint and format, and `ty` for type-checking.  
 All Python functions and files (outside of `anri/sandbox`) must conform for the GitHub CI tests to pass.  
 With `Visual Studio Code` you have easy access to automatic lint-on-save and format-on-save via extensions.  
 Inside `.vscode` you have a `settings.sample.json` which, if you're happy with, you can rename to `settings.json` to apply my recommended per-project settings for this repository.  
