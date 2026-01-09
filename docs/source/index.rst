@@ -1,9 +1,9 @@
 .. _anri_documentation:
 
-anri documentation
+Anri documentation
 ===================
 
-anri is a Python library for processing polycrystalline diffraction data with `JAX <https://docs.jax.dev/en/latest/>`_.
+Anri is a Python library for processing polycrystalline diffraction data with `JAX <https://docs.jax.dev/en/latest/>`_.
 
 `GitHub Repository <https://github.com/jadball/anri>`_  
 `License <https://raw.githubusercontent.com/jadball/anri/main/LICENSE>`_

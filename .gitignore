@@ -52,7 +52,7 @@ __pycache__
 
 docs/build
 site/
-docs/reference/generated/
+docs/source/reference/generated/
 
 # local packages
 anri/sandbox/jaxkd
