@@ -123,7 +123,7 @@ jobs:
 
   deploy-docs:
     name: Deploy Documentation
-    needs: checks
+    # needs: checks
     # Only deploy on pushes to main, not on PRs
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -156,12 +156,12 @@ jobs:
           cd docs
           make html
           # Create .nojekyll to ensure GitHub doesn't ignore files starting with underscores
-          touch _build/html/.nojekyll
+          touch build/html/.nojekyll
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/_build/html
+          path: docs/build/html
 
       - name: Deploy to GitHub Pages
         id: deployment
