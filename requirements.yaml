@@ -25,6 +25,7 @@ optional_dependencies:
     - pip: pydata-sphinx-theme
     - pip: myst-parser
     - pip: nbsphinx
+    - conda: pandoc  # needed for nbsphinx to render notebooks
     - pip: ipykernel  # needed for nbsphinx to render notebooks
     - pip: sphinx-copybutton
     - pip: sphinx-autobuild
