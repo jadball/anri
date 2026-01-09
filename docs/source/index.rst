@@ -15,6 +15,7 @@ Anri is a Python library for processing polycrystalline diffraction data with `J
     user/index
     reference/index
     CHANGELOG
+    CONTRIBUTING
 
 Installation
 ============

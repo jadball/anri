@@ -18,8 +18,7 @@ code sample or an executable test case demonstrating the expected behavior.
 
 We use GitHub issues to track feature requests. Before you create a feature request:
 
-* Make sure you have a clear idea of the enhancement you would like. If you have a vague idea, consider discussing
-it first on a GitHub issue.
+* Make sure you have a clear idea of the enhancement you would like. If you have a vague idea, consider discussing it first on a GitHub issue.
 * Check the documentation to make sure your feature does not already exist.
 * Do [a quick search](https://github.com/jadball/anri/issues) to see whether your feature has already been suggested.
 
@@ -161,6 +160,7 @@ When you're ready to contribute code to address an open issue, please follow the
 
     </details>
 
+(writing-docstrings)=
 ### Writing docstrings
 
 We use [Sphinx](https://www.sphinx-doc.org/en/master/index.html) to build our API docs, which automatically parses all docstrings

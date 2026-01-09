@@ -61,9 +61,8 @@ templates_path = ["../_templates"]
 
 # Myst-parser options
 # Tell myst-parser to assign header anchors for h1-h3.
-myst_heading_anchors = 3
+myst_heading_anchors = 4
 suppress_warnings = ["myst.header"]
-
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
