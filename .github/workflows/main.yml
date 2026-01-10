@@ -101,6 +101,13 @@ jobs:
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -value 1
 
+      - name: Configure Shallow Temp Paths (Windows only)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          mkdir -p /c/t
+          echo "TEMP=C:\t" >> $GITHUB_ENV
+          echo "TMP=C:\t" >> $GITHUB_ENV
+
       - name: Install pip, unidep, dependencies and package
         run: |
           python -m pip install --upgrade pip unidep
