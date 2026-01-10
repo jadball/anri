@@ -36,9 +36,9 @@ jobs:
             run: |
               pytest -v --color=yes tests/
         
-        exclude:
-          - os: windows-latest
-            python-version: "3.14"  # Currently no bslz4-to-sparse wheel for Python 3.14 on Windows
+        # exclude:
+        #   - os: windows-latest
+        #     python-version: "3.14"  # Currently no bslz4-to-sparse wheel for Python 3.14 on Windows
         
         include:
           - os: ubuntu-latest
