@@ -1,3 +1,5 @@
+"""Functions related to X-ray diffraction, Ewald conditions, etc."""
+
 import jax
 import jax.numpy as jnp
 

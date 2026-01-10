@@ -222,10 +222,32 @@ def det_to_lab(
 
 
 @jax.jit
-def lab_to_det(xl, yl, zl, det_trans, beam_cen_shift, x_distance_shift):
+def lab_to_det(
+    xl: float, yl: float, zl: float, det_trans: jax.Array, beam_cen_shift: jax.Array, x_distance_shift: jax.Array
+) -> jax.Array:
     """Convert lab (lx, ly, lz) coordinates to detector (sc, fc) coordinates.
 
-    Inverse of ImageD11.transform.compute_xyz_lab
+    Inverse of :func:`det_to_lab`
+
+    Parameters
+    ----------
+    xl
+        X component of lab vector
+    yl
+        Y component of lab vector
+    zl
+        Z component of lab vector
+    det_trans
+        [3,3] detector transformation matrix from :func:`detector_transforms`
+    beam_cen_shift
+        [3] beam center shift from :func:`detector_transforms`
+    x_distance_shift
+        [3] X distance shift from :func:`detector_transforms`
+
+    Returns
+    -------
+    v_det: jax.Array
+        [2] (sc, fc) vector
     """
     v_lab = jnp.array([xl, yl, zl])
     v_det = jnp.linalg.inv(det_trans) @ (v_lab - x_distance_shift) - beam_cen_shift
@@ -233,12 +255,37 @@ def lab_to_det(xl, yl, zl, det_trans, beam_cen_shift, x_distance_shift):
 
 
 @jax.jit
-def detector_basis_vectors_lab(det_trans, beam_cen_shift, x_distance_shift):
-    """Get detector basis vectors (slow, fast, normal) in lab coordinates."""
+def detector_basis_vectors_lab(
+    det_trans: jax.Array, beam_cen_shift: jax.Array, x_distance_shift: jax.Array
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Get laboratory basis vectors for detector (slow, fast, normal).
+
+    Needed for :func:`raytrace_to_det`
+
+    Parameters
+    ----------
+    det_trans
+        [3,3] detector transformation matrix from :func:`detector_transforms`
+    beam_cen_shift
+        [3] beam center shift from :func:`detector_transforms`
+    x_distance_shift
+        [3] X distance shift from :func:`detector_transforms`
+
+    Returns
+    -------
+    sc_lab: jax.Array
+        [3] Laboratory basis vector for the slow direction on the detector.
+    fc_lab: jax.Array
+        [3] Laboratory basis vector for the fast direction on the detector.
+    norm_lab: jax.Array
+        [3] Laboratory basis vector for the detector normal.
+    """
     # Find vectors in the fast, slow directions in the detector plane
+    # 3 basis vectors as pixels in the detector
     sc = jnp.array([1.0, 0.0, 0])
     fc = jnp.array([0.0, 1.0, 0])
 
+    # 3 basis vectors in the lab frame
     sc_lab = det_to_lab(sc[0], fc[0], det_trans, beam_cen_shift, x_distance_shift)
     fc_lab = det_to_lab(sc[1], fc[1], det_trans, beam_cen_shift, x_distance_shift)
     norm_lab = det_to_lab(sc[2], fc[2], det_trans, beam_cen_shift, x_distance_shift)
@@ -264,12 +311,12 @@ def raytrace_to_det(
         [3] Outgoing scaled normalised wave-vector in lab frame
     origin_lab
         [3] Origin of diffraction in lab frame
-    sc_lab
-        [3] Slow coordinate axis of detector in lab frame (pixel unit length)
-    fc_lab
-        [3] Fast coordinate axis of detector in lab frame (pixel unit length)
-    norm_lab
-        [3] Normal vector of detector in lab frame
+    ssc_lab: jax.Array
+        [3] Laboratory basis vector for the slow direction on the detector from :func:`detector_basis_vectors_lab`.
+    fc_lab: jax.Array
+        [3] Laboratory basis vector for the fast direction on the detector from :func:`detector_basis_vectors_lab`.
+    norm_lab: jax.Array
+        [3] Laboratory basis vector for the detector normal from :func:`detector_basis_vectors_lab`.
 
     Returns
     -------

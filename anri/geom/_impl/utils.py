@@ -6,7 +6,7 @@ from jax.scipy.spatial.transform import Rotation as jR
 
 
 @jax.jit
-def rmat_from_axis_angle(axis: jax.Array, angle: jax.Array) -> jax.Array:
+def rmat_from_axis_angle(axis: jax.Array, angle: float) -> jax.Array:
     """Return rotation matrix for positive right-handed rotation about axis by angle (degrees).
 
     Parameters
@@ -27,7 +27,7 @@ def rmat_from_axis_angle(axis: jax.Array, angle: jax.Array) -> jax.Array:
     return Q
 
 
-def rot_x(angle: jax.Array) -> jax.Array:
+def rot_x(angle: float) -> jax.Array:
     """Return rotation matrix for positive right-handed rotation about the X axis by angle (degrees).
 
     Parameters
@@ -44,7 +44,7 @@ def rot_x(angle: jax.Array) -> jax.Array:
     return rmat_from_axis_angle(axis=axis, angle=angle)
 
 
-def rot_y(angle: jax.Array) -> jax.Array:
+def rot_y(angle: float) -> jax.Array:
     """Return rotation matrix for positive right-handed rotation about the Y axis by angle (degrees).
 
     Parameters
@@ -61,7 +61,7 @@ def rot_y(angle: jax.Array) -> jax.Array:
     return rmat_from_axis_angle(axis=axis, angle=angle)
 
 
-def rot_z(angle: jax.Array) -> jax.Array:
+def rot_z(angle: float) -> jax.Array:
     """Return rotation matrix for positive right-handed rotation about the Z axis by angle (degrees).
 
     Parameters

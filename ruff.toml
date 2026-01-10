@@ -3,6 +3,8 @@ exclude = [
     "anri/sandbox",
     "docs/",
     # "tests/"
+    "scripts/release_notes.py",
+    "scripts/prepare_changelog.py"
 ]
 
 [lint]
