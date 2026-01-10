@@ -4,6 +4,8 @@
     "python.analysis.inlayHints.pytestParameters": true,
     "python.analysis.inlayHints.variableTypes": true,
     "python.analysis.typeCheckingMode": "standard",
+    "python.languageServer": "None",
+    "autoDocstring.docstringFormat": "numpy-notypes",
     "[python]": {
         "editor.formatOnSave": true,
         "editor.codeActionsOnSave": {
@@ -18,5 +20,5 @@
         "notebook.source.organizeImports": "explicit"
     },
     "ruff.organizeImports": true,
-    "notebook.formatOnSave.enabled": true
+    "notebook.formatOnSave.enabled": true,
 }

@@ -8,6 +8,7 @@
         "ms-toolsai.jupyter-keymap",
         "charliermarsh.ruff",
         "njqdev.vscode-python-typehint",
-        "ms-python.vscode-pylance"
+        "ms-python.vscode-pylance",
+        "astral-sh.ty"
     ]
 }
