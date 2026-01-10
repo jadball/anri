@@ -1,6 +1,6 @@
 """Diffraction-related utilities and functions."""
 
-from ._scattering import (
+from ._impl.scatter import (
     k_to_q_lab,
     omega_solns,
     peak_lab_to_k_out,

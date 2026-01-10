@@ -156,7 +156,7 @@ def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float) -> jax.A
 def q_lab_to_tth_eta(q_lab: jax.Array, wavelength: float) -> tuple[jax.Array, jax.Array]:
     r"""Convert from scattering vector $\vec{Q}$ in lab frame to (tth, eta) angles.
 
-    Adapted from :func:`ImageD11.transforms.uncompute_g_vectors`
+    Adapted from :func:`ImageD11.transform.uncompute_g_vectors`
 
     Parameters
     ----------
@@ -222,33 +222,61 @@ def omega_solns(
     This is adapted from :func:`ImageD11.gv_general.g_to_k`. You can find a nice writeup of this in (Milch and Minor, 1974) [2]_.
 
     The Ewald condition is defined by:
-    $$\vec{Q} = \vec{k}_{out} - \vec{k}_{in}$$
+
+    $\vec{Q} = \vec{k}_{out} - \vec{k}_{in}$
+
     so:
-    $$\vec{Q} + \vec{k}_{in} = \vec{k}_{out}$$
+
+    $\vec{Q} + \vec{k}_{in} = \vec{k}_{out}$
+
     The Ewald condition requires that the magnitudes of the incoming and outgoing wave-vectors are equal:
-    $$\abs{\vec{k}_{out}} = \abs{\vec{k}_{in}} = \frac{1}{\lambda}$$
+
+    $\abs{\vec{k}_{out}} = \abs{\vec{k}_{in}} = \frac{1}{\lambda}$
+
     So we can square both sides:
-    $$\abs{\vec{k}_{out}}^2 = \abs{\vec{k}_{in}}^2 = \frac{1}{\lambda^2}$$
+
+    $\abs{\vec{k}_{out}}^2 = \abs{\vec{k}_{in}}^2 = \frac{1}{\lambda^2}$
+
     We also square both sides here:
-    $$\abs{\vec{Q} + \vec{k}_{in}}^2 = \abs{\vec{k}_{out}}^2$$
+
+    $\abs{\vec{Q} + \vec{k}_{in}}^2 = \abs{\vec{k}_{out}}^2$
+
     Substituting the Ewald condition into this gives:
-    $$\abs{\vec{Q} + \vec{k}_{in}}^2 = \abs{\vec{k}_{in}}^2$$
+
+    $\abs{\vec{Q} + \vec{k}_{in}}^2 = \abs{\vec{k}_{in}}^2$
+
     Expanding the left-hand side:
-    $$\abs{\vec{Q}}^2 + 2 \vec{Q} \cdot \vec{k}_{in} + \abs{\vec{k}_{in}}^2 = \abs{\vec{k}_{in}}^2$$
+
+    $\abs{\vec{Q}}^2 + 2 \vec{Q} \cdot \vec{k}_{in} + \abs{\vec{k}_{in}}^2 = \abs{\vec{k}_{in}}^2$
+
     Subtracting $\abs{\vec{k}_{in}}^2$ from both sides:
-    $$\abs{\vec{Q}}^2 + 2 \vec{Q} \cdot \vec{k}_{in} = 0$$
+
+    $\abs{\vec{Q}}^2 + 2 \vec{Q} \cdot \vec{k}_{in} = 0$
+
     Rearrange:
-    $$\vec{Q} \cdot \vec{k}_{in} = -\frac{\abs{\vec{Q}}^2}{2}$$
+
+    $\vec{Q} \cdot \vec{k}_{in} = -\frac{\abs{\vec{Q}}^2}{2}$
+
     We decompose $\vec{Q}$ into components parallel and perpendicular to the rotation axis $\hat{n}$.
+
     $\vec{Q}(\omega)$ is the rotated Q vector at angle omega about axis $\hat{n}$:
-    $$\vec{Q}(\omega) = \vec{Q}_{perp} \cos(\omega) + (\hat{n} \times \vec{Q}_{perp}) \sin(\omega) + \vec{Q}_{par}$$
+
+    $\vec{Q}(\omega) = \vec{Q}_{perp} \cos(\omega) + (\hat{n} \times \vec{Q}_{perp}) \sin(\omega) + \vec{Q}_{par}$
+
     These are formed via basis vectors:
-    $$\vec{Q}_{par} = (\vec{Q} \cdot \hat{n}) \hat{n}$$
-    $$\vec{Q}_{perp} = \vec{Q} - \vec{Q}_{par}$$
+
+    $\vec{Q}_{par} = (\vec{Q} \cdot \hat{n}) \hat{n}$
+
+    $\vec{Q}_{perp} = \vec{Q} - \vec{Q}_{par}$
+
     Now dot product with $\vec{k}_{in}$:
-    $$\vec{Q}(\omega) \cdot \vec{k}_{in} = \vec{Q}_{perp} \cdot \vec{k}_{in} \cos(\omega) + (\hat{n} \times \vec{Q}_{perp}) \cdot \vec{k}_{in} \sin(\omega) + \vec{Q}_{par} \cdot \vec{k}_{in}$$
+
+    $\vec{Q}(\omega) \cdot \vec{k}_{in} = \vec{Q}_{perp} \cdot \vec{k}_{in} \cos(\omega) + (\hat{n} \times \vec{Q}_{perp}) \cdot \vec{k}_{in} \sin(\omega) + \vec{Q}_{par} \cdot \vec{k}_{in}$
+
     We define some constants here:
-    $$\alpha \cos(\omega) + \beta \sin(\omega) + \gamma = \vec{Q}(\omega) \cdot \vec{k}_{in}$$
+
+    $\alpha \cos(\omega) + \beta \sin(\omega) + \gamma = \vec{Q}(\omega) \cdot \vec{k}_{in}$
+
     where:
 
     .. math::
@@ -259,19 +287,28 @@ def omega_solns(
         \end{aligned}
     
     Setting equal to the Ewald condition:
-    $$\alpha \cos(\omega) + \beta \sin(\omega) + \gamma = -\frac{\abs{\vec{Q}}^2}{2}$$
-    Subtracting $\gamma$ from both sides:
-    $$\alpha \cos(\omega) + \beta \sin(\omega) = -\frac{\abs{\vec{Q}}^2}{2} - \gamma$$
-    We call the right-hand side $\delta$:
-    $$\alpha \cos(\omega) + \beta \sin(\omega) = \delta$$
 
+    $\alpha \cos(\omega) + \beta \sin(\omega) + \gamma = -\frac{\abs{\vec{Q}}^2}{2}$
+
+    Subtracting $\gamma$ from both sides:
+
+    $\alpha \cos(\omega) + \beta \sin(\omega) = -\frac{\abs{\vec{Q}}^2}{2} - \gamma$
+
+    We call the right-hand side $\delta$:
+
+    $\alpha \cos(\omega) + \beta \sin(\omega) = \delta$
+    
     We now solve the harmonic addition:
-    $$R \sin(\omega + \phi) = \delta$$
+
+    $R \sin(\omega + \phi) = \delta$
+
     with $R = \sqrt{\alpha^2 + \beta^2}$ and $\phi = \arctan2(\alpha, \beta)$.
 
     The two solutions for $\omega$ are:
-    $$\omega_1 = \arcsin\left(\frac{\delta}{R}\right) - \phi$$
-    $$\omega_2 = -\arcsin\left(\frac{\delta}{R}\right) - \phi - \pi$$
+
+    $\omega_1 = \arcsin\left(\frac{\delta}{R}\right) - \phi$
+
+    $\omega_2 = -\arcsin\left(\frac{\delta}{R}\right) - \phi - \pi$
 
     References
     ----------

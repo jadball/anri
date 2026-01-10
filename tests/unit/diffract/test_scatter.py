@@ -15,7 +15,7 @@ class TestScaleNormK(unittest.TestCase):
         k_vec = jnp.array([2.0, 0.0, 0.0])
         wavelength = 0.1
         expected = jnp.array([10.0, 0.0, 0.0])
-        result = anri.diffraction.scale_norm_k(k_vec, wavelength)
+        result = anri.diffract.scale_norm_k(k_vec, wavelength)
         np.testing.assert_allclose(result, expected)
 
 
@@ -27,12 +27,12 @@ class TestKToQLab(unittest.TestCase):
 
     def test_k_to_q_lab(self):
         expected = self.q
-        result = anri.diffraction.k_to_q_lab(self.k_in, self.k_out)
+        result = anri.diffract.k_to_q_lab(self.k_in, self.k_out)
         np.testing.assert_allclose(result, expected)
 
     def test_q_lab_to_k_out(self):
         expected = self.k_out
-        result = anri.diffraction.q_lab_to_k_out(self.q, self.k_in)
+        result = anri.diffract.q_lab_to_k_out(self.q, self.k_in)
         np.testing.assert_allclose(result, expected)
 
 
@@ -43,7 +43,7 @@ class TestPeakLabToKOut(unittest.TestCase):
         # k_out should be 1,0,0
         wavelength = 0.5
         expected = (1 / wavelength) * jnp.array([1.0, 0.0, 0.0])
-        result = anri.diffraction.peak_lab_to_k_out(peak_lab, origin_lab, wavelength)
+        result = anri.diffract.peak_lab_to_k_out(peak_lab, origin_lab, wavelength)
         np.testing.assert_allclose(result, expected)
 
 
@@ -53,14 +53,15 @@ class TestQLabToTthEta(unittest.TestCase):
 
         self.wavelength = 0.1
         self.k_in = jnp.array([1.0 / self.wavelength, 0.0, 0.0])
-        self.tth = np.random.random(100) * 30.0  # 0 to 30 degrees
-        self.eta = np.random.random(size=100) * 360.0 - 180.0  # -180 to 180 degrees
+        npks = 100
+        self.tth = np.random.random(npks) * 30.0  # 0 to 30 degrees
+        self.eta = np.random.random(size=npks) * 360.0 - 180.0  # -180 to 180 degrees
         # compute q_lab from tth, eta with ImageD11:
         self.q_lab_id11 = compute_k_vectors(self.tth, self.eta, self.wavelength).T
         # vectorize our functions for testing
-        self.q_lab_to_tth_eta_vec = vmap(anri.diffraction.q_lab_to_tth_eta, in_axes=(0, None))
-        self.tth_eta_to_k_out_vec = vmap(anri.diffraction.tth_eta_to_k_out, in_axes=(0, 0, None))
-        self.k_to_q_lab_vec = vmap(anri.diffraction.k_to_q_lab, in_axes=(0, 0))
+        self.q_lab_to_tth_eta_vec = vmap(anri.diffract.q_lab_to_tth_eta, in_axes=(0, None))
+        self.tth_eta_to_k_out_vec = vmap(anri.diffract.tth_eta_to_k_out, in_axes=(0, 0, None))
+        self.k_to_q_lab_vec = vmap(anri.diffract.k_to_q_lab, in_axes=(0, 0))
 
     def test_q_lab_to_tth_eta_id11(self):
         # when we convert our ImageD11 q_lab back to tth, eta we should recover the original values
@@ -127,7 +128,7 @@ class TestOmegaSolns(unittest.TestCase):
 
         self.q_sample = UB @ hkls.T
 
-        self.omega_solns_vec = vmap(anri.diffraction.omega_solns, in_axes=(1, None, None))
+        self.omega_solns_vec = vmap(anri.diffract.omega_solns, in_axes=(1, None, None))
 
     def test_omega_solns_id11_nochi_nowedge(self):
         chi = 0.0
@@ -137,7 +138,7 @@ class TestOmegaSolns(unittest.TestCase):
 
         # convert k_in to sample frame
         # just identity here
-        k_in_sample = anri.geometry.lab_to_sample(self.k_in_lab, omega=0.0, wedge=wedge, chi=chi)
+        k_in_sample = anri.geom.lab_to_sample(self.k_in_lab, omega=0.0, wedge=wedge, chi=chi)
 
         # we have to supply negative the axis to match ImageD11 convention here
         # this is because ImageD11 forces a negative k_in, whereas we can supply one
@@ -160,7 +161,7 @@ class TestOmegaSolns(unittest.TestCase):
 
         # convert k_in to sample frame
         # this is handled by the post matrix in ImageD11
-        k_in_sample = anri.geometry.lab_to_sample(self.k_in_lab, omega=0.0, wedge=wedge, chi=chi)
+        k_in_sample = anri.geom.lab_to_sample(self.k_in_lab, omega=0.0, wedge=wedge, chi=chi)
 
         # the rotation axis is always defined as +Z in the sample frame
         rot_axis_sample = jnp.array([0.0, 0.0, 1.0])

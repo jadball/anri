@@ -12,5 +12,5 @@ API reference
     :toctree: generated
     :template: custom-module-template.rst
 
-    diffraction
-    geometry
+    diffract
+    geom

@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from ._utils import rmat_from_axis_angle
+from .utils import rmat_from_axis_angle
 
 
 @jax.jit

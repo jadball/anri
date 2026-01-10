@@ -50,6 +50,7 @@ intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "jax": ("https://jax.readthedocs.io/en/latest/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
+    "ImageD11": ("https://imaged11.readthedocs.io/en/latest/", None),
     # Uncomment these if you use them in your codebase:
     #  "torch": ("https://pytorch.org/docs/stable", None),
     #  "datasets": ("https://huggingface.co/docs/datasets/master/en", None),
@@ -117,7 +118,10 @@ mathjax3_config = {
     'loader': {'load': ['[tex]/ams']},
     'tex': {
         'macros': {
+            'bm': [r'\boldsymbol{#1}',1],
             'vec': [r'\mathbf{#1}', 1],
+            'matr': [r'\bm{\mathit{#1}}', 1],
+            'tens': [r'\bm{#1}', 1],
             'abs': [r'\lvert #1 \rvert', 1],
         }
     }
