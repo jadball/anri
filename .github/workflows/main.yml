@@ -95,6 +95,11 @@ jobs:
           export PYTHONIOENCODING=utf-8
           echo "PYTHONIOENCODING=utf-8" >> $GITHUB_ENV
 
+      - name: Enable Long Paths (Windows only)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -value 1
+
       - name: Install pip, unidep, dependencies and package
         run: |
           python -m pip install --upgrade pip unidep
