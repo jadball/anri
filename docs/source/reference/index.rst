@@ -12,5 +12,6 @@ API reference
     :toctree: generated
     :template: custom-module-template.rst
 
+    crystal
     diffract
     geom

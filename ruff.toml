@@ -15,6 +15,9 @@ extend-select = [
     "ANN",
 ]
 ignore = [
+    "E741",  # allow "ambiguous" variable names
+    "N802",  # allow uppercase function names
+    "N803",  # allow uppercase argument names
     "N806",  # allow uppercase variable names
 ]
 

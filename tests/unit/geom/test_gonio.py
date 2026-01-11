@@ -153,3 +153,28 @@ class TestSampleToLab(unittest.TestCase):
             omega=omega_arr, wedge=wedge, chi=chi, t_x=vec_sample[:, 0], t_y=vec_sample[:, 1], t_z=vec_sample[:, 2]
         ).T
         np.testing.assert_allclose(result, desired)
+
+    def test_round_trip(self):
+        # test some more complicated vectors.
+        import time
+
+        from jax import random
+
+        key = random.key(time.time_ns())
+        key, *subkeys = random.split(key, 7)
+        npks = 1000
+
+        vec_sample = random.uniform(subkeys[0], shape=(npks, 3), minval=-1000.0, maxval=1000.0)
+        omega = random.uniform(subkeys[1], shape=(npks,), minval=-180.0, maxval=180.0)
+        wedge = random.uniform(subkeys[2], shape=(npks,), minval=-180.0, maxval=180.0)
+        chi = random.uniform(subkeys[3], shape=(npks,), minval=-180.0, maxval=180.0)
+        dty = random.uniform(subkeys[4], shape=(npks,), minval=-1000.0, maxval=1000.0)
+        y0 = random.uniform(subkeys[5], shape=(npks,), minval=-1000.0, maxval=1000.0)
+
+        sample_to_lab_vec = jax.vmap(anri.geom.sample_to_lab)
+        lab_to_sample_vec = jax.vmap(fun=anri.geom.lab_to_sample)
+
+        desired = vec_sample
+        vec_lab = sample_to_lab_vec(vec_sample, omega, wedge, chi, dty, y0)
+        result = lab_to_sample_vec(vec_lab, omega, wedge, chi, dty, y0)
+        np.testing.assert_allclose(result, desired)

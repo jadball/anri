@@ -4,6 +4,12 @@ Tutorials
 
 This page contains tutorials on how to use Anri.
 
+Crystallography
+===============
+.. nbgallery::
+
+    crystallography
+
 .. _tut_geom:
 
 Geometry

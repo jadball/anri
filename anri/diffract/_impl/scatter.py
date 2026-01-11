@@ -155,6 +155,50 @@ def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float) -> jax.A
 
 
 @jax.jit
+def q_to_ds(q: jax.Array) -> float:
+    r"""Convert q (in whatever reference frame) to d-star (1/d).
+
+    Parameters
+    ----------
+    q
+        [3] Scattering vector
+
+    Returns
+    -------
+    ds: float
+        d-star value, same units as q
+
+    Notes
+    -----
+    $d^* = \abs{\vec{Q}}$
+    """
+    ds = jnp.linalg.norm(q)
+    return ds
+
+
+@jax.jit
+def ds_to_tth(ds: float, wavelength: float) -> jax.Array:
+    r"""Convert from inverse length (d-star) and wavelength to two-theta.
+
+    Parameters
+    ----------
+    ds
+        Inverse length. Must have same units as wavelength.
+    wavelength
+        Wavelength.
+
+    Returns
+    -------
+    tth: jax.Array
+        Two-theta value in degrees.
+    """
+    sin_theta = ds * wavelength / 2.0  # dimensionless
+    theta = jnp.degrees(jnp.arcsin(sin_theta))
+    tth = 2 * theta
+    return tth
+
+
+@jax.jit
 def q_lab_to_tth_eta(q_lab: jax.Array, wavelength: float) -> tuple[jax.Array, jax.Array]:
     r"""Convert from scattering vector $\vec{Q}$ in lab frame to (tth, eta) angles.
 
@@ -165,7 +209,7 @@ def q_lab_to_tth_eta(q_lab: jax.Array, wavelength: float) -> tuple[jax.Array, ja
     q_lab
         [3] Scattering vector in lab frame
     wavelength
-        wavelength in angstroms
+        wavelength, same units as q_lab
 
     Returns
     -------
@@ -185,9 +229,8 @@ def q_lab_to_tth_eta(q_lab: jax.Array, wavelength: float) -> tuple[jax.Array, ja
         \end{aligned}
     """
     q1, q2, q3 = q_lab
-    ds = jnp.linalg.norm(q_lab)
-    s = ds * wavelength / 2.0  # sin(theta)
-    tth = 2.0 * jnp.degrees(jnp.arcsin(s))
+    ds = q_to_ds(q_lab)
+    tth = ds_to_tth(ds, wavelength)
     eta = jnp.degrees(jnp.arctan2(-q2, q3))
     return tth, eta
 

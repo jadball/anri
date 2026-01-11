@@ -51,10 +51,6 @@ intersphinx_mapping = {
     "jax": ("https://jax.readthedocs.io/en/latest/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "ImageD11": ("https://imaged11.readthedocs.io/en/latest/", None),
-    # Uncomment these if you use them in your codebase:
-    #  "torch": ("https://pytorch.org/docs/stable", None),
-    #  "datasets": ("https://huggingface.co/docs/datasets/master/en", None),
-    #  "transformers": ("https://huggingface.co/docs/transformers/master/en", None),
 }
 
 # Add any paths that contain templates here, relative to this directory.
