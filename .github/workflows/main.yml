@@ -136,7 +136,7 @@ jobs:
 
   deploy-docs:
     name: Deploy Documentation
-    # needs: checks
+    needs: checks
     # Only deploy on pushes to main, not on PRs
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest

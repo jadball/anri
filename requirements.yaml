@@ -32,6 +32,7 @@ optional_dependencies:
     - pip: sphinx-autodoc-typehints
     - pip: sphinx_math_dollar
     - pip: packaging
+    - pip: coverage
   sandbox:
     - pip: numpy<2
     - pip: matplotlib
