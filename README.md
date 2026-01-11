@@ -5,6 +5,7 @@ Anri is in the very early stages of development and is not yet ready to use for 
 [![cross-platform](https://img.shields.io/badge/platform-cross--platform-brightgreen.svg)](https://www.python.org/)
 [![JAX Python](https://img.shields.io/badge/code-JAX-blue.svg)](https://github.com/jax-ml/jax)
 [![tests (windows, ubuntu, mac os)](https://img.shields.io/github/actions/workflow/status/jadball/anri/main.yml)](https://github.com/jadball/anri/actions/workflows/main.yml)
+[![CodeCov](https://codecov.io/gh/jadball/anri/branch/main/graph/badge.svg)](https://codecov.io/gh/jadball/anri)
 [![code style ruff](https://img.shields.io/badge/code%20style-Ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Sphinx documentation](https://img.shields.io/badge/docs-sphinx-blue?logo=sphinx.svg)](https://jadball.github.io/anri/)
 
