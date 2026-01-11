@@ -20,10 +20,10 @@ from .utils import (
     UBI_to_mt,
     UBI_to_UB,
     hkl_B_to_q_crystal,
+    lpars_rlpars_to_B,
     lpars_to_mt,
     mt_to_lpars,
     mt_to_rmt,
-    rmt_to_B,
     volume_direct,
 )
 
@@ -71,6 +71,17 @@ class UnitCell:
         return mt_to_rmt(self.mt)
 
     @property
+    def reciprocal_lattice_parameters(self) -> jax.Array:
+        """Get the reciprocal lattice parameters as an array.
+
+        Returns
+        -------
+        jax.Array
+            [6] Reciprocal lattice parameters (a,b,c,alpha,beta,gamma) with angles in degrees
+        """
+        return mt_to_lpars(self.rmt)
+
+    @property
     def B(self) -> jax.Array:
         """Get the B matrix as an array.
 
@@ -79,7 +90,7 @@ class UnitCell:
         jax.Array
             [3,3] Reciprocal space orthogonalization matrix
         """
-        return rmt_to_B(self.rmt)
+        return lpars_rlpars_to_B(self.lattice_parameters, self.reciprocal_lattice_parameters)
 
     @property
     def F(self) -> jax.Array:

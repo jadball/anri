@@ -49,3 +49,12 @@ Something about detector space.
     
     detector_geometry
     goniometer_geometry
+
+Forward Modeling
+=================
+
+There's a very basic demonstration of how to perform a forward model with Anri.
+
+.. nbgallery::
+    
+    forward_model_simple

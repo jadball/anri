@@ -70,23 +70,53 @@ def lpars_to_mt(lpars: jax.Array) -> jax.Array:
 
 @jax.jit
 def mt_to_lpars(mt: jax.Array) -> jax.Array:
-    """Convert metric tensor back to lattice parameters.
+    """Convert (direct or reciprocal) metric tensor back to (direct or reciprocal) lattice parameters.
 
     Parameters
     ----------
     mt
-        [3,3] metric tensor
+        [3,3] direct or reciprocal metric tensor
 
     Returns
     -------
     jax.Array
-        [6] Lattice parameters (a,b,c,alpha,beta,gamma) with angles in degrees
+        [6] Direct or reciprocal lattice parameters (a,b,c,alpha,beta,gamma) with angles in degrees
     """
     a, b, c = jnp.sqrt(jnp.diag(mt))
     al = jnp.degrees(jnp.arccos(mt[1, 2] / b / c))
     be = jnp.degrees(jnp.arccos(mt[0, 2] / a / c))
     ga = jnp.degrees(jnp.arccos(mt[0, 1] / a / b))
     return jnp.array([a, b, c, al, be, ga])
+
+
+@jax.jit
+def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
+    """Get the Busing-Levy B matrix from the direct and reciprocal lattice parameters.
+
+    Parameters
+    ----------
+    lpars
+        [6] Lattice parameters (a,b,c,alpha,beta,gamma) with angles in degrees
+    rlpars
+        [6] Reciprocal lattice parameters (a*,b*,c*,alpha*,beta*,gamma*) with angles in degrees
+
+    Returns
+    -------
+    B: jax.Array
+        [3,3] Reciprocal space orthogonalization matrix
+    """
+    a, b, c, alpha, beta, gamma = lpars
+    astar, bstar, cstar, alphastar, betastar, gammastar = rlpars
+    betastar_rad = jnp.radians(betastar)
+    gammastar_rad = jnp.radians(gammastar)
+    ca = jnp.cos(jnp.radians(alpha))
+
+    # fmt: off
+    B = jnp.array([[astar, bstar * jnp.cos(gammastar_rad),       cstar * jnp.cos(betastar_rad)],
+                                 [    0, bstar * jnp.sin(gammastar_rad), -cstar * jnp.sin(betastar_rad) * ca],
+                                 [    0,                                       0,                                       1. / c]])
+    # fmt: on
+    return B
 
 
 @jax.jit
@@ -123,30 +153,6 @@ def rmt_to_mt(rmt: jax.Array) -> jax.Array:
     """
     mt = jnp.linalg.inv(rmt)
     return mt
-
-
-@jax.jit
-def rmt_to_B(rmt: jax.Array) -> jax.Array:
-    r"""Convert reciprocal metric tensor to B matrix.
-
-    Parameters
-    ----------
-    rmt
-        [3,3] Reciprocal metric tensor
-
-    Returns
-    -------
-    B: jax.Array
-        [3,3] Reciprocal space orthogonalization matrix
-
-    Notes
-    -----
-    $\tens{G^{ij}} = \matr{B^\dagger}\cdot\matr{B}$
-    For any upper-triangular matrix $\matr{R}, $\matr{A} = \matr{R^\dagger} \cdot \matr{R}$,
-    you can do upper-triangular Cholesky decomposition to recover $\matr{R}$ from $\matr{A}$.
-    """
-    B = jnp.linalg.cholesky(rmt, upper=True)
-    return B
 
 
 @jax.jit
@@ -425,7 +431,8 @@ def lpars_to_B(lpars: jax.Array) -> jax.Array:
     """
     mt = lpars_to_mt(lpars)
     rmt = mt_to_rmt(mt)
-    B = rmt_to_B(rmt)
+    rlpars = mt_to_lpars(rmt)
+    B = lpars_rlpars_to_B(lpars, rlpars)
     return B
 
 
