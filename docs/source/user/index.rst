@@ -1,4 +1,4 @@
-User Guide
+User guide
 ==========
 
 This will eventually be the user guide.

@@ -133,12 +133,14 @@ class TestOmegaSolns(unittest.TestCase):
     def test_omega_solns_id11_nochi_nowedge(self):
         chi = 0.0
         wedge = 0.0
+        dty = 0.0
+        y0 = 0.0
         # the rotation axis is always defined as +Z in the sample frame
         rot_axis_sample = jnp.array([0.0, 0.0, 1.0])
 
         # convert k_in to sample frame
         # just identity here
-        k_in_sample = anri.geom.lab_to_sample(self.k_in_lab, omega=0.0, wedge=wedge, chi=chi)
+        k_in_sample = anri.geom.lab_to_sample(self.k_in_lab, omega=0.0, wedge=wedge, chi=chi, dty=dty, y0=y0)
 
         # we have to supply negative the axis to match ImageD11 convention here
         # this is because ImageD11 forces a negative k_in, whereas we can supply one
@@ -157,11 +159,13 @@ class TestOmegaSolns(unittest.TestCase):
     def test_omega_solns_id11_chi_wedge(self):
         chi = 10.0
         wedge = -5.0
+        dty = 0.0
+        y0 = 0.0
         post = self.wedgechi_id11(wedge, chi)
 
         # convert k_in to sample frame
         # this is handled by the post matrix in ImageD11
-        k_in_sample = anri.geom.lab_to_sample(self.k_in_lab, omega=0.0, wedge=wedge, chi=chi)
+        k_in_sample = anri.geom.lab_to_sample(self.k_in_lab, omega=0.0, wedge=wedge, chi=chi, dty=dty, y0=y0)
 
         # the rotation axis is always defined as +Z in the sample frame
         rot_axis_sample = jnp.array([0.0, 0.0, 1.0])

@@ -18,7 +18,7 @@ class TestDetectorOrientationMatrix(unittest.TestCase):
         o22 = 1.0
         expected = jnp.eye(3)
         result = anri.geom.detector_orientation_matrix(o11, o12, o21, o22)
-        np.testing.assert_allclose(expected, result)
+        np.testing.assert_allclose(result, expected)
 
     def test_simple(self):
         o11 = 0.0
@@ -27,7 +27,7 @@ class TestDetectorOrientationMatrix(unittest.TestCase):
         o22 = 1.0
         expected = jnp.array([[0, 1, 0], [0, 1, 0], [0, 0, 1]])
         result = anri.geom.detector_orientation_matrix(o11, o12, o21, o22)
-        np.testing.assert_allclose(expected, result)
+        np.testing.assert_allclose(result, expected)
 
 
 class TestDetectorRotationMatrix(unittest.TestCase):
@@ -37,7 +37,7 @@ class TestDetectorRotationMatrix(unittest.TestCase):
         tilt_z = 0.0
         expected = jnp.eye(3)
         result = anri.geom.detector_rotation_matrix(tilt_x, tilt_y, tilt_z)
-        np.testing.assert_allclose(expected, result)
+        np.testing.assert_allclose(result, expected)
 
     def test_id11(self):
         tilt_x = 2.5
@@ -47,7 +47,7 @@ class TestDetectorRotationMatrix(unittest.TestCase):
 
         expected = detector_rotation_matrix_id11(tilt_x, tilt_y, tilt_z)
         result = anri.geom.detector_rotation_matrix(tilt_x, tilt_y, tilt_z)
-        np.testing.assert_allclose(expected, result)
+        np.testing.assert_allclose(result, expected)
 
 
 class TestDetectorTransforms(unittest.TestCase):
@@ -85,9 +85,9 @@ class TestDetectorTransforms(unittest.TestCase):
             o21=o21,
             o22=o22,
         )
-        np.testing.assert_allclose(expected_beam_cen_shift, result_beam_cen_shift)
-        np.testing.assert_allclose(expected_x_distance_shift, result_x_distance_shift)
-        np.testing.assert_allclose(expected_det_trans, result_det_trans)
+        np.testing.assert_allclose(result_beam_cen_shift, expected_beam_cen_shift)
+        np.testing.assert_allclose(result_x_distance_shift, expected_x_distance_shift)
+        np.testing.assert_allclose(result_det_trans, expected_det_trans)
 
 
 class TestDetToLab(unittest.TestCase):
@@ -124,7 +124,7 @@ class TestDetToLab(unittest.TestCase):
 
         expected = jnp.array([500.0, -50.0, 50.0])
         result = anri.geom.det_to_lab(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
-        np.testing.assert_allclose(expected, result)
+        np.testing.assert_allclose(result, expected)
 
     def test_id11(self):
         import time
@@ -186,7 +186,7 @@ class TestDetToLab(unittest.TestCase):
         ).T
         det_to_lab_vec = jax.vmap(anri.geom.det_to_lab, in_axes=[0, 0, None, None, None])
         result = det_to_lab_vec(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
-        np.testing.assert_allclose(expected, result)
+        np.testing.assert_allclose(result, expected)
 
     def test_round_trip(self):
         import time
