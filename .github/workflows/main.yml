@@ -34,7 +34,7 @@ jobs:
         task:
           - name: Test
             run: |
-              pytest -v --color=yes tests/
+              pytest --cov --cov-branch --cov-report=xml -v --color=yes tests/
         
         # exclude:
         #   - os: windows-latest
@@ -121,6 +121,12 @@ jobs:
       - name: ${{ matrix.task.name }}
         run: |
           ${{ matrix.task.run }}
+      
+      - name: Upload coverage reports to Codecov
+        if: matrix.task.name == 'Test'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload package distribution files
         if: matrix.task.name == 'Build'
