@@ -2,6 +2,7 @@
 Anri is a Python package for analysing Three-Dimensional X-Ray Diffraction data.  
 Anri is in the very early stages of development and is not yet ready to use for experimental analysis.
 
+[![GitHub Repo](https://img.shields.io/badge/repo-GitHub-lightgrey?logo=github)](https://github.com/jadball/anri)
 [![cross-platform](https://img.shields.io/badge/platform-cross--platform-brightgreen.svg)](https://www.python.org/)
 [![JAX Python](https://img.shields.io/badge/code-JAX-blue.svg)](https://github.com/jax-ml/jax)
 [![tests (windows, ubuntu, mac os)](https://img.shields.io/github/actions/workflow/status/jadball/anri/main.yml)](https://github.com/jadball/anri/actions/workflows/main.yml)

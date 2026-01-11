@@ -3,6 +3,29 @@
 Anri documentation
 ===================
 
+|repo| |platform| |jax| |tests| |codecov| |style| |docs|
+
+.. |repo| image:: https://img.shields.io/badge/repo-GitHub-lightgrey?logo=github
+   :target: https://github.com/jadball/anri
+
+.. |platform| image:: https://img.shields.io/badge/platform-cross--platform-brightgreen.svg
+   :target: https://www.python.org/
+
+.. |jax| image:: https://img.shields.io/badge/code-JAX-blue.svg
+   :target: https://github.com/jax-ml/jax
+
+.. |tests| image:: https://img.shields.io/github/actions/workflow/status/jadball/anri/main.yml
+   :target: https://github.com/jadball/anri/actions/workflows/main.yml
+
+.. |codecov| image:: https://codecov.io/gh/jadball/anri/branch/main/graph/badge.svg
+   :target: https://codecov.io/gh/jadball/anri
+
+.. |style| image:: https://img.shields.io/badge/code%20style-Ruff-000000.svg
+   :target: https://github.com/astral-sh/ruff
+
+.. |docs| image:: https://img.shields.io/badge/docs-sphinx-blue?logo=sphinx.svg
+   :target: https://jadball.github.io/anri/
+
 Anri is a Python library for processing polycrystalline diffraction data with `JAX <https://docs.jax.dev/en/latest/>`_.
 
 `GitHub Repository <https://github.com/jadball/anri>`_  
