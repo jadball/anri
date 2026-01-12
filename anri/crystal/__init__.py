@@ -7,11 +7,10 @@ from ._impl.utils import (
     lpars_rlpars_to_B,
     lpars_to_B,
     lpars_to_mt,
+    metric_to_volume,
     mt_to_lpars,
     mt_to_rmt,
     rmt_to_mt,
-    volume_direct,
-    volume_recip,
 )
 
 __all__ = [
@@ -25,12 +24,11 @@ __all__ = [
     "lpars_rlpars_to_B",
     "lpars_to_B",
     "lpars_to_mt",
+    "metric_to_volume",
     "mt_to_rmt",
     "mt_to_lpars",
     "rmt_to_B",
     "rmt_to_mt",
     "rmt_to_rlpars",
     "hkl_B_to_q_crystal",
-    "volume_direct",
-    "volume_recip",
 ]

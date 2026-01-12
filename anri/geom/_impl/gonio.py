@@ -89,7 +89,7 @@ def lab_to_sample(v_lab: jax.Array, omega: float, wedge: float, chi: float, dty:
 
     Then we get:
 
-    $$\vec{v_{\text{sample}}} = \matr{R^\dagger} \cdot \matr{C^\dagger} \cdot \matr{W^\dagger} \cdot \left(\vec{v_{\text{lab}}} - \left(0, \text{dty} - y_0, 0\right)\right)$$
+    $$\vec{v_{\text{sample}}} = \matr{R^T} \cdot \matr{C^T} \cdot \matr{W^T} \cdot \left(\vec{v_{\text{lab}}} - \left(0, \text{dty} - y_0, 0\right)\right)$$
     """
     v_dty = jnp.array([0.0, dty - y0, 0.0])
 

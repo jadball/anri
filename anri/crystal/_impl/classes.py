@@ -17,9 +17,9 @@ from .utils import (
     UBI_to_mt,
     lpars_rlpars_to_B,
     lpars_to_mt,
+    metric_to_volume,
     mt_to_lpars,
     mt_to_rmt,
-    volume_direct,
 )
 
 
@@ -119,7 +119,7 @@ class UnitCell:
         jax.Array
             [1] Volume of direct space unit cell
         """
-        return volume_direct(self.mt)
+        return metric_to_volume(self.mt)
 
 
 class Symmetry:

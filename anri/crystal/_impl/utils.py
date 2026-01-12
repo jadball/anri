@@ -71,29 +71,52 @@ def lpars_to_mt(lpars: jax.Array) -> jax.Array:
 
 
 @jax.jit
-def mt_to_lpars(mt: jax.Array) -> jax.Array:
-    """Convert (direct or reciprocal) metric tensor back to (direct or reciprocal) lattice parameters.
+def mt_to_lpars(metric: jax.Array) -> jax.Array:
+    r"""Convert (direct or reciprocal) metric tensor back to (direct or reciprocal) lattice parameters.
 
     Parameters
     ----------
-    mt
+    metric
         [3,3] direct or reciprocal metric tensor
 
     Returns
     -------
     jax.Array
         [6] Direct or reciprocal lattice parameters (a,b,c,alpha,beta,gamma) with angles in degrees
+    
+    Notes
+    -----
+    For a metric tensor $\tens{G}$ (direct or reciprocal), given:
+    $$
+    \tens{G} =
+    \begin{bmatrix}
+    a^2            & a b \cos\gamma & a c \cos\beta  \\
+    a b \cos\gamma &            b^2 & b c \cos\alpha \\
+    a c \cos\beta  & b c \cos\alpha &            c^2
+    \end{bmatrix}
+    $$
+    then:
+    $$
+    \begin{aligned}
+    a &= \sqrt{\tens{G}_{0,0}} \\
+    b &= \sqrt{\tens{G}_{1,1}} \\
+    c &= \sqrt{\tens{G}_{2,2}} \\
+    \alpha &= \cos^{-1}{\frac{\tens{G}_{1,2}}{b c}}  \\
+    \beta &= \cos^{-1}{\frac{\tens{G}_{0,2}}{a c}}   \\
+    \gamma &= \cos^{-1}{\frac{\tens{G}_{0,1}}{a b}}  \\
+    \end{aligned}
+    $$
     """
-    a, b, c = jnp.sqrt(jnp.diag(mt))
-    al = jnp.degrees(jnp.arccos(mt[1, 2] / b / c))
-    be = jnp.degrees(jnp.arccos(mt[0, 2] / a / c))
-    ga = jnp.degrees(jnp.arccos(mt[0, 1] / a / b))
+    a, b, c = jnp.sqrt(jnp.diag(metric))
+    al = jnp.degrees(jnp.arccos(metric[1, 2] / (b * c)))
+    be = jnp.degrees(jnp.arccos(metric[0, 2] / (a * c)))
+    ga = jnp.degrees(jnp.arccos(metric[0, 1] / (a * b)))
     return jnp.array([a, b, c, al, be, ga])
 
 
 @jax.jit
 def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
-    """Get the Busing-Levy B matrix from the direct and reciprocal lattice parameters.
+    r"""Get the Busing-Levy B matrix from the direct and reciprocal lattice parameters.
 
     Parameters
     ----------
@@ -106,6 +129,25 @@ def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
     -------
     B: jax.Array
         [3,3] Reciprocal space orthogonalization matrix
+    
+    Notes
+    -----
+    For a direct space lattice:
+    $$\left( a, b, c, \alpha, \beta, \gamma \right)$$
+    and a reciprocal space lattice:
+    $$\left( a^*, b^*, c^*, \alpha^*, \beta^*, \gamma^* \right)$$
+    We can say (Busing & Levy 1966, Equation 3) [2]_:
+    $$B = 
+    \begin{bmatrix}
+    a^* & b^* \cos{\gamma^*} &  c^* \cos{\beta^*} \\
+    0   & b^* \sin{\gamma^*} & -c^* \sin{\beta^*}\cos{\alpha} \\
+    0   &                  0 & \frac{1}{c}
+    \end{bmatrix}
+    $$
+
+    References
+    ----------
+    .. [2] https://doi.org/10.2172/4457192
     """
     a, b, c, alpha, beta, gamma = lpars
     astar, bstar, cstar, alphastar, betastar, gammastar = rlpars
@@ -123,7 +165,7 @@ def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
 
 @jax.jit
 def mt_to_rmt(mt: jax.Array) -> jax.Array:
-    """Convert metric tensor to reciprocal metric tensor.
+    r"""Convert metric tensor to reciprocal metric tensor.
 
     Parameters
     ----------
@@ -134,6 +176,10 @@ def mt_to_rmt(mt: jax.Array) -> jax.Array:
     -------
     rmt: jax.Array
         [3,3] Reciprocal metric tensor
+
+    Notes
+    -----
+    $\tens{G^{ij}} = \tens{G_{ij}^{-1}}$
     """
     rmt = jnp.linalg.inv(mt)
     return rmt
@@ -141,7 +187,7 @@ def mt_to_rmt(mt: jax.Array) -> jax.Array:
 
 @jax.jit
 def rmt_to_mt(rmt: jax.Array) -> jax.Array:
-    """Convert reciprocal metric tensor to metric tensor.
+    r"""Convert reciprocal metric tensor to metric tensor.
 
     Parameters
     ----------
@@ -152,6 +198,10 @@ def rmt_to_mt(rmt: jax.Array) -> jax.Array:
     -------
     mt: jax.Array
         [3,3] Metric tensor
+
+    Notes
+    -----
+    $\tens{G_{ij}} = \tens{G^{ij}^{-1}}$
     """
     mt = jnp.linalg.inv(rmt)
     return mt
@@ -173,51 +223,37 @@ def B_to_rmt(B: jax.Array) -> jax.Array:
 
     Notes
     -----
-    Just $\tens{G^ij} = \matr{B^\dagger} \cdot \matr{B}$
+    $\tens{G^{ij}} = \matr{B^T} \cdot \matr{B}$
     """
     rmt = B.T @ B
     return rmt
 
 
 @jax.jit
-def volume_direct(mt: jax.Array) -> jax.Array:
-    """Get the volume of the direct space unit cell from the metric tensor.
+def metric_to_volume(metric: jax.Array) -> jax.Array:
+    r"""Get the volume of the (direct or reciprocal space) unit cell from the (direct or reciprocal space) metric tensor.
 
     Parameters
     ----------
     mt
-        [3,3] Metric tensor
+        [3,3] (direct or reciprocal space) metric tensor
 
     Returns
     -------
-    V_direct: jax.Array
-        [1] Volume of direct space unit cell
+    volume: jax.Array
+        [1] Volume of (direct or reciprocal space) unit cell
+
+    Notes
+    -----
+    $$V = \sqrt{\abs{\tens{G}}}$$
     """
-    V_direct = jnp.sqrt(jnp.linalg.det(mt))
-    return V_direct
-
-
-@jax.jit
-def volume_recip(rmt: jax.Array) -> jax.Array:
-    """Get the volume of the reciprocal space unit cell from the reciprocal metric tensor.
-
-    Parameters
-    ----------
-    rmt
-        [3,3] Reciprocal metric tensor
-
-    Returns
-    -------
-    V_recip: jax.Array
-        [1] Volume of reciprocal space unit cell
-    """
-    V_recip = jnp.sqrt(jnp.linalg.det(rmt))
-    return V_recip
+    volume = jnp.sqrt(jnp.linalg.det(metric))
+    return volume
 
 
 @jax.jit
 def UBI_to_mt(UBI: jax.Array) -> jax.Array:
-    """Convert from (U.B)^-1 matrix to metric tensor.
+    r"""Convert from (U.B)^-1 matrix to metric tensor.
 
     Parameters
     ----------
@@ -228,6 +264,21 @@ def UBI_to_mt(UBI: jax.Array) -> jax.Array:
     -------
     jax.Array
         [3,3] Metric tensor
+
+    Notes
+    -----
+    $$
+    \begin{aligned}
+    \tens{G_{ij}} &= \left(\matr{UB}\right)^{-1} \cdot \left(\left(\matr{UB}\right)^{-1}\right)^T           \\
+    \tens{G_{ij}} &= \matr{B}^{-1}\matr{U}^{-1} \cdot \left(\matr{B}^{-1}\matr{U}^{-1}\right)^T            \\
+    \tens{G_{ij}} &= \matr{B}^{-1}\matr{U}^{-1} \cdot \left(\matr{U}^{-1}\right)^T \left(\matr{B}^{-1}\right)^T   \\
+    \tens{G_{ij}} &= \matr{B}^{-1}\matr{U}^{-1} \cdot \matr{U} \left(\matr{B}^{-1}\right)^T   \\
+    \tens{G_{ij}} &= \matr{B}^{-1} \cdot \left(\matr{B}^{-1}\right)^T   \\
+    \tens{G_{ij}} &= \matr{B}^{-1} \cdot \left(\matr{B}^T\right)^{-1}   \\
+    \tens{G_{ij}} &= \left(\matr{B}^T \cdot \matr{B}\right)^{-1}   \\
+    \tens{G_{ij}} &= \left(\tens{G^{ij}}\right)^{-1}   \\
+    \end{aligned}
+    $$
     """
     mt = UBI @ UBI.T
     return mt
