@@ -1,8 +1,10 @@
-"""JAX-based crystallographic utilities.
+r"""JAX-based crystallographic utilities.
 
 This file may look a bit stupid - these are all very fundamental conversions with simple mathematics.
 However, I feel it is important to have a single authoritative source for crystallographic conversion functions.
 These can be tested against Dans_Diffraction and ImageD11 etc too.
+
+I have deliberately avoided defining the direct matrix $\matr{A}$, because you have to make a choice about how it aligns to $\matr{B}$.
 """
 
 import jax
@@ -234,114 +236,6 @@ def volume_recip(rmt: jax.Array) -> jax.Array:
 
 
 @jax.jit
-def B_to_F(B: jax.Array) -> jax.Array:
-    """Convert B matrix to F matrix.
-
-    Parameters
-    ----------
-    B
-        [3,3] Reciprocal space orthogonalization matrix
-
-    Returns
-    -------
-    F: jax.Array
-        [3,3] Real space fractionalization matrix
-    """
-    F = B.T
-    return F
-
-
-@jax.jit
-def F_to_B(F: jax.Array) -> jax.Array:
-    """Convert F matrix to B matrix.
-
-    Parameters
-    ----------
-    F
-        [3,3] Real space orthogonalization matrix
-
-    Returns
-    -------
-    B: jax.Array
-        [3,3] Reciprocal space orthogonalization matrix
-    """
-    B = F.T
-    return B
-
-
-@jax.jit
-def F_to_O(F: jax.Array) -> jax.Array:
-    """Convert F matrix to O matrix.
-
-    Parameters
-    ----------
-    F
-        [3,3] Real space fractionalization matrix
-
-    Returns
-    -------
-    O: jax.Array
-        [3,3] Real space orthogonalization matrix
-    """
-    O = jnp.linalg.inv(F)
-    return O
-
-
-@jax.jit
-def O_to_F(O: jax.Array) -> jax.Array:
-    """Convert O matrix to F matrix.
-
-    Parameters
-    ----------
-    O
-        [3,3] Real space orthogonalization matrix
-
-    Returns
-    -------
-    F: jax.Array
-        [3,3] Real space fractionalization matrix
-    """
-    F = jnp.linalg.inv(O)
-    return F
-
-
-@jax.jit
-def O_to_A(O: jax.Array) -> jax.Array:
-    """Convert O matrix to A matrix.
-
-    Parameters
-    ----------
-    O
-        [3,3] Real space orthogonalization matrix
-
-    Returns
-    -------
-    A: jax.Array
-        [3,3] Reciprocal space fractionalization matrix
-    """
-    A = O.T
-    return A
-
-
-@jax.jit
-def A_to_O(A: jax.Array) -> jax.Array:
-    """Convert A matrix to O matrix.
-
-    Parameters
-    ----------
-    A
-        [3,3] Reciprocal space fractionalization matrix
-
-    Returns
-    -------
-    O: jax.Array
-        [3,3] Real space orthogonalization matrix
-    """
-    O = A.T
-    return O
-
-
-@jax.jit
 def UB_to_UBI(UB: jax.Array) -> jax.Array:
     """Invert U.B to get (U.B)^-1.
 
@@ -434,26 +328,6 @@ def lpars_to_B(lpars: jax.Array) -> jax.Array:
     rlpars = mt_to_lpars(rmt)
     B = lpars_rlpars_to_B(lpars, rlpars)
     return B
-
-
-@jax.jit
-def B_to_A(B: jax.Array) -> jax.Array:
-    """Convert B matrix to A matrix (cross-transform).
-
-    Parameters
-    ----------
-    B
-        [3,3] Reciprocal space orthogonalization matrix
-
-    Returns
-    -------
-    A
-        [3,3] Reciprocal space fractionalization matrix
-    """
-    F = B_to_F(B)
-    O = F_to_O(F)
-    A = O_to_A(O)
-    return A
 
 
 @jax.jit

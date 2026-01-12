@@ -120,9 +120,6 @@ class TestBuildBMat(unittest.TestCase):
         """Generate many random lattice parameters using Dan's logic and check Busing-Levy"""
         ntests = 1_000
 
-        import jax
-        import jax.numpy as jnp
-        import numpy as np
         from Dans_Diffraction.functions_lattice import random_lattice
         from ImageD11.unitcell import unitcell
 
@@ -142,25 +139,6 @@ class TestBuildBMat(unittest.TestCase):
             self.assertFalse(jnp.any(jnp.isnan(results[i])), f"NaN found at index {i} with input {lpars_batch[i]}")
 
             np.testing.assert_allclose(results[i], expected, atol=1e-16)
-
-
-class TestBFOA(unittest.TestCase):
-    def test_dd(self):
-        """Test B matrix -> F matrix -> O matrix -> A matrix (direct basis vectors)"""
-        a = 2.5
-        b = 2.8
-        c = 11.3
-        alpha = 85.2
-        beta = 95.8
-        gamma = 101.6
-        lpars = jnp.array([a, b, c, alpha, beta, gamma])
-        B = anri.crystal.lpars_to_B(lpars)
-        result = anri.crystal.B_to_A(B)
-
-        from Dans_Diffraction.classes_crystal import Cell
-
-        expected = Cell(a, b, c, alpha, beta, gamma).UV()
-        np.testing.assert_allclose(result, expected, atol=1e-15)
 
 
 class TestEverything(unittest.TestCase):

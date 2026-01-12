@@ -9,13 +9,11 @@ from Dans_Diffraction.classes_crystal import Cell as dd_Cell
 from Dans_Diffraction.classes_crystal import Crystal as dd_Crystal
 from Dans_Diffraction.classes_crystal import Symmetry as dd_Symm
 from Dans_Diffraction.classes_scattering import Scattering as dd_Scatter
+from Dans_Diffraction.functions_crystallography import find_spacegroup as dd_find_spacegroup
 
 from anri.diffract import ds_to_tth, q_to_ds
 
 from .utils import (
-    B_to_F,
-    F_to_O,
-    O_to_A,
     UB_and_B_to_U,
     UBI_to_mt,
     UBI_to_UB,
@@ -34,8 +32,31 @@ class UnitCell:
     Extends :func:`Dans_Diffraction.classes_crystal.Cell`.
     """
 
-    def __init__(self, dd_ucell: dd_Cell) -> None:
-        self._uc = dd_ucell
+    def __init__(self, cell_input: dd_Cell) -> None:
+        """Initialise a UnitCell object.
+
+        Parameters
+        ----------
+        cell_input
+            A `Dans_Diffraction.classes_crystal.Cell` instance
+        """
+        self._uc = cell_input
+
+    @classmethod
+    def from_lpars(cls, lpars: jax.Array) -> "UnitCell":
+        """Create :func:`UnitCell` instance directly from lattice parameters.
+
+        Parameters
+        ----------
+        lpars
+            [6] Lattice parameters (a,b,c,alpha,beta,gamma) with angles in degrees
+
+        Returns
+        -------
+        UnitCell
+             :func:`UnitCell` instance with requested lattice parameters.
+        """
+        return cls(dd_Cell(*lpars))
 
     @property
     def lattice_parameters(self) -> jax.Array:
@@ -93,39 +114,6 @@ class UnitCell:
         return lpars_rlpars_to_B(self.lattice_parameters, self.reciprocal_lattice_parameters)
 
     @property
-    def F(self) -> jax.Array:
-        """Get the F matrix as an array.
-
-        Returns
-        -------
-        jax.Array
-            [3,3] Real space fractionalization matrix
-        """
-        return B_to_F(self.B)
-
-    @property
-    def O(self) -> jax.Array:
-        """Get the O matrix as an array.
-
-        Returns
-        -------
-        jax.Array
-            [3,3] Real space orthogonalization matrix
-        """
-        return F_to_O(self.F)
-
-    @property
-    def A(self) -> jax.Array:
-        """Get the A matrix as an array.
-
-        Returns
-        -------
-        A: jax.Array
-            [3,3] Reciprocal space fractionalization matrix
-        """
-        return O_to_A(self.O)
-
-    @property
     def volume(self) -> jax.Array:
         """Get the real space unit cell volume as an array.
 
@@ -143,8 +131,24 @@ class Symmetry:
     Extends :func:`Dans_Diffraction.classes_crystal.Symmetry`.
     """
 
-    def __init__(self, dd_sym: dd_Symm) -> None:
-        self._sym = dd_sym
+    def __init__(self, sym_instance: dd_Symm) -> None:
+        """Private-style init: expects a fully formed dd_Symm instance."""
+        self._sym = sym_instance
+
+    @classmethod
+    def from_number(cls, sg_number: int) -> "Symmetry":
+        """Create instance from a spacegroup number (1-230)."""
+        sym = dd_Symm()
+        sym.load_spacegroup(sg_number=sg_number)
+        return cls(sym)
+
+    @classmethod
+    def from_name(cls, sg_name: str) -> "Symmetry":
+        """Create instance from a spacegroup name string (e.g., 'Fm-3m')."""
+        sg_dict = dd_find_spacegroup(sg_name)
+        sym = dd_Symm()
+        sym.load_spacegroup(sg_dict=sg_dict)
+        return cls(sym)
 
     @property
     def sgname(self) -> str:
@@ -165,15 +169,12 @@ class Symmetry:
 class Crystal(UnitCell, Symmetry):
     """Class to hold and manipulate a crystal, which we think of as a :func:`UnitCell` with a :func:`Symmetry`."""
 
-    def __init__(self, dd_ucell: dd_Cell, dd_sym: dd_Symm) -> None:
-        self._uc = dd_ucell
-        self._sym = dd_sym
+    def __init__(self, unit_cell: UnitCell, symmetry: Symmetry) -> None:
+        self._uc = unit_cell._uc
+        self._sym = symmetry._sym
 
-        Symmetry.__init__(self, self._sym)
-        UnitCell.__init__(self, self._uc)
-
-        # Dataframe of scattering info
-        # such as h, k, l, ds, tth, intensity
+        # # Dataframe of scattering info
+        # # such as h, k, l, ds, tth, intensity
         self._scatter_table = None
 
     def make_hkls(self, dsmax: float, wavelength: float, expand_to_p1: bool = True, tol: float = 0.001) -> None:
@@ -352,12 +353,12 @@ class Structure(Crystal):
 
     def __init__(self, dd_crystal: dd_Crystal) -> None:
         self._struc = dd_crystal
-        self._uc = self._struc.Cell
-        self._sym = self._struc.Symmetry
+        unitcell = UnitCell(self._struc.Cell)
+        symm = Symmetry(self._struc.Symmetry)
+
+        super().__init__(unitcell, symm)
+
         self._scatterer = dd_Scatter(self._struc)
-
-        super().__init__(self._uc, self._sym)
-
         self._rings_dict = None
 
     @property
