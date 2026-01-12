@@ -64,8 +64,8 @@ def lpars_to_mt(lpars: jax.Array) -> jax.Array:
     cg = jnp.cos(jnp.radians(gamma))
     # fmt: off
     mt = jnp.array([[     a * a, a * b * cg, a * c * cb],
-                                  [a * b * cg,      b * b, b * c * ca],
-                                  [a * c * cb, b * c * ca,      c * c]])
+                    [a * b * cg,      b * b, b * c * ca],
+                    [a * c * cb, b * c * ca,      c * c]])
     # fmt: on
     return mt
 
@@ -115,8 +115,8 @@ def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
 
     # fmt: off
     B = jnp.array([[astar, bstar * jnp.cos(gammastar_rad),       cstar * jnp.cos(betastar_rad)],
-                                 [    0, bstar * jnp.sin(gammastar_rad), -cstar * jnp.sin(betastar_rad) * ca],
-                                 [    0,                                       0,                     1. / c]])
+                   [    0, bstar * jnp.sin(gammastar_rad), -cstar * jnp.sin(betastar_rad) * ca],
+                   [    0,                               0,                             1. / c]])
     # fmt: on
     return B
 

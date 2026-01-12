@@ -141,13 +141,7 @@ def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float) -> jax.A
     tth = jnp.radians(tth)
     eta = jnp.radians(eta)
 
-    k_out_vec = jnp.array(
-        [
-            jnp.cos(tth),
-            -jnp.sin(tth) * jnp.sin(eta),
-            jnp.sin(tth) * jnp.cos(eta),
-        ]
-    )
+    k_out_vec = jnp.array([jnp.cos(tth), -jnp.sin(tth) * jnp.sin(eta), jnp.sin(tth) * jnp.cos(eta)])
 
     k_out = scale_norm_k(k_out_vec, wavelength)
 
