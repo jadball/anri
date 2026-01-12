@@ -13,6 +13,29 @@ Anri is in the very early stages of development and is not yet ready to use for 
 # Dependencies
 We currently target all stable releases of Python. Today this is `3.9 - 3.14` on Windows, ubuntu and OSX (ARM and x86).
 
+# Installation at the ESRF
+## From source (for developers)
+### Clone the repository
+```bash
+git clone git@github.com:jadball/anri.git anri
+cd anri
+```
+### Set up a mamba environment
+```bash
+module load mamba
+mamba create --prefix=./.conda -c conda-forge python pip setuptools
+mamba activate ./.conda
+```
+### Install build dependencies
+```bash
+python -m pip install --upgrade pip unidep
+```
+### Install conda, then pip deps, then the package itself (with `dev` optional deps) as editable.
+This gives you CUDA-enabled JAX.
+```bash
+unidep install .[dev,cuda12] -e
+```
+
 # Installation
 ## From Conda
 Coming soon!
@@ -35,11 +58,11 @@ which pip  # should yield something inside the environment <env-name>
 ```
 ### Install build dependencies
 ```bash
-pip install --upgrade pip unidep
+python -m pip install --upgrade pip unidep
 ```
 ### Install conda, then pip deps, then the package itself (with `dev` optional deps) as editable:
 ```bash
-unidep install .[dev]
+unidep install .[dev] -e
 ```
 
 # Development

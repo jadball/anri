@@ -5,12 +5,14 @@ dependencies:
   - pip: tqdm
   - pip: Dans-Diffraction
   - pip: polars
-  - conda: jax  # [unix]
+  - pip: jax
+  - conda: jax  # [osx]
   # there are more builds for jax on Conda than on pip (better OS/python support)
-  - pip: jax    # [win]
-  - pip: jaxlib # [win]
-  # ^ there are missing jax/jaxlib builds on conda-forge for windows
 optional_dependencies:
+  cuda12:
+    - pip: jax[cuda12]
+  cuda13:
+    - pip: jax[cuda13]
   dev:
     - pip: ruff
     - pip: ty
@@ -28,6 +30,7 @@ optional_dependencies:
     - pip: myst-parser
     - pip: nbsphinx
     - conda: pandoc  # needed for nbsphinx to render notebooks
+    - pip: ipython
     - pip: ipykernel  # needed for nbsphinx to render notebooks
     - pip: sphinx-copybutton
     - pip: sphinx-autobuild
@@ -42,6 +45,6 @@ optional_dependencies:
     - pip: ipykernel
     - pip: ipympl
     - pip: tqdm
-    - pip: jax
+#    - pip: jax
 #    - pip: silx[full]
 #    - conda: cctbx
