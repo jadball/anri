@@ -53,7 +53,11 @@ def detector_orientation_matrix(o11: float, o12: float, o21: float, o22: float) 
         \end{pmatrix}
     
     """
-    return jnp.array([[o11, o12, 0], [o21, o22, 0], [0, 0, 1]])
+    # fmt: off
+    return jnp.array([[o11, o12, 0],
+                             [o21, o22, 0],
+                             [  0,   0, 1]])
+    # fmt: on
 
 
 @jax.jit
@@ -175,11 +179,16 @@ def detector_transforms(
     $\matr{S_{\text{px size}}} = \begin{bmatrix} z_{\text{size}} & 0 & 0 \\ 0 & y_{\text{size}} & 0 \\ 0 & 0 & 1 \end{bmatrix}$ scales the pixel units to the (y_size, z_size) units.
     """
     beam_cen_shift = jnp.array([-z_center, -y_center, 0])  # shift to beam center in detector coords
-    pixel_size_scale = jnp.array([[z_size, 0, 0], [0, y_size, 0], [0, 0, 1]])  # change pixel units to units of y_size
-    det_flips = detector_orientation_matrix(o11, o12, o21, o22)  # detector orientation flips
-    cob_matrix = jnp.array(
-        [[0, 0, 1], [0, 1, 0], [1, 0, 0]]
-    )  # map (sc, fc) from (x, y) in detector frame to (z, y) in lab frame
+    # fmt: off
+    pixel_size_scale = jnp.array([[z_size,      0, 0],
+                                                [     0, y_size, 0],
+                                                [     0,      0, 1]])  # change pixel units to units of y_size
+    det_flips = detector_orientation_matrix(o11, o12,
+                                                     o21, o22)  # detector orientation flips
+    cob_matrix = jnp.array([[0, 0, 1],
+                                          [0, 1, 0],
+                                          [1, 0, 0]]) # map (sc, fc) from (x, y) in detector frame to (z, y) in lab frame
+    # fmt: on
     det_tilts = detector_rotation_matrix(tilt_x, tilt_y, tilt_z)
     x_distance_shift = jnp.array([distance, 0, 0])  # shift along lab x by sample-to-detector distance
 
