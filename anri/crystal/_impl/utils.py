@@ -116,7 +116,7 @@ def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
     # fmt: off
     B = jnp.array([[astar, bstar * jnp.cos(gammastar_rad),       cstar * jnp.cos(betastar_rad)],
                                  [    0, bstar * jnp.sin(gammastar_rad), -cstar * jnp.sin(betastar_rad) * ca],
-                                 [    0,                                       0,                                       1. / c]])
+                                 [    0,                                       0,                     1. / c]])
     # fmt: on
     return B
 
@@ -180,26 +180,6 @@ def B_to_rmt(B: jax.Array) -> jax.Array:
 
 
 @jax.jit
-def hkl_B_to_q_crystal(hkl: jax.Array, B: jax.Array) -> jax.Array:
-    """Convert hkl to Q in the crystal frame.
-
-    Parameters
-    ----------
-    hkl
-        [3] (h, k, l) like a Miller index.
-    B
-        [3,3] Reciprocal space orthogonalization matrix
-
-    Returns
-    -------
-    q_crystal: jax.Array
-        Q in the crystal frame
-    """
-    q_crystal = B @ hkl
-    return q_crystal
-
-
-@jax.jit
 def volume_direct(mt: jax.Array) -> jax.Array:
     """Get the volume of the direct space unit cell from the metric tensor.
 
@@ -233,59 +213,6 @@ def volume_recip(rmt: jax.Array) -> jax.Array:
     """
     V_recip = jnp.sqrt(jnp.linalg.det(rmt))
     return V_recip
-
-
-@jax.jit
-def UB_to_UBI(UB: jax.Array) -> jax.Array:
-    """Invert U.B to get (U.B)^-1.
-
-    Parameters
-    ----------
-    UB
-        [3,3] U.B matrix
-
-    Returns
-    -------
-    UBI: jax.Array
-        [3,3] (U.B)^-1 matrix
-    """
-    return jnp.linalg.inv(UB)
-
-
-@jax.jit
-def UBI_to_UB(UBI: jax.Array) -> jax.Array:
-    """Invert (U.B)^-1 to get (U.B).
-
-    Parameters
-    ----------
-    UBI
-        [3,3] (U.B)^-1 matrix
-
-    Returns
-    -------
-    UB: jax.Array
-        [3,3] U.B matrix
-    """
-    return jnp.linalg.inv(UBI)
-
-
-@jax.jit
-def UB_and_B_to_U(UB: jax.Array, B: jax.Array) -> jax.Array:
-    """Get U matrix from UB and B.
-
-    Parameters
-    ----------
-    UB
-        [3,3] U.B matrix
-    B
-        [3,3] Reciprocal space orthogonalization matrix
-
-    Returns
-    -------
-    U: jax.Arrray
-        [3,3] U matrix
-    """
-    return UB @ jnp.linalg.inv(B)
 
 
 @jax.jit
@@ -328,22 +255,3 @@ def lpars_to_B(lpars: jax.Array) -> jax.Array:
     rlpars = mt_to_lpars(rmt)
     B = lpars_rlpars_to_B(lpars, rlpars)
     return B
-
-
-@jax.jit
-def B_to_mt(B: jax.Array) -> jax.Array:
-    """Convert B matrix to metric tensor.
-
-    Parameters
-    ----------
-    B
-        [3,3] Reciprocal space orthogonalization matrix
-
-    Returns
-    -------
-    mt: jax.Array
-        [3,3] Metric tensor
-    """
-    rmt = B_to_rmt(B)
-    mt = rmt_to_mt(rmt)
-    return mt

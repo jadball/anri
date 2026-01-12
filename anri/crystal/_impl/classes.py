@@ -14,10 +14,7 @@ from Dans_Diffraction.functions_crystallography import find_spacegroup as dd_fin
 from anri.diffract import ds_to_tth, q_to_ds
 
 from .utils import (
-    UB_and_B_to_U,
     UBI_to_mt,
-    UBI_to_UB,
-    hkl_B_to_q_crystal,
     lpars_rlpars_to_B,
     lpars_to_mt,
     mt_to_lpars,
@@ -175,7 +172,7 @@ class Crystal(UnitCell, Symmetry):
 
         # # Dataframe of scattering info
         # # such as h, k, l, ds, tth, intensity
-        self._scatter_table = None
+        self.scatter_table = None
 
     def make_hkls(self, dsmax: float, wavelength: float, expand_to_p1: bool = True, tol: float = 0.001) -> None:
         """Generate integer ring HKLs, two-theta and d* values within a given max d* range and a supplied wavelength.
@@ -207,9 +204,9 @@ class Crystal(UnitCell, Symmetry):
         if not expand_to_p1:
             hkl = self._sym.remove_symmetric_reflections(hkl)
         hkl = self._uc.sort_hkl(hkl)
-        hkl_B_to_q_crystal_vec = jax.vmap(hkl_B_to_q_crystal, in_axes=[0, None])
+        q_crystal = (self.B @ hkl.T).T
+
         q_to_ds_vec = jax.vmap(q_to_ds)
-        q_crystal = hkl_B_to_q_crystal_vec(hkl, self.B)
         ds = q_to_ds_vec(q_crystal)
         tth = ds_to_tth(ds, wavelength)
 
@@ -222,7 +219,7 @@ class Crystal(UnitCell, Symmetry):
         ds = jax.device_get(ds)
         tth = jax.device_get(tth)
 
-        self._scatter_table = pd.DataFrame({"h": hkl[:, 0], "k": hkl[:, 1], "l": hkl[:, 2], "tth": tth, "ds": ds})
+        self.scatter_table = pd.DataFrame({"h": hkl[:, 0], "k": hkl[:, 1], "l": hkl[:, 2], "tth": tth, "ds": ds})
 
         self._ring_ds_tol = tol
 
@@ -241,9 +238,9 @@ class Crystal(UnitCell, Symmetry):
             If the scattering table hasn't been generated yet via :func:`make_hkls`.
         """
         # all hkls
-        if self._scatter_table is None:
+        if self.scatter_table is None:
             raise AttributeError("Must compute first with self.makerings(dsmax, wavelength)")
-        return jnp.array(self._scatter_table[["h", "k", "l"]].to_numpy())
+        return jnp.array(self.scatter_table[["h", "k", "l"]].to_numpy())
 
     @property
     def alltth(self) -> jax.Array:
@@ -259,9 +256,9 @@ class Crystal(UnitCell, Symmetry):
         AttributeError
             If the scattering table hasn't been generated yet via :func:`make_hkls`.
         """
-        if self._scatter_table is None:
+        if self.scatter_table is None:
             raise AttributeError("Must compute first with self.makerings(dsmax, wavelength)")
-        return jnp.array(self._scatter_table["tth"].to_numpy())
+        return jnp.array(self.scatter_table["tth"].to_numpy())
 
     @property
     def allds(self) -> jax.Array:
@@ -277,9 +274,9 @@ class Crystal(UnitCell, Symmetry):
         AttributeError
             If the scattering table hasn't been generated yet via :func:`make_hkls`.
         """
-        if self._scatter_table is None:
+        if self.scatter_table is None:
             raise AttributeError("Must compute first with self.makerings(dsmax, wavelength)")
-        return jnp.array(self._scatter_table["ds"].to_numpy())
+        return jnp.array(self.scatter_table["ds"].to_numpy())
 
 
 class Grain(UnitCell):
@@ -305,7 +302,7 @@ class Grain(UnitCell):
         UB: jax.Array
             [3,3] U.B matrix
         """
-        return UBI_to_UB(self.UBI)
+        return jnp.linalg.inv(self.UBI)
 
     @property
     def U(self) -> jax.Array:
@@ -316,7 +313,7 @@ class Grain(UnitCell):
         U: jax.Array
             [3,3] U matrix
         """
-        return UB_and_B_to_U(self.UB, self.B)
+        return self.UB @ jnp.linalg.inv(self.B)
 
 
 def groupby_isclose(series: pd.Series, atol: float = 0, rtol: float = 0) -> pd.Series:
@@ -359,7 +356,42 @@ class Structure(Crystal):
         super().__init__(unitcell, symm)
 
         self._scatterer = dd_Scatter(self._struc)
+        self._rings_table = None
         self._rings_dict = None
+
+    # TODO: Setter to clear self.rings_table if self.scatter_table is changed
+
+    @property
+    def rings_table(self) -> pd.DataFrame:
+        """Get a dataframe of HKLs with meaningful intensities.
+
+        Computed once on-demand if self.allhkls is preset. Intensities are included!
+
+        Returns
+        -------
+        pd.DataFrame
+            Dataframe
+
+        Raises
+        ------
+        AttributeError
+            If the scattering table hasn't been generated yet via :func:`make_hkls`.
+        """
+        if self._rings_table is None:
+            if self.scatter_table is None:
+                raise AttributeError("Must compute all reflections first with self.make_hkls(dsmax, wavelength)")
+            else:
+                # Add intensity to the scatter table
+                self.scatter_table = self.scatter_table.with_columns(
+                    intensity=self._scatterer.intensity(self.allhkls, scattering_type="xray", int_hkl=True)
+                )
+                # Filter hkls with meaningful intensities
+                self._rings_table = self.scatter_table.filter(pd.col("intensity") > 0.01)
+                # Group by d-star to get ring IDs
+                ring_ids = groupby_isclose(self._rings_table["ds"], atol=self._ring_ds_tol)
+                # Add them to the scatter table
+                self._rings_table = self._rings_table.with_columns(ring_id=ring_ids)
+        return self._rings_table
 
     @property
     def rings_dict(self) -> dict[int, pd.DataFrame]:
@@ -377,28 +409,15 @@ class Structure(Crystal):
         AttributeError
             If the scattering table hasn't been generated yet via :func:`make_hkls`.
         """
-        if self._scatter_table is None:
+        if self.scatter_table is None:
             raise AttributeError("Must compute all reflections first with self.make_hkls(dsmax, wavelength)")
         else:
-            if self._rings_dict is None:
-                self._scatter_table = self._scatter_table.with_columns(
-                    intensity=self._scatterer.intensity(self.allhkls, scattering_type="xray", int_hkl=True)
+            return {
+                ring_id: ring
+                for ring_id, (refl_id, ring) in enumerate(
+                    list(self.rings_table.group_by(by=pd.col(name="ring_id"), maintain_order=True))
                 )
-                # get hkls with meaningful intensities
-                real_hkls = self._scatter_table.filter(pd.col("intensity") > 0.01)
-
-                ring_ids = groupby_isclose(real_hkls["ds"], atol=self._ring_ds_tol)
-                real_hkls = real_hkls.with_columns(ring_id=ring_ids)
-
-                # group by and split into dicts
-                # group by d-star with a tolerance
-                self._rings_dict = {
-                    ring_id: ring
-                    for ring_id, (refl_id, ring) in enumerate(
-                        list(real_hkls.group_by(by=pd.col(name="ring_id"), maintain_order=True))
-                    )
-                }
-            return self._rings_dict
+            }
 
     @property
     def ringhkls(self) -> dict[float, jax.Array]:
@@ -415,7 +434,7 @@ class Structure(Crystal):
             If the scattering table hasn't been generated yet via :func:`make_hkls`.
         """
         # all hkls
-        if self._scatter_table is None:
+        if self.scatter_table is None:
             raise AttributeError("Must compute first with self.make_hkls(dsmax, wavelength)")
         return {ring["ds"][0]: jnp.array(ring[["h", "k", "l"]].to_numpy()) for ring in self.rings_dict.values()}
 
@@ -433,7 +452,7 @@ class Structure(Crystal):
         AttributeError
             If the scattering table hasn't been generated yet via :func:`make_hkls`.
         """
-        if self._scatter_table is None:
+        if self.scatter_table is None:
             raise AttributeError("Must compute first with self.make_hkls(dsmax, wavelength)")
         return jnp.concatenate(list(self.ringhkls.values()))
 
@@ -452,7 +471,7 @@ class Structure(Crystal):
             If the scattering table hasn't been generated yet via :func:`make_hkls`.
         """
         # all hkls
-        if self._scatter_table is None:
+        if self.scatter_table is None:
             raise AttributeError("Must compute first with self.make_hkls(dsmax, wavelength)")
         return jnp.array([ring["tth"][0] for ring in self.rings_dict.values()])
 
@@ -470,7 +489,7 @@ class Structure(Crystal):
         AttributeError
             If the scattering table hasn't been generated yet via :func:`make_hkls`.
         """
-        if self._scatter_table is None:
+        if self.scatter_table is None:
             raise AttributeError("Must compute first with self.make_hkls(dsmax, wavelength)")
         return jnp.array(list(self.ringhkls.keys()))
 
@@ -488,7 +507,7 @@ class Structure(Crystal):
         AttributeError
             If the scattering table hasn't been generated yet via :func:`make_hkls`.
         """
-        if self._scatter_table is None:
+        if self.scatter_table is None:
             raise AttributeError("Must compute first with self.make_hkls(dsmax, wavelength)")
         return jnp.array([hkls.shape[0] for hkls in self.ringhkls.values()])
 

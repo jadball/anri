@@ -2,13 +2,8 @@
 
 from ._impl.classes import Crystal, Grain, Structure, Symmetry, UnitCell
 from ._impl.utils import (
-    B_to_mt,
     B_to_rmt,
-    UB_and_B_to_U,
-    UB_to_UBI,
     UBI_to_mt,
-    UBI_to_UB,
-    hkl_B_to_q_crystal,
     lpars_rlpars_to_B,
     lpars_to_B,
     lpars_to_mt,
@@ -25,11 +20,7 @@ __all__ = [
     "Structure",
     "Symmetry",
     "UnitCell",
-    "B_to_mt",
     "B_to_rmt",
-    "UB_and_B_to_U",
-    "UB_to_UBI",
-    "UBI_to_UB",
     "UBI_to_mt",
     "lpars_rlpars_to_B",
     "lpars_to_B",

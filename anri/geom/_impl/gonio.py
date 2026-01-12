@@ -5,53 +5,6 @@ import jax.numpy as jnp
 
 from .utils import rot_x, rot_y, rot_z
 
-### These below functions introduce extra confusion. Chi and Wedge are just rotations around X and Y respectively.
-### If we understand well our rot_x, rot_y, and rot_z functions, we shouldn't need them.
-
-# @jax.jit
-# def chimat(chi: float) -> jax.Array:
-#     """Get the rotation matrix that applies the chi motor (roll the gonio around the beam).
-
-#     Equivalent to :func:`ImageD11.gv_general.chimat`
-
-#     Parameters
-#     ----------
-#     chi
-#         Chi motor angle (degrees)
-
-#     Returns
-#     -------
-#     jax.Array
-#         [3,3] Rotation matrix by applying the chi motor
-
-#     Notes
-#     -----
-#     For a 90 degree positive rotation, sample Z should go to lab -Y
-
-#     C @ (X,Y,Z) = (X,-Z,Y)
-#     Therefore C @ v_lab = v_sample
-#     """
-#     return rot_x(chi).T
-
-
-# @jax.jit
-# def wedgemat(wedge: float) -> jax.Array:
-#     """Get the rotation matrix that applies the wedge (roll the gonio around the y axis).
-
-#     Equivalent to :func:`ImageD11.gv_general.wedgemat`
-
-#     Parameters
-#     ----------
-#     wedge
-#         Wedge motor angle (degrees)
-
-#     Returns
-#     -------
-#     jax.Array
-#         [3,3] Rotation matrix by applying the wedge motor
-#     """
-#     return rot_y(wedge)
-
 
 @jax.jit
 def sample_to_lab(v_sample: jax.Array, omega: float, wedge: float, chi: float, dty: float, y0: float) -> jax.Array:
