@@ -3,7 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-from .utils import rmat_from_axis_angle
+from .utils import rot_x, rot_y, rot_z
 
 
 @jax.jit
@@ -81,12 +81,11 @@ def detector_rotation_matrix(tilt_x: float, tilt_y: float, tilt_z: float) -> jax
     -----
     We have $\matr{R} = \matr{R_x} \matr{R_y} \matr{R_z}$ around $x,y,z$ respectively.
     """
-    R1 = rmat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), jnp.degrees(tilt_z))
-    R2 = rmat_from_axis_angle(jnp.array([0.0, 1.0, 0.0]), jnp.degrees(tilt_y))
-    R3 = rmat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), jnp.degrees(tilt_x))
+    R_x = rot_x(jnp.degrees(tilt_x))
+    R_y = rot_y(jnp.degrees(tilt_y))
+    R_z = rot_z(jnp.degrees(tilt_z))
 
-    # combine in order R3 @ R2 @ R1
-    return R3 @ R2 @ R1
+    return R_x @ R_y @ R_z
 
 
 @jax.jit
