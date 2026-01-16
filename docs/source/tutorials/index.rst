@@ -58,3 +58,4 @@ There's a very basic demonstration of how to perform a forward model with Anri.
 .. nbgallery::
     
     forward_model_simple
+    forward_model_covariance

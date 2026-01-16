@@ -39,7 +39,6 @@ optional_dependencies:
     - pip: packaging
     - pip: coverage
   sandbox:
-    - pip: numpy<2
     - pip: matplotlib
     - pip: ImageD11
     - pip: ipykernel
