@@ -22,7 +22,6 @@ pip-wheel-metadata/
 /*.iml
 pyrightconfig.json
 
-
 # jupyter notebooks
 
 .ipynb_checkpoints
@@ -54,9 +53,25 @@ __pycache__
 docs/build
 site/
 docs/source/reference/generated/
+docs/source/tutorials/*.cif
+docs/source/tutorials/*.mcif
 
 # local packages
 anri/sandbox/jaxkd
+anri/sandbox/forward_backward/optax
+anri/sandbox/forward_backward/*.cif
+anri/sandbox/forward_backward/*.par
+anri/sandbox/forward_backward/*.json
+anri/sandbox/forward_backward/*.map
+anri/sandbox/forward_backward/*.h5
+anri/sandbox/forward_backward/*.flt*
+anri/sandbox/*.cif
+anri/sandbox/*.par
+anri/sandbox/*.json
+anri/sandbox/*.map
+anri/sandbox/*.ubi
+anri/sandbox/*.h5
+anri/sandbox/*.flt*
 
 # local test data
 tests/data/sandbox/refine
