@@ -26,9 +26,9 @@ def scale_norm_k(k_vec: jax.Array, wavelength: float) -> jax.Array:
         \vec{k_{\text{scaled}}} = \frac{1}{\lambda}\frac{\vec{k}}{\abs{\vec{k}}}
 
     """
-    k = 1 / wavelength  # ImageD11 convention
+    scale_factor = 1 / wavelength  # ImageD11 convention
     k_vec_norm = k_vec / jnp.linalg.norm(k_vec)
-    k_vec_scaled = k * k_vec_norm
+    k_vec_scaled = scale_factor * k_vec_norm
     return k_vec_scaled
 
 

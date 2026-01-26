@@ -181,3 +181,100 @@ class TestOmegaSolns(unittest.TestCase):
         np.testing.assert_allclose(omega2_anri, omega2_id11)
         np.testing.assert_array_equal(valid1_anri, valid_id11)
         np.testing.assert_array_equal(valid2_anri, valid_id11)
+
+
+class TestDetToQSample(unittest.TestCase):
+    def test_id11(self):
+        import time
+
+        import ImageD11.transform
+        from ImageD11.columnfile import columnfile
+        from ImageD11.parameters import AnalysisSchema
+        from jax import random
+
+        # get some basic ImageD11 geometry
+        pars = AnalysisSchema.from_default().geometry_pars_obj
+        # make it slightly spicier
+        pars.set("tilt_x", 0.4)
+        pars.set("tilt_y", -0.345)
+        pars.set("tilt_z", 0.2)
+        pars.set("chi", 10)
+        pars.set("wedge", -17)
+
+        # RNG
+        key = random.key(time.time_ns())
+        key, *subkeys = random.split(key, 4)
+
+        # detector peaks
+        npks = 100_000
+        fc = random.uniform(subkeys[0], shape=(npks,), minval=0.0, maxval=2048.0)
+        sc = random.uniform(subkeys[1], shape=(npks,), minval=0.0, maxval=2048.0)
+        om = random.uniform(subkeys[2], shape=(npks,), minval=-180.0, maxval=180.0)
+
+        # bung em in a columnfile
+        cf = columnfile(new=True)
+        cf.nrows = npks
+        cf.addcolumn(fc, "fc")
+        cf.addcolumn(sc, "sc")
+        cf.addcolumn(om, "omega")
+
+        # compute geometry with ImageD11
+        cf.parameters = pars
+        cf.updateGeometry()
+
+        # incident wavevector, normalised
+        k_in = anri.diffract.scale_norm_k(np.array([1.0, 0, 0]), pars.get("wavelength"))
+
+        det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(
+            pars.get("y_center"),
+            pars.get("y_size"),
+            pars.get("tilt_y"),
+            pars.get("z_center"),
+            pars.get("z_size"),
+            pars.get("tilt_z"),
+            pars.get("tilt_x"),
+            pars.get("distance"),
+            pars.get("o11"),
+            pars.get("o12"),
+            pars.get("o21"),
+            pars.get("o22"),
+        )
+
+        # detector peak positions in lab frame
+        det_to_lab_vec = vmap(
+            anri.geom.det_to_lab,
+            in_axes=(0, 0, None, None, None),
+        )
+        v_lab_me = det_to_lab_vec(cf.sc, cf.fc, det_trans, beam_cen_shift, x_distance_shift)
+        v_lab_id11 = jnp.column_stack([cf.xl, cf.yl, cf.zl])
+        np.testing.assert_allclose(v_lab_me, v_lab_id11)
+
+        # q_lab - just subtract diffraction origins then normalise and scale by 1/wavelength
+        peak_lab_to_k_out_vec = vmap(
+            anri.diffract.peak_lab_to_k_out,
+            in_axes=(0, None, None),
+        )
+        k_out_me = peak_lab_to_k_out_vec(v_lab_me, jnp.array([0.0, 0.0, 0.0]), pars.get("wavelength"))
+        k_to_q_lab_vec = vmap(
+            anri.diffract.k_to_q_lab,
+            in_axes=(None, 0),  # constant k_in
+        )
+        q_lab_me = k_to_q_lab_vec(k_in, k_out_me)
+        q_lab_id11 = ImageD11.transform.compute_k_vectors(cf.tth, cf.eta, pars.get("wavelength")).T
+        np.testing.assert_allclose(q_lab_me, q_lab_id11)
+
+        # q_sample - rotate q_lab to sample frame by applying omega, wedge, chi
+        lab_to_sample_vec = vmap(
+            anri.geom.lab_to_sample,
+            in_axes=(0, 0, None, None, None, None),
+        )
+        q_sample_me = lab_to_sample_vec(
+            q_lab_me,
+            cf.omega,
+            pars.get("wedge"),
+            pars.get("chi"),
+            0.0,
+            0.0,
+        )
+        q_sample_id11 = jnp.column_stack([cf.gx, cf.gy, cf.gz])
+        np.testing.assert_allclose(q_sample_me, q_sample_id11)
