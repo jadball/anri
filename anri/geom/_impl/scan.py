@@ -56,6 +56,9 @@ Reconstruction space (iradon output when plotted with origin="lower"):
 
 """
 
+# allow union operator in type annotations |
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 
