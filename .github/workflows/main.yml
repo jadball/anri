@@ -161,7 +161,7 @@ jobs:
         with:
           activate-environment: docs-env
           channels: conda-forge
-          python-version: "3.11" # Stable version for docs
+          python-version: "3.14" # Later version needed for jax autodoc
           use-mamba: true
           conda-remove-defaults: true
 
