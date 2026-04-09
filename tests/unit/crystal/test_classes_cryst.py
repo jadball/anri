@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-import anri
+import anri.crystal
 
 jax.config.update("jax_enable_x64", True)
 

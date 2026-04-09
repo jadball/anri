@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import vmap
 
-import anri
+import anri.geom
 
 jax.config.update("jax_enable_x64", True)
 
