@@ -29,6 +29,7 @@ Anri documentation
 Anri is a Python library for processing polycrystalline diffraction data with `JAX <https://docs.jax.dev/en/latest/>`_.
 
 `GitHub Repository <https://github.com/jadball/anri>`_  
+
 `License <https://raw.githubusercontent.com/jadball/anri/main/LICENSE>`_
 
 .. toctree::

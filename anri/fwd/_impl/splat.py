@@ -114,7 +114,7 @@ def prepare_cov(cov: jax.Array) -> tuple[jax.Array, jax.Array]:
 def peak_to_pixels(
     centroid: jax.Array, cov: jax.Array, amplitude: float, bins: tuple[jax.Array], window_size: int
 ) -> tuple[jax.Array, jax.Array]:
-    """Get N*(window_size,) image of normalised pixel intensities around centroid in N dimensions.
+    r"""Get N*(window_size,) image of normalised pixel intensities around centroid in N dimensions.
 
     This can be vectorised over centroids, see :func:`peaks_to_pixels`.
 

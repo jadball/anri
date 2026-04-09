@@ -23,9 +23,9 @@ def sample_to_lab(v_sample: jax.Array, omega: float, wedge: float, chi: float, d
         Wedge motor value (degrees)
     chi
         Chi motor value (degrees)
-    dty:
+    dty
         Base diffractometer Y translation value (same units as v_sample)
-    y0:
+    y0
         The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
 
     Returns
@@ -71,9 +71,9 @@ def lab_to_sample(v_lab: jax.Array, omega: float, wedge: float, chi: float, dty:
         Wedge motor value (degrees)
     chi
         Chi motor value (degrees)
-    dty:
+    dty
         Base diffractometer Y translation value (same units as v_sample)
-    y0:
+    y0
         The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
 
     Returns
@@ -122,7 +122,7 @@ def find_dty_for_beam_xy(
         Wedge motor value (degrees)
     chi
         Chi motor value (degrees)
-    y0:
+    y0
         The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
 
     Returns

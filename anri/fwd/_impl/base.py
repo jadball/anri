@@ -5,7 +5,8 @@ from typing import Iterable
 import jax
 import jax.numpy as jnp
 
-import anri
+from anri.diffract import omega_solns, q_lab_to_k_out, scale_norm_k
+from anri.geom import lab_to_sample, sample_to_lab
 
 
 @jax.jit
@@ -59,14 +60,14 @@ def hkl_to_k_omega(
     q_sample = jnp.linalg.inv(ubi) @ hkl
 
     k_in_lab = jnp.array([1.0, ky, kz])
-    k_in_lab_norm = anri.diffract.scale_norm_k(k_in_lab, wavelength)
-    k_in_sample_norm = anri.geom.lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
+    k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
+    k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
 
-    omega, valid = anri.diffract.omega_solns(q_sample, etasign, k_in_sample_norm)
+    omega, valid = omega_solns(q_sample, etasign, k_in_sample_norm)
 
-    q_lab = anri.geom.sample_to_lab(q_sample, omega, wedge, chi, 0.0, 0.0)
+    q_lab = sample_to_lab(q_sample, omega, wedge, chi, 0.0, 0.0)
 
-    k_out_lab = anri.diffract.q_lab_to_k_out(q_lab, k_in_lab_norm)
+    k_out_lab = q_lab_to_k_out(q_lab, k_in_lab_norm)
 
     return k_in_lab, k_out_lab, omega, valid
 

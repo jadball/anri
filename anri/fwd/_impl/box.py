@@ -24,7 +24,7 @@ def get_centroid_box(
     fc_lab: jax.Array,
     norm_lab: jax.Array,
 ) -> jax.Array:
-    """Forward project (ubi, hkl) to get 3D peak centroid on detector (sc, fc, omega) in the box-beam case.
+    r"""Forward project (ubi, hkl) to get 3D peak centroid on detector (sc, fc, omega) in the box-beam case.
 
     This can be vectorised over ubis and origin_samples, see :func:`get_centroid_box_all_grains`.
     It can then be vectorised in an outer loop over hkl, see :func:`get_centroid_box_all`.
