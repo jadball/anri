@@ -26,7 +26,7 @@ def mahalanobis_sq(centroid: jax.Array, coord: jax.Array, inv_cov: jax.Array) ->
 
     Notes
     -----
-    From Wikipedia [1]:
+    From Wikipedia [1]_:
 
     Given two points $\vec{x}$ and $\vec{y}$, the squared Mahalanobis distance between them with respect to a probability distribution $Q$, that has a positiuve semi-definite covariance matrix $\matr{\Sigma}$ is:
 
@@ -90,7 +90,7 @@ def prepare_cov(cov: jax.Array) -> tuple[jax.Array, jax.Array]:
 
     Notes
     -----
-    From Wikipedia [1]:
+    From Wikipedia [1]_:
 
     For a $N$-dimensional normal distribution, the probability density of an observation $\vec{x}$ can be determined:
 

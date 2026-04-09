@@ -3,7 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-import anri
+from anri.geom import raytrace_to_det, sample_to_lab
 
 from .base import hkl_to_k_omega, propagate_cov
 
@@ -39,17 +39,17 @@ def get_centroid_box(
         [3] (h,k,l) reciprocal space vector
     etasign
         +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
-    wavelength:
+    wavelength
         Wavelength in angstroms
-    ky:
+    ky
         y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
-    kz:
+    kz
         z-component of the beam in the lab frame. Represents vertical beam divergence, usually zero.
-    wedge:
+    wedge
         Wedge motor value (degrees)
-    chi:
+    chi
         Chi motor value (degrees)
-    y0:
+    y0
         The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
     sc_lab
         [3] Laboratory basis vector for the slow direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
@@ -81,9 +81,9 @@ def get_centroid_box(
         y0,
     )
 
-    origin_lab = anri.geom.sample_to_lab(origin_sample, omega, wedge, chi, 0.0, 0.0)
+    origin_lab = sample_to_lab(origin_sample, omega, wedge, chi, 0.0, 0.0)
 
-    sc, fc = anri.geom.raytrace_to_det(k_out_lab, origin_lab, sc_lab, fc_lab, norm_lab)
+    sc, fc = raytrace_to_det(k_out_lab, origin_lab, sc_lab, fc_lab, norm_lab)
 
     centroid = jnp.array([sc, fc, omega])
 
@@ -127,17 +127,17 @@ def propagate_cov_box(
         [3] (h,k,l) reciprocal space vector
     etasign
         +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
-    wavelength:
+    wavelength
         Wavelength in angstroms
-    ky:
+    ky
         y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
-    kz:
+    kz
         z-component of the beam in the lab frame. Represents vertical beam divergence, usually zero.
-    wedge:
+    wedge
         Wedge motor value (degrees)
-    chi:
+    chi
         Chi motor value (degrees)
-    y0:
+    y0
         The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
     sc_lab
         [3] Laboratory basis vector for the slow direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
