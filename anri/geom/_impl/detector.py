@@ -319,11 +319,11 @@ def raytrace_to_det(
         [3] Outgoing scaled normalised wave-vector in lab frame
     origin_lab
         [3] Origin of diffraction in lab frame
-    ssc_lab: jax.Array
+    sc_lab
         [3] Laboratory basis vector for the slow direction on the detector from :func:`detector_basis_vectors_lab`.
-    fc_lab: jax.Array
+    fc_lab
         [3] Laboratory basis vector for the fast direction on the detector from :func:`detector_basis_vectors_lab`.
-    norm_lab: jax.Array
+    norm_lab
         [3] Laboratory basis vector for the detector normal from :func:`detector_basis_vectors_lab`.
 
     Returns

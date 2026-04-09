@@ -247,7 +247,7 @@ def omega_solns(
     etasign
         +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
     k_in_sample
-        Incoming scaled normalised wave-vector in sample frame
+        [3] Incoming scaled normalised wave-vector in sample frame
 
     Returns
     -------
@@ -380,6 +380,7 @@ def omega_solns(
 
     phi = jnp.arctan2(alpha, beta)  # cos term / sin term
     R = jnp.sqrt(alpha * alpha + beta * beta)
+
     # handle cases where R is very close to zero
     eps = 1e-12
     R_safe = jnp.where(R < eps, eps, R)
@@ -394,18 +395,14 @@ def omega_solns(
 
     # asin only valid for -1 <= quot <= 1
     asin_term = jnp.where(valid, jnp.arcsin(jnp.clip(quot, -1.0, 1.0)), 0.0)
-    omega1 = asin_term - phi
-    omega2 = -asin_term - phi - jnp.pi
 
-    # map into -pi to pi
-    angmod_omega1 = jnp.arctan2(jnp.sin(omega1), jnp.cos(omega1))  # postive eta
-    angmod_omega2 = jnp.arctan2(jnp.sin(omega2), jnp.cos(omega2))  # negative eta
+    # If etasign is 1:  1 * asin - phi - 0
+    # If etasign is -1: -1 * asin - phi - pi
+    # Shift = (1 - etasign) * pi / 2  => if 1, shift=0; if -1, shift=pi
+    shift = (1.0 - etasign) * (jnp.pi / 2.0)
+    omega_rad = (etasign * asin_term) - phi - shift
 
-    # Convert the etasign to a boolean condition
-    condition = etasign == 1
+    # Clean wrap to [-pi, pi] and convert
+    omega_wrapped = jnp.arctan2(jnp.sin(omega_rad), jnp.cos(omega_rad))
 
-    angmod_result = jnp.where(condition, angmod_omega1, angmod_omega2)
-
-    omega = jnp.degrees(angmod_result)
-
-    return omega, valid
+    return jnp.degrees(omega_wrapped), valid

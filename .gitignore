@@ -59,6 +59,10 @@ docs/source/tutorials/*.mcif
 # local packages
 anri/sandbox/jaxkd
 anri/sandbox/forward_backward/optax
+
+# sandbox
+# for now, ignore whole sandbox during dev
+anri/sandbox/*
 anri/sandbox/forward_backward/*.cif
 anri/sandbox/forward_backward/*.par
 anri/sandbox/forward_backward/*.json

@@ -115,8 +115,10 @@ mathjax3_config = {
     'tex': {
         'macros': {
             'bm': [r'\boldsymbol{#1}',1],
-            'vec': [r'\mathbf{#1}', 1],
-            'matr': [r'\bm{\mathit{#1}}', 1],
+            # 'vec': [r'\mathbf{#1}', 1],
+            # 'vec': [r'\vec{#1}', 1],
+            # 'matr': [r'\bm{\mathit{#1}}', 1], # bold italic
+            'matr': [r'\mathbf{#1}', 1],
             'tens': [r'\bm{#1}', 1],
             'abs': [r'\lvert #1 \rvert', 1],
         }
