@@ -161,7 +161,8 @@ class TestOmegaSolns(unittest.TestCase):
         wedge = -5.0
         dty = 0.0
         y0 = 0.0
-        post = self.wedgechi_id11(wedge, chi)
+        # imaged11 wedge definition is negative
+        post = self.wedgechi_id11(-wedge, chi)
 
         # convert k_in to sample frame
         # this is handled by the post matrix in ImageD11
@@ -271,7 +272,7 @@ class TestDetToQSample(unittest.TestCase):
         q_sample_me = lab_to_sample_vec(
             q_lab_me,
             cf.omega,
-            pars.get("wedge"),
+            -pars.get("wedge"),  # ImageD11 wedge sign is negative
             pars.get("chi"),
             0.0,
             0.0,

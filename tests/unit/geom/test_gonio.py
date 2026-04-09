@@ -106,14 +106,14 @@ class TestSampleToLab(unittest.TestCase):
 
     def test_wedge(self):
         omega = 0.0
-        wedge = -90.0
+        wedge = 90.0
         chi = 0.0
         dty = 0.0
         y0 = 0.0
 
         # as angle increases, diffractometer falls towards detector
         # sample z ends up along lab x
-        # in ImageD11, the sign of the wedge is flipped.
+        # in ImageD11, the sign of the wedge is flipped. It isn't for us.
         v_sample = jnp.array([0.0, 0.0, 1.0])
         result = anri.geom.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
         desired = jnp.array([1.0, 0.0, 0.0])
@@ -150,7 +150,7 @@ class TestSampleToLab(unittest.TestCase):
         sample_to_lab_vec = jax.vmap(anri.geom.sample_to_lab)
         result = sample_to_lab_vec(vec_sample, omega_arr, wedge_arr, chi_arr, dty, y0)
         desired = compute_grain_origins(
-            omega=omega_arr, wedge=wedge, chi=chi, t_x=vec_sample[:, 0], t_y=vec_sample[:, 1], t_z=vec_sample[:, 2]
+            omega=omega_arr, wedge=-wedge, chi=chi, t_x=vec_sample[:, 0], t_y=vec_sample[:, 1], t_z=vec_sample[:, 2]
         ).T
         np.testing.assert_allclose(result, desired)
 
@@ -178,3 +178,64 @@ class TestSampleToLab(unittest.TestCase):
         vec_lab = sample_to_lab_vec(vec_sample, omega, wedge, chi, dty, y0)
         result = lab_to_sample_vec(vec_lab, omega, wedge, chi, dty, y0)
         np.testing.assert_allclose(result, desired)
+
+
+class TestFindDtyForBeamXY(unittest.TestCase):
+    def test_simple(self):
+        wedge = 0.0
+        chi = 0.0
+        omega = 90.0
+        y0 = 0.0
+
+        # fmt: off
+        v_sample = jnp.array([1.0, 0.0, 0.0])
+        k_in_lab = jnp.array([1.0, 0.0, 0.0])
+        # fmt: on
+
+        # sample vector is along x
+        # after rotating 90 degrees,
+        # should be pointing in +y
+        # need to set dty to -1 to bring this point into the beam
+
+        # fmt: off
+        dty_desired = jnp.array([-1.0])
+        # fmt: on
+        dty_result = anri.geom.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
+        np.testing.assert_allclose(dty_desired, dty_result)
+
+    def test_simple_y0(self):
+        wedge = 0.0
+        chi = 0.0
+        omega = 90.0
+        y0 = 1.0
+
+        # fmt: off
+        v_sample = jnp.array([1.0, 0.0, 0.0])
+        k_in_lab = jnp.array([1.0, 0.0, 0.0])
+        # fmt: on
+
+        # we want (dty - y0) = -1.0
+
+        # fmt: off
+        dty_desired = jnp.array([0.0])
+        # fmt: on
+        dty_result = anri.geom.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
+        self.assertAlmostEqual(dty_desired, dty_result)
+
+    def test_imaged11(self):
+        wedge = 0.0
+        chi = 0.0
+        omega = 12.4
+        y0 = 15.6
+
+        # fmt: off
+        v_sample = jnp.array([0.2, 0.3, -0.4])
+        k_in_lab = jnp.array([1.0, 0.0, 0.0])
+        # fmt: on
+
+        # fmt: off
+        from ImageD11.sinograms.geometry import dty_values_grain_in_beam
+        dty_desired = dty_values_grain_in_beam(v_sample[0], v_sample[1], y0, omega)
+        # fmt: on
+        dty_result = anri.geom.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
+        self.assertAlmostEqual(dty_desired, dty_result)

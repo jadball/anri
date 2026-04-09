@@ -46,7 +46,7 @@ def sample_to_lab(v_sample: jax.Array, omega: float, wedge: float, chi: float, d
     v_dty = jnp.array([0.0, dty - y0, 0.0])
 
     C = rot_x(chi)
-    W = rot_y(-wedge)
+    W = rot_y(wedge)
     R = rot_z(omega)
 
     v_lab = v_dty + (W @ C @ R @ v_sample)
@@ -94,9 +94,53 @@ def lab_to_sample(v_lab: jax.Array, omega: float, wedge: float, chi: float, dty:
     v_dty = jnp.array([0.0, dty - y0, 0.0])
 
     C = rot_x(chi)
-    W = rot_y(-wedge)
+    W = rot_y(wedge)
     R = rot_z(omega)
 
     v_sample = R.T @ C.T @ W.T @ (v_lab - v_dty)
 
     return v_sample
+
+
+@jax.jit
+def find_dty_for_beam_xy(
+    v_sample: jax.Array, k_in_lab: jax.Array, omega: float, wedge: float, chi: float, y0: float
+) -> jax.Array:
+    """Find the dty value required to make the beam intersect a specific point v_sample at a given omega.
+
+    This is only valid for the scanning case (beam can be approximated as a ray).
+
+    Parameters
+    ----------
+    v_sample
+        [3] Vector in sample coordinates
+    k_in_lab
+        [3] Incoming wave-vector in lab frame
+    omega
+        Omega motor value (degrees)
+    wedge
+        Wedge motor value (degrees)
+    chi
+        Chi motor value (degrees)
+    y0:
+        The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
+
+    Returns
+    -------
+    dty_required: float
+        dty value that brings v_sample into beam at angle omega
+    """
+    # Rotate v_sample into v_lab, ignoring y0 and dty for now (just find angles)
+    v_lab = sample_to_lab(v_sample, omega, wedge, chi, 0.0, 0.0)
+
+    # Find slope of ray in lab frame
+    beam_slope = k_in_lab[1] / k_in_lab[0]
+
+    # Find y value of ray at lab x coordinate
+    y_ray = beam_slope * v_lab[0]
+
+    # Find dty required
+    # When dty = y0, y_ray
+    dty_required = y_ray - v_lab[1] + y0
+
+    return dty_required

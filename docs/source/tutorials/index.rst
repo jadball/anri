@@ -29,7 +29,7 @@ Our goniometer stack is as follows::
 
     omega - roll around Z axis
     chi - roll around X axis
-    wedge - roll around Y axis (in ImageD11 this has a negative sign, so we copy that too)
+    wedge - roll around Y axis (in ImageD11 this has a negative sign, we definine it as positive.)
     dty stage - horizontal translation. Defines Y axis.
     Hutch floor
 
