@@ -116,7 +116,7 @@ def peak_to_pixels(
 ) -> tuple[jax.Array, jax.Array]:
     """Get N*(window_size,) image of normalised pixel intensities around centroid in N dimensions.
 
-    This can be vectorised over centroids - :func:`peaks_to_pixels`.
+    This can be vectorised over centroids, see :func:`peaks_to_pixels`.
 
     Parameters
     ----------

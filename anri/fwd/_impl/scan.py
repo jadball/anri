@@ -66,8 +66,8 @@ def get_centroid_scan(
 ) -> jax.Array:
     """Forward project (ubi, hkl) to get 4D peak centroid (sc, fc, omega, dty) in the Scanning 3DXRD case.
 
-    This can be vectorised over ubis and origin_samples - :func:`get_centroid_scan_all_grains`.
-    It can then be vectorised in an outer loop over hkl - :func:`get_centroid_scan_all`.
+    This can be vectorised over ubis and origin_samples, see :func:`get_centroid_scan_all_grains`.
+    It can then be vectorised in an outer loop over hkl, see :func:`get_centroid_scan_all`.
 
     Parameters
     ----------
@@ -154,8 +154,8 @@ def propagate_cov_scan(
 ) -> jax.Array:
     r"""Get output covariance matrix for a given forward-projected Scanning 3DXRD peak.
 
-    This can be vectorised over ubis and origin_samples (e.g. voxels) - :func:`propagate_cov_scan_all_grains`.
-    It can then be vectorised in an outer loop over hkl - :func:`propagate_cov_scan_all`.
+    This can be vectorised over ubis and origin_samples (e.g. voxels), see :func:`propagate_cov_scan_all_grains`.
+    It can then be vectorised in an outer loop over hkl, see :func:`propagate_cov_scan_all`.
 
     Parameters
     ----------
