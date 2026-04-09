@@ -120,7 +120,7 @@ mathjax3_config = {
             # 'matr': [r'\bm{\mathit{#1}}', 1], # bold italic
             'matr': [r'\mathbf{#1}', 1],
             'tens': [r'\bm{#1}', 1],
-            'abs': [r'\lvert #1 \rvert', 1],
+            'abs': [r'\left| #1 \right|', 1],
         }
     }
 }
