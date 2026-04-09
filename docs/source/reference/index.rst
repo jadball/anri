@@ -15,3 +15,4 @@ API reference
     crystal
     diffract
     geom
+    fwd
