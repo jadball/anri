@@ -152,10 +152,13 @@ class TestOmegaSolns(unittest.TestCase):
         omega1_anri, valid1_anri = self.omega_solns_vec(self.q_sample, 1, k_in_sample)
         omega2_anri, valid2_anri = self.omega_solns_vec(self.q_sample, -1, k_in_sample)
 
-        np.testing.assert_allclose(omega1_anri, omega1_id11)
-        np.testing.assert_allclose(omega2_anri, omega2_id11)
+        # we have different non-valid handling than ImageD11 to ensure differentiability
+        # so we only check that valid solutions match, and that the validity arrays are the same
+
         np.testing.assert_array_equal(valid1_anri, valid_id11)
         np.testing.assert_array_equal(valid2_anri, valid_id11)
+        np.testing.assert_allclose(omega1_anri[valid1_anri], omega1_id11[valid_id11])
+        np.testing.assert_allclose(omega2_anri[valid2_anri], omega2_id11[valid_id11])
 
     def test_omega_solns_id11_chi_wedge(self):
         chi = 10.0
@@ -179,10 +182,13 @@ class TestOmegaSolns(unittest.TestCase):
         omega1_anri, valid1_anri = self.omega_solns_vec(self.q_sample, 1, k_in_sample)
         omega2_anri, valid2_anri = self.omega_solns_vec(self.q_sample, -1, k_in_sample)
 
-        np.testing.assert_allclose(omega1_anri, omega1_id11)
-        np.testing.assert_allclose(omega2_anri, omega2_id11)
+        # we have different non-valid handling than ImageD11 to ensure differentiability
+        # so we only check that valid solutions match, and that the validity arrays are the same
+
         np.testing.assert_array_equal(valid1_anri, valid_id11)
         np.testing.assert_array_equal(valid2_anri, valid_id11)
+        np.testing.assert_allclose(omega1_anri[valid1_anri], omega1_id11[valid_id11])
+        np.testing.assert_allclose(omega2_anri[valid2_anri], omega2_id11[valid_id11])
 
 
 class TestDetToQSample(unittest.TestCase):
