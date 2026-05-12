@@ -15,15 +15,15 @@ def get_centroid_box(
     hkl: jax.Array,
     etasign: int,
     wavelength: float,
+    k_in_lab: jax.Array,
     ky: float,
     kz: float,
     wedge: float,
     chi: float,
-    y0: float,
     sc_lab: jax.Array,
     fc_lab: jax.Array,
     norm_lab: jax.Array,
-) -> jax.Array:
+) -> tuple[jax.Array, bool]:
     r"""Forward project (ubi, hkl) to get 3D peak centroid on detector (sc, fc, omega) in the box-beam case.
 
     This can be vectorised over ubis and origin_samples, see :func:`get_centroid_box_all_grains`.
@@ -41,6 +41,8 @@ def get_centroid_box(
         +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
     wavelength
         Wavelength in angstroms
+    k_in_lab:
+        [3] Unperturbed unit vector of incoming beam, lab frame
     ky
         y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
     kz
@@ -49,8 +51,6 @@ def get_centroid_box(
         Wedge motor value (degrees)
     chi
         Chi motor value (degrees)
-    y0
-        The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
     sc_lab
         [3] Laboratory basis vector for the slow direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
     fc_lab
@@ -62,6 +62,8 @@ def get_centroid_box(
     -------
     centroid: jax.Array
         [3] Peak centre-of-mass in (sc, fc, omega)
+    valid: bool
+        Boolean indicating if a valid solution exists
 
     Notes
     -----
@@ -74,11 +76,11 @@ def get_centroid_box(
         hkl,
         etasign,
         wavelength,
+        k_in_lab,
         ky,
         kz,
         wedge,
         chi,
-        y0,
     )
 
     origin_lab = sample_to_lab(origin_sample, omega, wedge, chi, 0.0, 0.0)
@@ -87,11 +89,11 @@ def get_centroid_box(
 
     centroid = jnp.array([sc, fc, omega])
 
-    return centroid
+    return centroid, valid
 
 
 # Function to get the Jacobian of get_centroid_box
-J_get_centroid_box = jax.jacfwd(get_centroid_box, argnums=(1, 4, 5, 6))
+J_get_centroid_box = jax.jacfwd(get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True)
 
 
 @jax.jit
@@ -101,15 +103,14 @@ def propagate_cov_box(
     hkl: jax.Array,
     etasign: int,
     wavelength: float,
+    k_in_lab: jax.Array,
     ky: float,
     kz: float,
     wedge: float,
     chi: float,
-    y0: float,
     sc_lab: jax.Array,
     fc_lab: jax.Array,
     norm_lab: jax.Array,
-    ostep: float,
     cov_in: jax.Array,
 ) -> jax.Array:
     r"""Get output covariance matrix for a given forward-projected box-beam peak.
@@ -129,6 +130,8 @@ def propagate_cov_box(
         +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
     wavelength
         Wavelength in angstroms
+    k_in_lab:
+        [3] Unperturbed unit vector of incoming beam, lab frame
     ky
         y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
     kz
@@ -137,8 +140,6 @@ def propagate_cov_box(
         Wedge motor value (degrees)
     chi
         Chi motor value (degrees)
-    y0
-        The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
     sc_lab
         [3] Laboratory basis vector for the slow direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
     fc_lab
@@ -160,28 +161,24 @@ def propagate_cov_box(
     Gets Jacobian of :func:`anri.fwd.get_centroid_box`, then uses that to propagate cov_in via :func:`anri.fwd.propagate_cov`.
     Adds single pixel widths (in sc, fc, ostep) as variances to outputs to "spread" the signal over 1 pixel.
     """
-    J_func_out = J_get_centroid_box(
+    J_func_out, valid = J_get_centroid_box(
         ubi,
         origin_sample,
         hkl,
         etasign,
         wavelength,
+        k_in_lab,
         ky,
         kz,
         wedge,
         chi,
-        y0,
         sc_lab,
         fc_lab,
         norm_lab,
     )
     cov_out = propagate_cov(J_func_out, cov_in)
 
-    # add single pixel width as variances
-    voxel_var = jnp.diag(jnp.array([1 / 12, 1 / 12, (ostep**2) / 12]))
-    cov_integrated = cov_out + voxel_var
-
-    return cov_integrated
+    return cov_out
 
 
 ### vmaps
@@ -195,13 +192,14 @@ get_centroid_box_all = jax.vmap(
     get_centroid_box_all_grains, in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None]
 )
 
+
 # vmap over grains
 propagate_cov_box_all_grains = jax.vmap(
-    propagate_cov_box, in_axes=[0, 0, None, None, None, None, None, None, None, None, None, None, None, None, None]
+    propagate_cov_box, in_axes=[0, 0, None, None, None, None, None, None, None, None, None, None, None, None]
 )
 
 # vmap over hkls
 propagate_cov_box_all = jax.vmap(
     propagate_cov_box_all_grains,
-    in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None, None],
+    in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None],
 )

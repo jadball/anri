@@ -12,15 +12,15 @@ from anri.geom import lab_to_sample, sample_to_lab
 @jax.jit
 def hkl_to_k_omega(
     ubi: jax.Array,  # grain stuff
-    hkl: jax.Array,
-    etasign: int,  # peak stuff
+    hkl: jax.Array,  # peak stuff
+    etasign: int,  # beam stuff
     wavelength: float,
+    k_in_lab: jax.Array,
     ky: float,
-    kz: float,  # beam
+    kz: float,  # gonio stuff
     wedge: float,
     chi: float,
-    y0: float,  # gonio
-) -> tuple[jax.Array, jax.Array, float, float]:
+) -> tuple[jax.Array, jax.Array, float, bool]:
     r"""Forward-project a reciprocal space vector (h,k,l) with basis vectors (a*, b*, c*) into k-vectors and omega angles.
 
     This just chains together various transforms from :func:`anri.diffract` and :func:`anri.geom`.
@@ -35,6 +35,8 @@ def hkl_to_k_omega(
         +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
     wavelength:
         Wavelength in angstroms
+    k_in_lab:
+        [3] Unperturbed unit vector of incoming beam, lab frame
     ky:
         y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
     kz:
@@ -43,8 +45,6 @@ def hkl_to_k_omega(
         Wedge motor value (degrees)
     chi:
         Chi motor value (degrees)
-    y0:
-        The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
 
     Returns
     -------
@@ -54,12 +54,13 @@ def hkl_to_k_omega(
         [3] k_out vector in laboratory frame
     omega: float
         Omega angle where diffraction occurs in degrees
-    valid: float
+    valid: bool
         Boolean indicating if a valid solution exists
     """
     q_sample = jnp.linalg.inv(ubi) @ hkl
 
-    k_in_lab = jnp.array([1.0, ky, kz])
+    # perturb k_in_lab by divergence
+    k_in_lab = k_in_lab + jnp.array([0.0, ky, kz])
     k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
     k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
 
@@ -99,7 +100,7 @@ def get_cov_in(sig_origin: jax.Array, sig_wavelength: float, sig_ky: float, sig_
     $\matr{\Sigma}^{\text{in}} = \begin{bmatrix} \sigma_x^2 & 0 & 0 & 0 & 0 & 0 \\ 0 & \sigma_y^2 & 0 & 0 & 0 & 0\\0 & 0 & \sigma_z^2 & 0 & 0 & 0\\ 0 & 0 & 0 &\sigma_\lambda^2 & 0 & 0\\ 0 & 0 & 0 & 0 & \sigma_{k_y}^2 & 0 \\ 0 & 0 & 0& 0& 0 & \sigma_{k_z}^2\end{bmatrix} $
 
     """
-    cov_in = jnp.diag(jnp.array([sig_origin**2, sig_origin**2, sig_origin**2, sig_wavelength**2, sig_ky**2, sig_kz**2]))
+    cov_in = jnp.diag(jnp.array([sig_origin[0]**2, sig_origin[1]**2, sig_origin[2]**2, sig_wavelength**2, sig_ky**2, sig_kz**2]))
 
     return cov_in
 

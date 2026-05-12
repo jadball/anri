@@ -55,6 +55,7 @@ def get_centroid_scan(
     hkl: jax.Array,  # peak stuff
     etasign: float,
     wavelength: float,  # beam
+    k_in_lab: jax.Array,
     ky: float,
     kz: float,
     wedge: float,  # gonio
@@ -81,6 +82,8 @@ def get_centroid_scan(
         +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
     wavelength
         Wavelength in angstroms
+    k_in_lab:
+        [3] Unperturbed unit vector of incoming beam, lab frame
     ky
         y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
     kz
@@ -115,6 +118,7 @@ def get_centroid_scan(
         hkl,  # peak stuff
         etasign,
         wavelength,  # beam
+        k_in_lab,
         ky,
         kz,
         wedge,  # gonio
@@ -140,6 +144,7 @@ def propagate_cov_scan(
     hkl: jax.Array,  # peak stuff
     etasign: float,
     wavelength: float,  # beam
+    k_in_lab: jax.Array,
     ky: float,
     kz: float,
     wedge: float,  # gonio
@@ -148,8 +153,6 @@ def propagate_cov_scan(
     sc_lab: jax.Array,  # detector
     fc_lab: jax.Array,
     norm_lab: jax.Array,
-    ostep: float,  # scan
-    ystep: float,
     cov_in: jax.Array,
 ) -> jax.Array:
     r"""Get output covariance matrix for a given forward-projected Scanning 3DXRD peak.
@@ -169,6 +172,8 @@ def propagate_cov_scan(
         +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
     wavelength
         Wavelength in angstroms
+    k_in_lab:
+        [3] Unperturbed unit vector of incoming beam, lab frame
     ky
         y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
     kz
@@ -208,6 +213,7 @@ def propagate_cov_scan(
         hkl,  # peak stuff
         etasign,
         wavelength,  # beam
+        k_in_lab,
         ky,
         kz,
         wedge,  # gonio
@@ -219,31 +225,27 @@ def propagate_cov_scan(
     )
     cov_out = propagate_cov(J_func_out, cov_in)
 
-    # add single pixel width as variances
-    voxel_var = jnp.diag(jnp.array([1 / 12, 1 / 12, (ostep**2) / 12, (ystep**2) / 12]))
-    cov_integrated = cov_out + voxel_var
-
-    return cov_integrated
+    return cov_out
 
 
 ### vmaps
 # vmap over grains
 get_centroid_scan_all_grains = jax.vmap(
-    get_centroid_scan, in_axes=[0, 0, None, None, None, None, None, None, None, None, None, None, None]
+    get_centroid_scan, in_axes=[0, 0, None, None, None, None, None, None, None, None, None, None, None, None]
 )
 
 # vmap over hkls
 get_centroid_scan_all = jax.vmap(
-    get_centroid_scan_all_grains, in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None]
+    get_centroid_scan_all_grains, in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None]
 )
 
 # vmap over grains
 propagate_cov_scan_all_grains = jax.vmap(
     propagate_cov_scan,
-    in_axes=[0, 0, None, None, None, None, None, None, None, None, None, None, None, None, None, None],
+    in_axes=[0, 0, None, None, None, None, None, None, None, None, None, None, None, None, None],
 )
 # vmap over hkls
 propagate_cov_scan_all = jax.vmap(
     propagate_cov_scan_all_grains,
-    in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None, None, None],
+    in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None, None],
 )

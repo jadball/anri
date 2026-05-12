@@ -5,169 +5,196 @@ import jax.numpy as jnp
 
 
 @jax.jit
-def mahalanobis_sq(centroid: jax.Array, coord: jax.Array, inv_cov: jax.Array) -> jax.Array:
-    r"""Get squared Mahalanobis distance for a coordinate given a centroid and an inverse covariance matrix.
-
-    See :func:`prepare_cov` for preparation of inv_cov.
+def prepare_gaussian_bin(cov: jax.Array) -> jax.Array:
+    r"""Precompute per-axis scaling factors for :func:`sample_gaussian_bin`.
 
     Parameters
     ----------
-    centroid
-        [N] Coordinate of peak centroid in N dimensions
-    coord
-        [N] Query coordinate in N dimensions
-    inv_cov
-        Inverse covariance matrix, from :func:`prepare_cov`
+    cov : jax.Array
+        ``[n, n]`` covariance matrix of the multivariate Gaussian.
 
     Returns
     -------
-    d2: jax.Array
-        Squared Mahalanobis distance
+    erf_scale : jax.Array
+        ``[n]`` per-axis scaling factor :math:`\frac{1}{\sigma_i \sqrt{2}}`
+        applied to bin edge residuals in :func:`sample_gaussian_bin`.
 
     Notes
     -----
-    From Wikipedia [1]_:
+    The integrated intensity of an :math:`n`-dimensional Gaussian
+    :math:`\mathcal{N}(\vec{\mu}, \Sigma)` over an axis-aligned bin centred
+    at :math:`\vec{x}` with half-widths :math:`\vec{h} = \vec{w}/2` factorises
+    over axes using the marginal distributions:
 
-    Given two points $\vec{x}$ and $\vec{y}$, the squared Mahalanobis distance between them with respect to a probability distribution $Q$, that has a positiuve semi-definite covariance matrix $\matr{\Sigma}$ is:
+    .. math::
 
-    $$d_{M}\left(\vec{x},\vec{y},Q\right)^2 = \left(\vec{x}-\vec{y}\right)^{\intercal}\matr{\Sigma}^{-1}\left(\vec{x}-\vec{y}\right)$$
+        \int_{\vec{x} - \vec{h}}^{\vec{x} + \vec{h}}
+        \mathcal{N}(\vec{u} \mid \vec{\mu}, \Sigma)\, d\vec{u}
+        \approx \prod_{i=1}^{n}
+        \frac{1}{2}\left[
+            \operatorname{erf}\!\left(\frac{x_i + h_i - \mu_i}{\sigma_i\sqrt{2}}\right)
+            -
+            \operatorname{erf}\!\left(\frac{x_i - h_i - \mu_i}{\sigma_i\sqrt{2}}\right)
+        \right]
+
+    where :math:`\sigma_i = \sqrt{\Sigma_{ii}}` is the marginal standard
+    deviation along axis :math:`i`. This is exact when :math:`\Sigma` is
+    diagonal and accurate when bin widths are small relative to the
+    correlation length of :math:`\Sigma` [1]_.
 
     References
     ----------
-    .. [1] https://en.wikipedia.org/wiki/Mahalanobis_distance#Definition
+    .. [1] https://en.wikipedia.org/wiki/Error_function#Integral_of_a_Gaussian_over_an_interval
     """
-    diff = coord - centroid
-    d2 = diff @ inv_cov @ diff
-    return d2
+    marginal_std = jnp.sqrt(jnp.diag(cov))
+    erf_scale = 1.0 / (marginal_std * jnp.sqrt(2.0))
+    return erf_scale
 
 
 @jax.jit
-def sample_intensities(centroid: jax.Array, coord: jax.Array, inv_cov: jax.Array, norm_const: float) -> jax.Array:
-    r"""Evaluate probability density of Mahalanobis distance.
-
-    See :func:`prepare_cov` for preparation of inv_cov and norm_const.
-
-    Parameters
-    ----------
-    centroid
-        [N] Coordinate of peak centroid in N dimensions
-    coord
-        [N] Query coordinate in N dimensions
-    inv_cov
-        Inverse covariance matrix, from :func:`prepare_cov`
-    norm_const
-        Normalisation constant, from :func:`prepare_cov`
-
-    Returns
-    -------
-    jax.Array
-        Probability density of an observation
-
-    Notes
-    -----
-    See :func:`prepare_cov` for maths.
-
-    """
-    d2 = mahalanobis_sq(centroid, coord, inv_cov)
-    return norm_const * jnp.exp(-0.5 * d2)
-
-
-@jax.jit
-def prepare_cov(cov: jax.Array) -> tuple[jax.Array, jax.Array]:
-    r"""Get inverse covariance matrix and normalisation constant for :func:`sample_intensities`.
+def sample_gaussian_bins(
+    mu: jax.Array,
+    erf_scale: jax.Array,
+    bin_centres: jax.Array,
+    half_widths: jax.Array,
+) -> jax.Array:
+    r"""Integrated intensity of a multivariate Gaussian over an array of axis-aligned bins.
 
     Parameters
     ----------
-    cov
-        [3,3] or [3,4] output covariance matrix from :func:`anri.fwd.propagate_cov_box` or :func:`anri.fwd.propagate_cov_scan`
+    mu : jax.Array
+        ``[n]`` centroid of the Gaussian in ``(slow, fast, omega[, dty])`` coordinates.
+    erf_scale : jax.Array
+        ``[n]`` precomputed per-axis scaling factors from :func:`prepare_gaussian_bin`,
+        equal to :math:`\frac{1}{\sigma_i \sqrt{2}}`.
+    bin_centres : jax.Array
+        ``[m, n]`` coordinates of ``m`` bin centres to evaluate.
+    half_widths : jax.Array
+        ``[n]`` half-width of each bin along each axis, derived from the bin
+        spacing of ``(slow, fast, omega[, dty])``.
 
     Returns
     -------
-    inv_cov: jax.Array
-        Inverse covariance matrix
-    norm_const: jax.Array
-        Normalisation constant for :func:`sample_intensities`
+    intensities : jax.Array
+        ``[m]`` integrated intensity at each bin, fully differentiable
+        with respect to ``mu`` and ``erf_scale``.
 
     Notes
     -----
-    From Wikipedia [1]_:
+    Each bin integral factorises over axes as a product of 1-D marginal integrals:
 
-    For a $N$-dimensional normal distribution, the probability density of an observation $\vec{x}$ can be determined:
+    .. math::
 
-    $$\Pr[{\vec{x}}]\,d{\vec{x}} = \frac{1}{\sqrt{\det{2\pi\matr{\Sigma}}}}\exp{\left(-\frac{d_{M}\left(\vec{x},\vec{y},Q\right)^2}{2}\right)}$$
+        I_j = \prod_{i=1}^{n}
+            \frac{1}{2}\left[
+                \operatorname{erf}\!\left((x_{ji} + h_i - \mu_i) \cdot s_i\right)
+                -
+                \operatorname{erf}\!\left((x_{ji} - h_i - \mu_i) \cdot s_i\right)
+            \right]
+
+    where :math:`h_i` is the per-axis bin half-width and
+    :math:`s_i = \frac{1}{\sigma_i\sqrt{2}}` is the precomputed scale.
+    Each axis carries its own physical units --- pixels for ``slow`` and
+    ``fast``, degrees for ``omega``, mm for ``dty`` --- so half-widths must
+    not be assumed uniform across axes.
 
     References
     ----------
-    .. [1] https://en.wikipedia.org/wiki/Mahalanobis_distance#Normal_distributions
+    .. [1] https://en.wikipedia.org/wiki/Error_function#Integral_of_a_Gaussian_over_an_interval
     """
-    inv_cov = jnp.linalg.inv(cov)
-
-    twopi_cov = (2.0 * jnp.pi) * cov
-    det_twopi_cov = jnp.linalg.det(twopi_cov)
-
-    norm_const = 1.0 / jnp.sqrt(det_twopi_cov)
-
-    return inv_cov, norm_const
+    lo = (bin_centres - half_widths - mu) * erf_scale   # [m, n]
+    hi = (bin_centres + half_widths - mu) * erf_scale   # [m, n]
+    marginals = 0.5 * (jax.scipy.special.erf(hi) - jax.scipy.special.erf(lo))  # [m, n]
+    return jnp.prod(marginals, axis=-1)                  # [m]
 
 
 @jax.jit(static_argnums=(4,))
 def peak_to_pixels(
-    centroid: jax.Array, cov: jax.Array, amplitude: float, bins: tuple[jax.Array], window_size: int
+    centroid: jax.Array,
+    erf_scale: jax.Array,
+    amplitude: float,
+    bins: tuple[jax.Array, ...],
+    window_size: int,
 ) -> tuple[jax.Array, jax.Array]:
-    r"""Get N*(window_size,) image of normalised pixel intensities around centroid in N dimensions.
-
-    This can be vectorised over centroids, see :func:`peaks_to_pixels`.
+    r"""Compute the intensity of a single Gaussian peak over a local pixel window.
 
     Parameters
     ----------
-    centroid
-        [N] Coordinate of peak centroid in N dimensions
-    cov
-        [3, N] output covariance matrix from :func:`anri.fwd.propagate_cov_box` or :func:`anri.fwd.propagate_cov_scan`
-    amplitude
-        Total integrated amplitude of the peak
-    bins
-        The bin centres for each dimension ( e.g (sc, fc, omega, [dty]) )
-    window_size
-        The window size to evaluate pixel intensities
+    centroid : jax.Array
+        ``[n]`` centroid of the Gaussian peak in ``(slow, fast, omega[, dty])``
+        coordinates.
+    erf_scale : jax.Array
+        ``[n]`` precomputed per-axis scaling factors from :func:`prepare_gaussian_bin`,
+        equal to :math:`\frac{1}{\sigma_i\sqrt{2}}`.
+    amplitude : float
+        Integrated intensity of the peak.
+    bins : tuple[jax.Array, ...]
+        Tuple of ``n`` coordinate arrays giving bin centres along each of
+        ``(slow, fast, omega[, dty])``. Bin widths are derived from the
+        spacing of each array, so uniform spacing per axis is assumed.
+    window_size : int
+        Number of bins along each axis. Static for JIT and vmap compilation.
 
     Returns
     -------
-    intensities_dense: jax.Array
-        [N*(window_size,)] Dense image of intensities around the centroid
-    starts: jax.Array
-        [N] Start indices (of bins) to the intensity image
-    """
-    k = centroid.shape[0]
-    inv_cov, norm_const = prepare_cov(cov)
+    intensities : jax.Array
+        ``[window_size] * n`` dense block of integrated intensities scaled
+        by ``amplitude``.
+    starts : jax.Array
+        ``[n]`` start indices locating the window within each axis of ``bins``,
+        for scattering the output back into a global array.
 
-    # 1. Find start indices using a list comprehension instead of vmap
-    # This handles bins with different lengths (e.g., 2048 vs 3600)
-    starts = jnp.array(
-        [
-            jnp.clip(jnp.argmin(jnp.abs(bins[i] - centroid[i])) - window_size // 2, 0, len(bins[i]) - window_size)
-            for i in range(k)
-        ]
+    Notes
+    -----
+    Per-axis bin half-widths :math:`h_i` are derived from the spacing of each
+    bin array as :math:`h_i = (b_i[1] - b_i[0]) / 2`. A local window of
+    ``window_size`` bins is extracted around ``centroid`` along each axis via
+    :func:`jax.lax.dynamic_slice`. The resulting local bin centres are formed
+    into an ``[window_size^n, n]`` grid via :func:`jnp.meshgrid` and passed to
+    :func:`sample_gaussian_bins`.
+
+    See Also
+    --------
+    prepare_gaussian_bin : Precomputes ``erf_scale`` from a covariance matrix.
+    peaks_to_pixels : Vectorised form of this function over a batch of peaks.
+    """
+    n = centroid.shape[0]
+
+    # Per-axis bin half-widths — each axis has its own physical units
+    half_widths = jnp.array([
+        (bins[i][1] - bins[i][0]) / 2.0
+        for i in range(n)
+    ])
+
+    starts = jnp.array([
+        jnp.clip(
+            jnp.argmin(jnp.abs(bins[i] - centroid[i])) - window_size // 2,
+            0,
+            len(bins[i]) - window_size,
+        )
+        for i in range(n)
+    ])
+
+    local_axes = [
+        jax.lax.dynamic_slice(bins[i], (starts[i],), (window_size,))
+        for i in range(n)
+    ]
+
+    # [window_size^n, n] grid of bin centres within the local window
+    grid = jnp.stack(
+        [g.ravel() for g in jnp.meshgrid(*local_axes, indexing='ij')],
+        axis=-1,
     )
 
-    # 2. Extract local coordinates
-    local_bins = [jax.lax.dynamic_slice(bins[i], (starts[i],), (window_size,)) for i in range(k)]
+    intensities = sample_gaussian_bins(centroid, erf_scale, grid, half_widths)
+    intensities = intensities.reshape((window_size,) * n) * amplitude
 
-    # 3. Create the k-dimensional grid
-    grid = jnp.meshgrid(*local_bins, indexing="ij")
-    coords = jnp.stack([g.ravel() for g in grid], axis=-1)
-
-    # 4. Calculate intensities
-    # We vmap over the flattened 'coords'
-    v_sample = jax.vmap(sample_intensities, in_axes=(None, 0, None, None))
-    intensities = v_sample(centroid, coords, inv_cov, norm_const) * amplitude
-
-    # 5. Reshape back to the dense block shape: (window_size, window_size, ...)
-    block_shape = (window_size,) * k
-    intensities_dense = intensities.reshape(block_shape)
-
-    return intensities_dense, starts
+    return intensities, starts
 
 
-## vmaps
+#: Vectorised form of :func:`peak_to_pixels` over a batch of peaks.
+#:
+#: Parameters map identically to :func:`peak_to_pixels` with a leading batch
+#: dimension on ``centroid``, ``erf_scale``, and ``amplitude``.
+#: ``bins`` and ``window_size`` are shared across all peaks.
 peaks_to_pixels = jax.vmap(peak_to_pixels, in_axes=[0, 0, 0, None, None])
