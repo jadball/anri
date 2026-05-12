@@ -5,7 +5,7 @@ import jax.numpy as jnp
 
 from anri.geom import raytrace_to_det, sample_to_lab
 
-from .base import hkl_to_k_omega, propagate_cov
+from .base import hkl_to_k_omega, make_propagator
 
 
 @jax.jit
@@ -91,95 +91,7 @@ def get_centroid_box(
 
     return centroid, valid
 
-
-# Function to get the Jacobian of get_centroid_box
-J_get_centroid_box = jax.jacfwd(get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True)
-
-
-@jax.jit
-def propagate_cov_box(
-    ubi: jax.Array,
-    origin_sample: jax.Array,
-    hkl: jax.Array,
-    etasign: int,
-    wavelength: float,
-    k_in_lab: jax.Array,
-    ky: float,
-    kz: float,
-    wedge: float,
-    chi: float,
-    sc_lab: jax.Array,
-    fc_lab: jax.Array,
-    norm_lab: jax.Array,
-    cov_in: jax.Array,
-) -> jax.Array:
-    r"""Get output covariance matrix for a given forward-projected box-beam peak.
-
-    This can be vectorised over ubis and origin_samples, see :func:`propagate_cov_box_all_grains`.
-    It can then be vectorised in an outer loop over hkl, see :func:`propagate_cov_box_all`.
-
-    Parameters
-    ----------
-    ubi
-        [3,3] (U.B)^(-1) matrix of the grain/voxel
-    origin_sample
-        [3] origin position of the voxel in the sample reference frame
-    hkl
-        [3] (h,k,l) reciprocal space vector
-    etasign
-        +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
-    wavelength
-        Wavelength in angstroms
-    k_in_lab:
-        [3] Unperturbed unit vector of incoming beam, lab frame
-    ky
-        y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
-    kz
-        z-component of the beam in the lab frame. Represents vertical beam divergence, usually zero.
-    wedge
-        Wedge motor value (degrees)
-    chi
-        Chi motor value (degrees)
-    sc_lab
-        [3] Laboratory basis vector for the slow direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    fc_lab
-        [3] Laboratory basis vector for the fast direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    norm_lab
-        [3] Laboratory basis vector for the detector normal from :func:`anri.geom.detector_basis_vectors_lab`.
-    ostep
-        Omega step size in degrees
-    cov_in
-        [6,6] Input covariance matrix - build with :func:`anri.fwd.get_cov_in`
-
-    Returns
-    -------
-    cov_integrated: jax.Array
-        [3,3] Output covariance matrix for this peak.
-
-    Notes
-    -----
-    Gets Jacobian of :func:`anri.fwd.get_centroid_box`, then uses that to propagate cov_in via :func:`anri.fwd.propagate_cov`.
-    Adds single pixel widths (in sc, fc, ostep) as variances to outputs to "spread" the signal over 1 pixel.
-    """
-    J_func_out, valid = J_get_centroid_box(
-        ubi,
-        origin_sample,
-        hkl,
-        etasign,
-        wavelength,
-        k_in_lab,
-        ky,
-        kz,
-        wedge,
-        chi,
-        sc_lab,
-        fc_lab,
-        norm_lab,
-    )
-    cov_out = propagate_cov(J_func_out, cov_in)
-
-    return cov_out
-
+propagate_cov_box = make_propagator(get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True)
 
 ### vmaps
 # vmap over grains

@@ -1,6 +1,7 @@
 """Base functions for forward projection code."""
 
 from typing import Iterable
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
@@ -131,3 +132,48 @@ def propagate_cov(J_func_out: Iterable[jax.Array], cov_in: jax.Array) -> jax.Arr
     J = jnp.concatenate([j if j.ndim > 1 else j[..., jnp.newaxis] for j in J_func_out], axis=-1)
     cov_out = J @ cov_in @ J.T
     return cov_out
+
+
+def make_propagator(centroid_fn: Callable, argnums: tuple[int, ...], has_aux: bool = False) -> Callable:
+    r"""Build a JIT'd covariance propagation function for a given centroid function.
+
+    Parameters
+    ----------
+    centroid_fn
+        A JIT'd function that forward-projects (ubi, hkl) to a peak centroid.
+        Its signature must have ``cov_in`` as the final argument.
+    argnums
+        Argument indices to differentiate with respect to, passed directly to :func:`jax.jacfwd`.
+        Should correspond to the uncertain inputs (origin, wavelength, divergence).
+    has_aux
+        If ``True``, ``centroid_fn`` returns a ``(centroid, aux)`` tuple (e.g. a validity bool),
+        and the auxiliary output is discarded before propagation.
+
+    Returns
+    -------
+    propagate_fn: Callable
+        A JIT'd function with the same signature as ``centroid_fn`` (plus ``cov_in`` as the final argument)
+        that returns an output covariance matrix.
+
+    Notes
+    -----
+    Returned function propagates the input covariance matrix :math:`\mathbf{\Sigma}^{\text{in}}` via:
+
+    .. math::
+        \mathbf{\Sigma}^{\text{out}} = \mathbf{J}_f \, \mathbf{\Sigma}^{\text{in}} \, \mathbf{J}_f^T
+
+    where :math:`\mathbf{J}_f` is the Jacobian of ``centroid_fn`` with respect to ``argnums``.
+
+    This is a Python-level factory; it executes once at definition time.
+    The returned ``propagate_fn`` is safe to call standalone or inside another :func:`jax.jit`.
+    """
+    J_fn = jax.jacfwd(centroid_fn, argnums=argnums, has_aux=has_aux)
+
+    @jax.jit
+    def _propagate(*args):
+        J_out = J_fn(*args[:-1])
+        if has_aux:
+            J_out, _ = J_out
+        return propagate_cov(J_out, args[-1])
+
+    return _propagate

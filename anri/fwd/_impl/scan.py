@@ -5,7 +5,7 @@ import jax.numpy as jnp
 
 from anri.geom import find_dty_for_beam_xy, raytrace_to_det, sample_to_lab
 
-from .base import hkl_to_k_omega, propagate_cov
+from .base import hkl_to_k_omega, make_propagator
 
 
 @jax.jit
@@ -130,103 +130,12 @@ def get_centroid_scan(
     origin_lab = sample_to_lab(origin_sample, omega, wedge, chi, dty, y0)
     sc, fc = raytrace_to_det(k_out_lab, origin_lab, sc_lab, fc_lab, norm_lab)
 
-    return jnp.array([sc, fc, omega, dty])
+    centroid = jnp.array([sc, fc, omega, dty])
+
+    return centroid, valid
 
 
-# Function to get the Jacobian of get_centroid_scan
-J_get_centroid_scan = jax.jacfwd(get_centroid_scan, argnums=(1, 4, 5, 6))
-
-
-@jax.jit
-def propagate_cov_scan(
-    ubi: jax.Array,  # grain stuff
-    origin_sample: jax.Array,
-    hkl: jax.Array,  # peak stuff
-    etasign: float,
-    wavelength: float,  # beam
-    k_in_lab: jax.Array,
-    ky: float,
-    kz: float,
-    wedge: float,  # gonio
-    chi: float,
-    y0: float,
-    sc_lab: jax.Array,  # detector
-    fc_lab: jax.Array,
-    norm_lab: jax.Array,
-    cov_in: jax.Array,
-) -> jax.Array:
-    r"""Get output covariance matrix for a given forward-projected Scanning 3DXRD peak.
-
-    This can be vectorised over ubis and origin_samples (e.g. voxels), see :func:`propagate_cov_scan_all_grains`.
-    It can then be vectorised in an outer loop over hkl, see :func:`propagate_cov_scan_all`.
-
-    Parameters
-    ----------
-    ubi
-        [3,3] (U.B)^(-1) matrix of the grain/voxel
-    origin_sample
-        [3] origin position of the voxel in the sample reference frame
-    hkl
-        [3] (h,k,l) reciprocal space vector
-    etasign
-        +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
-    wavelength
-        Wavelength in angstroms
-    k_in_lab:
-        [3] Unperturbed unit vector of incoming beam, lab frame
-    ky
-        y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
-    kz
-        z-component of the beam in the lab frame. Represents vertical beam divergence, usually zero.
-    wedge
-        Wedge motor value (degrees)
-    chi
-        Chi motor value (degrees)
-    y0
-        The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
-    sc_lab
-        [3] Laboratory basis vector for the slow direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    fc_lab
-        [3] Laboratory basis vector for the fast direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    norm_lab
-        [3] Laboratory basis vector for the detector normal from :func:`anri.geom.detector_basis_vectors_lab`.
-    ostep
-        Omega step size in degrees
-    ystep
-        dty step size in degrees
-    cov_in
-        [6,6] Input covariance matrix - build with :func:`anri.fwd.get_cov_in`
-
-    Returns
-    -------
-    cov_integrated: jax.Array
-        [3,4] Output covariance matrix for this peak.
-
-    Notes
-    -----
-    Gets Jacobian of :func:`anri.fwd.get_centroid_box`, then uses that to propagate cov_in via :func:`anri.fwd.propagate_cov`.
-    Adds single pixel widths (in sc, fc, ostep) as variances to outputs to "spread" the signal over 1 pixel.
-    """
-    J_func_out = J_get_centroid_scan(
-        ubi,  # grain stuff
-        origin_sample,
-        hkl,  # peak stuff
-        etasign,
-        wavelength,  # beam
-        k_in_lab,
-        ky,
-        kz,
-        wedge,  # gonio
-        chi,
-        y0,
-        sc_lab,  # detector
-        fc_lab,
-        norm_lab,
-    )
-    cov_out = propagate_cov(J_func_out, cov_in)
-
-    return cov_out
-
+propagate_cov_scan = make_propagator(get_centroid_scan, argnums=(1, 4, 6, 7), has_aux=True)
 
 ### vmaps
 # vmap over grains

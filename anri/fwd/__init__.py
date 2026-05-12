@@ -17,7 +17,7 @@ from ._impl.scan import (
     propagate_cov_scan_all,
     propagate_cov_scan_all_grains,
 )
-from ._impl.splat import mahalanobis_sq, peak_to_pixels, peaks_to_pixels, prepare_cov, sample_intensities
+from ._impl.splat import peak_to_pixels, peaks_to_pixels, prepare_gaussian_bin, sample_gaussian_bins
 
 # fmt: off
 __all__ = [
@@ -36,9 +36,8 @@ __all__ = [
     "get_centroid_scan",
     "get_centroid_scan_all_grains",
     "get_centroid_scan_all",
-    "mahalanobis_sq",
-    "sample_intensities",
-    "prepare_cov",
+    "prepare_gaussian_bin",
+    "sample_gaussian_bins",
     "peak_to_pixels",
     "peaks_to_pixels"
 ]
