@@ -378,31 +378,29 @@ def omega_solns(
     # R = sqrt(alpha^2 + beta^2)
     # phi = arctan2(alpha, beta)
 
-    phi = jnp.arctan2(alpha, beta)  # cos term / sin term
-    R = jnp.sqrt(alpha * alpha + beta * beta)
+    eps = 1e-7
 
-    # handle cases where R is very close to zero
-    eps = 1e-12
-    R_safe = jnp.where(R < eps, eps, R)
-    # valid solutions occur if |delta / R| <= 1
-    quot = delta / R_safe
-
-    valid = jnp.where(
-        R < eps,
-        jnp.abs(delta) < eps,  # any w works only if delta≈0
-        (quot >= -1.0) & (quot <= 1.0),
-    )
-
-    # asin only valid for -1 <= quot <= 1
-    asin_term = jnp.where(valid, jnp.arcsin(jnp.clip(quot, -1.0, 1.0)), 0.0)
-
-    # If etasign is 1:  1 * asin - phi - 0
-    # If etasign is -1: -1 * asin - phi - pi
-    # Shift = (1 - etasign) * pi / 2  => if 1, shift=0; if -1, shift=pi
-    shift = (1.0 - etasign) * (jnp.pi / 2.0)
-    omega_rad = (etasign * asin_term) - phi - shift
-
-    # Clean wrap to [-pi, pi] and convert
+    # ensure finite gradient - clamp before square-rooting
+    R_sq = alpha * alpha + beta * beta
+    R = jnp.sqrt(jnp.maximum(R_sq, eps))
+    
+    # Safe phi: normalise before arctan2 so args are never jointly zero
+    # by dividing both alpha and beta by R, we don't change the value of phi
+    # but R is strictly never zero, so phi has a nice gradient now
+    phi = jnp.arctan2(alpha / R, beta / R)
+    
+    # validity from *original* R_sq (not the clamped one)
+    quot = delta / R
+    valid = (jnp.abs(quot) <= 1.0) & (R_sq >= eps)
+    
+    # safe arcsin: keep away from +-1 where 1/sqrt(1−x^2) → inf
+    # 1e-6 keeps max gradient != 707, which Adam handles fine
+    clip_eps = 1e-6
+    safe_quot = jnp.clip(quot, -1.0 + clip_eps, 1.0 - clip_eps)
+    asin_term = jnp.arcsin(safe_quot)   # gradient is finite everywhere
+    
+    shift        = (1.0 - etasign) * (jnp.pi / 2.0)
+    omega_rad    = (etasign * asin_term) - phi - shift
     omega_wrapped = jnp.arctan2(jnp.sin(omega_rad), jnp.cos(omega_rad))
-
+    
     return jnp.degrees(omega_wrapped), valid
