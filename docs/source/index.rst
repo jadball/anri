@@ -90,4 +90,4 @@ Install conda, then pip deps, then the package itself (with `dev` optional deps)
 
 .. code-block:: bash
 
-    unidep install .[dev]
+    unidep install .[dev] -e
