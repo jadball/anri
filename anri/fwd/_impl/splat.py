@@ -81,7 +81,34 @@ def sample_gaussian_bins(
 
     Notes
     -----
-    Each bin integral factorises over axes as a product of 1-D marginal integrals:
+    For a 1-D Gaussian with mean :math:`\mu_i` and standard deviation
+    :math:`\sigma_i`, the probability mass in the interval :math:`(a, b]` is [1]_:
+
+    .. math::
+
+        \operatorname{P}(a < x \leq b) =
+            \frac{1}{2}\left[
+                \operatorname{erf}\!\left(\frac{b - \mu_i}{\sigma_i\sqrt{2}}\right)
+                -
+                \operatorname{erf}\!\left(\frac{a - \mu_i}{\sigma_i\sqrt{2}}\right)
+            \right]
+
+    Substituting the bin edges :math:`a = x_{ji} - h_i` and
+    :math:`b = x_{ji} + h_i`, where :math:`x_{ji}` is the bin centre and
+    :math:`h_i` is the bin half-width, and writing
+    :math:`s_i = \frac{1}{\sigma_i\sqrt{2}}` for the precomputed scale:
+
+    .. math::
+
+        \operatorname{P}(x_{ji} - h_i < x \leq x_{ji} + h_i) =
+            \frac{1}{2}\left[
+                \operatorname{erf}\!\left((x_{ji} + h_i - \mu_i) \cdot s_i\right)
+                -
+                \operatorname{erf}\!\left((x_{ji} - h_i - \mu_i) \cdot s_i\right)
+            \right]
+
+    The full :math:`n`-dimensional bin intensity is the product of marginal
+    integrals over each axis:
 
     .. math::
 
@@ -92,20 +119,18 @@ def sample_gaussian_bins(
                 \operatorname{erf}\!\left((x_{ji} - h_i - \mu_i) \cdot s_i\right)
             \right]
 
-    where :math:`h_i` is the per-axis bin half-width and
-    :math:`s_i = \frac{1}{\sigma_i\sqrt{2}}` is the precomputed scale.
-    Each axis carries its own physical units --- pixels for ``slow`` and
-    ``fast``, degrees for ``omega``, mm for ``dty`` --- so half-widths must
-    not be assumed uniform across axes.
+    This factorisation is exact when :math:`\Sigma` is diagonal and accurate
+    when bin widths are small relative to the correlation length of
+    :math:`\Sigma`.
 
     References
     ----------
-    .. [1] https://en.wikipedia.org/wiki/Error_function#Integral_of_a_Gaussian_over_an_interval
+    .. [1] https://en.wikipedia.org/wiki/Normal_distribution#Cumulative_distribution_function
     """
-    lo = (bin_centres - half_widths - mu) * erf_scale   # [m, n]
-    hi = (bin_centres + half_widths - mu) * erf_scale   # [m, n]
+    lo = (bin_centres - half_widths - mu) * erf_scale  # [m, n]
+    hi = (bin_centres + half_widths - mu) * erf_scale  # [m, n]
     marginals = 0.5 * (jax.scipy.special.erf(hi) - jax.scipy.special.erf(lo))  # [m, n]
-    return jnp.prod(marginals, axis=-1)                  # [m]
+    return jnp.prod(marginals, axis=-1)  # [m]
 
 
 @jax.jit(static_argnums=(4,))
@@ -161,28 +186,24 @@ def peak_to_pixels(
     n = centroid.shape[0]
 
     # Per-axis bin half-widths — each axis has its own physical units
-    half_widths = jnp.array([
-        (bins[i][1] - bins[i][0]) / 2.0
-        for i in range(n)
-    ])
+    half_widths = jnp.array([(bins[i][1] - bins[i][0]) / 2.0 for i in range(n)])
 
-    starts = jnp.array([
-        jnp.clip(
-            jnp.argmin(jnp.abs(bins[i] - centroid[i])) - window_size // 2,
-            0,
-            len(bins[i]) - window_size,
-        )
-        for i in range(n)
-    ])
+    starts = jnp.array(
+        [
+            jnp.clip(
+                jnp.argmin(jnp.abs(bins[i] - centroid[i])) - window_size // 2,
+                0,
+                len(bins[i]) - window_size,
+            )
+            for i in range(n)
+        ]
+    )
 
-    local_axes = [
-        jax.lax.dynamic_slice(bins[i], (starts[i],), (window_size,))
-        for i in range(n)
-    ]
+    local_axes = [jax.lax.dynamic_slice(bins[i], (starts[i],), (window_size,)) for i in range(n)]
 
     # [window_size^n, n] grid of bin centres within the local window
     grid = jnp.stack(
-        [g.ravel() for g in jnp.meshgrid(*local_axes, indexing='ij')],
+        [g.ravel() for g in jnp.meshgrid(*local_axes, indexing="ij")],
         axis=-1,
     )
 
