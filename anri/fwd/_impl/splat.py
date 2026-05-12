@@ -6,7 +6,7 @@ import jax.numpy as jnp
 
 @jax.jit
 def prepare_gaussian_bin(cov: jax.Array) -> jax.Array:
-    r"""Precompute per-axis scaling factors for :func:`sample_gaussian_bin`.
+    r"""Precompute per-axis scaling factors for :func:`sample_gaussian_bins`.
 
     Parameters
     ----------
@@ -16,35 +16,10 @@ def prepare_gaussian_bin(cov: jax.Array) -> jax.Array:
     Returns
     -------
     erf_scale : jax.Array
-        ``[n]`` per-axis scaling factor :math:`\frac{1}{\sigma_i \sqrt{2}}`
-        applied to bin edge residuals in :func:`sample_gaussian_bin`.
-
-    Notes
-    -----
-    The integrated intensity of an :math:`n`-dimensional Gaussian
-    :math:`\mathcal{N}(\vec{\mu}, \Sigma)` over an axis-aligned bin centred
-    at :math:`\vec{x}` with half-widths :math:`\vec{h} = \vec{w}/2` factorises
-    over axes using the marginal distributions:
-
-    .. math::
-
-        \int_{\vec{x} - \vec{h}}^{\vec{x} + \vec{h}}
-        \mathcal{N}(\vec{u} \mid \vec{\mu}, \Sigma)\, d\vec{u}
-        \approx \prod_{i=1}^{n}
-        \frac{1}{2}\left[
-            \operatorname{erf}\!\left(\frac{x_i + h_i - \mu_i}{\sigma_i\sqrt{2}}\right)
-            -
-            \operatorname{erf}\!\left(\frac{x_i - h_i - \mu_i}{\sigma_i\sqrt{2}}\right)
-        \right]
-
-    where :math:`\sigma_i = \sqrt{\Sigma_{ii}}` is the marginal standard
-    deviation along axis :math:`i`. This is exact when :math:`\Sigma` is
-    diagonal and accurate when bin widths are small relative to the
-    correlation length of :math:`\Sigma` [1]_.
-
-    References
-    ----------
-    .. [1] https://en.wikipedia.org/wiki/Error_function#Integral_of_a_Gaussian_over_an_interval
+        ``[n]`` per-axis scaling factor :math:`s_i = \frac{1}{\sigma_i \sqrt{2}}`,
+        where :math:`\sigma_i = \sqrt{\Sigma_{ii}}` is the marginal standard
+        deviation along axis :math:`i`. See :func:`sample_gaussian_bins` for
+        usage.
     """
     marginal_std = jnp.sqrt(jnp.diag(cov))
     erf_scale = 1.0 / (marginal_std * jnp.sqrt(2.0))
@@ -65,13 +40,16 @@ def sample_gaussian_bins(
     mu : jax.Array
         ``[n]`` centroid of the Gaussian in ``(slow, fast, omega[, dty])`` coordinates.
     erf_scale : jax.Array
-        ``[n]`` precomputed per-axis scaling factors from :func:`prepare_gaussian_bin`,
-        equal to :math:`\frac{1}{\sigma_i \sqrt{2}}`.
+        ``[n]`` per-axis scaling factors :math:`s_i = \frac{1}{\sigma_i \sqrt{2}}`
+        precomputed by :func:`prepare_gaussian_bin`.
     bin_centres : jax.Array
         ``[m, n]`` coordinates of ``m`` bin centres to evaluate.
     half_widths : jax.Array
-        ``[n]`` half-width of each bin along each axis, derived from the bin
-        spacing of ``(slow, fast, omega[, dty])``.
+        ``[n]`` half-width :math:`h_i` of each bin along each axis, derived from
+        the bin spacing of ``(slow, fast, omega[, dty])``. Each axis carries its
+        own physical units --- pixels for ``slow`` and ``fast``, degrees for
+        ``omega``, um for ``dty`` --- so half-widths are not assumed uniform
+        across axes.
 
     Returns
     -------
@@ -93,10 +71,8 @@ def sample_gaussian_bins(
                 \operatorname{erf}\!\left(\frac{a - \mu_i}{\sigma_i\sqrt{2}}\right)
             \right]
 
-    Substituting the bin edges :math:`a = x_{ji} - h_i` and
-    :math:`b = x_{ji} + h_i`, where :math:`x_{ji}` is the bin centre and
-    :math:`h_i` is the bin half-width, and writing
-    :math:`s_i = \frac{1}{\sigma_i\sqrt{2}}` for the precomputed scale:
+    Substituting bin edges :math:`a = x_{ji} - h_i` and :math:`b = x_{ji} + h_i`
+    and writing :math:`s_i = \frac{1}{\sigma_i\sqrt{2}}`:
 
     .. math::
 
@@ -120,12 +96,16 @@ def sample_gaussian_bins(
             \right]
 
     This factorisation is exact when :math:`\Sigma` is diagonal and accurate
-    when bin widths are small relative to the correlation length of
-    :math:`\Sigma`.
+    when bin widths are small relative to the correlation length of :math:`\Sigma`.
 
     References
     ----------
     .. [1] https://en.wikipedia.org/wiki/Normal_distribution#Cumulative_distribution_function
+
+    See Also
+    --------
+    prepare_gaussian_bin : Precomputes :math:`s_i` from a covariance matrix.
+    peak_to_pixels : Evaluates a single peak over a local window using this function.
     """
     lo = (bin_centres - half_widths - mu) * erf_scale  # [m, n]
     hi = (bin_centres + half_widths - mu) * erf_scale  # [m, n]
@@ -149,21 +129,22 @@ def peak_to_pixels(
         ``[n]`` centroid of the Gaussian peak in ``(slow, fast, omega[, dty])``
         coordinates.
     erf_scale : jax.Array
-        ``[n]`` precomputed per-axis scaling factors from :func:`prepare_gaussian_bin`,
-        equal to :math:`\frac{1}{\sigma_i\sqrt{2}}`.
+        ``[n]`` per-axis scaling factors :math:`s_i = \frac{1}{\sigma_i\sqrt{2}}`
+        precomputed by :func:`prepare_gaussian_bin`.
     amplitude : float
         Integrated intensity of the peak.
     bins : tuple[jax.Array, ...]
         Tuple of ``n`` coordinate arrays giving bin centres along each of
-        ``(slow, fast, omega[, dty])``. Bin widths are derived from the
-        spacing of each array, so uniform spacing per axis is assumed.
+        ``(slow, fast, omega[, dty])``. Bin half-widths :math:`h_i` are derived
+        from the spacing of each array as :math:`h_i = (b_i[1] - b_i[0]) / 2`,
+        so uniform spacing per axis is assumed.
     window_size : int
         Number of bins along each axis. Static for JIT and vmap compilation.
 
     Returns
     -------
     intensities : jax.Array
-        ``[window_size] * n`` dense block of integrated intensities scaled
+        ``[window_size,] * n`` dense block of integrated intensities scaled
         by ``amplitude``.
     starts : jax.Array
         ``[n]`` start indices locating the window within each axis of ``bins``,
@@ -171,21 +152,19 @@ def peak_to_pixels(
 
     Notes
     -----
-    Per-axis bin half-widths :math:`h_i` are derived from the spacing of each
-    bin array as :math:`h_i = (b_i[1] - b_i[0]) / 2`. A local window of
-    ``window_size`` bins is extracted around ``centroid`` along each axis via
-    :func:`jax.lax.dynamic_slice`. The resulting local bin centres are formed
-    into an ``[window_size^n, n]`` grid via :func:`jnp.meshgrid` and passed to
-    :func:`sample_gaussian_bins`.
+    A local window of ``window_size`` bins is extracted around ``centroid``
+    along each axis via :func:`jax.lax.dynamic_slice`. The resulting local bin
+    centres are assembled into an ``[window_size^n, n]`` grid and passed to
+    :func:`sample_gaussian_bins` — see that function for the underlying maths.
 
     See Also
     --------
-    prepare_gaussian_bin : Precomputes ``erf_scale`` from a covariance matrix.
+    prepare_gaussian_bin : Precomputes :math:`s_i` from a covariance matrix.
+    sample_gaussian_bins : Core bin-integration function called internally.
     peaks_to_pixels : Vectorised form of this function over a batch of peaks.
     """
     n = centroid.shape[0]
 
-    # Per-axis bin half-widths — each axis has its own physical units
     half_widths = jnp.array([(bins[i][1] - bins[i][0]) / 2.0 for i in range(n)])
 
     starts = jnp.array(
@@ -213,9 +192,4 @@ def peak_to_pixels(
     return intensities, starts
 
 
-#: Vectorised form of :func:`peak_to_pixels` over a batch of peaks.
-#:
-#: Parameters map identically to :func:`peak_to_pixels` with a leading batch
-#: dimension on ``centroid``, ``erf_scale``, and ``amplitude``.
-#: ``bins`` and ``window_size`` are shared across all peaks.
 peaks_to_pixels = jax.vmap(peak_to_pixels, in_axes=[0, 0, 0, None, None])
