@@ -1,4 +1,4 @@
-# anri
+# Anri
 Anri is a Python package for analysing Three-Dimensional X-Ray Diffraction data.  
 Anri is in the very early stages of development and is not yet ready to use for experimental analysis.
 
@@ -76,3 +76,9 @@ All Python functions and files (outside of `anri/sandbox`) must conform for the 
 With `Visual Studio Code` you have easy access to automatic lint-on-save and format-on-save via extensions.  
 Inside `.vscode` you have a `settings.sample.json` which, if you're happy with, you can rename to `settings.json` to apply my recommended per-project settings for this repository.  
 You also have `extensions.json` containing my recommended extensions (including `ruff`) which `Visual Studio Code` should prompt you to install automatically.
+
+# Credits
+Anri is currently primarily developed by James A. D. Ball. Many sections of Anri are based on [ImageD11](https://github.com/FABLE-3DXRD/ImageD11) - I recommend you check it out!
+
+# Acknowledgements
+We are grateful to Carsten Detlefs, Axel Henningsson, and Jon P. Wright for their invaluable advice during the development of Anri.
