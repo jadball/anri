@@ -64,7 +64,7 @@ def get_centroid_scan(
     sc_lab: jax.Array,  # detector
     fc_lab: jax.Array,
     norm_lab: jax.Array,
-) -> jax.Array:
+) -> tuple[jax.Array, bool]:
     """Forward project (ubi, hkl) to get 4D peak centroid (sc, fc, omega, dty) in the Scanning 3DXRD case.
 
     This can be vectorised over ubis and origin_samples, see :func:`get_centroid_scan_all_grains`.
@@ -114,7 +114,6 @@ def get_centroid_scan(
     """
     k_in_lab, k_out_lab, omega, valid = hkl_to_k_omega(
         ubi,  # grain stuff
-        origin_sample,
         hkl,  # peak stuff
         etasign,
         wavelength,  # beam
@@ -123,7 +122,6 @@ def get_centroid_scan(
         kz,
         wedge,  # gonio
         chi,
-        y0,
     )
 
     dty = find_dty_for_beam_xy(origin_sample, k_in_lab, omega, wedge, chi, y0)
@@ -145,7 +143,8 @@ get_centroid_scan_all_grains = jax.vmap(
 
 # vmap over hkls
 get_centroid_scan_all = jax.vmap(
-    get_centroid_scan_all_grains, in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None]
+    get_centroid_scan_all_grains,
+    in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None],
 )
 
 # vmap over grains

@@ -70,14 +70,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up system Python for Conda
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
+      # - name: Set up system Python for Conda
+      #   uses: actions/setup-python@v6
+      #   with:
+      #     python-version: ${{ matrix.python-version }}
 
-      - name: Get exact Python version
-        id: get-python-version
-        run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
+      # - name: Get exact Python version
+      #   id: get-python-version
+      #   run: echo "PYTHON_VERSION=$(python --version | cut -d' ' -f2)" >> $GITHUB_ENV
 
       - name: Set up Miniconda via conda-incubator
         uses: conda-incubator/setup-miniconda@v4
@@ -88,6 +88,9 @@ jobs:
           use-mamba: true
           conda-remove-defaults: true
           python-version: ${{ matrix.python-version }}
+      
+      - name: Force GIL-enabled Python
+        run: mamba install -n anaconda-client-env -y python-gil
 
       - name: Set UTF-8 Code Page (Windows only)
         if: startsWith(matrix.os, 'windows')

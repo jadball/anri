@@ -119,7 +119,7 @@ def peak_to_pixels(
     erf_scale: jax.Array,
     amplitude: float,
     bins: tuple[jax.Array, ...],
-    window_size: int,
+    window_sizes: tuple[int, ...],
 ) -> tuple[jax.Array, jax.Array]:
     r"""Compute the intensity of a single Gaussian peak over a local pixel window.
 
@@ -138,24 +138,26 @@ def peak_to_pixels(
         ``(slow, fast, omega[, dty])``. Bin half-widths :math:`h_i` are derived
         from the spacing of each array as :math:`h_i = (b_i[1] - b_i[0]) / 2`,
         so uniform spacing per axis is assumed.
-    window_size : int
-        Number of bins along each axis. Static for JIT and vmap compilation.
+    window_sizes : tuple[int, ...]
+        Number of bins along each axis, one per axis. Each entry must not
+        exceed the length of the corresponding bin array. Static for JIT
+        and vmap compilation.
 
     Returns
     -------
     intensities : jax.Array
-        ``[window_size,] * n`` dense block of integrated intensities scaled
-        by ``amplitude``.
+        Dense block of integrated intensities scaled by ``amplitude``, with
+        shape ``window_sizes``.
     starts : jax.Array
         ``[n]`` start indices locating the window within each axis of ``bins``,
         for scattering the output back into a global array.
 
     Notes
     -----
-    A local window of ``window_size`` bins is extracted around ``centroid``
-    along each axis via :func:`jax.lax.dynamic_slice`. The resulting local bin
-    centres are assembled into an ``[window_size^n, n]`` grid and passed to
-    :func:`sample_gaussian_bins` — see that function for the underlying maths.
+    A local window of ``window_sizes[i]`` bins is extracted around ``centroid``
+    along each axis ``i`` via :func:`jax.lax.dynamic_slice`. The resulting local
+    bin centres are assembled into an ``[prod(window_sizes), n]`` grid and passed
+    to :func:`sample_gaussian_bins` — see that function for the underlying maths.
 
     See Also
     --------
@@ -170,24 +172,24 @@ def peak_to_pixels(
     starts = jnp.array(
         [
             jnp.clip(
-                jnp.argmin(jnp.abs(bins[i] - centroid[i])) - window_size // 2,
+                jnp.argmin(jnp.abs(bins[i] - centroid[i])) - window_sizes[i] // 2,
                 0,
-                len(bins[i]) - window_size,
+                len(bins[i]) - window_sizes[i],
             )
             for i in range(n)
         ]
     )
 
-    local_axes = [jax.lax.dynamic_slice(bins[i], (starts[i],), (window_size,)) for i in range(n)]
+    local_axes = [jax.lax.dynamic_slice(bins[i], (starts[i],), (window_sizes[i],)) for i in range(n)]
 
-    # [window_size^n, n] grid of bin centres within the local window
+    # [prod(window_sizes), n] grid of bin centres within the local window
     grid = jnp.stack(
         [g.ravel() for g in jnp.meshgrid(*local_axes, indexing="ij")],
         axis=-1,
     )
 
     intensities = sample_gaussian_bins(centroid, erf_scale, grid, half_widths)
-    intensities = intensities.reshape((window_size,) * n) * amplitude
+    intensities = intensities.reshape(window_sizes) * amplitude
 
     return intensities, starts
 
