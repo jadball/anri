@@ -1,6 +1,6 @@
 """Base functions for forward projection code."""
 
-from typing import Iterable
+from typing import Any, Iterable
 from collections.abc import Callable
 
 import jax
