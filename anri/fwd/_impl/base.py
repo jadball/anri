@@ -170,7 +170,7 @@ def make_propagator(centroid_fn: Callable, argnums: tuple[int, ...], has_aux: bo
     J_fn = jax.jacfwd(centroid_fn, argnums=argnums, has_aux=has_aux)
 
 
-    def _propagate(*args: Any) -> jax.Array:
+    def _propagate(*args: Any) -> jax.Array: # noqa: ANN401
         J_out = J_fn(*args[:-1])
         if has_aux:
             J_out, _ = J_out
