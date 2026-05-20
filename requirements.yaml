@@ -39,12 +39,14 @@ optional_dependencies:
     - pip: sphinx_math_dollar
     - pip: packaging
     - pip: coverage
+    - pip: optax  # for some tutorial notebooks
   sandbox:
     - pip: matplotlib
     - pip: ImageD11
     - pip: ipykernel
     - pip: ipympl
     - pip: tqdm
+    - pip: optax
 #    - pip: jax
 #    - pip: silx[full]
 #    - conda: cctbx
