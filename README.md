@@ -1,7 +1,3 @@
-# Anri
-Anri is a Python package for analysing Three-Dimensional X-Ray Diffraction data.  
-Anri is in the very early stages of development and is not yet ready to use for experimental analysis.
-
 [![GitHub Repo](https://img.shields.io/badge/repo-GitHub-lightgrey?logo=github)](https://github.com/jadball/anri)
 [![cross-platform](https://img.shields.io/badge/platform-cross--platform-brightgreen.svg)](https://www.python.org/)
 [![JAX Python](https://img.shields.io/badge/code-JAX-blue.svg)](https://github.com/jax-ml/jax)
@@ -9,6 +5,18 @@ Anri is in the very early stages of development and is not yet ready to use for 
 [![CodeCov](https://codecov.io/gh/jadball/anri/branch/main/graph/badge.svg)](https://codecov.io/gh/jadball/anri)
 [![code style ruff](https://img.shields.io/badge/code%20style-Ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Sphinx documentation](https://img.shields.io/badge/docs-sphinx-blue?logo=sphinx.svg)](https://jadball.github.io/anri/)
+
+# Anri
+Anri is a Python package for GPU-accelerated analysis of Three-Dimensional X-Ray Diffraction (3DXRD) data.  
+
+# Development status
+
+[![xkcd: Here to Help](https://imgs.xkcd.com/comics/here_to_help_2x.png)](https://xkcd.com/2641/)
+
+Anri is in the very early stages of development and is not yet ready to use for experimental analysis.
+
+# Documentation
+See the docs on GitHub here: [![Sphinx documentation](https://img.shields.io/badge/docs-sphinx-blue?logo=sphinx.svg)](https://jadball.github.io/anri/)
 
 # Dependencies
 We currently target all stable releases of Python. Today this is `3.9 - 3.14` on Windows, ubuntu and OSX (ARM and x86).
