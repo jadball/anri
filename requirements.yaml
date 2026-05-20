@@ -32,6 +32,7 @@ optional_dependencies:
     - conda: pandoc  # needed for nbsphinx to render notebooks
     - pip: ipython
     - pip: ipykernel  # needed for nbsphinx to render notebooks
+    - pip: ipywidgets  # needed for nbsphinx to render notebooks with interactive figures
     - pip: sphinx-copybutton
     - pip: sphinx-autobuild
     - pip: sphinx-autodoc-typehints
