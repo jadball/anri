@@ -13,7 +13,8 @@ Anri is a Python package for GPU-accelerated analysis of Three-Dimensional X-Ray
 
 [![xkcd: Here to Help](https://imgs.xkcd.com/comics/here_to_help_2x.png)](https://xkcd.com/2641/)
 
-Anri is in the very early stages of development and is not yet ready to use for experimental analysis.
+Anri is in the very early stages of development and is not yet ready to use for experimental analysis.  
+However, we are making progress! See the [Tutorials](https://jadball.github.io/anri/tutorials/index.html) section of the Documentation for some examples of what Anri can do.
 
 # Documentation
 See the docs on GitHub here: [![Sphinx documentation](https://img.shields.io/badge/docs-sphinx-blue?logo=sphinx.svg)](https://jadball.github.io/anri/)
