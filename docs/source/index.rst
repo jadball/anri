@@ -54,9 +54,11 @@ At the core of Anri is a high-performance forward model that goes from sample sp
 Great effort has been undertaken to ensure that JAX-native Anri functions are differentiable, using the powerful auto-diff capabilities of JAX. This has two obvious use-cases:
 
 - **Peak shapes**
+
 By expressing instrumental parameters such as incident beam divergence and energy spread as Gaussian distributions, Anri can use the per-peak Jacobians produced by JAX to propagate these parameters into detector space as a covariance matrix in output space, thereby rendering fairly realistic peak shapes that are not just simple detector point spread functions. Therefore, a spread in beam energy (for example) manifests as a radial distribution on the detector. 
 
 - **Gradient-aware optimisation (in progress)**
+
 Anri will take advantage of the differentiable, intensity-aware forward model to perform iterative refinement of grain maps produced by `ImageD11 <https://github.com/FABLE-3DXRD/ImageD11>`_ (and perhaps other programs in the future) to yield refined maps of orientation gradients and strains.
 
 
