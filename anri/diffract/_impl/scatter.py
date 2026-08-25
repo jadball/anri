@@ -222,7 +222,7 @@ def q_lab_to_tth_eta(q_lab: jax.Array, wavelength: float) -> tuple[jax.Array, ja
             \eta &= \arctan2\left(-Q_2, Q_3\right)
         \end{aligned}
     """
-    q1, q2, q3 = q_lab
+    _q1, q2, q3 = q_lab
     ds = q_to_ds(q_lab)
     tth = ds_to_tth(ds, wavelength)
     eta = jnp.degrees(jnp.arctan2(-q2, q3))
@@ -383,24 +383,24 @@ def omega_solns(
     # ensure finite gradient - clamp before square-rooting
     R_sq = alpha * alpha + beta * beta
     R = jnp.sqrt(jnp.maximum(R_sq, eps))
-    
+
     # Safe phi: normalise before arctan2 so args are never jointly zero
     # by dividing both alpha and beta by R, we don't change the value of phi
     # but R is strictly never zero, so phi has a nice gradient now
     phi = jnp.arctan2(alpha / R, beta / R)
-    
+
     # validity from *original* R_sq (not the clamped one)
     quot = delta / R
     valid = (jnp.abs(quot) <= 1.0) & (R_sq >= eps)
-    
+
     # safe arcsin: keep away from +-1 where 1/sqrt(1−x^2) → inf
     # 1e-6 keeps max gradient != 707, which Adam handles fine
     clip_eps = 1e-6
     safe_quot = jnp.clip(quot, -1.0 + clip_eps, 1.0 - clip_eps)
-    asin_term = jnp.arcsin(safe_quot)   # gradient is finite everywhere
-    
-    shift        = (1.0 - etasign) * (jnp.pi / 2.0)
-    omega_rad    = (etasign * asin_term) - phi - shift
+    asin_term = jnp.arcsin(safe_quot)  # gradient is finite everywhere
+
+    shift = (1.0 - etasign) * (jnp.pi / 2.0)
+    omega_rad = (etasign * asin_term) - phi - shift
     omega_wrapped = jnp.arctan2(jnp.sin(omega_rad), jnp.cos(omega_rad))
-    
+
     return jnp.degrees(omega_wrapped), valid
