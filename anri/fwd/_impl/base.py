@@ -1,7 +1,7 @@
 """Base functions for forward projection code."""
 
-from typing import Any, Iterable
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 import jax
 import jax.numpy as jnp

@@ -149,8 +149,8 @@ def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
     ----------
     .. [2] https://doi.org/10.2172/4457192
     """
-    a, b, c, alpha, beta, gamma = lpars
-    astar, bstar, cstar, alphastar, betastar, gammastar = rlpars
+    _a, _b, c, alpha, _beta, _gamma = lpars
+    astar, bstar, cstar, _alphastar, betastar, gammastar = rlpars
     betastar_rad = jnp.radians(betastar)
     gammastar_rad = jnp.radians(gammastar)
     ca = jnp.cos(jnp.radians(alpha))
