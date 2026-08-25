@@ -22,7 +22,7 @@ from anri import VERSION, VERSION_SHORT  # noqa: E402
 
 # -- Project information -----------------------------------------------------
 
-project = "anri"
+project = "Anri"
 copyright = f"{datetime.today().year}, James A. D. Ball"
 author = "James A. D. Ball"
 version = VERSION_SHORT
@@ -68,7 +68,7 @@ exclude_patterns = ["_build"]
 
 # HTML stuff
 html_theme = "pydata_sphinx_theme"
-html_title = f"anri v{VERSION}"
+html_title = f"Anri v{VERSION}"
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,

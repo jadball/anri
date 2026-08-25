@@ -3,6 +3,7 @@
 """Prepares markdown release notes for GitHub releases. From template https://github.com/allenai/python-package-template ."""
 
 import os
+import subprocess
 from typing import List, Optional
 
 import packaging.version
@@ -57,10 +58,17 @@ def get_commit_history() -> str:
     new_version = packaging.version.parse(TAG)
 
     # Pull all tags.
-    os.popen("git fetch --tags")
+    # os.popen("git fetch --tags")  # now deprecated
+    subprocess.run(["git", "fetch", "--tags"], check=True)
 
     # Get all tags sorted by version, latest first.
-    all_tags = os.popen("git tag -l --sort=-version:refname 'v*'").read().split("\n")
+    # all_tags = os.popen("git tag -l --sort=-version:refname 'v*'").read().split("\n")
+    all_tags = subprocess.run(
+    ["git", "tag", "-l", "--sort=-version:refname", "v*"],
+        capture_output=True,
+        text=True,
+        check=True
+    ).stdout.splitlines()
 
     # Out of `all_tags`, find the latest previous version so that we can collect all
     # commits between that version and the new version we're about to publish.
@@ -75,10 +83,24 @@ def get_commit_history() -> str:
         if version < new_version:
             last_tag = tag
             break
+    # if last_tag is not None:
+    #     commits = os.popen(f"git log {last_tag}..{TAG} --oneline --first-parent").read()
+    # else:
+    #     commits = os.popen("git log --oneline --first-parent").read()
     if last_tag is not None:
-        commits = os.popen(f"git log {last_tag}..{TAG} --oneline --first-parent").read()
+        commits = subprocess.run(
+            ["git", "log", f"{last_tag}..{TAG}", "--oneline", "--first-parent"],
+            capture_output=True,
+            text=True,
+            check=True
+        ).stdout
     else:
-        commits = os.popen("git log --oneline --first-parent").read()
+        commits = subprocess.run(
+            ["git", "log", "--oneline", "--first-parent"],
+            capture_output=True,
+            text=True,
+            check=True
+        ).stdout
     return "## Commits\n\n" + commits
 
 

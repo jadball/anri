@@ -6,6 +6,9 @@ This page contains tutorials on how to use Anri.
 
 Crystallography
 ===============
+
+Anri has some basic crystallography classes that extend the Dan's Diffraction library but are interfaced with similarly to ImageD11. This currently contains the minimum needed to load a CIF, get the lattice parameters, compute hkls, group them into rings (based on d-star), get multiplicities and structure factors.
+
 .. nbgallery::
 
     crystallography
@@ -27,6 +30,7 @@ If you are the beam, looking towards the detector from the source, the $Y$ axis 
 
 Our goniometer stack is as follows::
 
+    sample
     omega - roll around Z axis
     chi - roll around X axis
     wedge - roll around Y axis (in ImageD11 this has a negative sign, we definine it as positive.)
@@ -43,7 +47,7 @@ $$\matr{R_z} \cdot \vec{v_{\text{sample}}} = \vec{v_{\text{lab}}}$$
 Detector
 --------
 
-Something about detector space.
+Anri currently uses the FABLE geometry definitions for detector space.
 
 .. nbgallery::
     
@@ -51,7 +55,7 @@ Something about detector space.
     goniometer_geometry
 
 Forward Modeling
-=================
+================
 
 There's a very basic demonstration of how to perform a forward model with Anri.
 
