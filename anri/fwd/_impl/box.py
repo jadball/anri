@@ -94,14 +94,19 @@ def get_centroid_box(
 propagate_cov_box = make_propagator(get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True)
 
 ### vmaps
+# Fully-vectorised entry points are jitted so repeated calls reuse one compiled
+# program instead of re-tracing the nested vmaps.
 # vmap over grains
 get_centroid_box_all_grains = jax.vmap(
     get_centroid_box, in_axes=[0, 0, None, None, None, None, None, None, None, None, None, None, None]
 )
 
 # vmap over hkls
-get_centroid_box_all = jax.vmap(
-    get_centroid_box_all_grains, in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None]
+get_centroid_box_all = jax.jit(
+    jax.vmap(
+        get_centroid_box_all_grains,
+        in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None],
+    )
 )
 
 
@@ -111,7 +116,9 @@ propagate_cov_box_all_grains = jax.vmap(
 )
 
 # vmap over hkls
-propagate_cov_box_all = jax.vmap(
-    propagate_cov_box_all_grains,
-    in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None],
+propagate_cov_box_all = jax.jit(
+    jax.vmap(
+        propagate_cov_box_all_grains,
+        in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None],
+    )
 )

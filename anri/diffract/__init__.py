@@ -3,7 +3,10 @@
 from ._impl.scatter import (
     ds_to_tth,
     k_to_q_lab,
+    omega_from_core,
     omega_solns,
+    omega_solns_both,
+    omega_solns_core,
     peak_lab_to_k_out,
     q_lab_to_k_out,
     q_lab_to_tth_eta,
@@ -15,7 +18,10 @@ from ._impl.scatter import (
 __all__ = [
     "ds_to_tth",
     "k_to_q_lab",
+    "omega_from_core",
     "omega_solns",
+    "omega_solns_both",
+    "omega_solns_core",
     "peak_lab_to_k_out",
     "q_lab_to_k_out",
     "q_lab_to_tth_eta",

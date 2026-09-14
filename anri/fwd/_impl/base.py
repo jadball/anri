@@ -5,9 +5,50 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from anri.diffract import omega_solns, q_lab_to_k_out, scale_norm_k
+from anri.diffract import omega_from_core, omega_solns_core, q_lab_to_k_out, scale_norm_k
 from anri.geom import lab_to_sample, sample_to_lab
+
+
+@jax.jit
+def inv3(m: jax.Array) -> jax.Array:
+    r"""Invert a 3x3 matrix analytically, via the adjugate over the determinant.
+
+    Parameters
+    ----------
+    m
+        [3,3] Matrix to invert
+
+    Returns
+    -------
+    m_inv: jax.Array
+        [3,3] Inverse of ``m``
+
+    Notes
+    -----
+    Written out rather than delegated to :func:`jax.numpy.linalg.inv` because
+    this sits in the inner loop of the forward model. A LAPACK-backed inverse
+    lowers to custom calls that XLA cannot fuse with the surrounding arithmetic
+    and that constrain the operand layout; the adjugate is around thirty flops
+    of plain elementwise work and fuses freely.
+
+    Accuracy relies on ``m`` being well conditioned, which UBI matrices are.
+    On near-singular input it loses precision faster than an LU-based inverse,
+    so it is not a general-purpose substitute.
+    """
+    c00 = m[1, 1] * m[2, 2] - m[1, 2] * m[2, 1]
+    c01 = m[1, 2] * m[2, 0] - m[1, 0] * m[2, 2]
+    c02 = m[1, 0] * m[2, 1] - m[1, 1] * m[2, 0]
+    det = m[0, 0] * c00 + m[0, 1] * c01 + m[0, 2] * c02
+    c10 = m[0, 2] * m[2, 1] - m[0, 1] * m[2, 2]
+    c11 = m[0, 0] * m[2, 2] - m[0, 2] * m[2, 0]
+    c12 = m[0, 1] * m[2, 0] - m[0, 0] * m[2, 1]
+    c20 = m[0, 1] * m[1, 2] - m[0, 2] * m[1, 1]
+    c21 = m[0, 2] * m[1, 0] - m[0, 0] * m[1, 2]
+    c22 = m[0, 0] * m[1, 1] - m[0, 1] * m[1, 0]
+    # rows of the inverse are the columns of the cofactor matrix
+    return jnp.array([[c00, c10, c20], [c01, c11, c21], [c02, c12, c22]]) / det
 
 
 @jax.jit
@@ -58,20 +99,94 @@ def hkl_to_k_omega(
     valid: bool
         Boolean indicating if a valid solution exists
     """
-    q_sample = jnp.linalg.inv(ubi) @ hkl
+    q_sample = inv3(ubi) @ hkl
 
     # perturb k_in_lab by divergence
     k_in_lab = k_in_lab + jnp.array([0.0, ky, kz])
     k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
     k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
 
-    omega, valid = omega_solns(q_sample, etasign, k_in_sample_norm)
+    asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample_norm)
+    omega = omega_from_core(asin_term, phi, etasign)
 
     q_lab = sample_to_lab(q_sample, omega, wedge, chi, 0.0, 0.0)
 
     k_out_lab = q_lab_to_k_out(q_lab, k_in_lab_norm)
 
     return k_in_lab, k_out_lab, omega, valid
+
+
+@jax.jit
+def hkl_to_k_omega_both(
+    ubi: jax.Array,
+    hkl: jax.Array,
+    wavelength: float,
+    k_in_lab: jax.Array,
+    ky: float,
+    kz: float,
+    wedge: float,
+    chi: float,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    r"""Forward-project (h,k,l) into k-vectors and omega angles for both Friedel solutions.
+
+    Parameters
+    ----------
+    ubi:
+        [3,3] (U.B)^(-1) matrix of the grain/voxel
+    hkl:
+        [3] (h,k,l) reciprocal space vector
+    wavelength:
+        Wavelength in angstroms
+    k_in_lab:
+        [3] Unperturbed unit vector of incoming beam, lab frame
+    ky:
+        y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
+    kz:
+        z-component of the beam in the lab frame. Represents vertical beam divergence, usually zero.
+    wedge:
+        Wedge motor value (degrees)
+    chi:
+        Chi motor value (degrees)
+
+    Returns
+    -------
+    k_in_lab: jax.Array
+        [3] k-in vector in laboratory frame (incoming beam) - not scaled or normalised!
+    k_out_lab: jax.Array
+        [2,3] k_out vectors in laboratory frame, index 0 for ``etasign = +1``
+    omega: jax.Array
+        [2] Omega angles in degrees, index 0 for ``etasign = +1``
+    valid: jax.Array
+        Boolean indicating if a valid solution exists, shared by both branches
+
+    Notes
+    -----
+    Q in the sample frame, the beam normalisation and the sample-frame beam
+    vector are all properties of the geometry rather than of the branch, as is
+    everything :func:`anri.diffract.omega_solns_core` computes. Producing both
+    solutions together evaluates that shared part once. Only the omega rotation
+    of Q and the resulting k_out differ per branch.
+
+    See Also
+    --------
+    hkl_to_k_omega : Single-solution version, taking an ``etasign`` argument.
+    """
+    q_sample = inv3(ubi) @ hkl
+
+    # perturb k_in_lab by divergence
+    k_in_lab = k_in_lab + jnp.array([0.0, ky, kz])
+    k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
+    k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
+
+    asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample_norm)
+    omegas = jnp.stack([omega_from_core(asin_term, phi, 1.0), omega_from_core(asin_term, phi, -1.0)])
+
+    k_outs = jnp.stack([
+        q_lab_to_k_out(sample_to_lab(q_sample, omegas[i], wedge, chi, 0.0, 0.0), k_in_lab_norm)
+        for i in range(2)
+    ])
+
+    return k_in_lab, k_outs, omegas, valid
 
 
 @jax.jit
@@ -134,7 +249,13 @@ def propagate_cov(J_func_out: Iterable[jax.Array], cov_in: jax.Array) -> jax.Arr
     return cov_out
 
 
-def make_propagator(centroid_fn: Callable, argnums: tuple[int, ...], has_aux: bool = False) -> Callable:
+def make_propagator(
+    centroid_fn: Callable,
+    argnums: tuple[int, ...],
+    has_aux: bool = False,
+    diagonal: bool = True,
+    active_dims: tuple[int, ...] | None = None,
+) -> Callable:
     r"""Build a JIT'd covariance propagation function for a given centroid function.
 
     Parameters
@@ -143,37 +264,115 @@ def make_propagator(centroid_fn: Callable, argnums: tuple[int, ...], has_aux: bo
         A JIT'd function that forward-projects (ubi, hkl) to a peak centroid.
         Its signature must have ``cov_in`` as the final argument.
     argnums
-        Argument indices to differentiate with respect to, passed directly to :func:`jax.jacfwd`.
+        Argument indices to differentiate with respect to.
         Should correspond to the uncertain inputs (origin, wavelength, divergence).
     has_aux
         If ``True``, ``centroid_fn`` returns a ``(centroid, aux)`` tuple (e.g. a validity bool),
         and the auxiliary output is discarded before propagation.
+    diagonal
+        If ``True`` (default), treat :math:`\mathbf{\Sigma}^{\text{in}}` as diagonal,
+        which is what :func:`get_cov_in` produces. Off-diagonal entries of ``cov_in``
+        are then ignored. Set ``False`` for a hand-built correlated input covariance.
+    active_dims
+        Static tuple selecting which input dimensions to propagate, indexing the
+        flattened concatenation of the ``argnums`` entries. With
+        ``argnums=(1, 4, 6, 7)`` on the scanning model these are ``0,1,2`` for
+        origin xyz, ``3`` for wavelength, ``4`` for ky and ``5`` for kz. ``None``
+        selects all of them. Only used when ``diagonal`` is ``True``.
+
+        Selection happens at trace time, so an omitted dimension costs nothing at
+        all, whereas a zero entry in ``cov_in`` is a runtime value that still pays
+        for its Jacobian column. The origin dimensions are much cheaper than the
+        beam ones: :func:`hkl_to_k_omega` does not depend on ``origin_sample``, so
+        those tangents are zero through the expensive half of the model and fold
+        away.
 
     Returns
     -------
     propagate_fn: Callable
-        A JIT'd function with the same signature as ``centroid_fn`` (plus ``cov_in`` as the final argument)
-        that returns an output covariance matrix.
+        A JIT'd function with the same signature as ``centroid_fn`` (plus ``cov_in``
+        as the final argument) that returns an output covariance matrix.
 
     Notes
     -----
-    Returned function propagates the input covariance matrix :math:`\mathbf{\Sigma}^{\text{in}}` via:
+    Propagation goes as:
 
     .. math::
         \mathbf{\Sigma}^{\text{out}} = \mathbf{J}_f \, \mathbf{\Sigma}^{\text{in}} \, \mathbf{J}_f^T
 
-    where :math:`\mathbf{J}_f` is the Jacobian of ``centroid_fn`` with respect to ``argnums``.
+    where :math:`\mathbf{J}_f` is the Jacobian of ``centroid_fn`` with respect to
+    ``argnums``. For diagonal :math:`\mathbf{\Sigma}^{\text{in}}` this is a sum over
+    the Jacobian columns:
+
+    .. math::
+        \mathbf{\Sigma}^{\text{out}} = \sum_k \sigma_k^2 \, \mathbf{J}_{:,k} \mathbf{J}_{:,k}^T
+
+    so the diagonal path takes one column at a time as a JVP against a tangent that
+    is zero everywhere except entry :math:`k`. Those zeros are compile-time
+    constants, letting XLA drop whichever parts of the model a given column does not
+    reach, and the sum of outer products needs neither the assembled Jacobian nor
+    the two matrix products. Forward-mode costs one pass per input dimension either
+    way, so covariance propagation remains several times more expensive than a
+    centroid: ``argnums=(1, 4, 6, 7)`` is six dimensions.
 
     This is a Python-level factory; it executes once at definition time.
     The returned ``propagate_fn`` is safe to call standalone or inside another :func:`jax.jit`.
     """
-    J_fn = jax.jacfwd(centroid_fn, argnums=argnums, has_aux=has_aux)
+    argnums = tuple(argnums)
 
+    if not diagonal:
+        J_fn = jax.jacfwd(centroid_fn, argnums=argnums, has_aux=has_aux)
 
-    def _propagate(*args: Any) -> jax.Array: # noqa: ANN401
-        J_out = J_fn(*args[:-1])
-        if has_aux:
-            J_out, _ = J_out
-        return propagate_cov(J_out, args[-1])
+        def _propagate_full(*args: Any) -> jax.Array:  # noqa: ANN401
+            J_out = J_fn(*args[:-1])
+            if has_aux:
+                J_out, _ = J_out
+            return propagate_cov(J_out, args[-1])
+
+        return _propagate_full
+
+    def _propagate(*args: Any) -> jax.Array:  # noqa: ANN401
+        fargs, cov_in = list(args[:-1]), args[-1]
+        sigmas = jnp.sqrt(jnp.diagonal(cov_in))
+
+        def f(*diff_args: Any) -> jax.Array:  # noqa: ANN401
+            full = list(fargs)
+            for n, v in zip(argnums, diff_args, strict=True):
+                full[n] = v
+            out = centroid_fn(*full)
+            return out[0] if has_aux else out
+
+        prim = tuple(jnp.asarray(fargs[n]) for n in argnums)
+        shapes = [pr.shape for pr in prim]
+        sizes = [int(np.prod(sh, dtype=int)) for sh in shapes]
+        dims = active_dims if active_dims is not None else tuple(range(sum(sizes)))
+
+        zeros = [jnp.zeros(sh, dtype=pr.dtype) for sh, pr in zip(shapes, prim, strict=True)]
+
+        acc = None
+        for k in dims:
+            # Locate dimension k within the flattened argnums, then build a tangent
+            # that is sigma_k there and a literal zero everywhere else.
+            a, off = 0, k
+            while off >= sizes[a]:
+                off -= sizes[a]
+                a += 1
+            tan = list(zeros)
+            if shapes[a] == ():
+                tan[a] = sigmas[k].astype(prim[a].dtype)
+            else:
+                tan[a] = zeros[a].reshape(-1).at[off].set(sigmas[k]).reshape(shapes[a])
+
+            col = jax.jvp(f, prim, tuple(tan))[1]
+            # Indexed outer product rather than jnp.outer, so a centroid function
+            # returning several solutions (shape [2,4]) yields [2,4,4] instead of
+            # flattening into a single [8,8].
+            outer = col[..., :, None] * col[..., None, :]
+            acc = outer if acc is None else acc + outer
+
+        if acc is None:
+            msg = "active_dims selected no input dimensions, nothing to propagate"
+            raise ValueError(msg)
+        return acc
 
     return _propagate

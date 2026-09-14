@@ -353,12 +353,53 @@ def omega_solns(
     ----------
     .. [2] Milch, J.R., Minor, T.C., 1974. The indexing of single-crystal X-ray rotation photographs. Journal of Applied Crystallography 7, 502–505. https://doi.org/10.1107/S0021889874010284
     """
+    asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample)
+    return omega_from_core(asin_term, phi, etasign), valid
+
+
+@jax.jit
+def omega_solns_core(q_sample: jax.Array, k_in_sample: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
+    r"""Solve the Ewald condition for omega, up to the choice of Friedel branch.
+
+    Parameters
+    ----------
+    q_sample
+        [3] Scattering vector in sample frame
+    k_in_sample
+        [3] Incoming scaled normalised wave-vector in sample frame
+
+    Returns
+    -------
+    asin_term: jax.Array
+        :math:`\arcsin(\delta / R)` in radians, clipped to keep the gradient finite
+    phi: jax.Array
+        Phase :math:`\phi = \arctan2(\alpha, \beta)` in radians
+    valid: jax.Array
+        Boolean indicating if a valid solution exists
+
+    Notes
+    -----
+    The Ewald condition reduces to :math:`\alpha \cos\omega + \beta \sin\omega = \delta`,
+    which harmonic addition turns into :math:`R \sin(\omega + \phi) = \delta` with
+    :math:`R = \sqrt{\alpha^2 + \beta^2}`. Both Friedel solutions follow from
+    :math:`\arcsin(\delta / R)` and :math:`\phi`; only the final phase shift
+    distinguishes them, so those two quantities are the natural thing to compute
+    once and reuse. See :func:`omega_solns` for the full derivation.
+
+    Validity is a property of the geometry, not of the branch, so it is returned
+    here rather than per solution.
+
+    See Also
+    --------
+    omega_from_core : Selects one branch from this output.
+    omega_solns : Returns a single solution in degrees.
+    omega_solns_both : Returns both solutions in degrees.
+    """
     q_0 = q_sample
     axis_sample = jnp.array([0.0, 0.0, 1.0])  # rotation axis is always +Z in sample frame
 
     # split Q into components parallel and perpendicular to rotation axis
     # when we rotate, only the perpendicular component changes
-
     q_par = jnp.dot(q_0, axis_sample) * axis_sample
     q_perp = q_0 - q_par
 
@@ -393,14 +434,68 @@ def omega_solns(
     quot = delta / R
     valid = (jnp.abs(quot) <= 1.0) & (R_sq >= eps)
 
-    # safe arcsin: keep away from +-1 where 1/sqrt(1−x^2) → inf
+    # safe arcsin: keep away from +-1 where 1/sqrt(1-x^2) -> inf
     # 1e-6 keeps max gradient != 707, which Adam handles fine
     clip_eps = 1e-6
     safe_quot = jnp.clip(quot, -1.0 + clip_eps, 1.0 - clip_eps)
     asin_term = jnp.arcsin(safe_quot)  # gradient is finite everywhere
 
+    return asin_term, phi, valid
+
+
+@jax.jit
+def omega_from_core(asin_term: jax.Array, phi: jax.Array, etasign: float) -> jax.Array:
+    r"""Select one Friedel branch from :func:`omega_solns_core` and wrap it to degrees.
+
+    Parameters
+    ----------
+    asin_term
+        :math:`\arcsin(\delta / R)` in radians, from :func:`omega_solns_core`
+    phi
+        Phase in radians, from :func:`omega_solns_core`
+    etasign
+        +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
+
+    Returns
+    -------
+    omega: jax.Array
+        Omega angle in degrees, wrapped to (-180, 180]
+
+    Notes
+    -----
+    The two solutions are :math:`\omega_1 = \arcsin(\delta/R) - \phi` and
+    :math:`\omega_2 = -\arcsin(\delta/R) - \phi - \pi`, which the ``etasign``
+    factor and the :math:`\pi` shift express as one branchless expression.
+    """
     shift = (1.0 - etasign) * (jnp.pi / 2.0)
     omega_rad = (etasign * asin_term) - phi - shift
     omega_wrapped = jnp.arctan2(jnp.sin(omega_rad), jnp.cos(omega_rad))
+    return jnp.degrees(omega_wrapped)
 
-    return jnp.degrees(omega_wrapped), valid
+
+@jax.jit
+def omega_solns_both(q_sample: jax.Array, k_in_sample: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Compute both Friedel omega solutions for a given Q in the sample frame.
+
+    Parameters
+    ----------
+    q_sample
+        [3] Scattering vector in sample frame
+    k_in_sample
+        [3] Incoming scaled normalised wave-vector in sample frame
+
+    Returns
+    -------
+    omega1: jax.Array
+        Omega angle in degrees for ``etasign = +1``
+    omega2: jax.Array
+        Omega angle in degrees for ``etasign = -1``
+    valid: jax.Array
+        Boolean indicating if a valid solution exists, shared by both branches
+
+    See Also
+    --------
+    omega_solns : Returns a single solution.
+    """
+    asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample)
+    return omega_from_core(asin_term, phi, 1.0), omega_from_core(asin_term, phi, -1.0), valid
