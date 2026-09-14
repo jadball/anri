@@ -41,8 +41,12 @@ def rot_x(angle: float) -> jax.Array:
     R: jax.Array
         [3,3] Rotation matrix
     """
-    axis = jnp.array([1.0, 0.0, 0.0])
-    return rmat_from_axis_angle(axis=axis, angle=angle)
+    a = jnp.radians(angle)
+    c, s = jnp.cos(a), jnp.sin(a)
+    # zeros_like/ones_like rather than literals so the matrix still
+    # broadcasts correctly when angle is an array.
+    z, o = jnp.zeros_like(c), jnp.ones_like(c)
+    return jnp.array([[o, z, z], [z, c, -s], [z, s, c]])
 
 
 @jax.jit
@@ -59,8 +63,12 @@ def rot_y(angle: float) -> jax.Array:
     R: jax.Array
         [3,3] Rotation matrix
     """
-    axis = jnp.array([0.0, 1.0, 0.0])
-    return rmat_from_axis_angle(axis=axis, angle=angle)
+    a = jnp.radians(angle)
+    c, s = jnp.cos(a), jnp.sin(a)
+    # zeros_like/ones_like rather than literals so the matrix still
+    # broadcasts correctly when angle is an array.
+    z, o = jnp.zeros_like(c), jnp.ones_like(c)
+    return jnp.array([[c, z, s], [z, o, z], [-s, z, c]])
 
 
 @jax.jit
@@ -86,5 +94,9 @@ def rot_z(angle: float) -> jax.Array:
 
     Therefore we get R @ v_sample = v_lab.
     """
-    axis = jnp.array([0.0, 0.0, 1.0])
-    return rmat_from_axis_angle(axis=axis, angle=angle)
+    a = jnp.radians(angle)
+    c, s = jnp.cos(a), jnp.sin(a)
+    # zeros_like/ones_like rather than literals so the matrix still
+    # broadcasts correctly when angle is an array.
+    z, o = jnp.zeros_like(c), jnp.ones_like(c)
+    return jnp.array([[c, -s, z], [s, c, z], [z, z, o]])
