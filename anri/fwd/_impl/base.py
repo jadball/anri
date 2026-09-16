@@ -255,6 +255,8 @@ def make_propagator(
     has_aux: bool = False,
     diagonal: bool = True,
     active_dims: tuple[int, ...] | None = None,
+    diag_out: bool = False,
+    out_elems: tuple[tuple[int, int], ...] | None = None,
 ) -> Callable:
     r"""Build a JIT'd covariance propagation function for a given centroid function.
 
@@ -273,6 +275,29 @@ def make_propagator(
         If ``True`` (default), treat :math:`\mathbf{\Sigma}^{\text{in}}` as diagonal,
         which is what :func:`get_cov_in` produces. Off-diagonal entries of ``cov_in``
         are then ignored. Set ``False`` for a hand-built correlated input covariance.
+    diag_out
+        If ``True``, return only the diagonal of :math:`\\mathbf{\\Sigma}^{\\text{out}}`,
+        i.e. the marginal variances, with shape ``[..., 4]`` instead of ``[..., 4, 4]``.
+        Callers that splat axis-aligned Gaussians only ever use
+        ``jnp.diagonal(cov)``; accumulating the full outer product
+        ``col[:, None] * col[None, :]`` computes sixteen numbers per peak per
+        input dimension to keep four, and returns an array four times larger for
+        the host to gather from. Requires ``diagonal=True``.
+    out_elems
+        Static tuple of ``(i, j)`` index pairs selecting which elements of
+        :math:`\\mathbf{\\Sigma}^{\\text{out}}` to accumulate, returned with shape
+        ``[..., len(out_elems)]``. ``diag_out=True`` is shorthand for the four
+        diagonal entries.
+
+        The four variances alone are enough only if whatever consumes them
+        renders an axis-aligned peak. They are not enough on a detector: the
+        dominant broadening in a monochromatic scanning experiment is the
+        wavelength spread, which displaces the spot along the radial direction
+        of the Debye-Scherrer ring, so at azimuth 45 degrees the slow-fast
+        covariance is comparable to the variances themselves and the peak is a
+        tilted streak. Pass ``((0, 0), (1, 1), (2, 2), (3, 3), (0, 1))`` to get
+        the variances plus the detector-plane covariance for five accumulations
+        instead of sixteen.
     active_dims
         Static tuple selecting which input dimensions to propagate, indexing the
         flattened concatenation of the ``argnums`` entries. With
@@ -320,6 +345,14 @@ def make_propagator(
     """
     argnums = tuple(argnums)
 
+    if out_elems is None and diag_out:
+        out_elems = ((0, 0), (1, 1), (2, 2), (3, 3))
+    if out_elems is not None:
+        out_elems = tuple((int(i), int(j)) for i, j in out_elems)
+        if not diagonal:
+            msg = "out_elems / diag_out require diagonal=True"
+            raise ValueError(msg)
+
     if not diagonal:
         J_fn = jax.jacfwd(centroid_fn, argnums=argnums, has_aux=has_aux)
 
@@ -366,8 +399,13 @@ def make_propagator(
             col = jax.jvp(f, prim, tuple(tan))[1]
             # Indexed outer product rather than jnp.outer, so a centroid function
             # returning several solutions (shape [2,4]) yields [2,4,4] instead of
-            # flattening into a single [8,8].
-            outer = col[..., :, None] * col[..., None, :]
+            # flattening into a single [8,8]. With diag_out only the diagonal of
+            # that outer product is formed.
+            if out_elems is None:
+                outer = col[..., :, None] * col[..., None, :]
+            else:
+                outer = jnp.stack([col[..., i] * col[..., j]
+                                   for i, j in out_elems], axis=-1)
             acc = outer if acc is None else acc + outer
 
         if acc is None:

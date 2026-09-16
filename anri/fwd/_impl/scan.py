@@ -284,3 +284,66 @@ propagate_cov_scan_all_both = jax.jit(
         in_axes=[None, None, 0, None, None, None, None, None, None, None, None, None, None, None],
     )
 )
+
+
+# ---------------------------------------------------------------------------
+# paired entry points
+#
+# The nested vmaps above form the full hkl x voxel outer product, which is the
+# right shape when every pair is wanted. It is the wrong shape when it is not.
+# Covariance propagation costs one forward pass per input dimension -- six for
+# argnums=(1, 3, 5, 6) -- so it is several times more expensive than a centroid,
+# and in a scanning forward projection a large fraction of (voxel, hkl) pairs
+# either have no omega solution or land off the detector. Those are known from
+# the centroids alone.
+#
+# These take three equal-length arrays instead, one entry per pair, so a caller
+# can run the cheap centroid pass over the outer product, gather the survivors,
+# and pay for the expensive covariance only on those.
+# ---------------------------------------------------------------------------
+
+# vmap over (ubi, origin, hkl) triples
+get_centroid_scan_pairs_both = jax.jit(
+    jax.vmap(get_centroid_scan_both, in_axes=[0, 0, 0] + [None] * 10)
+)
+
+propagate_cov_scan_pairs_both = jax.jit(
+    jax.vmap(propagate_cov_scan_both, in_axes=[0, 0, 0] + [None] * 11)
+)
+
+# Variances plus the detector-plane covariance: [..., 5], ordered
+# (var_sc, var_fc, var_omega, var_dty, cov_sc_fc). The fifth is what makes the
+# rendered peak a radial streak rather than an axis-aligned blob; see the
+# out_elems note in make_propagator.
+SF_ELEMS = ((0, 0), (1, 1), (2, 2), (3, 3), (0, 1))
+
+propagate_cov_scan_both_sf = make_propagator(
+    get_centroid_scan_both, argnums=(1, 3, 5, 6), has_aux=True, out_elems=SF_ELEMS
+)
+
+propagate_cov_scan_all_both_sf = jax.jit(
+    jax.vmap(
+        jax.vmap(propagate_cov_scan_both_sf, in_axes=[0, 0] + [None] * 12),
+        in_axes=[None, None, 0] + [None] * 11,
+    )
+)
+
+propagate_cov_scan_pairs_both_sf = jax.jit(
+    jax.vmap(propagate_cov_scan_both_sf, in_axes=[0, 0, 0] + [None] * 11)
+)
+
+# marginal-variance variants: [..., 4] rather than [..., 4, 4]
+propagate_cov_scan_both_diag = make_propagator(
+    get_centroid_scan_both, argnums=(1, 3, 5, 6), has_aux=True, diag_out=True
+)
+
+propagate_cov_scan_all_both_diag = jax.jit(
+    jax.vmap(
+        jax.vmap(propagate_cov_scan_both_diag, in_axes=[0, 0] + [None] * 12),
+        in_axes=[None, None, 0] + [None] * 11,
+    )
+)
+
+propagate_cov_scan_pairs_both_diag = jax.jit(
+    jax.vmap(propagate_cov_scan_both_diag, in_axes=[0, 0, 0] + [None] * 11)
+)
