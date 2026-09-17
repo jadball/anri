@@ -26,9 +26,18 @@ def exact_block(mu, cov, start, win):
 def render(mu, cov, lo, hi, shape, image=(0, 1), win=(15, 15), n_sub=2, periods=None, amp=1.0, dtype=np.float32):
     """One peak, as (dense canvas, block, start)."""
     periods = periods or (0.0,) * len(shape)
-    f = lambda x: jnp.asarray(np.asarray(x, dtype))  # noqa: E731
+    f = lambda x: jnp.asarray(np.asarray(x, dtype))
     blocks, starts = splat_peaks(
-        f(mu)[None], f(cov)[None], f([amp]), f(lo).reshape(1, -1), f(hi).reshape(1, -1), shape, image, win, n_sub, periods
+        f(mu)[None],
+        f(cov)[None],
+        f([amp]),
+        f(lo).reshape(1, -1),
+        f(hi).reshape(1, -1),
+        shape,
+        image,
+        win,
+        n_sub,
+        periods,
     )
     return np.asarray(blocks[0], np.float64), np.asarray(starts[0])
 
@@ -41,7 +50,7 @@ def place(block, start, size):
 
 @unittest.skipIf(multivariate_normal is None, "needs scipy")
 class TestImageAxes(unittest.TestCase):
-    CASES = [(0.4, 0.9, 0.6), (0.9, 0.4, 0.6), (0.3, 1.1, 0.88), (1.5, 1.5, 0.95), (0.29, 0.29, 0.0), (2.5, 0.5, -0.8)]
+    CASES = ((0.4, 0.9, 0.6), (0.9, 0.4, 0.6), (0.3, 1.1, 0.88), (1.5, 1.5, 0.95), (0.29, 0.29, 0.0), (2.5, 0.5, -0.8))
 
     def _check(self, n_sub, tol, rho_zero_only=False):
         for sr, sc, rho in self.CASES:
@@ -146,8 +155,19 @@ class TestCollapsedAxes(unittest.TestCase):
         shape = (512, 512, 360, 40)
         periods = (0.0, 0.0, 360.0, 0.0)
         img = np.asarray(
-            splat(jnp.asarray(mu[None]), jnp.asarray(cov[None]), jnp.ones(1), jnp.array([-0.5, -0.5]),
-                  jnp.array([511.5, 511.5]), shape, image=(2, 3), win=(21, 21), n_sub=2, periods=periods))
+            splat(
+                jnp.asarray(mu[None]),
+                jnp.asarray(cov[None]),
+                jnp.ones(1),
+                jnp.array([-0.5, -0.5]),
+                jnp.array([511.5, 511.5]),
+                shape,
+                image=(2, 3),
+                win=(21, 21),
+                n_sub=2,
+                periods=periods,
+            )
+        )
         self.assertEqual(img.shape, (360, 40))
         self.assertAlmostEqual(img.sum(), 1.0, delta=1e-4)
         self.assertGreater(img[355:].sum(), 0.2)  # wrapped around to the end of omega
@@ -194,8 +214,18 @@ class TestGradients(unittest.TestCase):
         cov = jnp.diag(jnp.array([0.3, 0.3, 0.2, 0.0]))[None]  # zero dty variance
 
         def loss(mu):
-            blocks, _ = splat_peaks(mu, cov, jnp.ones(1), jnp.array([[49.5, 19.5]]), jnp.array([[50.5, 20.5]]),
-                                    shape, (0, 1), (9, 9), 2, (0.0,) * 4)
+            blocks, _ = splat_peaks(
+                mu,
+                cov,
+                jnp.ones(1),
+                jnp.array([[49.5, 19.5]]),
+                jnp.array([[50.5, 20.5]]),
+                shape,
+                (0, 1),
+                (9, 9),
+                2,
+                (0.0,) * 4,
+            )
             return jnp.sum(blocks**2)
 
         for om in (50.1, 90.0):
@@ -212,8 +242,9 @@ class TestSplat(unittest.TestCase):
         cov[:, 0, 2] = cov[:, 2, 0] = 0.2
         args = (jnp.asarray(mu), jnp.asarray(cov), jnp.ones(n), jnp.array([10.5]), jnp.array([11.5]))
         img = np.asarray(splat(*args, (64, 48, 20), win=(7, 7)))
-        blocks, starts = splat_peaks(*args[:3], jnp.full((n, 1), 10.5), jnp.full((n, 1), 11.5), (64, 48, 20), (0, 1),
-                                     (7, 7), 2, (0.0, 0.0, 0.0))
+        blocks, starts = splat_peaks(
+            *args[:3], jnp.full((n, 1), 10.5), jnp.full((n, 1), 11.5), (64, 48, 20), (0, 1), (7, 7), 2, (0.0, 0.0, 0.0)
+        )
         ref = np.zeros((64, 48))
         for b, s in zip(np.asarray(blocks), np.asarray(starts)):
             ref[s[0] : s[0] + 7, s[1] : s[1] + 7] += b

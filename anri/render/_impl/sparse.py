@@ -1,13 +1,12 @@
-"""Sum window pixels into frames and pull out the ones above threshold, in O(contributions).
+"""Sum window pixels into frames and pull out the ones above threshold.
 
-A batch of frames is rendered into a persistent scratch canvas of ``n_slots`` frames. Thresholding
-that canvas densely costs ``n_slots * n_pixels`` per batch no matter how few pixels were touched;
-for a 2048x2048 detector and ~1000 peaks per frame that is ~50x the cost of rendering the peaks.
-Instead only the touched pixels are read back and reset.
+A batch of frames is rendered into a persistent scratch canvas of ``n_slots`` frames plus one dump
+pixel for padding. Thresholding that canvas densely would cost ``n_slots * n_pixels`` per batch
+however few pixels were touched, so only the touched pixels are read back and reset.
 
-Duplicates (overlapping windows) are resolved without sorting: each window pixel scatter-maxes its
-own position in the batch into an ``owner`` canvas, so exactly one window pixel per canvas pixel reads
-its own position back. That one is the pixel's representative.
+On CPU every pass over the touched pixels is a cache miss into a canvas of tens of MB, so passes are
+kept to two: one gather of the summed values, one reset. Only the few pixels above threshold (a
+fraction of a percent of window pixels in practice) are deduplicated, by sorting them.
 """
 
 from __future__ import annotations
@@ -17,17 +16,53 @@ import functools
 import jax
 import jax.numpy as jnp
 
-
-def new_canvases(n_slots: int, n_pixels: int, dtype: jax.typing.DTypeLike = jnp.float32) -> tuple[jax.Array, jax.Array]:
-    """Zeroed value canvas and ``-1`` owner canvas for :func:`accumulate_extract`, with a padding slot."""
-    size = (n_slots + 1) * n_pixels
-    return jnp.zeros(size, dtype), jnp.full(size, -1, jnp.int32)
+_NONE = jnp.iinfo(jnp.int32).max
 
 
-@functools.partial(jax.jit, static_argnames=("n_slots", "n_pixels", "max_nnz"), donate_argnames=("canvas", "owner"))
-def accumulate_extract(
+def new_canvas(n_slots: int, n_pixels: int, dtype: jax.typing.DTypeLike = jnp.float32) -> jax.Array:
+    """Zeroed canvas for :func:`accumulate_extract`: ``n_slots`` frames and a dump pixel."""
+    return jnp.zeros(n_slots * n_pixels + 1, dtype)
+
+
+def _extract(
     canvas: jax.Array,
-    owner: jax.Array,
+    keys: jax.Array,
+    threshold: jax.typing.ArrayLike,
+    n_slots: int,
+    n_pixels: int,
+    max_nnz: int,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Pixels above ``threshold`` among ``keys``, for a canvas already holding the values; then reset.
+
+    Returns
+    -------
+    canvas: jax.Array
+        Zero again at ``keys``.
+    out_keys: jax.Array
+        [max_nnz] int32 sorted distinct keys above threshold, then padding.
+    out_values: jax.Array
+        [max_nnz] their values.
+    nnz: jax.Array
+        Number of distinct keys above threshold (valid entries of the outputs).
+    hits: jax.Array
+        Number of window pixels above threshold, duplicates included. If ``hits > max_nnz`` the output
+        is incomplete: run again with more room.
+    """
+    total = canvas[keys]
+    keep = (total > threshold) & (keys < n_slots * n_pixels)
+    hits = keep.sum(dtype=jnp.int32)
+    (sel,) = jnp.nonzero(keep, size=max_nnz, fill_value=0)
+    cand = jnp.where(jnp.arange(max_nnz) < hits, keys[sel], _NONE)
+    out_keys = jnp.unique(cand, size=max_nnz, fill_value=_NONE)
+    valid = out_keys != _NONE
+    nnz = valid.sum(dtype=jnp.int32)
+    out_values = jnp.where(valid, canvas[jnp.where(valid, out_keys, 0)], 0.0)
+    canvas = canvas.at[keys].set(0.0, mode="promise_in_bounds")
+    return canvas, out_keys, out_values, nnz, hits
+
+
+def _accumulate_extract(
+    canvas: jax.Array,
     keys: jax.Array,
     values: jax.Array,
     threshold: jax.typing.ArrayLike,
@@ -40,12 +75,9 @@ def accumulate_extract(
     Parameters
     ----------
     canvas
-        [(n_slots + 1) * n_pixels] float scratch canvas, all zero on entry. Donated.
-    owner
-        [(n_slots + 1) * n_pixels] int32 scratch canvas, all -1 on entry. Donated.
+        [n_slots * n_pixels + 1] float scratch canvas, all zero on entry. Donated.
     keys
-        [N] int32 ``slot * n_pixels + pixel``, with ``N < 2**31``. Padding must use slot ``n_slots``
-        (the extra one), which is never extracted, so padding cannot take ownership of a real pixel.
+        [N] int32 ``slot * n_pixels + pixel``. Padding uses ``n_slots * n_pixels``, the dump pixel.
     values
         [N] intensities
     threshold
@@ -53,28 +85,17 @@ def accumulate_extract(
     n_slots, n_pixels
         Static. Frames per batch and pixels per frame.
     max_nnz
-        Static. Output capacity. If ``nnz > max_nnz`` the output is truncated: re-run with fewer slots.
+        Static. Output capacity; see ``hits``.
 
     Returns
     -------
-    canvas, owner: jax.Array
-        The scratch canvases, zero and -1 again.
-    out_keys: jax.Array
-        [max_nnz] int32 keys of the extracted pixels, in no particular order. Valid up to ``nnz``.
-    out_values: jax.Array
-        [max_nnz] summed values of the extracted pixels.
-    nnz: jax.Array
-        Number of pixels above threshold. May exceed ``max_nnz``.
+    See :func:`_extract`.
     """
-    pos = jnp.arange(keys.shape[0], dtype=jnp.int32)
     canvas = canvas.at[keys].add(values, mode="promise_in_bounds")
-    owner = owner.at[keys].max(pos, mode="promise_in_bounds")
-    total = canvas[keys]
-    keep = (owner[keys] == pos) & (total > threshold) & (keys < n_slots * n_pixels)
-    (sel,) = jnp.nonzero(keep, size=max_nnz, fill_value=0)
-    nnz = keep.sum(dtype=jnp.int32)
-    out_keys = keys[sel]
-    out_values = total[sel]
-    canvas = canvas.at[keys].set(0.0, mode="promise_in_bounds")
-    owner = owner.at[keys].set(-1, mode="promise_in_bounds")
-    return canvas, owner, out_keys, out_values, nnz
+    return _extract(canvas, keys, threshold, n_slots, n_pixels, max_nnz)
+
+
+accumulate_extract = functools.partial(
+    jax.jit, static_argnames=("n_slots", "n_pixels", "max_nnz"), donate_argnames=("canvas",)
+)(_accumulate_extract)
+accumulate_extract.__doc__ = _accumulate_extract.__doc__

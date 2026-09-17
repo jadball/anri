@@ -203,14 +203,23 @@ def truncate(
     m, c = _as_lists(mu, cov)
     m = [m[i] for i in order]
     c = [[c[i][j] for j in order] for i in order]
-    w, m, c = _truncation_sweep(m, c, [lo[..., k] for k in range(len(axes))], [hi[..., k] for k in range(len(axes))],
-                                [jnp.asarray(periods[i], mu.dtype) for i in axes])
+    w, m, c = _truncation_sweep(
+        m,
+        c,
+        [lo[..., k] for k in range(len(axes))],
+        [hi[..., k] for k in range(len(axes))],
+        [jnp.asarray(periods[i], mu.dtype) for i in axes],
+    )
     back = {ax: n for n, ax in enumerate(order)}
     w = jnp.broadcast_to(w, mu.shape[:-1])
     mu_out = jnp.stack([jnp.broadcast_to(m[back[i]], mu.shape[:-1]) for i in range(d)], axis=-1)
     cov_out = jnp.stack(
-        [jnp.stack([jnp.broadcast_to(c[back[i]][back[j]], mu.shape[:-1]) for j in range(d)], axis=-1) for i in range(d)],
-        axis=-2)
+        [
+            jnp.stack([jnp.broadcast_to(c[back[i]][back[j]], mu.shape[:-1]) for j in range(d)], axis=-1)
+            for i in range(d)
+        ],
+        axis=-2,
+    )
     return w, mu_out, cov_out
 
 
@@ -221,12 +230,78 @@ def _col_mass(ec: jax.Array, mean: jax.Array, var: jax.Array) -> jax.Array:
     return _mass(s[..., :-1], q[..., :-1], s[..., 1:], q[..., 1:])
 
 
-def _select(onehot: list[jax.Array], values: list) -> jax.Array:  # noqa: D103
+def _select(onehot: list[jax.Array], values: list) -> jax.Array:
     """``values[i]`` where ``onehot[i]`` is 1, as arithmetic."""
     out = onehot[0] * values[0]
     for h, v in zip(onehot[1:], values[1:]):
         out = out + h * v
     return out
+
+
+_SEPARABLE_PIECES = 4
+
+
+def _separable_collapse(mu, cov, lo, hi, collapsed, image, periods, n_pieces):  # noqa: ANN001, ANN202
+    """Two collapsed intervals for the separable kernel: weight and image-axis moments.
+
+    Two correlated motor intervals (dty tied to omega) cut a diagonal ridge; applying them one after
+    the other can misjudge the weight by 20%. The interval applied first (narrowest relative to its
+    sigma) is cut into ``n_pieces``, each followed by the other, and the pieces are merged.
+    Returns per-peak weight, and mean and variance of each image axis, relative to the same origin as
+    ``mu``.
+    """
+    n, d = mu.shape
+    dt = mu.dtype
+    (a0, a1), (r0, c0) = collapsed, image
+    sd0 = jnp.sqrt(jnp.maximum(cov[:, a0, a0], _TINY_VAR))
+    sd1 = jnp.sqrt(jnp.maximum(cov[:, a1, a1], _TINY_VAR))
+    swap = (hi[:, 1] - lo[:, 1]) / sd1 < (hi[:, 0] - lo[:, 0]) / sd0
+    zero, one = jnp.zeros(n, dt), jnp.ones(n, dt)
+    onehot = lambda ax: [one if i == ax else zero for i in range(d)]
+    e0, e1 = onehot(a0), onehot(a1)
+    sw = swap.astype(dt)
+    first = [x * (1 - sw) + y * sw for x, y in zip(e0, e1)]
+    second = [x * sw + y * (1 - sw) for x, y in zip(e0, e1)]
+    rows = [first, second, onehot(r0), onehot(c0)]
+    mu_l, cov_l = _as_lists(mu, cov)
+    mu_p = [_select(rows[k], mu_l) for k in range(4)]
+    cov_p = [[None] * 4 for _ in range(4)]
+    for k in range(4):
+        row_k = [_select(rows[k], [cov_l[i][j] for i in range(d)]) for j in range(d)]
+        for q in range(k, 4):
+            cov_p[k][q] = cov_p[q][k] = _select(rows[q], row_k)
+    per = [jnp.full(n, periods[a0], dt), jnp.full(n, periods[a1], dt)]
+    per_p = [per[0] * (1 - sw) + per[1] * sw, per[0] * sw + per[1] * (1 - sw)]
+    lo_f = jnp.where(swap, lo[:, 1], lo[:, 0])
+    hi_f = jnp.where(swap, hi[:, 1], hi[:, 0])
+    lo_s = jnp.where(swap, lo[:, 0], lo[:, 1])
+    hi_s = jnp.where(swap, hi[:, 0], hi[:, 1])
+    frac = jnp.arange(n_pieces + 1, dtype=dt) / n_pieces
+    rep = lambda x: jnp.repeat(x, n_pieces)
+    step_lo = [(lo_f[:, None] + (hi_f - lo_f)[:, None] * frac[:-1]).reshape(-1), rep(lo_s)]
+    step_hi = [(lo_f[:, None] + (hi_f - lo_f)[:, None] * frac[1:]).reshape(-1), rep(hi_s)]
+    ws, m_end, c_end = _truncation_sweep(
+        [rep(x) for x in mu_p],
+        [[rep(x) for x in r] for r in cov_p],
+        _cut(step_lo),
+        _cut(step_hi),
+        [rep(x) for x in per_p],
+    )
+    ws = ws.reshape(n, n_pieces)
+    out = [ws[:, 0]]
+    for q in range(1, n_pieces):
+        out[0] = out[0] + ws[:, q]
+    safe = jnp.where(out[0] > _TINY_MASS, out[0], 1.0)
+    for ax in (2, 3):
+        mq = m_end[ax].reshape(n, n_pieces)
+        vq = c_end[ax][ax].reshape(n, n_pieces)
+        s1, s2 = ws[:, 0] * mq[:, 0], ws[:, 0] * (vq[:, 0] + mq[:, 0] ** 2)
+        for q in range(1, n_pieces):
+            s1 = s1 + ws[:, q] * mq[:, q]
+            s2 = s2 + ws[:, q] * (vq[:, q] + mq[:, q] ** 2)
+        mean = s1 / safe
+        out += [mean, jnp.maximum(s2 / safe - mean * mean, _TINY_VAR)]
+    return tuple(out)
 
 
 def splat_peaks(
@@ -313,12 +388,17 @@ def splat_peaks(
     start = jnp.floor(centre + 0.5).astype(jnp.int32) + ref_img.astype(jnp.int32)
     start = start - jnp.array([win[0] // 2, win[1] // 2], jnp.int32)
     start = jnp.stack(
-        [start[:, i] if periodic[i] else jnp.clip(start[:, i], 0, sizes[i] - win[i]) for i in range(2)], axis=-1)
+        [start[:, i] if periodic[i] else jnp.clip(start[:, i], 0, sizes[i] - win[i]) for i in range(2)], axis=-1
+    )
     fstart = start.astype(dt) - ref_img  # relative to ref
 
     if n_sub == 0:
-        row = _col_mass(fstart[:, 0, None] - 0.5 + jnp.arange(win[0] + 1, dtype=dt), m[:, r0], p[:, r0, r0])
-        col = _col_mass(fstart[:, 1, None] - 0.5 + jnp.arange(win[1] + 1, dtype=dt), m[:, c0], p[:, c0, c0])
+        if kc == 2:
+            w, mr, vr, mc, vc = _separable_collapse(mu, cov, lo, hi, collapsed, (r0, c0), periods, _SEPARABLE_PIECES)
+        else:
+            mr, vr, mc, vc = m[:, r0], p[:, r0, r0], m[:, c0], p[:, c0, c0]
+        row = _col_mass(fstart[:, 0, None] - 0.5 + jnp.arange(win[0] + 1, dtype=dt), mr, vr)
+        col = _col_mass(fstart[:, 1, None] - 0.5 + jnp.arange(win[1] + 1, dtype=dt), mc, vc)
         return (amp * w)[:, None, None] * (row[:, :, None] * col[:, None, :]), start
 
     if win[0] != win[1]:
@@ -330,7 +410,7 @@ def splat_peaks(
     fs_c = jnp.where(swap, fstart[:, 0], fstart[:, 1])
     ns = n_sub
     n_steps = 1 + kc
-    n_pieces = ns if kc else 1
+    n_pieces = (max(ns, _SEPARABLE_PIECES) if kc == 2 else ns) if kc else 1
     n_rows = wr * ns
     grid = n_rows * n_pieces
 
@@ -350,16 +430,22 @@ def splat_peaks(
 
     # Order: narrowest interval (relative to its marginal sigma) first. Rank by pairwise comparison.
     widths = [jnp.full(n, 1.0 / ns, dt)] + [hi[:, k] - lo[:, k] for k in range(kc)]
-    ratio = [widths[j] / jnp.sqrt(jnp.maximum(_select(interval_axes[j], var_diag), _TINY_VAR))
-             for j in range(n_steps)]
-    rank = [sum(((ratio[i] < ratio[j]) | ((ratio[i] == ratio[j]) & (i < j))).astype(jnp.int32)
-                for i in range(n_steps) if i != j) + jnp.zeros(n, jnp.int32)
-            for j in range(n_steps)]
+    ratio = [widths[j] / jnp.sqrt(jnp.maximum(_select(interval_axes[j], var_diag), _TINY_VAR)) for j in range(n_steps)]
+    rank = [
+        sum(
+            ((ratio[i] < ratio[j]) | ((ratio[i] == ratio[j]) & (i < j))).astype(jnp.int32)
+            for i in range(n_steps)
+            if i != j
+        )
+        + jnp.zeros(n, jnp.int32)
+        for j in range(n_steps)
+    ]
     at_step = [[(rank[j] == k).astype(dt) for j in range(n_steps)] for k in range(n_steps)]  # [step][interval]
 
     # Axis permutation: the step axes in order, then the column axis, as one-hot rows over d axes.
-    perm_rows = [[_select(at_step[k], [interval_axes[j][i] for j in range(n_steps)]) for i in range(d)]
-                 for k in range(n_steps)] + [col_onehot]
+    perm_rows = [
+        [_select(at_step[k], [interval_axes[j][i] for j in range(n_steps)]) for i in range(d)] for k in range(n_steps)
+    ] + [col_onehot]
     mu_l, cov_l = _as_lists(mu, cov)
     mu_p = [_select(perm_rows[a], mu_l) for a in range(d)]
     cov_p = [[None] * d for _ in range(d)]
@@ -385,14 +471,20 @@ def splat_peaks(
             l, h = lo[:, j - 1, None, None], hi[:, j - 1, None, None]
             ivl_lo.append(jnp.where(split, l + (h - l) * frac[:-1], l) + full)
             ivl_hi.append(jnp.where(split, l + (h - l) * frac[1:], h) + full)
-    flat = lambda x: x.reshape(-1)  # noqa: E731
-    rep = lambda x: jnp.repeat(x, grid)  # noqa: E731
+    flat = lambda x: x.reshape(-1)
+    rep = lambda x: jnp.repeat(x, grid)
     step_lo = [flat(_select([h[:, None, None] for h in at_step[k]], ivl_lo)) for k in range(n_steps)]
     step_hi = [flat(_select([h[:, None, None] for h in at_step[k]], ivl_hi)) for k in range(n_steps)]
 
     sweep_in = _cut(
-        ([rep(x) for x in mu_p], [[rep(cov_p[i][j]) for j in range(d)] for i in range(d)], step_lo, step_hi,
-         [rep(x) for x in per_p]))
+        (
+            [rep(x) for x in mu_p],
+            [[rep(cov_p[i][j]) for j in range(d)] for i in range(d)],
+            step_lo,
+            step_hi,
+            [rep(x) for x in per_p],
+        )
+    )
     ws, m_end, c_end = _truncation_sweep(*sweep_in)
     # Merge each sub-row's pieces into one Gaussian along the column. Everything below stays 1-D:
     # pieces are strided slices of the (peak, sub-row, piece) layout.
@@ -412,11 +504,10 @@ def splat_peaks(
 
     # Column integral on a (peak, row, column, sub-row) layout, so that summing sub-rows is a
     # strided slice. Per-(peak, sub-row) values are tiled across the columns.
-    per_col = lambda x: jnp.tile(x.reshape(n * wr, ns), (1, wc)).reshape(-1)  # noqa: E731
+    per_col = lambda x: jnp.tile(x.reshape(n * wr, ns), (1, wc)).reshape(-1)
     col_idx = jnp.repeat(jnp.arange(wc, dtype=dt), ns)
     left = jnp.repeat(fs_c, wr)[:, None] - 0.5 + col_idx[None, :]
-    left, k_mean, k_inv, k_w = _cut(
-        (left.reshape(-1), per_col(mean_c), per_col(inv_sd), per_col(wt)))
+    left, k_mean, k_inv, k_w = _cut((left.reshape(-1), per_col(mean_c), per_col(inv_sd), per_col(wt)))
     zl = (left - k_mean) * k_inv
     zr = zl + k_inv
     sl, ql, _ = _edges(zl)
@@ -433,7 +524,9 @@ def splat_peaks(
     return amp[:, None, None] * block, start
 
 
-def flat_index(start: jax.Array, win: tuple[int, int], sizes: tuple[int, int], periodic: tuple[bool, bool]) -> jax.Array:
+def flat_index(
+    start: jax.Array, win: tuple[int, int], sizes: tuple[int, int], periodic: tuple[bool, bool]
+) -> jax.Array:
     """[..., win[0]*win[1]] int32 row-major pixel index of each window pixel, wrapping periodic axes."""
     rows = start[..., 0, None] + jnp.arange(win[0], dtype=jnp.int32)
     cols = start[..., 1, None] + jnp.arange(win[1], dtype=jnp.int32)
@@ -444,7 +537,6 @@ def flat_index(start: jax.Array, win: tuple[int, int], sizes: tuple[int, int], p
     return (rows[..., :, None] * sizes[1] + cols[..., None, :]).reshape(*start.shape[:-1], -1)
 
 
-@functools.partial(jax.jit, static_argnames=("shape", "image", "win", "n_sub", "periods"))
 def splat(
     mu: jax.Array,
     cov: jax.Array,
@@ -487,6 +579,22 @@ def splat(
     image: jax.Array
         [shape[image[0]], shape[image[1]]]
     """
+    return _splat(
+        mu,
+        cov,
+        amp,
+        lo,
+        hi,
+        tuple(int(v) for v in shape),
+        tuple(int(v) for v in image),
+        tuple(int(v) for v in win),
+        int(n_sub),
+        None if periods is None else tuple(float(v) for v in periods),
+    )
+
+
+@functools.partial(jax.jit, static_argnames=("shape", "image", "win", "n_sub", "periods"))
+def _splat(mu, cov, amp, lo, hi, shape, image, win, n_sub, periods):  # noqa: ANN001, ANN202
     periods = periods if periods is not None else (0.0,) * len(shape)
     lo = jnp.broadcast_to(lo, (mu.shape[0], len(shape) - 2))
     hi = jnp.broadcast_to(hi, (mu.shape[0], len(shape) - 2))

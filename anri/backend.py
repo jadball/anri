@@ -66,7 +66,10 @@ def _nvidia_memory_bytes() -> list[int]:
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10, check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return []
