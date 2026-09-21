@@ -39,6 +39,10 @@ See the [Tutorials](https://jadball.github.io/anri/tutorials/index.html) and [Ex
 # Dependencies
 We currently target all stable releases of Python. Today this is `3.9 - 3.14` on Windows, ubuntu and OSX (ARM and x86).
 
+# AI usage disclaimer
+Parts of Anri have used LLM-powered tools such as Gemini and Claude during development.  
+This is restricted to polish and performance-related patches, plus some little "gotchas" like ensuring differentiability through the Ewald solver.
+
 # Installation at the ESRF
 ## From source (for developers)
 ### Clone the repository

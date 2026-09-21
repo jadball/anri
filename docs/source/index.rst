@@ -61,6 +61,12 @@ By expressing instrumental parameters such as incident beam divergence and energ
 
 Anri will take advantage of the differentiable, intensity-aware forward model to perform iterative refinement of grain maps produced by `ImageD11 <https://github.com/FABLE-3DXRD/ImageD11>`_ (and perhaps other programs in the future) to yield refined maps of orientation gradients and strains.
 
+AI usage disclaimer
+===================
+
+Parts of Anri have used LLM-powered tools such as Gemini and Claude during development.  
+This is restricted to polish and performance-related patches, plus some little "gotchas" like ensuring differentiability through the Ewald solver.
+
 
 .. toctree::
     :maxdepth: 2
