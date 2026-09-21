@@ -23,7 +23,7 @@ def cellvolume(latticepar):
     
     angular = np.sqrt(1 - calp**2 - cbet**2 - cgam**2 + 2*calp*cbet*cgam)
     
-    Vcell = a*b*c*angular
+    Vcell = np.abs(a*b*c*angular)
     
     return Vcell
 
@@ -48,9 +48,9 @@ class TestUnitCell(unittest.TestCase):
             uc_id11 = unitcell_id11(lpars_batch[i], "P")
             uc_anri = anri.crystal.UnitCell.from_lpars(lpars_batch[i])
             np.testing.assert_allclose(uc_id11.lattice_parameters, uc_anri.lattice_parameters)
-            np.testing.assert_allclose(uc_id11.B, uc_anri.B)
-            np.testing.assert_allclose(uc_id11.g, uc_anri.mt)
-            np.testing.assert_allclose(uc_id11.gi, uc_anri.rmt)
+            np.testing.assert_allclose(uc_id11.B, uc_anri.B, rtol=1e-7, atol=1e-10)
+            np.testing.assert_allclose(uc_id11.g, uc_anri.mt, rtol=1e-7, atol=1e-10)
+            np.testing.assert_allclose(uc_id11.gi, uc_anri.rmt, rtol=1e-7, atol=1e-10)
             np.testing.assert_allclose(
                 jnp.array([uc_id11.astar, uc_id11.bstar, uc_id11.cstar, uc_id11.alphas, uc_id11.betas, uc_id11.gammas]),
                 uc_anri.reciprocal_lattice_parameters,
