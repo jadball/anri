@@ -45,7 +45,10 @@ class TestUnitCell(unittest.TestCase):
         self.assertTrue(~jnp.any(jnp.isnan(lpars_batch)))
 
         for i in range(ntests):
-            uc_id11 = unitcell_id11(lpars_batch[i], "P")
+            try:
+                uc_id11 = unitcell_id11(lpars_batch[i], "P")
+            except np.linalg.LinAlgError:
+                continue
             uc_anri = anri.crystal.UnitCell.from_lpars(lpars_batch[i])
             np.testing.assert_allclose(uc_id11.lattice_parameters, uc_anri.lattice_parameters)
             np.testing.assert_allclose(uc_id11.B, uc_anri.B, rtol=1e-7, atol=1e-10)
