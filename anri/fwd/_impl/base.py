@@ -12,46 +12,6 @@ from anri.geom import lab_to_sample, sample_to_lab
 
 
 @jax.jit
-def inv3(m: jax.Array) -> jax.Array:
-    r"""Invert a 3x3 matrix analytically, via the adjugate over the determinant.
-
-    Parameters
-    ----------
-    m
-        [3,3] Matrix to invert
-
-    Returns
-    -------
-    m_inv: jax.Array
-        [3,3] Inverse of ``m``
-
-    Notes
-    -----
-    Written out rather than delegated to :func:`jax.numpy.linalg.inv` because
-    this sits in the inner loop of the forward model. A LAPACK-backed inverse
-    lowers to custom calls that XLA cannot fuse with the surrounding arithmetic
-    and that constrain the operand layout; the adjugate is around thirty flops
-    of plain elementwise work and fuses freely.
-
-    Accuracy relies on ``m`` being well conditioned, which UBI matrices are.
-    On near-singular input it loses precision faster than an LU-based inverse,
-    so it is not a general-purpose substitute.
-    """
-    c00 = m[1, 1] * m[2, 2] - m[1, 2] * m[2, 1]
-    c01 = m[1, 2] * m[2, 0] - m[1, 0] * m[2, 2]
-    c02 = m[1, 0] * m[2, 1] - m[1, 1] * m[2, 0]
-    det = m[0, 0] * c00 + m[0, 1] * c01 + m[0, 2] * c02
-    c10 = m[0, 2] * m[2, 1] - m[0, 1] * m[2, 2]
-    c11 = m[0, 0] * m[2, 2] - m[0, 2] * m[2, 0]
-    c12 = m[0, 1] * m[2, 0] - m[0, 0] * m[2, 1]
-    c20 = m[0, 1] * m[1, 2] - m[0, 2] * m[1, 1]
-    c21 = m[0, 2] * m[1, 0] - m[0, 0] * m[1, 2]
-    c22 = m[0, 0] * m[1, 1] - m[0, 1] * m[1, 0]
-    # rows of the inverse are the columns of the cofactor matrix
-    return jnp.array([[c00, c10, c20], [c01, c11, c21], [c02, c12, c22]]) / det
-
-
-@jax.jit
 def hkl_to_k_omega(
     ubi: jax.Array,  # grain stuff
     hkl: jax.Array,  # peak stuff
@@ -99,7 +59,7 @@ def hkl_to_k_omega(
     valid: bool
         Boolean indicating if a valid solution exists
     """
-    q_sample = inv3(ubi) @ hkl
+    q_sample = jnp.linalg.inv(ubi) @ hkl
 
     # perturb k_in_lab by divergence
     k_in_lab = k_in_lab + jnp.array([0.0, ky, kz])
@@ -171,7 +131,7 @@ def hkl_to_k_omega_both(
     --------
     hkl_to_k_omega : Single-solution version, taking an ``etasign`` argument.
     """
-    q_sample = inv3(ubi) @ hkl
+    q_sample = jnp.linalg.inv(ubi) @ hkl
 
     # perturb k_in_lab by divergence
     k_in_lab = k_in_lab + jnp.array([0.0, ky, kz])
