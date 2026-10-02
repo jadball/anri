@@ -1,6 +1,7 @@
 """Base functions for forward projection code."""
 
 from __future__ import annotations
+
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -10,6 +11,7 @@ import numpy as np
 
 from anri.diffract import omega_from_core, omega_solns_core, q_lab_to_k_out, scale_norm_k
 from anri.geom import lab_to_sample, sample_to_lab
+from anri.mathutils import inv3
 
 
 @jax.jit
@@ -60,7 +62,7 @@ def hkl_to_k_omega(
     valid: bool
         Boolean indicating if a valid solution exists
     """
-    q_sample = jnp.linalg.inv(ubi) @ hkl
+    q_sample = inv3(ubi) @ hkl
 
     # perturb k_in_lab by divergence
     k_in_lab = k_in_lab + jnp.array([0.0, ky, kz])
@@ -132,7 +134,7 @@ def hkl_to_k_omega_both(
     --------
     hkl_to_k_omega : Single-solution version, taking an ``etasign`` argument.
     """
-    q_sample = jnp.linalg.inv(ubi) @ hkl
+    q_sample = inv3(ubi) @ hkl
 
     # perturb k_in_lab by divergence
     k_in_lab = k_in_lab + jnp.array([0.0, ky, kz])
