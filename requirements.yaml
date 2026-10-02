@@ -5,6 +5,7 @@ dependencies:
   - pip: tqdm
   - pip: Dans-Diffraction
   - pip: polars
+  - pip: h5py
   - pip: jax
   - conda: jax  # [osx]
   # there are more builds for jax on Conda than on pip (better OS/python support)
