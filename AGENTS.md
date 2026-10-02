@@ -28,8 +28,31 @@ Anri must scale from a laptop to a cluster.
 - **Laptop target:** ImageD11 can analyse a small(ish) S3DXRD dataset (400 × 400 px) on a laptop with < 64 GB RAM. Anri should match that.
 - **Big problems:** we have a SLURM cluster with multiple GPUs. JAX multi-device and multi-host (`jax.distributed`, sharding) is the preferred route there.
 
+## Shared machines: be a good neighbour
+
+Development happens on shared machines (e.g. an ESRF node with one L40S GPU and other users) and sometimes on a laptop.
+**Running out of memory can force a full machine restart.**
+
+- **Estimate first.** Before running anything, estimate peak host-RAM and GPU-memory footprint from the array shapes and dtypes. Start with a small problem, measure, then scale up.
+- **Check usage.** Look at what others are using (`free -g`, `nvidia-smi`) before a big run.
+- **Don't let JAX take the whole GPU.** Call `anri.backend.setup()` at the top of scripts. It sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` so JAX doesn't grab 75% of the GPU at start-up. Set `XLA_PYTHON_CLIENT_MEM_FRACTION` too if needed.
+- **Don't hog the CPU.** Don't use every core: pin CPU runs with `taskset` (e.g. `taskset -c 0-15`).
+- **Clean up.** Don't leave long-running or idle processes holding memory.
+
+## Keep it simple (no "Claudish" code)
+
+No bloated frameworks, layers of abstraction or complicated APIs that the maintainer can't follow.
+Earlier AI-written attempts were removed for exactly this reason: they were hard to understand, and slow.
+
+- Prefer small, plain functions in the style of the existing `anri/` modules.
+- Keep code functional: pure functions on arrays, no OOP. The classes in `anri.crystal` are an existing exception and may be refactored to match.
+- Build incrementally and explain design choices.
+- Check in before adding new abstractions or API surface.
+- Going slower with better understanding beats a fast, opaque result.
+
 ## Development
 
 - Lint and format with `ruff`, type-check with `ty`, test with `pytest tests/`. All code outside `anri/sandbox` must pass.
+- If `ty` can't find the environment (e.g. `VIRTUAL_ENV` points at a conda env), run `env -u VIRTUAL_ENV ty check --python <env>/bin/python`.
 - Shared test data lives in `tests/data/`. Docs notebooks load it by relative path, e.g. `../../../tests/data/cif/Si.cif`.
 - `anri/sandbox` is unstable and gitignored.
