@@ -1,5 +1,7 @@
 """Crystallography classes."""
 
+import warnings
+
 import Dans_Diffraction as dif
 import Dans_Diffraction.functions_lattice
 import jax
@@ -224,6 +226,7 @@ class Crystal(UnitCell, Symmetry):
         self.scatter_table = pd.DataFrame({"h": hkl[:, 0], "k": hkl[:, 1], "l": hkl[:, 2], "tth": tth, "ds": ds})
 
         self._ring_ds_tol = tol
+        self._wavelength = wavelength
 
     @property
     def allhkls(self) -> jax.Array:
@@ -383,9 +386,12 @@ class Structure(Crystal):
             if self.scatter_table is None:
                 raise AttributeError("Must compute all reflections first with self.make_hkls(dsmax, wavelength)")
             else:
-                # Add intensity to the scatter table
+                # Add intensity to the scatter table.
+                # |F|^2 includes Debye-Waller factors from the CIF and anomalous dispersion (f', f'') at our energy.
+                self._warn_if_no_thermal_factors()
+                self._scatterer.setup_scatter(wavelength_a=self._wavelength, output=False)
                 self.scatter_table = self.scatter_table.with_columns(
-                    intensity=self._scatterer.intensity(self.allhkls, scattering_type="xray", int_hkl=True)
+                    intensity=self._scatterer.intensity(self.allhkls, scattering_type="xray dispersion", int_hkl=True)
                 )
                 # Filter hkls with meaningful intensities
                 self._rings_table = self.scatter_table.filter(pd.col("intensity") > 0.01)
@@ -394,6 +400,20 @@ class Structure(Crystal):
                 # Add them to the scatter table
                 self._rings_table = self._rings_table.with_columns(ring_id=ring_ids)
         return self._rings_table
+
+    def _warn_if_no_thermal_factors(self) -> None:
+        """Warn if the CIF has no isotropic thermal factors, as Dans Diffraction then sets Uiso = 0 (no Debye-Waller)."""
+        cif = getattr(self._struc, "cif", None)
+        if cif is None:
+            has_thermal = bool((self._struc.Atoms.uiso > 0).any())
+        else:
+            has_thermal = "_atom_site_U_iso_or_equiv" in cif or "_atom_site_B_iso_or_equiv" in cif
+        if not has_thermal:
+            warnings.warn(
+                f"No isotropic thermal factors (U_iso or B_iso) for {self._struc.name}: "
+                "intensities have no Debye-Waller attenuation.",
+                stacklevel=3,
+            )
 
     @property
     def rings_dict(self) -> dict[int, pd.DataFrame]:
