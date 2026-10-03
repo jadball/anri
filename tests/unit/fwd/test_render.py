@@ -206,3 +206,48 @@ class TestPointSpread(unittest.TestCase):
             errors[psf] = np.abs(measured - np.asarray(centroid[:2])).max()
         self.assertLess(errors[0.7], 0.01)
         self.assertGreater(errors[0.0], errors[0.7])
+
+
+class TestLargeBatch(unittest.TestCase):
+    def test_matches_small_batches(self):
+        """A batch of 4096 peaks renders the same as batches of 256.
+
+        jaxlib 0.11's YNNPACK fusions miscompiled render_peaks for large batches (most peaks squeezed into one
+        pixel); anri.utils.setup() turns them off, and conftest.py calls it.
+        """
+        import os
+
+        from ImageD11.sinograms.tensor_map import TensorMap
+
+        from anri.fwd._impl.render import render_peaks, select_peaks
+        from anri.io import entries_from_tensormap, geom_from_pars
+
+        data = os.path.join(os.path.dirname(__file__), "..", "..", "data")
+        tmap = TensorMap.from_h5(os.path.join(data, "phantoms", "quartz_flyxdm", "quartz_flyxdm_tmap.h5"))
+        entries = {k: jnp.asarray(v[:300]) for k, v in entries_from_tensormap(tmap).items()}
+        wl = 0.2845704100778472
+        struc = anri.crystal.Structure.from_cif(os.path.join(data, "cif", "SiO2.cif"))
+        struc.make_hkls(dsmax=1.0, wavelength=wl)
+        table = struc.rings_table
+        hkls = jnp.asarray(np.stack([table["h"], table["k"], table["l"]], 1), dtype=float)
+        F2 = jnp.asarray(table["intensity"], dtype=float)
+        pars = {
+            "y_center": 1049.9, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1116.5, "z_size": 75.0, "tilt_z": 0.0,
+            "tilt_x": 0.0, "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1, "wavelength": wl,
+        }  # fmt: skip
+        geom = jax.tree.map(
+            jnp.asarray, geom_from_pars(pars, 0.0, wl * 1e-4, 1e-4, 1e-4, sig_beam=0.5, voxel_size=0.787, sig_psf=0.3)
+        )
+        omega = np.arange(0.0, 180.0, 0.25) + 0.125
+        row = jax.tree.map(jnp.asarray, make_row(omega, np.zeros_like(omega)))
+        det_shape, window = (2162, 2068), (3, 7, 7)
+        margin = jnp.array([4.0, 4.0, 0.5, 2.787])
+        mask = select_peaks(entries["ubi"], entries["pos"], hkls, geom, row, margin, det_shape)
+        e, h, b = (x[:4096].astype(np.int32) for x in np.nonzero(np.asarray(mask)))
+        self.assertEqual(e.size, 4096)
+
+        args = (entries, hkls, F2, geom, row, window, det_shape)
+        big = np.asarray(render_peaks(e, h, b, *args)[2])
+        small = np.concatenate([np.asarray(render_peaks(e[i : i + 256], h[i : i + 256], b[i : i + 256], *args)[2])
+                                for i in range(0, 4096, 256)])  # fmt: skip
+        np.testing.assert_allclose(big, small, rtol=0, atol=1e-9 * small.max())
