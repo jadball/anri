@@ -49,6 +49,24 @@ def bin_fractions(lo: ArrayLike, hi: ArrayLike, mu: ArrayLike, sigma: ArrayLike)
     return ndtr((hi - mu) / sigma) - ndtr((lo - mu) / sigma)
 
 
+def truncated_moments(lo: ArrayLike, hi: ArrayLike, mu: ArrayLike, sigma: ArrayLike) -> tuple:
+    """Mass, mean and variance of N(mu, sigma^2) restricted to [lo, hi).
+
+    Where the mass is negligible, the mean falls back to mu clipped into the interval and the variance to 0
+    (those cells carry no intensity, and this keeps gradients finite).
+    """
+    lo, hi, mu, sigma = (jnp.asarray(x) for x in (lo, hi, mu, sigma))
+    a, b = (lo - mu) / sigma, (hi - mu) / sigma
+    mass = ndtr(b) - ndtr(a)
+    pa, pb = jnp.asarray(norm.pdf(a)), jnp.asarray(norm.pdf(b))
+    ok = mass > 1e-12
+    safe = jnp.where(ok, mass, 1.0)
+    r = (pa - pb) / safe
+    mean = jnp.where(ok, mu + sigma * r, jnp.clip(mu, lo, hi))
+    var = jnp.where(ok, sigma**2 * (1.0 + (a * pa - b * pb) / safe - r**2), 0.0)
+    return mass, mean, jnp.maximum(var, 0.0)
+
+
 def _ramp_integral(x: ArrayLike, sigma: ArrayLike) -> jax.Array:
     """Antiderivative of ndtr(x / sigma): x * Phi(x / sigma) + sigma * phi(x / sigma)."""
     x, sigma = jnp.asarray(x), jnp.asarray(sigma)
@@ -223,8 +241,9 @@ def render_peaks(
 
     The peak is a Gaussian in (sc, fc, omega) with the propagated covariance. Its mass in each
     (frame, slow, fast) cell of the window is approximated by conditioning: the omega marginal over
-    the frame, then slow given omega at the frame centre, then fast given slow and omega at the cell
-    centres. This keeps the slow-fast and detector-omega correlations.
+    the frame, then slow given omega within the frame, then fast given slow within the row and omega
+    within the frame, each conditioned on the within-cell (truncated) mean. This keeps the slow-fast
+    and detector-omega correlations, and the centroid of peaks narrower than a frame or pixel.
 
     Parameters
     ----------
@@ -260,7 +279,9 @@ def render_peaks(
         etasign = 1.0 - 2.0 * br
         centroid, valid = _peak_centroid(ubi, pos, hkl, etasign, geom)
         cov = _peak_cov(ubi, pos, hkl, etasign, geom)
-        ss, ff, oo = cov[0] + _VAR_FLOOR[0], cov[1] + _VAR_FLOOR[1], cov[2] + _VAR_FLOOR[2]
+        # detector point spread adds to the slow and fast variances (pixels^2)
+        psf2 = geom["sig_psf"] ** 2
+        ss, ff, oo = cov[0] + psf2 + _VAR_FLOOR[0], cov[1] + psf2 + _VAR_FLOOR[1], cov[2] + _VAR_FLOOR[2]
         sf, so, fo = cov[3], cov[4], cov[5]
         mu_s, mu_f, mu_o, dty_c = centroid
         mu_o = _wrap_omega(mu_o, 0.5 * (row["omega_min"] + row["omega_max"]))
@@ -275,24 +296,29 @@ def render_peaks(
         nfr = row["omega_sorted"].shape[0]
         fclip = jnp.clip(frames, 0, nfr - 1)
 
-        # omega marginal over each frame
-        p_o = bin_fractions(row["omega_edges"][fclip], row["omega_edges"][fclip + 1], mu_o, jnp.sqrt(oo))
-        d_o = row["omega_sorted"][fclip] - mu_o  # [wo]
+        # omega over each frame: mass, and the mean and variance of omega within the frame. Conditioning on the
+        # within-frame mean (not the frame centre) keeps peaks much narrower than a frame at their true position.
+        p_o, m_o, v_o = truncated_moments(
+            row["omega_edges"][fclip], row["omega_edges"][fclip + 1], mu_o, jnp.sqrt(oo)
+        )  # [wo]
+        d_o = m_o - mu_o
 
-        # slow | omega
-        mu_s_o = mu_s + so / oo * d_o  # [wo]
-        sd_s_o = jnp.sqrt(ss - so**2 / oo)
-        p_s = bin_fractions(rows[None, :] - 0.5, rows[None, :] + 0.5, mu_s_o[:, None], sd_s_o)  # [wo, ws]
+        # slow | omega in the frame
+        slope = so / oo
+        mu_s_o = mu_s + slope * d_o  # [wo]
+        sd_s_o = jnp.sqrt(ss - so**2 / oo + slope**2 * v_o)  # [wo]
+        p_s, m_s, v_s = truncated_moments(
+            rows[None, :] - 0.5, rows[None, :] + 0.5, mu_s_o[:, None], sd_s_o[:, None]
+        )  # [wo, ws]
 
-        # fast | slow, omega
+        # fast | slow in the row, omega in the frame (the within-cell slow-omega covariance is neglected in the width)
         det = ss * oo - so**2
         ainv = jnp.array([[oo, -so], [-so, ss]]) / det
         bvec = jnp.array([sf, fo])
         gain = bvec @ ainv  # [2]
-        d_s = rows[None, :] - mu_s  # [1, ws]
-        mu_f_so = mu_f + gain[0] * d_s + gain[1] * d_o[:, None]  # [wo, ws]
-        sd_f_so = jnp.sqrt(ff - bvec @ ainv @ bvec)
-        p_f = bin_fractions(cols - 0.5, cols + 0.5, mu_f_so[..., None], sd_f_so)  # [wo, ws, wf]
+        mu_f_so = mu_f + gain[0] * (m_s - mu_s) + gain[1] * d_o[:, None]  # [wo, ws]
+        sd_f_so = jnp.sqrt(ff - bvec @ ainv @ bvec + gain[0] ** 2 * v_s + gain[1] ** 2 * v_o[:, None])  # [wo, ws]
+        p_f = bin_fractions(cols - 0.5, cols + 0.5, mu_f_so[..., None], sd_f_so[..., None])  # [wo, ws, wf]
 
         frac = p_o[:, None, None] * p_s[:, :, None] * p_f  # [wo, ws, wf]
         inside = (
@@ -468,7 +494,8 @@ def render_row(
     geom
         Dict with "wavelength", "k_in_lab" [3], "wedge", "chi" (degrees), "y0",
         "s_step_lab", "f_step_lab", "det_origin_lab" [3] (from :func:`anri.geom.detector_basis_vectors_lab`),
-        "sig_wavelength", "sig_ky", "sig_kz", "sig_beam", "voxel_size" and "pol_factor"
+        "sig_wavelength", "sig_ky", "sig_kz", "sig_beam", "sig_psf" (detector point spread, pixels), "voxel_size"
+        and "pol_factor"
     row
         From :func:`make_row`
     det_shape

@@ -82,7 +82,7 @@ def _single_peak_setup():
         "s_step_lab": s_step_lab, "f_step_lab": f_step_lab, "det_origin_lab": det_origin_lab,
         # broad enough that spots cover a few pixels and frames, so moments are unbiased
         "sig_wavelength": pars["wavelength"] * 1e-3, "sig_ky": 1e-3, "sig_kz": 1e-3,
-        "sig_beam": 0.5, "voxel_size": voxel, "pol_factor": 1.0,
+        "sig_beam": 0.5, "voxel_size": voxel, "pol_factor": 1.0, "sig_psf": 0.0,
     }  # fmt: skip
 
     U = np.asarray(anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0) @ anri.geom.rot_y(10.0))
@@ -182,3 +182,27 @@ class TestSinglePeak(unittest.TestCase):
             np.testing.assert_allclose((ubi @ g).ravel(), hkl, atol=2e-4)
             n_rows_checked += 1
         self.assertGreater(n_rows_checked, 5)
+
+
+class TestPointSpread(unittest.TestCase):
+    def test_sharp_spot_centroid(self):
+        """A spot much narrower than a pixel has its pixel centroid snapped to the pixel centre; a PSF fixes that."""
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        one = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        sharp = {**geom, "sig_wavelength": geom["wavelength"] * 1e-5, "sig_ky": 1e-5, "sig_kz": 1e-5}
+        centroid, _ = get_centroid_scan(
+            jnp.asarray(one["ubi"][0]), jnp.zeros(3), jnp.asarray(hkl), 1.0, geom["wavelength"], geom["k_in_lab"],
+            0.0, 0.0, 0.0, 0.0, geom["y0"], geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
+        )  # fmt: skip
+        omega = (np.floor(omega_c / 0.05) + np.arange(-20, 21)) * 0.05 + 0.025
+        row = make_row(omega, np.zeros_like(omega))
+        errors = {}
+        for psf in (0.0, 0.7):
+            _, pixel, value, _ = render_row(
+                one, hkl[None], np.ones(1), {**sharp, "sig_psf": psf}, row, det_shape, window=(5, 9, 9), min_value=0.0
+            )
+            s, f = pixel // det_shape[1], pixel % det_shape[1]
+            measured = np.array([(s * value).sum(), (f * value).sum()]) / value.sum()
+            errors[psf] = np.abs(measured - np.asarray(centroid[:2])).max()
+        self.assertLess(errors[0.7], 0.01)
+        self.assertGreater(errors[0.0], errors[0.7])

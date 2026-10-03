@@ -35,6 +35,7 @@ def geom_from_pars(
     sig_beam: float,
     voxel_size: float,
     pol_factor: float = 1.0,
+    sig_psf: float = 0.0,
 ) -> dict:
     """Build the geometry dict for :func:`anri.fwd._impl.render.render_row` from ImageD11 parameters.
 
@@ -52,6 +53,10 @@ def geom_from_pars(
         Side length of the voxels (same units as dty)
     pol_factor
         Degree of horizontal polarisation, see :func:`anri.fwd._impl.render.polarisation`
+    sig_psf
+        Standard deviation of the detector point spread, in pixels. Spots much narrower than a pixel have
+        intensity-weighted centroids snapped towards pixel centres (by up to ~0.3 px at 0.1 px wide); a real
+        detector's point spread prevents that.
     """
     if float(pars.get("omegasign", 1.0)) != 1.0:
         msg = "omegasign != 1 is not supported"
@@ -59,7 +64,9 @@ def geom_from_pars(
     det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(
         *(float(pars[k]) for k in _GEOMETRY_KEYS), *(float(pars[k]) for k in _ORIENTATION_KEYS)
     )
-    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(det_trans, beam_cen_shift, x_distance_shift)
+    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(
+        det_trans, beam_cen_shift, x_distance_shift
+    )
     return {
         "wavelength": float(pars["wavelength"]),
         "k_in_lab": jnp.array([1.0, 0.0, 0.0]),
@@ -75,6 +82,7 @@ def geom_from_pars(
         "sig_beam": sig_beam,
         "voxel_size": voxel_size,
         "pol_factor": pol_factor,
+        "sig_psf": sig_psf,
     }
 
 
