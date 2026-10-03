@@ -75,6 +75,7 @@ CI (`.github/workflows/main.yml`) tests Python 3.9 and 3.14 on Linux, Windows an
 ## Development
 
 - Lint and format with `ruff`, type-check with `ty`, test with `pytest tests/`. All code outside `anri/sandbox` must pass.
+- A pre-commit hook in `.githooks/` runs `ruff check .` like CI. Enable it once per clone with `git config core.hooksPath .githooks`.
 - If `ty` can't find the environment (e.g. `VIRTUAL_ENV` points at a conda env), run `env -u VIRTUAL_ENV ty check --python <env>/bin/python`.
 - Shared test data lives in `tests/data/`. Docs notebooks load it by relative path, e.g. `../../../tests/data/cif/Si.cif`.
 - `anri/sandbox` is unstable and gitignored.
