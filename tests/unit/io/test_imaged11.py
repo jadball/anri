@@ -87,6 +87,19 @@ class TestEntriesFromTensorMap(unittest.TestCase):
         k = np.flatnonzero(np.all(np.isclose(entries["pos"][:, :2], [sx, sy]), axis=1))
         self.assertEqual(k.size, 1)
         np.testing.assert_array_equal(entries["ubi"][k[0]], tmap.UBI[0, y, x])
+        np.testing.assert_array_equal(entries["density"], 1.0)
+
+    def test_density_map(self):
+        from ImageD11.sinograms.tensor_map import TensorMap
+
+        tmap = TensorMap.from_h5(QUARTZ_FLYXDM_H5)
+        density = np.where(tmap.labels >= 0, 0.5, 0.0)
+        density[0, 40:50, 40:50] = 0.0  # a pore
+        tmap.add_map("density", density)
+        entries = entries_from_tensormap(tmap)
+        n_pore = int(np.sum(tmap.labels[0, 40:50, 40:50] >= 0))
+        self.assertEqual(np.sum(entries["density"] == 0.0), n_pore)
+        self.assertEqual(np.sum(entries["density"] == 0.5), len(entries["density"]) - n_pore)
 
 
 class TestSimulateSparse(unittest.TestCase):

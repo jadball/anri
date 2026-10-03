@@ -88,7 +88,8 @@ def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0)
     """Map entries for one phase of a 2D ImageD11 TensorMap, at sample-frame positions.
 
     Uses ImageD11's own map -> reconstruction -> sample conventions, so a simulation from this map lines
-    up with what ImageD11 reconstructs. Density is 1 for every entry.
+    up with what ImageD11 reconstructs. Density comes from an optional "density" map (e.g. for pores),
+    and is 1 where the map has none.
 
     Parameters
     ----------
@@ -116,10 +117,14 @@ def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0)
     ubi = TensorMap.map_order_to_recon_order(tmap.UBI, z_layer)
     ri, rj = np.nonzero(phase == phase_id)
     sx, sy = recon_to_sample(ri, rj, (nx, ny), ystep)
+    if "density" in tmap.maps:
+        density = TensorMap.map_order_to_recon_order(tmap["density"], z_layer)[ri, rj].astype(float)
+    else:
+        density = np.ones(ri.size)
     return {
         "ubi": ubi[ri, rj],
         "pos": np.stack([sx, sy, np.zeros_like(sx)], 1).astype(float),
-        "density": np.ones(ri.size),
+        "density": density,
     }
 
 
