@@ -3,7 +3,7 @@ import unittest
 import jax
 import numpy as np
 
-from anri.mathutils import inv3
+from anri.utils import inv3
 
 jax.config.update("jax_enable_x64", True)
 

@@ -6,7 +6,7 @@ import h5py
 import jax
 import numpy as np
 
-from anri.io_imaged11 import (
+from anri.io import (
     entries_from_tensormap,
     geom_from_pars,
     motor_grid,
@@ -19,7 +19,7 @@ from anri.io_imaged11 import (
 jax.config.update("jax_enable_x64", True)
 
 QUARTZ_FLYXDM_H5 = os.path.join(
-    os.path.dirname(__file__), "..", "data", "phantoms", "quartz_flyxdm", "quartz_flyxdm_tmap.h5"
+    os.path.dirname(__file__), "..", "..", "data", "phantoms", "quartz_flyxdm", "quartz_flyxdm_tmap.h5"
 )
 
 

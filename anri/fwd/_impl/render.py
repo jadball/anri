@@ -26,7 +26,7 @@ try:
 except ImportError:  # JAX < 0.6, e.g. 0.4.30, the last release for Python 3.9
     from jax.experimental.shard_map import shard_map
 
-import anri.backend
+import anri.utils
 from anri.geom import sample_to_lab
 
 from .base import get_cov_in, hkl_to_k_omega, make_propagator
@@ -455,8 +455,8 @@ def render_row(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """Render all peaks of one phase that reach one dty row into sparse pixels.
 
-    Work is split across the devices of ``mesh`` (default :func:`anri.backend.mesh`): all GPUs,
-    or all XLA CPU devices set up by :func:`anri.backend.setup`.
+    Work is split across the devices of ``mesh`` (default :func:`anri.utils.mesh`): all GPUs,
+    or all XLA CPU devices set up by :func:`anri.utils.setup`.
 
     Parameters
     ----------
@@ -482,7 +482,7 @@ def render_row(
     min_value
         Contributions below this are dropped
     mesh
-        Devices to use, default :func:`anri.backend.mesh`
+        Devices to use, default :func:`anri.utils.mesh`
 
     Returns
     -------
@@ -491,7 +491,7 @@ def render_row(
     stats: dict
         "n_peaks" rendered and their "captured" window fractions
     """
-    mesh = anri.backend.mesh() if mesh is None else mesh
+    mesh = anri.utils.mesh() if mesh is None else mesh
     nd = mesh.size
     ubi = jnp.asarray(entries["ubi"])
     dtype = ubi.dtype

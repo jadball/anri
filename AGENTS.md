@@ -35,7 +35,7 @@ Development happens on shared machines (e.g. an ESRF node with one L40S GPU and 
 
 - **Estimate first.** Before running anything, estimate peak host-RAM and GPU-memory footprint from the array shapes and dtypes. Start with a small problem, measure, then scale up.
 - **Check usage.** Look at what others are using (`free -g`, `nvidia-smi`) before a big run.
-- **Don't let JAX take the whole GPU.** Call `anri.backend.setup()` at the top of scripts. It sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` so JAX doesn't grab 75% of the GPU at start-up. Set `XLA_PYTHON_CLIENT_MEM_FRACTION` too if needed.
+- **Don't let JAX take the whole GPU.** Call `anri.utils.setup()` at the top of scripts. It sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` so JAX doesn't grab 75% of the GPU at start-up. Set `XLA_PYTHON_CLIENT_MEM_FRACTION` too if needed.
 - **Don't hog the CPU.** Don't use every core: pin CPU runs with `taskset` (e.g. `taskset -c 0-15`).
 - **Clean up.** Don't leave long-running or idle processes holding memory.
 
@@ -67,7 +67,7 @@ CI (`.github/workflows/main.yml`) tests Python 3.9 and 3.14 on Linux, Windows an
   - check that any newer JAX API exists in 0.4.30 before using it.
 - **Cross-platform.** Avoid Linux-only calls (e.g. `os.sched_getaffinity`). Use `os.path`/`tempfile` for paths, not hard-coded `/tmp`.
 - **Lint the whole repo.** Run `ruff check .` from the repo root, not just `anri tests`: root files like `conftest.py` are checked too. Local ruff/ty may lag the versions CI installs.
-- **Don't start JAX at import time.** No module-level `jnp` arrays or computations; use Python or NumPy constants. Starting the backend on import stops `anri.backend.setup()` from working.
+- **Don't start JAX at import time.** No module-level `jnp` arrays or computations; use Python or NumPy constants. Starting the backend on import stops `anri.utils.setup()` from working.
 - **Keep tests small.** They run on CPU-only runners, so keep each test to seconds and modest memory. Don't pad small problems up to production batch sizes.
 - **PRs that touch `anri/**` must update `CHANGELOG.md`** (`pr_checks.yml`).
 - **Testing on Python 3.9 locally:** build a throwaway env the way CI does: a conda-forge `python=3.9` env, then `unidep install -p <env> ".[dev]"`.

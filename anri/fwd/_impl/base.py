@@ -11,7 +11,7 @@ import numpy as np
 
 from anri.diffract import omega_from_core, omega_solns_core, q_lab_to_k_out, scale_norm_k
 from anri.geom import lab_to_sample, sample_to_lab
-from anri.mathutils import inv3
+from anri.utils import inv3
 
 
 @jax.jit

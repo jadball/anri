@@ -5,8 +5,8 @@ on one thread per device. Asking XLA for a few CPU devices and sharding work acr
 parallel too. The number of devices is fixed when JAX starts its backend, so call :func:`setup` at the
 top of a script or notebook, before any JAX computation::
 
-    import anri.backend
-    anri.backend.setup()
+    import anri.utils
+    anri.utils.setup()
 
 On a GPU machine the CPU device count is unused, and work is sharded over the GPUs instead.
 """
@@ -38,7 +38,7 @@ def setup(n_cpu: int = 4, preallocate: bool = False) -> None:
     from jax._src import xla_bridge
 
     if xla_bridge.backends_are_initialized():
-        msg = "JAX has already started; call anri.backend.setup() before any JAX computation"
+        msg = "JAX has already started; call anri.utils.setup() before any JAX computation"
         raise RuntimeError(msg)
     flags = re.sub(r"--xla_force_host_platform_device_count=\d+", "", os.environ.get("XLA_FLAGS", ""))
     os.environ["XLA_FLAGS"] = f"{flags} --xla_force_host_platform_device_count={n_cpu}".strip()

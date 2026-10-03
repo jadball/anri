@@ -16,3 +16,5 @@ API reference
     diffract
     geom
     fwd
+    io
+    utils
