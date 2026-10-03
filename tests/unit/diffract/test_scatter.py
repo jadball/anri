@@ -79,7 +79,8 @@ class TestQLabToTthEta(unittest.TestCase):
         k_out_vec = self.tth_eta_to_k_out_vec(self.tth, self.eta, self.wavelength)
         q_lab_vec = self.k_to_q_lab_vec(jnp.repeat(self.k_in[None, :], k_out_vec.shape[0], axis=0), k_out_vec)
 
-        np.testing.assert_allclose(q_lab_vec, self.q_lab_id11)
+        # atol: components of q near zero (the angles are random) differ by rounding only
+        np.testing.assert_allclose(q_lab_vec, self.q_lab_id11, atol=1e-12)
 
     def test_round_trip_tth_eta(self):
         # round trip tth, eta -> k_out -> q_lab -> tth, eta
