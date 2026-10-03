@@ -12,7 +12,16 @@ from ._impl.box import (
     propagate_cov_box_all,
     propagate_cov_box_all_grains,
 )
-from ._impl.render import dty_weight, lorentz, make_row, polarisation, render_peaks, render_row, select_peaks
+from ._impl.render import (
+    check_render,
+    dty_weight,
+    lorentz,
+    make_row,
+    polarisation,
+    render_peaks,
+    render_row,
+    select_peaks,
+)
 from ._impl.scan import (
     get_centroid_scan,
     get_centroid_scan_all,
@@ -30,6 +39,7 @@ from ._impl.scan import (
 
 # fmt: off
 __all__ = [
+    "check_render",
     "dty_weight",
     "get_centroid_box",
     "get_centroid_box_all",

@@ -241,9 +241,10 @@ def render_peaks(
 
     The peak is a Gaussian in (sc, fc, omega) with the propagated covariance. Its mass in each
     (frame, slow, fast) cell of the window is approximated by conditioning: the omega marginal over
-    the frame, then slow given omega within the frame, then fast given slow within the row and omega
-    within the frame, each conditioned on the within-cell (truncated) mean. This keeps the slow-fast
-    and detector-omega correlations, and the centroid of peaks narrower than a frame or pixel.
+    the frame, then slow given omega within the frame, then fast given slow within the row, with omega
+    integrated out within the frame. Each step conditions on the within-cell (truncated) mean and variance.
+    This keeps the slow-fast and detector-omega correlations, and the centroid of peaks narrower than a
+    frame or pixel.
 
     Parameters
     ----------
@@ -311,13 +312,20 @@ def render_peaks(
             rows[None, :] - 0.5, rows[None, :] + 0.5, mu_s_o[:, None], sd_s_o[:, None]
         )  # [wo, ws]
 
-        # fast | slow in the row, omega in the frame (the within-cell slow-omega covariance is neglected in the width)
+        # fast | slow in the row, omega in the frame. Within the frame, omega is taken as N(m_o, v_o) and slow | omega
+        # is Gaussian, so (slow, omega) are jointly Gaussian there: integrate omega out given slow, then average over
+        # the row. Holding omega at m_o instead ignores that the row tells us where omega is within the frame, which
+        # matters for peaks narrower in omega than a frame (most of them).
         det = ss * oo - so**2
-        ainv = jnp.array([[oo, -so], [-so, ss]]) / det
-        bvec = jnp.array([sf, fo])
-        gain = bvec @ ainv  # [2]
-        mu_f_so = mu_f + gain[0] * (m_s - mu_s) + gain[1] * d_o[:, None]  # [wo, ws]
-        sd_f_so = jnp.sqrt(ff - bvec @ ainv @ bvec + gain[0] ** 2 * v_s + gain[1] ** 2 * v_o[:, None])  # [wo, ws]
+        g_s = (sf * oo - fo * so) / det  # regression of fast on slow and omega
+        g_o = (fo * ss - sf * so) / det
+        var_f_so = ff - (g_s * sf + g_o * fo)  # variance of fast given slow and omega
+        k = slope * v_o / sd_s_o**2  # [wo] slope of E[omega | slow] within the frame
+        var_o_s = v_o * (1.0 - k * slope)  # [wo] variance of omega given slow within the frame
+        e_o = m_o[:, None] + k[:, None] * (m_s - mu_s_o[:, None])  # [wo, ws] E[omega | slow] at the row's mean slow
+        mu_f_so = mu_f + g_s * (m_s - mu_s) + g_o * (e_o - mu_o)  # [wo, ws]
+        dfds = g_s + g_o * k  # [wo] slope of E[fast | slow] within the frame
+        sd_f_so = jnp.sqrt(var_f_so + g_o**2 * var_o_s[:, None] + dfds[:, None] ** 2 * v_s)  # [wo, ws]
         p_f = bin_fractions(cols - 0.5, cols + 0.5, mu_f_so[..., None], sd_f_so[..., None])  # [wo, ws, wf]
 
         frac = p_o[:, None, None] * p_s[:, :, None] * p_f  # [wo, ws, wf]
@@ -587,3 +595,125 @@ def render_row(
     frame, pixel = np.divmod(key[starts], npix)
     stats = {"n_peaks": n_peaks, "captured": np.concatenate(captured)}
     return frame.astype(np.int32), pixel.astype(np.int32), value, stats
+
+
+def check_render(
+    entries: dict,
+    hkls: np.ndarray,
+    geom: dict,
+    row: dict,
+    det_shape: tuple[int, int],
+    window: tuple[int, int, int] = (3, 7, 7),
+    n_peaks: int = 100,
+    n_samples: int = 100_000,
+    n_entries: int = 1000,
+    seed: int = 0,
+) -> dict:
+    """Check rendered peaks against a Monte Carlo simulation of the beam spreads.
+
+    For a random sample of peaks of the row, samples wavelength, ky and kz from their Gaussian spreads, pushes
+    every sample through the forward model (:func:`anri.fwd.get_centroid_scan`), adds the detector point spread
+    and the renderer's variance floor, and histograms the (slow, fast, omega) positions into the peak's window
+    cells. :func:`render_peaks` linearises the forward model and integrates the resulting Gaussian over the cells
+    approximately, so this checks both approximations, for your own map and geometry.
+
+    Only peaks whose whole window is on the detector and inside the scan are compared.
+
+    Parameters
+    ----------
+    entries, hkls, geom, row, det_shape, window
+        As for :func:`render_row`
+    n_peaks
+        Number of peaks to check
+    n_samples
+        Monte Carlo samples per peak. The noise in a cell's fraction is about sqrt(fraction / n_samples).
+    n_entries
+        Number of map entries to pick peaks from, at random
+    seed
+        Random seed
+
+    Returns
+    -------
+    result: dict
+        Per checked peak: "entry", "hkl" (row of ``hkls``) and "branch" (0 for etasign +1), "max_cell_error" (largest
+        absolute difference between rendered and Monte Carlo fraction of the peak in any cell), "captured" (fraction
+        of the rendered Gaussian inside the window) and "captured_mc" (fraction of the Monte Carlo samples inside it)
+    """
+    rng = np.random.default_rng(seed)
+    ubi = jnp.asarray(entries["ubi"])
+    dtype = ubi.dtype
+    pos = jnp.asarray(entries["pos"], dtype=dtype)
+    hkls_j = jnp.asarray(hkls, dtype=dtype)
+    ents = {"ubi": ubi, "pos": pos, "density": jnp.ones(ubi.shape[0], dtype=dtype)}
+    geom = jax.tree.map(jnp.asarray, geom)
+    row_j = jax.tree.map(jnp.asarray, row)
+    wo, ws, wf = window
+
+    # 1. Peaks of a random subset of entries that reach this row
+    sub = rng.choice(ubi.shape[0], size=min(n_entries, ubi.shape[0]), replace=False)
+    ostep = float(np.max(np.diff(np.asarray(row["omega_edges"]))))
+    margin = jnp.array(
+        [ws // 2 + 1, wf // 2 + 1, (wo // 2 + 1) * ostep, 4 * float(geom["sig_beam"]) + float(geom["voxel_size"])],
+        dtype=dtype,
+    )
+    e, h, b = np.nonzero(np.asarray(select_peaks(ubi[sub], pos[sub], hkls_j, geom, row_j, margin, det_shape)))
+    pick = rng.choice(e.size, size=min(n_peaks, e.size), replace=False)
+    e, h, b = sub[e[pick]].astype(np.int32), h[pick].astype(np.int32), b[pick].astype(np.int32)
+
+    # 2. Rendered fraction of each peak in each cell (the per-peak factors are constant over a window)
+    frame, pixel, value, captured = (
+        np.asarray(x) for x in render_peaks(e, h, b, ents, hkls_j, jnp.ones(hkls_j.shape[0], dtype=dtype), geom, row_j,
+                                            window, det_shape)
+    )  # fmt: skip
+    frame, pixel, value = (x.reshape(-1, wo, ws, wf) for x in (frame, pixel, value))
+    total = value.sum(axis=(1, 2, 3))
+    whole = (frame >= 0).all(axis=(1, 2, 3)) & (total > 0)
+
+    # 3. Monte Carlo: beam spreads through the forward model, then point spread and floor
+    def centroid(
+        u: jax.Array,
+        p: jax.Array,
+        q: jax.Array,
+        etasign: jax.Array,
+        wavelength: jax.Array,
+        ky: jax.Array,
+        kz: jax.Array,
+    ) -> jax.Array:
+        return get_centroid_scan(
+            u, p, q, etasign, wavelength, geom["k_in_lab"], ky, kz,
+            geom["wedge"], geom["chi"], geom["y0"], geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
+        )[0][:3]  # fmt: skip
+
+    sample = jax.jit(jax.vmap(centroid, in_axes=(None, None, None, None, 0, 0, 0)))
+    sd_beam = np.array([float(geom["sig_wavelength"]), float(geom["sig_ky"]), float(geom["sig_kz"])])
+    psf2 = float(geom["sig_psf"]) ** 2
+    sd_extra = np.sqrt([psf2 + _VAR_FLOOR[0], psf2 + _VAR_FLOOR[1], _VAR_FLOOR[2]])
+    sorted_index = np.argsort(np.asarray(row["order"]))  # file-order frame -> sorted-omega frame
+    edges_all = np.asarray(row["omega_edges"])
+    omega_mid = 0.5 * (row["omega_min"] + row["omega_max"])
+    keep, err, cap_mc = [], [], []
+    for i in np.flatnonzero(whole):
+        spreads = rng.standard_normal((n_samples, 3)) * sd_beam
+        wavelength = float(geom["wavelength"]) + spreads[:, 0]
+        x = np.array(
+            sample(ubi[e[i]], pos[e[i]], hkls_j[h[i]], 1.0 - 2.0 * b[i], wavelength, spreads[:, 1], spreads[:, 2])
+        )
+        x += rng.standard_normal((n_samples, 3)) * sd_extra
+        x[:, 2] += 360.0 * np.round((omega_mid - x[:, 2]) / 360.0)
+        s0, f0 = divmod(int(pixel[i, 0, 0, 0]), det_shape[1])
+        jo = sorted_index[frame[i, 0, 0, 0]]
+        cells = [s0 - 0.5 + np.arange(ws + 1), f0 - 0.5 + np.arange(wf + 1), edges_all[jo : jo + wo + 1]]
+        mc = np.moveaxis(np.histogramdd(x, bins=cells)[0], 2, 0) / n_samples  # (frame, slow, fast)
+        rendered = value[i] / total[i] * captured[i]
+        keep.append(i)
+        err.append(np.abs(rendered - mc).max())
+        cap_mc.append(mc.sum())
+    keep = np.asarray(keep, dtype=int)
+    return {
+        "entry": e[keep],
+        "hkl": h[keep],
+        "branch": b[keep],
+        "max_cell_error": np.asarray(err),
+        "captured": captured[keep],
+        "captured_mc": np.asarray(cap_mc),
+    }

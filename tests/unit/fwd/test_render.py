@@ -6,7 +6,7 @@ import numpy as np
 
 import anri.crystal
 import anri.geom
-from anri.fwd import dty_weight, lorentz, make_row, polarisation, render_peaks, render_row, select_peaks
+from anri.fwd import check_render, dty_weight, lorentz, make_row, polarisation, render_peaks, render_row, select_peaks
 from anri.fwd._impl.scan import get_centroid_scan
 
 jax.config.update("jax_enable_x64", True)
@@ -250,3 +250,34 @@ class TestLargeBatch(unittest.TestCase):
         small = np.concatenate([np.asarray(render_peaks(e[i : i + 256], h[i : i + 256], b[i : i + 256], *args)[2])
                                 for i in range(0, 4096, 256)])  # fmt: skip
         np.testing.assert_allclose(big, small, rtol=0, atol=1e-9 * small.max())
+
+
+class TestCheckRender(unittest.TestCase):
+    """Rendered peaks against a Monte Carlo simulation of the beam spreads through the forward model."""
+
+    def setUp(self):
+        pars, self.det_shape, self.geom, self.entries, _, _ = _single_peak_setup()
+        self.wavelength = pars["wavelength"]
+        hkls = np.array(list(np.ndindex(7, 7, 7)), dtype=float) - 3
+        self.hkls = hkls[(np.abs(hkls).sum(1) > 0) & (hkls.sum(1) % 2 == 0)]  # bcc
+        omega = np.arange(0.0, 180.0, 0.25) + 0.125
+        self.row = make_row(omega, np.zeros_like(omega))
+
+    def test_narrow_peaks(self):
+        # realistic spreads: peaks much narrower in omega than a frame, so slow and omega are strongly coupled within it
+        geom = dict(self.geom, sig_wavelength=self.wavelength * 1e-4, sig_ky=1e-4, sig_kz=1e-4, sig_psf=0.3)
+        r = check_render(self.entries, self.hkls, geom, self.row, self.det_shape, n_peaks=24, n_samples=200_000)
+        self.assertGreater(len(r["entry"]), 10)
+        # Monte Carlo noise is ~0.002 per cell; holding omega at its frame mean gave a median of 0.011
+        self.assertLess(np.median(r["max_cell_error"]), 0.004)
+        self.assertLess(r["max_cell_error"].max(), 0.012)
+
+    def test_broad_peaks_captured(self):
+        # broad spreads (~2 px, truncated by the window): the fraction inside the window must match
+        geom = dict(self.geom, sig_psf=0.3)
+        r = check_render(
+            self.entries, self.hkls, geom, self.row, self.det_shape, window=(7, 15, 15), n_peaks=24, n_samples=200_000
+        )
+        self.assertGreater(len(r["entry"]), 10)
+        self.assertLess(r["captured"].min(), 0.995)  # the window does truncate these peaks
+        np.testing.assert_allclose(r["captured"], r["captured_mc"], atol=0.01)
