@@ -189,7 +189,9 @@ class TestGeomFromPars(unittest.TestCase):
         det = detector_from_pars(pars)
         for sc, fc in ((1500.3, 700.8), (12.0, 2000.5)):
             xyz = anri.geom.det_to_lab(sc, fc, det["det_trans"], det["beam_cen_shift"], det["x_distance_shift"])
-            np.testing.assert_allclose(xyz, transform.compute_xyz_lab(np.array([[sc], [fc]]), **pars).ravel(), atol=1e-6)
+            np.testing.assert_allclose(
+                xyz, transform.compute_xyz_lab(np.array([[sc], [fc]]), **pars).ravel(), atol=1e-6
+            )
             back = anri.geom.raytrace_to_det(
                 xyz / jnp.linalg.norm(xyz), jnp.zeros(3), det["s_step_lab"], det["f_step_lab"], det["det_origin_lab"]
             )
