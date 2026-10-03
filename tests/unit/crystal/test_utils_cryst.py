@@ -163,3 +163,19 @@ class TestEverything(unittest.TestCase):
 
         B = anri.crystal.lpars_to_B(lpars)
         np.testing.assert_allclose(B, uc.B)
+
+
+class TestMetricTensors(unittest.TestCase):
+    def test_id11(self):
+        from ImageD11.unitcell import unitcell as unitcell_id11
+
+        import anri.geom
+
+        lpars = [4.9, 5.1, 5.4, 88.0, 92.0, 119.0]
+        uc = unitcell_id11(lpars, "P")
+        B = anri.crystal.lpars_to_B(jnp.array(lpars))
+        np.testing.assert_allclose(anri.crystal.B_to_rmt(B), uc.gi, rtol=1e-10)
+        np.testing.assert_allclose(anri.crystal.rmt_to_mt(jnp.asarray(uc.gi)), uc.g, rtol=1e-10)
+        # the metric tensor does not depend on the orientation
+        U = anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0)
+        np.testing.assert_allclose(anri.crystal.UBI_to_mt(jnp.linalg.inv(U @ B)), uc.g, rtol=1e-10)

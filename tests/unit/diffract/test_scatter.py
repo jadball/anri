@@ -286,3 +286,18 @@ class TestDetToQSample(unittest.TestCase):
         )
         q_sample_id11 = jnp.column_stack([cf.gx, cf.gy, cf.gz])
         np.testing.assert_allclose(q_sample_me, q_sample_id11)
+
+
+class TestOmegaSolnsBoth(unittest.TestCase):
+    def test_matches_single_solutions(self):
+        rng = np.random.default_rng(0)
+        k_in = diffract.scale_norm_k(jnp.array([1.0, 0.0, 0.0]), 0.3)
+        both = vmap(diffract.omega_solns_both, in_axes=(0, None))
+        single = vmap(diffract.omega_solns, in_axes=(0, None, None))
+        q = jnp.asarray(rng.normal(size=(200, 3)))
+        omega1, omega2, valid = both(q, k_in)
+        for omega, etasign in ((omega1, 1.0), (omega2, -1.0)):
+            expected, valid_single = single(q, etasign, k_in)
+            np.testing.assert_array_equal(valid, valid_single)
+            np.testing.assert_allclose(omega[valid], expected[valid])
+        self.assertTrue(valid.any() and not valid.all())

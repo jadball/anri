@@ -24,3 +24,17 @@ class TestRotZ(unittest.TestCase):
         expected = jnp.array([[jnp.cos(romega), -jnp.sin(romega), 0], [jnp.sin(romega), jnp.cos(romega), 0], [0, 0, 1]])
         result = anri.geom.rot_z(omega)
         np.testing.assert_allclose(result, expected)
+
+
+class TestRmatFromAxisAngle(unittest.TestCase):
+    def test_axes(self):
+        # the axis need not be normalised
+        for axis, rot in (
+            ([2.0, 0, 0], anri.geom.rot_x),
+            ([0, 0.5, 0], anri.geom.rot_y),
+            ([0, 0, 3.0], anri.geom.rot_z),
+        ):
+            for angle in (-30.0, 10.0, 135.0):
+                np.testing.assert_allclose(
+                    anri.geom.rmat_from_axis_angle(jnp.array(axis), angle), rot(angle), atol=1e-12
+                )
