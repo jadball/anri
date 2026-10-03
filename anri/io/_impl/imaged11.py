@@ -26,6 +26,75 @@ _GEOMETRY_KEYS = ("y_center", "y_size", "tilt_y", "z_center", "z_size", "tilt_z"
 _ORIENTATION_KEYS = ("o11", "o12", "o21", "o22")
 
 
+def detector_from_pars(pars: dict) -> dict:
+    """Detector geometry from ImageD11 parameters, for mapping between detector pixels and the lab frame.
+
+    Parameters
+    ----------
+    pars
+        ImageD11 parameters: ``y_center``, ``y_size``, ``tilt_y``, ``z_center``, ``z_size``, ``tilt_z``, ``tilt_x``,
+        ``distance`` and ``o11`` ... ``o22``. Other keys are ignored.
+
+    Returns
+    -------
+    detector: dict
+        "det_trans", "beam_cen_shift", "x_distance_shift" from :func:`anri.geom.detector_transforms` (pixels to lab,
+        see :func:`anri.geom.det_to_lab`), and "s_step_lab", "f_step_lab", "det_origin_lab" from
+        :func:`anri.geom.detector_basis_vectors_lab` (lab to pixels, see :func:`anri.geom.raytrace_to_det`)
+    """
+    det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(
+        *(float(pars[k]) for k in _GEOMETRY_KEYS), *(float(pars[k]) for k in _ORIENTATION_KEYS)
+    )
+    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(
+        det_trans, beam_cen_shift, x_distance_shift
+    )
+    return {
+        "det_trans": det_trans,
+        "beam_cen_shift": beam_cen_shift,
+        "x_distance_shift": x_distance_shift,
+        "s_step_lab": s_step_lab,
+        "f_step_lab": f_step_lab,
+        "det_origin_lab": det_origin_lab,
+    }
+
+
+def gonio_from_pars(pars: dict, y0: float) -> dict:
+    """Goniometer geometry from ImageD11 parameters.
+
+    Parameters
+    ----------
+    pars
+        ImageD11 parameters: ``wedge`` and ``chi`` (degrees, default 0) and ``omegasign`` (default 1).
+        ImageD11's wedge has the opposite sign to anri's, so the returned ``wedge`` is ``-pars["wedge"]``.
+    y0
+        dty at which the rotation axis is in the beam
+
+    Returns
+    -------
+    gonio: dict
+        "wedge", "chi" (degrees, anri convention) and "y0"
+    """
+    if float(pars.get("omegasign", 1.0)) != 1.0:
+        msg = "omegasign != 1 is not supported"
+        raise ValueError(msg)
+    return {
+        "wedge": -float(pars.get("wedge", 0.0)),  # ImageD11's wedge is a left-handed rotation; anri's is right-handed
+        "chi": float(pars.get("chi", 0.0)),
+        "y0": y0,
+    }
+
+
+def beam_from_pars(pars: dict) -> dict:
+    """Beam from ImageD11 parameters: ``wavelength`` (angstrom), along the lab x axis.
+
+    Returns
+    -------
+    beam: dict
+        "wavelength" and "k_in_lab" [3], the unit vector of the incoming beam
+    """
+    return {"wavelength": float(pars["wavelength"]), "k_in_lab": jnp.array([1.0, 0.0, 0.0])}
+
+
 def geom_from_pars(
     pars: dict,
     y0: float,
@@ -38,6 +107,9 @@ def geom_from_pars(
     sig_psf: float = 0.0,
 ) -> dict:
     """Build the geometry dict for :func:`anri.fwd._impl.render.render_row` from ImageD11 parameters.
+
+    Combines :func:`beam_from_pars`, :func:`gonio_from_pars` and :func:`detector_from_pars` with the spreads
+    the renderer needs.
 
     Parameters
     ----------
@@ -59,24 +131,10 @@ def geom_from_pars(
         intensity-weighted centroids snapped towards pixel centres (by up to ~0.3 px at 0.1 px wide); a real
         detector's point spread prevents that.
     """
-    if float(pars.get("omegasign", 1.0)) != 1.0:
-        msg = "omegasign != 1 is not supported"
-        raise ValueError(msg)
-    det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(
-        *(float(pars[k]) for k in _GEOMETRY_KEYS), *(float(pars[k]) for k in _ORIENTATION_KEYS)
-    )
-    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(
-        det_trans, beam_cen_shift, x_distance_shift
-    )
     return {
-        "wavelength": float(pars["wavelength"]),
-        "k_in_lab": jnp.array([1.0, 0.0, 0.0]),
-        "wedge": -float(pars.get("wedge", 0.0)),  # ImageD11's wedge is a left-handed rotation; anri's is right-handed
-        "chi": float(pars.get("chi", 0.0)),
-        "y0": y0,
-        "s_step_lab": s_step_lab,
-        "f_step_lab": f_step_lab,
-        "det_origin_lab": det_origin_lab,
+        **beam_from_pars(pars),
+        **gonio_from_pars(pars, y0),
+        **detector_from_pars(pars),
         "sig_wavelength": sig_wavelength,
         "sig_ky": sig_ky,
         "sig_kz": sig_kz,

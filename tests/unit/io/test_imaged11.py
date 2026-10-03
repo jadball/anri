@@ -7,6 +7,7 @@ import jax
 import numpy as np
 
 from anri.io import (
+    detector_from_pars,
     entries_from_tensormap,
     geom_from_pars,
     motor_grid,
@@ -173,6 +174,27 @@ class TestSimulateSparse(unittest.TestCase):
 
 
 class TestGeomFromPars(unittest.TestCase):
+    def test_detector_from_pars(self):
+        """Pixel to lab matches ImageD11, and ray-tracing the lab point back from the origin gives the same pixel."""
+        import jax.numpy as jnp
+        from ImageD11 import transform
+
+        import anri.geom
+
+        pars = {
+            "y_center": 1049.9, "y_size": 75.0, "tilt_y": -2e-3,
+            "z_center": 1116.5, "z_size": 75.0, "tilt_z": 3e-3, "tilt_x": 1e-3,
+            "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1,
+        }  # fmt: skip
+        det = detector_from_pars(pars)
+        for sc, fc in ((1500.3, 700.8), (12.0, 2000.5)):
+            xyz = anri.geom.det_to_lab(sc, fc, det["det_trans"], det["beam_cen_shift"], det["x_distance_shift"])
+            np.testing.assert_allclose(xyz, transform.compute_xyz_lab(np.array([[sc], [fc]]), **pars).ravel(), atol=1e-6)
+            back = anri.geom.raytrace_to_det(
+                xyz / jnp.linalg.norm(xyz), jnp.zeros(3), det["s_step_lab"], det["f_step_lab"], det["det_origin_lab"]
+            )
+            np.testing.assert_allclose(back, (sc, fc), atol=1e-8)
+
     def test_wedge_chi_against_imaged11(self):
         """A peak computed by anri from geom_from_pars maps back to its hkl through ImageD11's own geometry."""
         import jax.numpy as jnp
