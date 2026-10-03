@@ -12,6 +12,11 @@ from anri.fwd._impl.scan import get_centroid_scan
 jax.config.update("jax_enable_x64", True)
 
 
+def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
+    """Trapezoid rule (np.trapezoid needs numpy >= 2)."""
+    return float(np.sum(0.5 * (y[1:] + y[:-1]) * np.diff(x)))
+
+
 class TestDtyWeight(unittest.TestCase):
     def test_area(self):
         # integrated over dty, the weight is the voxel area for any omega and beam size
@@ -19,7 +24,7 @@ class TestDtyWeight(unittest.TestCase):
         for omega in [0.0, 10.0, 45.0, 90.0, 123.4]:
             for sig in [0.05, 0.5, 3.0]:
                 w = dty_weight(jnp.asarray(delta), omega, 2.0, sig)
-                np.testing.assert_allclose(np.trapezoid(w, delta), 4.0, rtol=1e-6)
+                np.testing.assert_allclose(_trapezoid(np.asarray(w), delta), 4.0, rtol=1e-6)
 
     def test_convolution(self):
         # compare with a brute-force convolution of the chord length with a Gaussian beam
@@ -30,7 +35,7 @@ class TestDtyWeight(unittest.TestCase):
         chord = np.clip((a - np.abs(u)) / (a - b), 0, 1) * size / max(c, s)
         for d in [-1.0, 0.0, 0.3, 1.2]:
             g = np.exp(-0.5 * ((d - u) / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
-            np.testing.assert_allclose(dty_weight(d, omega, size, sig), np.trapezoid(chord * g, u), rtol=1e-4)
+            np.testing.assert_allclose(dty_weight(d, omega, size, sig), _trapezoid(chord * g, u), rtol=1e-4)
 
     def test_continuous_near_box(self):
         # the rectangle branch at omega = 0 joins the trapezoid smoothly

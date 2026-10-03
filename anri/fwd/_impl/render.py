@@ -21,6 +21,11 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax.typing import ArrayLike
 
+try:
+    from jax import shard_map
+except ImportError:  # JAX < 0.6, e.g. 0.4.30, the last release for Python 3.9
+    from jax.experimental.shard_map import shard_map
+
 import anri.backend
 from anri.geom import sample_to_lab
 
@@ -379,7 +384,7 @@ def _select_sharded(
         return select_peaks(u, p, h, g, r, m, det_shape)
 
     specs = (P("d"), P("d"), P(), P(), P(), P())
-    return jax.shard_map(local, mesh=mesh, in_specs=specs, out_specs=P("d"))(ubi, pos, hkls, geom, row, margin)
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=P("d"))(ubi, pos, hkls, geom, row, margin)
 
 
 @partial(jax.jit, static_argnames=("window", "det_shape", "mesh"))
@@ -421,7 +426,7 @@ def _render_sharded(
         return frame, pixel, value, count[None], captured
 
     specs = (P("d"),) * 4 + (P(),) * 6
-    return jax.shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 5)(
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 5)(
         entry, hkl_idx, branch, live, entries, hkls, F2, geom, row, min_value
     )
 

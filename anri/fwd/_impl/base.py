@@ -333,7 +333,7 @@ def make_propagator(
 
         def f(*diff_args: Any) -> jax.Array:  # noqa: ANN401
             full = list(fargs)
-            for n, v in zip(argnums, diff_args, strict=True):
+            for n, v in zip(argnums, diff_args):
                 full[n] = v
             out = centroid_fn(*full)
             return out[0] if has_aux else out
@@ -343,7 +343,7 @@ def make_propagator(
         sizes = [int(np.prod(sh, dtype=int)) for sh in shapes]
         dims = active_dims if active_dims is not None else tuple(range(sum(sizes)))
 
-        zeros = [jnp.zeros(sh, dtype=pr.dtype) for sh, pr in zip(shapes, prim, strict=True)]
+        zeros = [jnp.zeros(sh, dtype=pr.dtype) for sh, pr in zip(shapes, prim)]
 
         acc = None
         for k in dims:
