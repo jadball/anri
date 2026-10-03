@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- For a beam tilted out of the horizontal plane, the scattering origin in the scanning model is where the pencil crosses the voxel's column: the beam is taken to cross the rotation axis at the voxel's own height (the layer's height in a 2D map), so the origin is raised by (k_z / k_x) x. Nothing changes for a horizontal beam.
 - `anri.fwd.dty_weight` takes the beam direction (`k_in_lab`, default lab x), and the renderer passes it: a beam turned by psi in the horizontal plane sees the voxel rotated by omega - psi and a dty offset moves the voxel delta cos(psi) across it; a pencil tilted by alpha out of the plane travels 1/cos(alpha) further through the voxel column. The dty selection margin scales by 1/cos(psi).
 - `anri.fwd.polarisation(k_in, k_out, factor)` takes the beam direction: horizontal polarisation is across the beam, wherever it points.
 

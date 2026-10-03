@@ -165,8 +165,8 @@ def dty_and_origin_lab(
     dty_required: jax.Array
         dty value that brings v_sample into beam at angle omega
     origin_lab: jax.Array
-        [3] v_sample in lab coordinates at that dty, equal to
-        ``sample_to_lab(v_sample, omega, wedge, chi, dty_required, y0)``
+        [3] Where the beam passes through v_sample's column at that dty: v_sample in lab coordinates
+        (``sample_to_lab(v_sample, omega, wedge, chi, dty_required, y0)``), raised to the height of a tilted beam
 
     Notes
     -----
@@ -175,6 +175,14 @@ def dty_and_origin_lab(
     ``y_ray - v_lab[1]``, and the y coordinate of the shifted position collapses
     to ``y_ray``. Both return values therefore come from a single rotation of
     ``v_sample``.
+
+    A beam tilted out of the horizontal plane is taken to cross the rotation axis
+    at the point's own height (in a 2D map, the layer's height), so that a point's
+    height never depends on other layers. The beam is a pencil and the voxel a
+    column, so the scattering happens where the pencil crosses the column: the
+    origin is raised by ``(k_z / k_x) * v_lab[0]``. For a beam in the horizontal
+    plane this is zero, and ``origin_lab`` equals
+    ``sample_to_lab(v_sample, omega, wedge, chi, dty_required, y0)``.
 
     See Also
     --------
@@ -194,6 +202,9 @@ def dty_and_origin_lab(
     # When dty = y0, y_ray
     dty_required = y_ray - v_lab[1] + y0
 
-    origin_lab = jnp.array([v_lab[0], y_ray, v_lab[2]])
+    # Height of the beam there, if it is tilted: it crosses the rotation axis at the point's own height
+    z_ray = v_lab[2] + k_in_lab[2] / k_in_lab[0] * v_lab[0]
+
+    origin_lab = jnp.array([v_lab[0], y_ray, z_ray])
 
     return dty_required, origin_lab

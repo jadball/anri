@@ -239,3 +239,27 @@ class TestFindDtyForBeamXY(unittest.TestCase):
         # fmt: on
         dty_result = anri.geom.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
         self.assertAlmostEqual(dty_desired, dty_result)
+
+
+class TestDtyAndOriginLab(unittest.TestCase):
+    def setUp(self):
+        self.v = jnp.array([12.0, -7.0, 3.0])  # a voxel above the rotation axis' crossing with lab x
+        self.args = (35.0, 1.5, -2.0, 0.4)  # omega, wedge, chi, y0
+
+    def test_horizontal_beam(self):
+        omega, wedge, chi, y0 = self.args
+        for k in (jnp.array([1.0, 0.0, 0.0]), jnp.array([1.0, 0.2, 0.0])):
+            dty, origin = anri.geom.dty_and_origin_lab(self.v, k, *self.args)
+            np.testing.assert_allclose(origin, anri.geom.sample_to_lab(self.v, omega, wedge, chi, dty, y0), atol=1e-12)
+
+    def test_tilted_beam(self):
+        # the beam crosses the rotation axis at the voxel's own height; the origin is on it, in the voxel's column
+        omega, wedge, chi, _ = self.args
+        v_lab = anri.geom.sample_to_lab(self.v, omega, wedge, chi, 0.0, 0.0)
+        for k in (jnp.array([1.0, 0.0, 0.1]), jnp.array([1.0, -0.2, -0.05])):
+            dty, origin = anri.geom.dty_and_origin_lab(self.v, k, *self.args)
+            np.testing.assert_allclose(jnp.cross(origin - jnp.array([0.0, 0.0, v_lab[2]]), k), 0.0, atol=1e-12)
+            self.assertAlmostEqual(float(origin[0]), float(v_lab[0]))
+            # dty only depends on the horizontal part of the beam
+            dty_flat, _ = anri.geom.dty_and_origin_lab(self.v, k.at[2].set(0.0), *self.args)
+            self.assertAlmostEqual(float(dty), float(dty_flat))
