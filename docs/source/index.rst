@@ -64,8 +64,7 @@ Anri will take advantage of the differentiable, intensity-aware forward model to
 AI usage disclaimer
 ===================
 
-Parts of Anri have used LLM-powered tools such as Gemini and Claude during development.  
-This is restricted to polish and performance-related patches, plus some little "gotchas" like ensuring differentiability through the Ewald solver.
+Some parts of the code are developed with the assistance of LLMs, such as Claude and Gemini.
 
 
 .. toctree::
