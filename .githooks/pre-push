@@ -25,7 +25,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     tmp=$(mktemp -d) || exit 1
     git archive "$local_sha" | tar -x -C "$tmp"
     echo "pre-push: building the docs for ${local_ref#refs/heads/} ($(git rev-parse --short "$local_sha"))" >&2
-    if ! (cd "$tmp/docs" && "$sphinx" -W --keep-going -q -b html -D nbsphinx_execute=never \
+    # PYTHONWARNINGS silences Python deprecation noise from the extensions; Sphinx warnings still fail the build (-W)
+    if ! (cd "$tmp/docs" && PYTHONWARNINGS=ignore "$sphinx" -W --keep-going -q -b html -D nbsphinx_execute=never \
             source "$tmp/docs/build/html"); then
         rm -rf "$tmp"
         echo "pre-push: the docs build failed (as the deploy job would); fix the errors above or push with --no-verify" >&2
