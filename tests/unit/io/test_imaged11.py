@@ -10,6 +10,7 @@ from anri.io import (
     detector_from_pars,
     entries_from_tensormap,
     geom_from_pars,
+    gonio_from_pars,
     motor_grid,
     simulate_sparse,
     write_dataset,
@@ -90,6 +91,14 @@ class TestEntriesFromTensorMap(unittest.TestCase):
         np.testing.assert_array_equal(entries["ubi"][k[0]], tmap.UBI[0, y, x])
         np.testing.assert_array_equal(entries["density"], 1.0)
 
+    def test_square_voxels(self):
+        from ImageD11.sinograms.tensor_map import TensorMap
+
+        tmap = TensorMap.from_h5(QUARTZ_FLYXDM_H5)
+        tmap.steps = (1.0, 0.787, 0.5)
+        with self.assertRaises(ValueError):
+            entries_from_tensormap(tmap)
+
     def test_density_map(self):
         from ImageD11.sinograms.tensor_map import TensorMap
 
@@ -104,6 +113,24 @@ class TestEntriesFromTensorMap(unittest.TestCase):
 
 
 class TestSimulateSparse(unittest.TestCase):
+    def test_rows_without_peaks(self):
+        import anri.crystal
+
+        pars = {
+            "y_center": 1049.9, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1116.5, "z_size": 75.0, "tilt_z": 0.0,
+            "tilt_x": 0.0, "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1, "wavelength": 0.2883,
+        }  # fmt: skip
+        geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0)
+        B = np.asarray(anri.crystal.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+        entries = {"ubi": np.linalg.inv(B)[None], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        omega, dty = motor_grid((0.0, 10.0), 0.25, (100.0, 101.0), 1.0)  # the beam never reaches the voxel
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = simulate_sparse(os.path.join(tmp, "sparse.h5"), entries, np.array([[1.0, 1.0, 0.0]]), np.ones(1),
+                                    geom, omega, dty, (2162, 2068))  # fmt: skip
+        np.testing.assert_array_equal(stats["n_peaks"], 0)
+        np.testing.assert_array_equal(stats["n_pixels"], 0)
+        np.testing.assert_array_equal(stats["captured_min"], 1.0)
+
     def test_small_grain(self):
         from ImageD11.sparseframe import SparseScan
 
@@ -174,6 +201,11 @@ class TestSimulateSparse(unittest.TestCase):
 
 
 class TestGeomFromPars(unittest.TestCase):
+    def test_omegasign(self):
+        self.assertEqual(gonio_from_pars({"wedge": 2.5, "chi": 1.0}, 0.3), {"wedge": -2.5, "chi": 1.0, "y0": 0.3})
+        with self.assertRaises(ValueError):
+            gonio_from_pars({"omegasign": -1.0}, 0.0)
+
     def test_detector_from_pars(self):
         """Pixel to lab matches ImageD11, and ray-tracing the lab point back from the origin gives the same pixel."""
         import jax.numpy as jnp

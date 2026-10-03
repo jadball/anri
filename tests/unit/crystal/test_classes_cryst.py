@@ -111,6 +111,23 @@ class TestStructure(unittest.TestCase):
         self.assertLess(unique.allhkls.shape[0], n_p1)
         np.testing.assert_allclose(np.unique(np.round(unique.allds, 5)), np.unique(np.round(self.struc.allds, 5)))
 
+    def test_rings_id11(self):
+        from ImageD11.unitcell import unitcell as unitcell_id11
+
+        dsmax, wavelength = 1.2, 0.18
+        self.struc.make_hkls(dsmax=dsmax, wavelength=wavelength)
+        uc = unitcell_id11(np.asarray(self.struc.lattice_parameters), self.struc.sgno)
+        uc.makerings(dsmax, tol=1e-4)
+        np.testing.assert_allclose(self.struc.ringds, uc.ringds, rtol=1e-6)
+        self.assertEqual(len(self.struc.rings_dict), len(uc.ringds))
+        for ds, mult, hkls in zip(uc.ringds, self.struc.ringmult, self.struc.ringhkls.values()):
+            self.assertEqual(int(mult), len(uc.ringhkls[ds]))
+            self.assertEqual(sorted(map(tuple, np.asarray(hkls).astype(int).tolist())), sorted(uc.ringhkls[ds]))
+        tth = np.degrees(2 * np.arcsin(np.asarray(self.struc.ringds) * wavelength / 2))
+        np.testing.assert_allclose(self.struc.ringtth, tth, rtol=1e-5)
+        np.testing.assert_array_equal(self.struc.ringhkls_arr, np.concatenate(list(self.struc.ringhkls.values())))
+        self.assertIs(self.struc.rings_table, self.struc.rings_table)  # computed once
+
     def test_thermal_factor_warning(self):
         import warnings
 

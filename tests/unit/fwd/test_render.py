@@ -317,6 +317,16 @@ class TestGuessBatchSize(unittest.TestCase):
     def test_minimum(self):
         self.assertEqual(self.guess(memory_fraction=1e-12), 64 * self.nd)
 
+    def test_device_memory(self):
+        # GPUs: free device memory, without the host copy of the output that CPU devices share memory with
+        from unittest import mock
+
+        with mock.patch("anri.fwd._impl.render._free_memory", return_value=(2**30, True)):
+            host = self.guess()
+        with mock.patch("anri.fwd._impl.render._free_memory", return_value=(2**30, False)):
+            device = self.guess()
+        self.assertGreaterEqual(device, host)
+
     def test_no_memory_analysis(self):
         from unittest import mock
 
@@ -340,3 +350,22 @@ class TestGuessBatchSize(unittest.TestCase):
                 return {"bytes_limit": 1000, "bytes_in_use": self.in_use}
 
         self.assertEqual(_free_memory([FakeGPU(100), FakeGPU(300)]), (700.0, False))
+
+
+class TestMakeRow(unittest.TestCase):
+    def test_unsorted_with_transmission(self):
+        omega = np.array([0.75, 0.25, 1.25, 1.75])  # file order is not omega order
+        row = make_row(omega, np.full(4, 2.0), transmission=np.array([0.9, 0.8, 0.7, 0.6]))
+        np.testing.assert_array_equal(row["order"], [1, 0, 2, 3])
+        np.testing.assert_allclose(row["omega_edges"], [0.0, 0.5, 1.0, 1.5, 2.0])
+        np.testing.assert_allclose(row["transmission_sorted"], [0.8, 0.9, 0.7, 0.6])
+        self.assertEqual((row["omega_min"], row["omega_max"], row["dty_min"], row["dty_max"]), (0.0, 2.0, 2.0, 2.0))
+
+
+class TestEmptyRow(unittest.TestCase):
+    def test_no_peaks(self):
+        _, det_shape, geom, entries, hkl, _ = _single_peak_setup()
+        omega = np.arange(0.0, 10.0, 0.25) + 0.125
+        row = make_row(omega, np.full_like(omega, 1000.0))  # the beam misses the grain
+        frame, pixel, value, stats = render_row(entries, hkl[None], np.ones(1), geom, row, det_shape)
+        self.assertEqual((frame.size, pixel.size, value.size, stats["n_peaks"], stats["captured"].size), (0,) * 5)
