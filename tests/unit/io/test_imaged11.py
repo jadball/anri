@@ -170,3 +170,46 @@ class TestSimulateSparse(unittest.TestCase):
             self.assertGreater(cf.nrows, 0)
             np.testing.assert_allclose(cf.sc, cf.s_raw)
             np.testing.assert_allclose(cf.fc, cf.f_raw)
+
+
+class TestGeomFromPars(unittest.TestCase):
+    def test_wedge_chi_against_imaged11(self):
+        """A peak computed by anri from geom_from_pars maps back to its hkl through ImageD11's own geometry."""
+        import jax.numpy as jnp
+        from ImageD11 import transform
+
+        import anri.crystal
+        import anri.geom
+        from anri.fwd._impl.scan import get_centroid_scan
+
+        pars = {
+            "y_center": 1049.9, "y_size": 75.0, "tilt_y": -2e-3,
+            "z_center": 1116.5, "z_size": 75.0, "tilt_z": 3e-3, "tilt_x": 1e-3,
+            "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1,
+            "wavelength": 0.2883, "wedge": 2.5, "chi": -1.5,
+        }  # fmt: skip
+        geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0)
+        self.assertEqual(geom["wedge"], -2.5)
+        U = np.asarray(anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0) @ anri.geom.rot_y(10.0))
+        B = np.asarray(anri.crystal.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+        ubi = np.linalg.inv(U @ B)
+        checked = 0
+        for hkl in ([1.0, 1.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 1.0], [-1.0, 2.0, 1.0], [3.0, 1.0, 0.0]):
+            for etasign in (1.0, -1.0):
+                c, valid = get_centroid_scan(
+                    jnp.asarray(ubi), jnp.zeros(3), jnp.asarray(hkl), etasign, geom["wavelength"], geom["k_in_lab"],
+                    0.0, 0.0, geom["wedge"], geom["chi"], geom["y0"],
+                    geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
+                )  # fmt: skip
+                if not valid or not (0 < c[0] < 2162 and 0 < c[1] < 2068):
+                    continue
+                xyz = transform.compute_xyz_lab(np.array([[c[0]], [c[1]]]), **pars)
+                tth, eta = transform.compute_tth_eta_from_xyz(
+                    xyz, np.array([c[2]]), wedge=pars["wedge"], chi=pars["chi"]
+                )
+                g = transform.compute_g_vectors(
+                    tth, eta, np.array([c[2]]), pars["wavelength"], pars["wedge"], pars["chi"]
+                )
+                np.testing.assert_allclose((ubi @ g).ravel(), hkl, atol=1e-6)
+                checked += 1
+        self.assertGreater(checked, 3)

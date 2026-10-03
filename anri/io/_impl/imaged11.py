@@ -42,7 +42,8 @@ def geom_from_pars(
     Parameters
     ----------
     pars
-        ImageD11 parameters: detector geometry (``y_center`` ... ``o22``), ``wavelength``, ``wedge``, ``chi``
+        ImageD11 parameters: detector geometry (``y_center`` ... ``o22``), ``wavelength``, ``wedge``, ``chi``.
+        ImageD11's wedge has the opposite sign to anri's, so the returned geometry has ``-wedge``.
     y0
         dty at which the rotation axis is in the beam
     sig_wavelength, sig_ky, sig_kz
@@ -70,7 +71,7 @@ def geom_from_pars(
     return {
         "wavelength": float(pars["wavelength"]),
         "k_in_lab": jnp.array([1.0, 0.0, 0.0]),
-        "wedge": float(pars.get("wedge", 0.0)),
+        "wedge": -float(pars.get("wedge", 0.0)),  # ImageD11's wedge is a left-handed rotation; anri's is right-handed
         "chi": float(pars.get("chi", 0.0)),
         "y0": y0,
         "s_step_lab": s_step_lab,
