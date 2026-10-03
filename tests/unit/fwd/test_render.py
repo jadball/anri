@@ -17,7 +17,7 @@ from anri.fwd import (
     render_row,
     select_peaks,
 )
-from anri.fwd._impl.render import _centroid, _free_memory
+from anri.fwd._impl.render import _centroid, _compact, _free_memory, _merge
 from anri.fwd._impl.scan import get_centroid_scan
 from anri.geom import sample_to_lab
 
@@ -458,6 +458,27 @@ class TestGuessBatchSize(unittest.TestCase):
                 return {"bytes_limit": 1000, "bytes_in_use": self.in_use}
 
         self.assertEqual(_free_memory([FakeGPU(100), FakeGPU(300)]), (700.0, False))
+
+
+class TestMerge(unittest.TestCase):
+    """_merge (used on GPUs) sums duplicates on the device; it must match _compact plus a host merge (CPUs)."""
+
+    def test_matches_host_merge(self):
+        rng = np.random.default_rng(0)
+        n = 5000
+        frame = rng.integers(-1, 6, n).astype(np.int32)  # -1: unused cell
+        pixel = rng.integers(0, 40, n).astype(np.int32)  # few pixels, so many duplicates
+        value = rng.exponential(1.0, n)
+        min_value = jnp.asarray(0.5)
+        fr, px, val, count = (np.asarray(x) for x in _merge(frame, pixel, value, min_value))
+        fr, px, val = fr[:count], px[:count], val[:count]
+        c_fr, c_px, c_val, c_count = (np.asarray(x) for x in _compact(frame, pixel, value, min_value))
+        key = c_fr[:c_count].astype(np.int64) * 40 + c_px[:c_count]
+        uniq, inverse = np.unique(key, return_inverse=True)
+        expected = np.bincount(inverse, weights=c_val[:c_count])
+        np.testing.assert_array_equal(fr.astype(np.int64) * 40 + px, uniq)  # sorted by (frame, pixel), unique
+        np.testing.assert_allclose(val, expected, rtol=1e-6)
+        self.assertTrue(np.all(fr >= 0))
 
 
 class TestPolarisationDirection(unittest.TestCase):

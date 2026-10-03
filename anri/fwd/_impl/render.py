@@ -37,6 +37,9 @@ from anri.geom import beam_basis, raytrace_to_det, sample_to_lab
 
 from .base import hkl_to_k_omega, hkl_to_k_omega_both, make_propagator
 
+# Smallest batch per device that render_row compiles (see there)
+_MIN_BATCH = 1024
+
 # Elements of the (sc, fc, omega) covariance that the renderer uses
 _COV_ELEMS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
 
@@ -446,7 +449,8 @@ def _compact(
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Move the contributions that are kept (value >= min_value) to the front, without sorting.
 
-    Returns fixed-size arrays plus the number of kept leading entries. Duplicates are not merged here.
+    Returns fixed-size arrays plus the number of kept leading entries. Duplicates are not merged here. Used on CPUs,
+    where XLA's sort is several times slower than NumPy's, so :func:`_merge` would cost more than it saves.
     """
     frame, pixel, value = frame.ravel(), pixel.ravel(), value.ravel()
     keep = (frame >= 0) & (value >= min_value)
@@ -456,6 +460,32 @@ def _compact(
     pixel = jnp.zeros_like(pixel).at[target].set(pixel, mode="drop")
     value = jnp.zeros_like(value).at[target].set(value, mode="drop")
     return frame, pixel, value, jnp.sum(keep)
+
+
+@jax.jit
+def _merge(
+    frame: jax.Array, pixel: jax.Array, value: jax.Array, min_value: jax.Array
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Drop contributions below min_value, then sum duplicate (frame, pixel)s: sorted, unique ones first.
+
+    Neighbouring voxels light up the same pixels, so a batch has many duplicates (~100x for a grain). Merging them
+    here means only the unique pixels go to the host. Returns fixed-size arrays plus the number of leading entries
+    that are used.
+    """
+    frame, pixel, value = frame.ravel(), pixel.ravel(), value.ravel()
+    keep = (frame >= 0) & (value >= min_value)
+    last = jnp.iinfo(jnp.int32).max  # dropped entries sort to the end
+    frame, pixel, value = jax.lax.sort(
+        (jnp.where(keep, frame, last), jnp.where(keep, pixel, last), jnp.where(keep, value, 0.0)), num_keys=2
+    )
+    n = frame.shape[0]
+    new = jnp.ones(n, bool).at[1:].set((frame[1:] != frame[:-1]) | (pixel[1:] != pixel[:-1])) & (frame != last)
+    unique = jnp.cumsum(new) - 1  # index of each entry's unique (frame, pixel)
+    first = jnp.where(new, unique, n)  # n is out of bounds, so dropped
+    value = jnp.zeros_like(value).at[jnp.where(frame != last, unique, n)].add(value, mode="drop")
+    frame = jnp.zeros_like(frame).at[first].set(frame, mode="drop")
+    pixel = jnp.zeros_like(pixel).at[first].set(pixel, mode="drop")
+    return frame, pixel, value, jnp.sum(new)
 
 
 def make_row(omega: np.ndarray, dty: np.ndarray, transmission: np.ndarray | None = None) -> dict:
@@ -525,10 +555,11 @@ def _render_sharded(
     det_shape: tuple[int, int],
     mesh: Mesh,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-    """:func:`render_peaks` then :func:`_compact`, with the batch split across the devices of ``mesh``.
+    """:func:`render_peaks` then :func:`_merge` (GPUs) or :func:`_compact` (CPUs), split across the devices of ``mesh``.
 
-    Duplicate pixels are merged on the host.
+    Pixels shared between devices or batches (and on CPUs, all duplicates) are merged on the host.
     """
+    reduce = _compact if mesh.devices.flat[0].platform == "cpu" else _merge
 
     def local(
         e: jax.Array,
@@ -544,7 +575,7 @@ def _render_sharded(
     ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
         frame, pixel, value, captured = render_peaks(e, h, b, ent, hk, f2, g, r, window, det_shape)
         value = jnp.where(lv[:, None], value, 0.0)
-        frame, pixel, value, count = _compact(frame, pixel, value, mv)
+        frame, pixel, value, count = reduce(frame, pixel, value, mv)
         return frame, pixel, value, count[None], captured
 
     specs = (P("d"),) * 4 + (P(),) * 6
@@ -670,9 +701,13 @@ def render_row(
         empty = np.zeros(0, np.int32)
         return empty, empty, np.zeros(0), {"n_peaks": 0, "captured": np.zeros(0)}
 
-    # 2. Render in fixed-size batches split over the devices. Small problems use smaller batches;
-    # powers of two keep the number of compiled shapes small. Padding peaks are marked not live.
-    per_device = min(max(batch // nd, 1), max(64, 1 << (-(-n_peaks // nd) - 1).bit_length()))
+    # 2. Render in fixed-size batches split over the devices. Small problems use smaller batches: 1024 peaks per
+    # device times a power of 4, so a scan compiles few shapes. Each compile takes seconds, and XLA:GPU takes up to
+    # a minute for very small batches. Padding peaks are marked not live.
+    per_device = _MIN_BATCH
+    while per_device < -(-n_peaks // nd):
+        per_device *= 4
+    per_device = min(max(batch // nd, 1), per_device)
     batch = per_device * nd
     per_shard = per_device * wo * ws * wf
     min_value_j = jnp.asarray(min_value, dtype=dtype)
