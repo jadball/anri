@@ -85,5 +85,23 @@ class TestPropagate(unittest.TestCase):
             nothing(*self.args, self.cov_in)
 
 
+class TestDivergence(unittest.TestCase):
+    def test_across_the_beam(self):
+        # ky and kz tilt the beam along its own horizontal and vertical, whatever its direction
+        args = _box_args()
+        rng = np.random.default_rng(1)
+        for k in [np.array([1.0, 0.0, 0.0]), *rng.normal(size=(5, 3)) + [3.0, 0.0, 0.0]]:
+            k_hat, e_h, e_v = anri.geom.beam_basis(jnp.asarray(k))
+            k_in, _, _, _ = anri.fwd.hkl_to_k_omega(args[0], args[2], 1.0, 0.3, jnp.asarray(k), 2e-4, -3e-4, 1.0, -2.0)
+            np.testing.assert_allclose([k_in @ k_hat, k_in @ e_h, k_in @ e_v], [1.0, 2e-4, -3e-4], atol=1e-14)
+            both = anri.fwd.hkl_to_k_omega_both(args[0], args[2], 0.3, jnp.asarray(k), 2e-4, -3e-4, 1.0, -2.0)
+            np.testing.assert_allclose(both[0], k_in, atol=1e-14)
+        # along x, the divergence is the lab y and z components, as before
+        k_in_x = anri.fwd.hkl_to_k_omega(
+            args[0], args[2], 1.0, 0.3, jnp.array([1.0, 0.0, 0.0]), 2e-4, -3e-4, 1.0, -2.0
+        )[0]
+        np.testing.assert_allclose(k_in_x, [1.0, 2e-4, -3e-4], atol=1e-15)
+
+
 if __name__ == "__main__":
     unittest.main()

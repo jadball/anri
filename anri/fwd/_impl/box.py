@@ -42,11 +42,13 @@ def get_centroid_box(
     wavelength
         Wavelength in angstroms
     k_in_lab:
-        [3] Unperturbed unit vector of incoming beam, lab frame
+        [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky
-        y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
+        Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
+        :func:`anri.geom.beam_basis`. Usually zero.
     kz
-        z-component of the beam in the lab frame. Represents vertical beam divergence, usually zero.
+        Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
+        :func:`anri.geom.beam_basis`. Usually zero.
     wedge
         Wedge motor value (degrees)
     chi
@@ -123,11 +125,13 @@ def get_centroid_box_both(
     wavelength
         Wavelength in angstroms
     k_in_lab:
-        [3] Unperturbed unit vector of incoming beam, lab frame
+        [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky
-        y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
+        Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
+        :func:`anri.geom.beam_basis`. Usually zero.
     kz
-        z-component of the beam in the lab frame. Represents vertical beam divergence, usually zero.
+        Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
+        :func:`anri.geom.beam_basis`. Usually zero.
     wedge
         Wedge motor value (degrees)
     chi

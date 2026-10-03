@@ -27,7 +27,7 @@ except ImportError:  # JAX < 0.6, e.g. 0.4.30, the last release for Python 3.9
     from jax.experimental.shard_map import shard_map
 
 import anri.utils
-from anri.geom import sample_to_lab
+from anri.geom import beam_basis, sample_to_lab
 
 from .base import get_cov_in, hkl_to_k_omega, make_propagator
 from .scan import get_centroid_scan, get_centroid_scan_both
@@ -127,14 +127,16 @@ def lorentz(k_in: jax.Array, k_out: jax.Array, rot_axis: jax.Array) -> jax.Array
     return 1.0 / jnp.abs(rot_axis @ jnp.cross(k_in, k_out))
 
 
-def polarisation(k_out: jax.Array, factor: ArrayLike) -> jax.Array:
-    """Polarisation factor for a beam polarised along lab y with degree of polarisation ``factor``.
+def polarisation(k_in: jax.Array, k_out: jax.Array, factor: ArrayLike) -> jax.Array:
+    """Polarisation factor for a beam polarised horizontally, with degree of polarisation ``factor``.
 
-    Equal to :func:`ImageD11.refinegrains.polarization` with ``eta0 = 0``.
+    Horizontal and vertical are across the beam, see :func:`anri.geom.beam_basis`. For a beam along lab x
+    (horizontal = lab y) this equals :func:`ImageD11.refinegrains.polarization` with ``eta0 = 0``.
     ``factor = 1`` is fully horizontally polarised, ``factor = 0`` is unpolarised.
     """
+    _, e_h, e_v = beam_basis(k_in)
     k_out = k_out / jnp.linalg.norm(k_out)
-    return 0.5 * (1 + factor) * (1 - k_out[1] ** 2) + 0.5 * (1 - factor) * (1 - k_out[2] ** 2)
+    return 0.5 * (1 + factor) * (1 - (k_out @ e_h) ** 2) + 0.5 * (1 - factor) * (1 - (k_out @ e_v) ** 2)
 
 
 def _peak_centroid(
@@ -163,7 +165,7 @@ def _peak_factors(ubi: jax.Array, hkl: jax.Array, etasign: ArrayLike, geom: dict
         ubi, hkl, etasign, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
     )
     rot_axis = sample_to_lab(jnp.array([0.0, 0.0, 1.0]), 0.0, geom["wedge"], geom["chi"], 0.0, 0.0)
-    return lorentz(k_in, k_out, rot_axis) * polarisation(k_out, geom["pol_factor"])
+    return lorentz(k_in, k_out, rot_axis) * polarisation(k_in, k_out, geom["pol_factor"])
 
 
 def _wrap_omega(omega: jax.Array, omega_mid: jax.Array) -> jax.Array:

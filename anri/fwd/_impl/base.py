@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from anri.diffract import omega_from_core, omega_solns_core, q_lab_to_k_out, scale_norm_k
-from anri.geom import lab_to_sample, sample_to_lab
+from anri.geom import beam_basis, lab_to_sample, sample_to_lab
 from anri.utils import inv3
 
 
@@ -41,11 +41,13 @@ def hkl_to_k_omega(
     wavelength:
         Wavelength in angstroms
     k_in_lab:
-        [3] Unperturbed unit vector of incoming beam, lab frame
+        [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky:
-        y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
+        Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
+        :func:`anri.geom.beam_basis`. Usually zero.
     kz:
-        z-component of the beam in the lab frame. Represents vertical beam divergence, usually zero.
+        Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
+        :func:`anri.geom.beam_basis`. Usually zero.
     wedge:
         Wedge motor value (degrees)
     chi:
@@ -65,7 +67,8 @@ def hkl_to_k_omega(
     q_sample = inv3(ubi) @ hkl
 
     # perturb k_in_lab by divergence
-    k_in_lab = k_in_lab + jnp.array([0.0, ky, kz])
+    k_hat, e_h, e_v = beam_basis(k_in_lab)
+    k_in_lab = k_hat + ky * e_h + kz * e_v
     k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
     k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
 
@@ -101,11 +104,13 @@ def hkl_to_k_omega_both(
     wavelength:
         Wavelength in angstroms
     k_in_lab:
-        [3] Unperturbed unit vector of incoming beam, lab frame
+        [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky:
-        y-component of the beam in the lab frame. Represents horizontal beam divergence, usually zero.
+        Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
+        :func:`anri.geom.beam_basis`. Usually zero.
     kz:
-        z-component of the beam in the lab frame. Represents vertical beam divergence, usually zero.
+        Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
+        :func:`anri.geom.beam_basis`. Usually zero.
     wedge:
         Wedge motor value (degrees)
     chi:
@@ -137,7 +142,8 @@ def hkl_to_k_omega_both(
     q_sample = inv3(ubi) @ hkl
 
     # perturb k_in_lab by divergence
-    k_in_lab = k_in_lab + jnp.array([0.0, ky, kz])
+    k_hat, e_h, e_v = beam_basis(k_in_lab)
+    k_in_lab = k_hat + ky * e_h + kz * e_v
     k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
     k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
 

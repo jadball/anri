@@ -38,3 +38,19 @@ class TestRmatFromAxisAngle(unittest.TestCase):
                 np.testing.assert_allclose(
                     anri.geom.rmat_from_axis_angle(jnp.array(axis), angle), rot(angle), atol=1e-12
                 )
+
+
+class TestBeamBasis(unittest.TestCase):
+    def test_along_x(self):
+        for got, expected in zip(anri.geom.beam_basis(jnp.array([2.0, 0.0, 0.0])), np.eye(3)):
+            np.testing.assert_allclose(got, expected, atol=1e-15)
+
+    def test_orthonormal(self):
+        rng = np.random.default_rng(0)
+        for k in rng.normal(size=(20, 3)):
+            k_hat, e_h, e_v = anri.geom.beam_basis(jnp.asarray(k))
+            basis = np.stack([k_hat, e_h, e_v])
+            np.testing.assert_allclose(basis @ basis.T, np.eye(3), atol=1e-12)
+            np.testing.assert_allclose(np.linalg.det(basis), 1.0, atol=1e-12)  # right-handed, like (x, y, z)
+            np.testing.assert_allclose(k_hat, k / np.linalg.norm(k), atol=1e-12)
+            self.assertAlmostEqual(float(e_h[2]), 0.0)  # horizontal

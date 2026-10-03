@@ -68,7 +68,7 @@ class TestIntensityFactors(unittest.TestCase):
         L = jax.vmap(lorentz, in_axes=(None, 0, None))(k_in, k_out, axis)
         np.testing.assert_allclose(L * lf(tth, eta), 1.0, rtol=1e-10)
         for f in [1.0, 0.9, 0.0]:
-            P = jax.vmap(polarisation, in_axes=(0, None))(k_out, f)
+            P = jax.vmap(polarisation, in_axes=(None, 0, None))(k_in, k_out, f)
             np.testing.assert_allclose(P, polarization(tth, eta, factor=f), atol=1e-12)
 
 
@@ -350,6 +350,20 @@ class TestGuessBatchSize(unittest.TestCase):
                 return {"bytes_limit": 1000, "bytes_in_use": self.in_use}
 
         self.assertEqual(_free_memory([FakeGPU(100), FakeGPU(300)]), (700.0, False))
+
+
+class TestPolarisationDirection(unittest.TestCase):
+    def test_rotating_the_setup(self):
+        # rotating beam and scattered ray together about lab z, or about lab y (a beam tilted up or down, e.g.
+        # grazing incidence), keeps horizontal polarisation horizontal: the factor must not change
+        rng = np.random.default_rng(0)
+        k_in = jnp.array([1.0, 0.0, 0.0])
+        k_out = jnp.asarray(rng.normal(size=(50, 3)) + [3.0, 0.0, 0.0])
+        pol = jax.vmap(polarisation, in_axes=(None, 0, None))
+        for factor in (1.0, 0.9, 0.0):
+            reference = pol(k_in, k_out, factor)
+            for R in (anri.geom.rot_z(40.0), anri.geom.rot_y(-25.0)):
+                np.testing.assert_allclose(pol(R @ k_in, k_out @ R.T, factor), reference, rtol=1e-12)
 
 
 class TestMakeRow(unittest.TestCase):
