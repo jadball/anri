@@ -15,6 +15,7 @@ from ._impl.box import (
 from ._impl.render import (
     check_render,
     dty_weight,
+    guess_batch_size,
     lorentz,
     make_row,
     polarisation,
@@ -54,6 +55,7 @@ __all__ = [
     "get_centroid_scan_all_grains_both",
     "get_centroid_scan_both",
     "get_cov_in",
+    "guess_batch_size",
     "hkl_to_k_omega",
     "hkl_to_k_omega_both",
     "lorentz",

@@ -474,6 +474,19 @@ def _valid_from_shards(x: jax.Array, count: np.ndarray, per_shard: int) -> np.nd
     return np.concatenate(out)
 
 
+def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict) -> tuple:
+    """Convert the renderer's inputs to JAX arrays, in the dtype of the entries' UBIs."""
+    ubi = jnp.asarray(entries["ubi"])
+    dtype = ubi.dtype
+    entries = {
+        "ubi": ubi,
+        "pos": jnp.asarray(entries["pos"], dtype=dtype),
+        "density": jnp.asarray(entries["density"], dtype=dtype),
+    }
+    hkls, F2 = jnp.asarray(hkls, dtype=dtype), jnp.asarray(F2, dtype=dtype)
+    return entries, hkls, F2, jax.tree.map(jnp.asarray, geom), jax.tree.map(jnp.asarray, row)
+
+
 def render_row(
     entries: dict,
     hkls: np.ndarray,
@@ -528,14 +541,9 @@ def render_row(
     """
     mesh = anri.utils.mesh() if mesh is None else mesh
     nd = mesh.size
-    ubi = jnp.asarray(entries["ubi"])
+    entries, hkls_j, F2_j, geom, row_j = _as_jax(entries, hkls, F2, geom, row)
+    ubi, pos = entries["ubi"], entries["pos"]
     dtype = ubi.dtype
-    pos = jnp.asarray(entries["pos"], dtype=dtype)
-    hkls_j = jnp.asarray(hkls, dtype=dtype)
-    F2_j = jnp.asarray(F2, dtype=dtype)
-    entries = {"ubi": ubi, "pos": pos, "density": jnp.asarray(entries["density"], dtype=dtype)}
-    geom = jax.tree.map(jnp.asarray, geom)
-    row_j = jax.tree.map(jnp.asarray, row)
     n_entries, n_hkls = ubi.shape[0], hkls_j.shape[0]
 
     # 1. Which peaks can reach this row? Chunks of entries, padded to a multiple of the device count.
@@ -640,13 +648,12 @@ def check_render(
         of the rendered Gaussian inside the window) and "captured_mc" (fraction of the Monte Carlo samples inside it)
     """
     rng = np.random.default_rng(seed)
-    ubi = jnp.asarray(entries["ubi"])
+    n_hkls = np.shape(hkls)[0]
+    ents, hkls_j, ones, geom, row_j = _as_jax(
+        {**entries, "density": np.ones(len(entries["ubi"]))}, hkls, np.ones(n_hkls), geom, row
+    )  # unit density and |F|^2: only the fractions in the cells matter
+    ubi, pos = ents["ubi"], ents["pos"]
     dtype = ubi.dtype
-    pos = jnp.asarray(entries["pos"], dtype=dtype)
-    hkls_j = jnp.asarray(hkls, dtype=dtype)
-    ents = {"ubi": ubi, "pos": pos, "density": jnp.ones(ubi.shape[0], dtype=dtype)}
-    geom = jax.tree.map(jnp.asarray, geom)
-    row_j = jax.tree.map(jnp.asarray, row)
     wo, ws, wf = window
 
     # 1. Peaks of a random subset of entries that reach this row
@@ -662,9 +669,8 @@ def check_render(
 
     # 2. Rendered fraction of each peak in each cell (the per-peak factors are constant over a window)
     frame, pixel, value, captured = (
-        np.asarray(x) for x in render_peaks(e, h, b, ents, hkls_j, jnp.ones(hkls_j.shape[0], dtype=dtype), geom, row_j,
-                                            window, det_shape)
-    )  # fmt: skip
+        np.asarray(x) for x in render_peaks(e, h, b, ents, hkls_j, ones, geom, row_j, window, det_shape)
+    )
     frame, pixel, value = (x.reshape(-1, wo, ws, wf) for x in (frame, pixel, value))
     total = value.sum(axis=(1, 2, 3))
     whole = (frame >= 0).all(axis=(1, 2, 3)) & (total > 0)
@@ -717,3 +723,73 @@ def check_render(
         "captured": captured[keep],
         "captured_mc": np.asarray(cap_mc),
     }
+
+
+def _free_memory(devices: list) -> tuple[float, bool]:
+    """Free memory per device in bytes, and whether the devices share the host's memory (CPU devices)."""
+    if devices[0].platform == "cpu":
+        import psutil
+
+        return psutil.virtual_memory().available / len(devices), True
+    free = [d.memory_stats()["bytes_limit"] - d.memory_stats()["bytes_in_use"] for d in devices]
+    return float(min(free)), False
+
+
+def guess_batch_size(
+    entries: dict,
+    hkls: np.ndarray,
+    F2: np.ndarray,
+    geom: dict,
+    row: dict,
+    det_shape: tuple[int, int],
+    window: tuple[int, int, int] = (3, 7, 7),
+    mesh: Mesh | None = None,
+    memory_fraction: float = 0.25,
+) -> int:
+    """Largest ``batch`` for :func:`render_row` whose render step fits in a fraction of the free memory.
+
+    Compiles the render step for two small batches (nothing is rendered) and reads XLA's memory analysis to get
+    the bytes per peak, then fits as many peaks as ``memory_fraction`` of the free memory allows: on GPUs, of the
+    least free device; on CPU, of the host memory shared by the CPU devices, counting the host copy of each
+    batch's output too. Precision matters: float64 needs about twice the memory of float32. Selecting the peaks
+    (``select_chunk`` in :func:`render_row`) needs memory too, a few hundred MB by default, which is not counted.
+
+    Parameters
+    ----------
+    entries, hkls, F2, geom, row, det_shape, window, mesh
+        As for :func:`render_row`
+    memory_fraction
+        Fraction of the free memory to use. The default leaves room for other users of a shared machine.
+
+    Returns
+    -------
+    batch: int
+        A power of two times the number of devices, at least 64 peaks per device
+    """
+    mesh = anri.utils.mesh() if mesh is None else mesh
+    nd = mesh.size
+    entries, hkls_j, F2_j, geom, row_j = _as_jax(entries, hkls, F2, geom, row)
+    min_value = jnp.asarray(0.0, dtype=entries["ubi"].dtype)
+
+    def sizes(per_device: int) -> tuple[int, int]:
+        idx = [jax.ShapeDtypeStruct((per_device * nd,), jnp.int32)] * 3
+        live = jax.ShapeDtypeStruct((per_device * nd,), jnp.bool_)
+        compiled = _render_sharded.lower(
+            *idx, live, entries, hkls_j, F2_j, geom, row_j, min_value, window, det_shape, mesh
+        ).compile()
+        m = compiled.memory_analysis()
+        if m is None:
+            msg = "XLA gives no memory analysis on this backend: pass batch to render_row yourself"
+            raise RuntimeError(msg)
+        total = m.temp_size_in_bytes + m.argument_size_in_bytes + m.output_size_in_bytes - m.alias_size_in_bytes
+        return total, m.output_size_in_bytes
+
+    (total1, out1), (total2, out2) = sizes(1024), sizes(2048)
+    per_peak = (total2 - total1) / 1024
+    fixed = total1 - 1024 * per_peak
+    free, host = _free_memory(list(mesh.devices.flat))
+    if host:
+        per_peak += (out2 - out1) / 1024  # render_row copies each batch's output to the host
+    per_device = int((memory_fraction * free - fixed) // per_peak)
+    per_device = 1 << max(6, per_device.bit_length() - 1)  # largest power of two that fits, at least 64
+    return per_device * nd

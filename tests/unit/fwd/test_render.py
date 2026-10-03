@@ -6,7 +6,18 @@ import numpy as np
 
 import anri.crystal
 import anri.geom
-from anri.fwd import check_render, dty_weight, lorentz, make_row, polarisation, render_peaks, render_row, select_peaks
+from anri.fwd import (
+    check_render,
+    dty_weight,
+    guess_batch_size,
+    lorentz,
+    make_row,
+    polarisation,
+    render_peaks,
+    render_row,
+    select_peaks,
+)
+from anri.fwd._impl.render import _free_memory
 from anri.fwd._impl.scan import get_centroid_scan
 
 jax.config.update("jax_enable_x64", True)
@@ -281,3 +292,51 @@ class TestCheckRender(unittest.TestCase):
         self.assertGreater(len(r["entry"]), 10)
         self.assertLess(r["captured"].min(), 0.995)  # the window does truncate these peaks
         np.testing.assert_allclose(r["captured"], r["captured_mc"], atol=0.01)
+
+
+class TestGuessBatchSize(unittest.TestCase):
+    def setUp(self):
+        _, self.det_shape, self.geom, self.entries, hkl, _ = _single_peak_setup()
+        self.hkls, self.F2 = hkl[None], np.ones(1)
+        omega = np.arange(0.0, 180.0, 0.25) + 0.125
+        self.row = make_row(omega, np.zeros_like(omega))
+        self.nd = len(jax.devices())
+
+    def guess(self, **kwargs):
+        return guess_batch_size(self.entries, self.hkls, self.F2, self.geom, self.row, self.det_shape, **kwargs)
+
+    def test_power_of_two_per_device(self):
+        batch = self.guess()
+        per_device = batch // self.nd
+        self.assertEqual(batch % self.nd, 0)
+        self.assertEqual(per_device & (per_device - 1), 0)
+        self.assertGreaterEqual(per_device, 64)
+        # a bigger window costs more memory per peak
+        self.assertLessEqual(self.guess(window=(5, 11, 11)), batch)
+
+    def test_minimum(self):
+        self.assertEqual(self.guess(memory_fraction=1e-12), 64 * self.nd)
+
+    def test_no_memory_analysis(self):
+        from unittest import mock
+
+        fake = mock.MagicMock()
+        fake.lower.return_value.compile.return_value.memory_analysis.return_value = None
+        with mock.patch("anri.fwd._impl.render._render_sharded", fake), self.assertRaises(RuntimeError):
+            self.guess()
+
+    def test_free_memory(self):
+        free, host = _free_memory(jax.devices())
+        self.assertTrue(host)
+        self.assertGreater(free, 0)
+
+        class FakeGPU:
+            platform = "gpu"
+
+            def __init__(self, in_use):
+                self.in_use = in_use
+
+            def memory_stats(self):
+                return {"bytes_limit": 1000, "bytes_in_use": self.in_use}
+
+        self.assertEqual(_free_memory([FakeGPU(100), FakeGPU(300)]), (700.0, False))
