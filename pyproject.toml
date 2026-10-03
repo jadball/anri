@@ -33,7 +33,8 @@ exclude = [
     "tests.*",
     "tests",
     "docs*",
-    "scripts*"
+    "scripts*",
+    "anri.sandbox*",
 ]
 
 [tool.setuptools]
