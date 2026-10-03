@@ -404,7 +404,7 @@ class Structure(Crystal):
     def _warn_if_no_thermal_factors(self) -> None:
         """Warn if the CIF has no isotropic thermal factors, as Dans Diffraction then sets Uiso = 0 (no Debye-Waller)."""
         cif = getattr(self._struc, "cif", None)
-        if cif is None:
+        if not cif:  # built in code, not read from a CIF (Dans_Diffraction sets cif = {})
             has_thermal = bool((self._struc.Atoms.uiso > 0).any())
         else:
             has_thermal = "_atom_site_U_iso_or_equiv" in cif or "_atom_site_B_iso_or_equiv" in cif

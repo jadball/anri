@@ -1,3 +1,4 @@
+import os
 import unittest
 
 import jax
@@ -72,3 +73,28 @@ class TestUnitCell(unittest.TestCase):
 
 #         self.assertTupleEqual(lpars_batch.shape, (ntests, 6))
 #         self.assertTrue(~jnp.any(jnp.isnan(lpars_batch)))
+
+
+CIF_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cif")
+
+
+class TestStructure(unittest.TestCase):
+    def setUp(self):
+        self.struc = anri.crystal.Structure.from_cif(os.path.join(CIF_DIR, "Fe.cif"))
+
+    def test_thermal_factor_warning(self):
+        import warnings
+
+        from Dans_Diffraction.classes_crystal import Crystal as dd_Crystal
+
+        # read from a CIF without U_iso / B_iso: warn
+        self.struc.make_hkls(dsmax=0.5, wavelength=0.3)
+        with self.assertWarns(UserWarning):
+            _ = self.struc.rings_table
+        # built in code, with a non-zero U_iso: no warning
+        built = anri.crystal.Structure(dd_Crystal())
+        built.make_hkls(dsmax=0.5, wavelength=0.3)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            _ = built.rings_table
+
