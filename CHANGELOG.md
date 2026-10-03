@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `anri.geom.beam_basis`: unit vectors along a beam and across it (horizontal and vertical).
 - `anri.io.beam_from_pars` and `geom_from_pars` take a beam direction, `k_in_lab` (default lab x).
-- `anri.fwd.guess_batch_size`: the largest `batch` for `render_row` that fits in a fraction (default 25%) of the free GPU or host memory, from XLA's memory analysis of the compiled render step. Adds `psutil` as a dependency.
+- `anri.fwd.guess_batch_size`: the largest `batch` for `render_row` that fits in a fraction (default 25%) of the free GPU or host memory, from XLA's memory analysis of the compiled render step. Adds `psutil` as a dependency. Raises `RuntimeError` where XLA gives no usable memory analysis (e.g. jaxlib 0.4.28 on macOS).
 - `anri.fwd.check_render`: checks rendered peaks of your own map and geometry against a Monte Carlo simulation of the beam spreads through the forward model, and reports the worst cell error and window capture for each peak.
 - The renderer is public: `anri.fwd.render_row`, `make_row`, `select_peaks`, `render_peaks`, `dty_weight`, `lorentz` and `polarisation` (previously only importable from `anri.fwd._impl.render`).
 - `anri.io.detector_from_pars`, `gonio_from_pars` and `beam_from_pars`: the detector, goniometer and beam parts of `geom_from_pars`, usable on their own (e.g. without the renderer's spreads). `detector_from_pars` also returns the pixel-to-lab transforms for `anri.geom.det_to_lab`, and so does `geom_from_pars`.

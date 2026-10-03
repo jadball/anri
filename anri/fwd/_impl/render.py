@@ -807,6 +807,9 @@ def guess_batch_size(
 
     (total1, out1), (total2, out2) = sizes(1024), sizes(2048)
     per_peak = (total2 - total1) / 1024
+    if per_peak <= 0:  # e.g. jaxlib 0.4.28 on macOS reports the same sizes for any batch
+        msg = "XLA's memory analysis doesn't scale with the batch on this backend: pass batch to render_row yourself"
+        raise RuntimeError(msg)
     fixed = total1 - 1024 * per_peak
     free, host = _free_memory(list(mesh.devices.flat))
     if host:
