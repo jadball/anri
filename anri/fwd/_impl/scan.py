@@ -9,46 +9,6 @@ from .base import hkl_to_k_omega, hkl_to_k_omega_both, make_propagator
 
 
 @jax.jit
-def get_active_peak_indices(
-    dty: float, omega: float, centroids: jax.Array, dty_tol: float, omega_tol: float
-) -> jax.Array:
-    """Return a boolean mask of peaks that contribute to a specific (dty, omega) coordinate within tolerances.
-
-    Parameters
-    ----------
-    dty
-        Base diffractometer Y translation value (same units as v_sample)
-    omega
-        Omega motor value (degrees)
-    centroids
-        [N,4] 4D peak centroids [sc, fc, omega, dty]
-    dty_tol
-        Tolerance of dty
-    omega_tol
-        Tolerance of omega
-
-    Returns
-    -------
-    is_active: jax.Array
-        [N] bools - mask to centroids
-    """
-    # 1. Extract motor centroids
-    # omega is index 2, dty is index 3
-    omega_mus = centroids[:, 2]
-    dty_mus = centroids[:, 3]
-
-    # 3. Check boundaries for both motors independently
-    # |val - mu| <= margin * sqrt(var)
-    is_omega_active = jnp.abs(omega - omega_mus) <= omega_tol
-    is_dty_active = jnp.abs(dty - dty_mus) <= dty_tol
-
-    # 4. Peak is active only if it falls within the window for BOTH motors
-    is_active = is_omega_active & is_dty_active
-
-    return is_active
-
-
-@jax.jit
 def get_centroid_scan(
     ubi: jax.Array,  # grain stuff
     origin_sample: jax.Array,
