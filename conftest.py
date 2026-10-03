@@ -1,3 +1,5 @@
+"""Pytest configuration shared by all tests."""
+
 import logging
 
 # suppress JAX debug spam when there are test failures
