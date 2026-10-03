@@ -12,8 +12,10 @@ from anri.io import (
     motor_grid,
     simulate_sparse,
     write_dataset,
-    write_par,
+    write_pars,
+    write_peaks_table,
     write_scan,
+    write_zero_distortion,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -52,15 +54,16 @@ class TestDataset(unittest.TestCase):
         omega, dty = motor_grid((0.0, 2.0), 0.5, (-1.0, 1.0), 0.5)
         self.assertEqual(omega.shape, (5, 4))
         with tempfile.TemporaryDirectory() as tmp:
-            sparse, dsfile, par = (os.path.join(tmp, f) for f in ("s_sparse.h5", "s_dataset.h5", "s.par"))
+            sparse = os.path.join(tmp, "s_sparse.h5")
             with h5py.File(sparse, "w") as hout:
                 for i in range(5):
                     write_scan(
                         hout, f"{i + 1}.1", np.zeros(0, int), np.zeros(0, int), np.zeros(0), omega[i], dty[i], (4, 4)
                     )
-            write_par(par, {"wavelength": 0.2, "distance": 150e3})
-            write_dataset(sparse, dsfile, y0=0.25, parfile=par)
+            dsfile = write_dataset(sparse, tmp, "s", "d", y0=0.25)
+            self.assertEqual(dsfile, os.path.join(tmp, "s", "s_d", "s_d_dataset.h5"))
             ds = load(dsfile)
+            self.assertEqual(os.path.dirname(ds.pksfile), os.path.dirname(dsfile))
             self.assertEqual(ds.shape, (5, 4))
             np.testing.assert_allclose(ds.omega, omega)
             np.testing.assert_allclose(ds.dty, dty)
@@ -117,3 +120,40 @@ class TestSimulateSparse(unittest.TestCase):
                 scan = SparseScan(path, f"{k + 1}.1")
                 self.assertEqual(scan.nnz.sum(), n)
                 self.assertTrue(np.all(scan.intensity > 1))
+
+    def test_imaged11_peaks(self):
+        """The whole pipeline: simulate, write pars, zero distortion, DataSet and peaks table; ImageD11 makes the 2D peaks."""
+        from ImageD11.sinograms.dataset import load
+
+        import anri.crystal
+        import anri.geom
+
+        pars = {
+            "y_center": 1049.9, "y_size": 75.0, "tilt_y": 0.0,
+            "z_center": 1116.5, "z_size": 75.0, "tilt_z": 0.0, "tilt_x": 0.0,
+            "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1,
+            "wavelength": 12.398419843320026 / 43.0, "wedge": 0.0, "chi": 0.0,
+        }  # fmt: skip
+        a = 2.8694
+        cell = {"cell__a": a, "cell__b": a, "cell__c": a, "cell_alpha": 90.0, "cell_beta": 90.0, "cell_gamma": 90.0}
+        cell["cell_lattice_[P,A,B,C,I,F,R]"] = 229
+        geom = geom_from_pars(pars, 0.0, pars["wavelength"] * 1e-3, 1e-3, 1e-3, sig_beam=0.5, voxel_size=1.0)
+        B = np.asarray(anri.crystal.lpars_to_B(np.array([a, a, a, 90.0, 90.0, 90.0])))
+        U = np.asarray(anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0))
+        entries = {"ubi": np.linalg.inv(U @ B)[None], "pos": np.zeros((1, 3)), "density": np.full(1, 100.0)}
+        hkls = np.array([[1.0, 1.0, 0.0], [-1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
+        omega, dty = motor_grid((0.0, 180.0), 0.25, (-1.0, 1.0), 1.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            sparse = os.path.join(tmp, "sparse.h5")
+            simulate_sparse(sparse, entries, hkls, np.ones(3), geom, omega, dty, (2162, 2068), window=(5, 17, 17))
+            parfile = write_pars(os.path.join(tmp, "pars"), pars, {"Fe": cell})
+            e2dx, e2dy = write_zero_distortion(os.path.join(tmp, "pars"), (2162, 2068))
+            dsfile = write_dataset(sparse, tmp, "fe", "sim", y0=0.0, parfile=parfile, e2dxfile=e2dx, e2dyfile=e2dy)
+            pksfile = write_peaks_table(dsfile, nproc=1)
+            ds = load(dsfile)
+            self.assertEqual(pksfile, ds.pksfile)
+            self.assertIn("Fe", ds.get_phases_from_disk().unitcells)
+            cf = ds.get_cf_2d()
+            self.assertGreater(cf.nrows, 0)
+            np.testing.assert_allclose(cf.sc, cf.s_raw)
+            np.testing.assert_allclose(cf.fc, cf.f_raw)

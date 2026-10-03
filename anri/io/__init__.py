@@ -7,7 +7,10 @@ from ._impl.imaged11 import (
     simulate_sparse,
     write_dataset,
     write_par,
+    write_pars,
+    write_peaks_table,
     write_scan,
+    write_zero_distortion,
 )
 
 __all__ = [
@@ -17,5 +20,8 @@ __all__ = [
     "simulate_sparse",
     "write_dataset",
     "write_par",
+    "write_pars",
+    "write_peaks_table",
     "write_scan",
+    "write_zero_distortion",
 ]

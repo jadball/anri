@@ -1,6 +1,6 @@
 """Read and write ImageD11 formats: parameters, TensorMaps, sparse pixel files and DataSet files.
 
-A simulated scanning-3DXRD dataset is a sparse pixels file plus a DataSet file. The sparse file has one
+A simulated scanning-3DXRD dataset is a sparse pixels file, a DataSet file and a peaks table. The sparse file has one
 group per dty row ("1.1", "2.1", ...), laid out like ImageD11's own segmented files, so ImageD11's
 S3DXRD pipeline can read it directly.
 
@@ -203,27 +203,140 @@ def write_scan(
 
 def write_dataset(
     sparse_path: str,
-    ds_path: str,
+    analysisroot: str,
+    sample: str,
+    dset: str,
     y0: float,
     parfile: str | None = None,
-    sample: str = "sample",
-    dset: str = "dataset",
+    e2dxfile: str | None = None,
+    e2dyfile: str | None = None,
     omega_motor: str = "rot_center",
     dty_motor: str = "dty",
-) -> None:
-    """Write an ImageD11 DataSet file for a sparse pixels file, ready for the S3DXRD pipeline."""
+) -> str:
+    """Write an ImageD11 DataSet file for a sparse pixels file, ready for the S3DXRD pipeline.
+
+    The DataSet uses ImageD11's standard layout: it is saved as
+    ``<analysisroot>/<sample>/<sample>_<dset>/<sample>_<dset>_dataset.h5``, and the peaks table,
+    columnfiles and grains that the pipeline writes later go in the same folder.
+
+    Parameters
+    ----------
+    sparse_path
+        Sparse pixels file, e.g. from :func:`simulate_sparse`. It can live anywhere.
+    analysisroot, sample, dset
+        Where the DataSet goes, and its name
+    y0
+        dty at which the rotation axis is in the beam
+    parfile
+        Parameter file for the pipeline, e.g. the ``pars.json`` from :func:`write_pars`
+    e2dxfile, e2dyfile
+        Spatial distortion files, e.g. from :func:`write_zero_distortion`. ImageD11 needs a spatial
+        correction to give the 2D peaks their corrected ``sc`` and ``fc`` columns.
+    omega_motor, dty_motor
+        Motor names used in the sparse file
+
+    Returns
+    -------
+    dsfile: str
+        Path of the DataSet file
+    """
     from ImageD11.sinograms.dataset import DataSet
 
-    folder = os.path.dirname(os.path.abspath(ds_path))
-    ds = DataSet(analysisroot=folder, sample=sample, dset=dset, omegamotor=omega_motor, dtymotor=dty_motor)
+    ds = DataSet(
+        analysisroot=os.path.abspath(analysisroot), sample=sample, dset=dset, omegamotor=omega_motor, dtymotor=dty_motor
+    )
     ds.import_from_sparse(os.path.abspath(sparse_path))
-    ds.analysispath = folder
-    if parfile is not None:
-        setattr(ds, "parfile", os.path.abspath(parfile))  # noqa: B010 (not declared on DataSet)
-    ds.save(ds_path)
+    # these attributes are not declared on DataSet, so set them with setattr
+    for name, path in (("parfile", parfile), ("e2dxfile", e2dxfile), ("e2dyfile", e2dyfile)):
+        if path is not None:
+            setattr(ds, name, os.path.abspath(path))
+    dsfile = ds.dsfile_default
+    os.makedirs(os.path.dirname(dsfile), exist_ok=True)
+    ds.save(dsfile)
     # older ImageD11 releases don't save y0 themselves
-    with h5py.File(ds_path, "a") as f:
+    with h5py.File(dsfile, "a") as f:
         f.attrs["y0"] = y0
+    return dsfile
+
+
+def write_peaks_table(dsfile: str, nproc: int | None = None, algorithm: str = "lmlabel", wtmax: int = 70000) -> str:
+    """Label the sparse pixels into ImageD11's peaks table: the last step of a simulation.
+
+    After this, the S3DXRD pipeline can start at indexing (e.g. ``tomo_1_index``); the DataSet
+    makes the 2D and 4D peaks from the peaks table on demand.
+
+    This runs ``ImageD11.sinograms.properties.main``, which uses a multiprocessing pool. Scripts
+    that call it must do so under ``if __name__ == "__main__":``.
+
+    Parameters
+    ----------
+    dsfile
+        DataSet file, e.g. from :func:`write_dataset`
+    nproc
+        Number of worker processes. ``None`` lets ImageD11 use every available core.
+    algorithm, wtmax
+        Labelling options for ImageD11, as in its ``0_segment_and_label`` notebook
+
+    Returns
+    -------
+    pksfile: str
+        Path of the peaks table
+    """
+    import ImageD11.sinograms.properties
+    from ImageD11.sinograms.dataset import load
+
+    options = {"algorithm": algorithm, "wtmax": wtmax, "save_overlaps": False, "nproc": nproc}
+    ImageD11.sinograms.properties.main(dsfile, options=options)
+    return load(dsfile).pksfile
+
+
+def write_pars(folder: str, geometry: dict, phases: dict) -> str:
+    """Write ImageD11 parameter files: ``geometry.par``, one ``<phase>.par`` per phase, and ``pars.json``.
+
+    Parameters
+    ----------
+    folder
+        Where to write them
+    geometry
+        Detector and beam parameters, as in an ImageD11 ``.par`` file
+    phases
+        ``{phase_name: {"cell__a": ..., ..., "cell_lattice_[P,A,B,C,I,F,R]": ...}}``
+
+    Returns
+    -------
+    path: str
+        Path of ``pars.json``, which ``ImageD11.unitcell.Phases`` (and ``DataSet.phases``) read
+    """
+    import json
+
+    os.makedirs(folder, exist_ok=True)
+    write_par(os.path.join(folder, "geometry.par"), geometry)
+    for name, cell in phases.items():
+        write_par(os.path.join(folder, f"{name}.par"), cell)
+    schema = {"geometry": {"file": "geometry.par"}, "phases": {name: {"file": f"{name}.par"} for name in phases}}
+    path = os.path.join(folder, "pars.json")
+    with open(path, "w") as f:
+        json.dump(schema, f, indent=2)
+    return path
+
+
+def write_zero_distortion(folder: str, det_shape: tuple[int, int]) -> tuple[str, str]:
+    """Write ``e2dx.edf`` and ``e2dy.edf`` spatial distortion files that are zero everywhere.
+
+    Simulated detectors have no distortion, but ImageD11 only gives 2D peaks corrected ``sc``/``fc``
+    columns when a spatial correction is set.
+
+    Returns
+    -------
+    e2dxfile, e2dyfile: str
+    """
+    from fabio.edfimage import EdfImage
+
+    os.makedirs(folder, exist_ok=True)
+    paths = os.path.join(folder, "e2dx.edf"), os.path.join(folder, "e2dy.edf")
+    for path in paths:
+        EdfImage(data=np.zeros(det_shape, np.float32)).write(path)
+    return paths
 
 
 def simulate_sparse(
