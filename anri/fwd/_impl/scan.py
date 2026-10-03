@@ -61,9 +61,9 @@ def get_centroid_scan(
     wedge: float,  # gonio
     chi: float,
     y0: float,
-    sc_lab: jax.Array,  # detector
-    fc_lab: jax.Array,
-    norm_lab: jax.Array,
+    s_step_lab: jax.Array,  # detector
+    f_step_lab: jax.Array,
+    det_origin_lab: jax.Array,
 ) -> tuple[jax.Array, bool]:
     """Forward project (ubi, hkl) to get 4D peak centroid (sc, fc, omega, dty) in the Scanning 3DXRD case.
 
@@ -94,12 +94,12 @@ def get_centroid_scan(
         Chi motor value (degrees)
     y0
         The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
-    sc_lab
-        [3] Laboratory basis vector for the slow direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    fc_lab
-        [3] Laboratory basis vector for the fast direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    norm_lab
-        [3] Laboratory basis vector for the detector normal from :func:`anri.geom.detector_basis_vectors_lab`.
+    s_step_lab
+        [3] Lab-frame step of one pixel along the slow direction, from :func:`anri.geom.detector_basis_vectors_lab`.
+    f_step_lab
+        [3] Lab-frame step of one pixel along the fast direction, from :func:`anri.geom.detector_basis_vectors_lab`.
+    det_origin_lab
+        [3] Lab-frame position of pixel (0, 0), from :func:`anri.geom.detector_basis_vectors_lab`.
 
     Returns
     -------
@@ -125,7 +125,7 @@ def get_centroid_scan(
     )
 
     dty, origin_lab = dty_and_origin_lab(origin_sample, k_in_lab, omega, wedge, chi, y0)
-    sc, fc = raytrace_to_det(k_out_lab, origin_lab, sc_lab, fc_lab, norm_lab)
+    sc, fc = raytrace_to_det(k_out_lab, origin_lab, s_step_lab, f_step_lab, det_origin_lab)
 
     centroid = jnp.array([sc, fc, omega, dty])
 
@@ -144,9 +144,9 @@ def get_centroid_scan_both(
     wedge: float,  # gonio
     chi: float,
     y0: float,
-    sc_lab: jax.Array,  # detector
-    fc_lab: jax.Array,
-    norm_lab: jax.Array,
+    s_step_lab: jax.Array,  # detector
+    f_step_lab: jax.Array,
+    det_origin_lab: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
     """Forward project (ubi, hkl) to both Friedel 4D peak centroids in the Scanning 3DXRD case.
 
@@ -176,12 +176,12 @@ def get_centroid_scan_both(
         Chi motor value (degrees)
     y0
         The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
-    sc_lab
-        [3] Laboratory basis vector for the slow direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    fc_lab
-        [3] Laboratory basis vector for the fast direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    norm_lab
-        [3] Laboratory basis vector for the detector normal from :func:`anri.geom.detector_basis_vectors_lab`.
+    s_step_lab
+        [3] Lab-frame step of one pixel along the slow direction, from :func:`anri.geom.detector_basis_vectors_lab`.
+    f_step_lab
+        [3] Lab-frame step of one pixel along the fast direction, from :func:`anri.geom.detector_basis_vectors_lab`.
+    det_origin_lab
+        [3] Lab-frame position of pixel (0, 0), from :func:`anri.geom.detector_basis_vectors_lab`.
 
     Returns
     -------
@@ -216,7 +216,7 @@ def get_centroid_scan_both(
     centroids = []
     for i in range(2):
         dty, origin_lab = dty_and_origin_lab(origin_sample, k_in_lab, omegas[i], wedge, chi, y0)
-        sc, fc = raytrace_to_det(k_out_labs[i], origin_lab, sc_lab, fc_lab, norm_lab)
+        sc, fc = raytrace_to_det(k_out_labs[i], origin_lab, s_step_lab, f_step_lab, det_origin_lab)
         centroids.append(jnp.array([sc, fc, omegas[i], dty]))
 
     return jnp.stack(centroids), valid

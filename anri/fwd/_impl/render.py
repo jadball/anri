@@ -125,7 +125,7 @@ def _peak_centroid(
     return get_centroid_scan(
         ubi, pos, hkl, etasign,
         geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], geom["y0"],
-        geom["sc_lab"], geom["fc_lab"], geom["norm_lab"],
+        geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
     )  # fmt: skip
 
 
@@ -135,7 +135,7 @@ def _peak_cov(ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike
     return _propagate(
         ubi, pos, hkl, etasign,
         geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], geom["y0"],
-        geom["sc_lab"], geom["fc_lab"], geom["norm_lab"], cov_in,
+        geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"], cov_in,
     )  # fmt: skip
 
 
@@ -189,7 +189,7 @@ def select_peaks(
     def one(u: jax.Array, p: jax.Array, h: jax.Array) -> tuple[jax.Array, jax.Array]:
         centroids, valid = get_centroid_scan_both(
             u, p, h, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], geom["y0"],
-            geom["sc_lab"], geom["fc_lab"], geom["norm_lab"],
+            geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
         )  # fmt: skip
         return centroids, valid
 
@@ -467,7 +467,7 @@ def render_row(
         [Nh, 3] hkls of that phase and [Nh] their structure factors squared
     geom
         Dict with "wavelength", "k_in_lab" [3], "wedge", "chi" (degrees), "y0",
-        "sc_lab", "fc_lab", "norm_lab" [3] (from :func:`anri.geom.detector_basis_vectors_lab`),
+        "s_step_lab", "f_step_lab", "det_origin_lab" [3] (from :func:`anri.geom.detector_basis_vectors_lab`),
         "sig_wavelength", "sig_ky", "sig_kz", "sig_beam", "voxel_size" and "pol_factor"
     row
         From :func:`make_row`

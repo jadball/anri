@@ -224,7 +224,7 @@ def det_to_lab(
     v_lab: jax.Array
         [3] (x_lab, y_lab, z_lab) vector
     """
-    v_det = jnp.array([sc, fc, 0])
+    v_det = jnp.array([sc, fc, 0], dtype=det_trans.dtype)
     v_lab = det_trans @ (v_det + beam_cen_shift) + x_distance_shift
     return v_lab
 
@@ -266,9 +266,11 @@ def lab_to_det(
 def detector_basis_vectors_lab(
     det_trans: jax.Array, beam_cen_shift: jax.Array, x_distance_shift: jax.Array
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Get laboratory basis vectors for detector (slow, fast, normal).
+    """Get the detector's pixel steps and pixel (0, 0) position in the laboratory frame.
 
-    Needed for :func:`raytrace_to_det`
+    Needed for :func:`raytrace_to_det`. The steps are computed directly from the detector transform, not as
+    differences of pixel positions: positions are ~distance away from the origin, so subtracting them loses
+    precision in float32 (about 2e-4 relative for a 75 um pixel at 150 mm).
 
     Parameters
     ----------
@@ -281,33 +283,26 @@ def detector_basis_vectors_lab(
 
     Returns
     -------
-    sc_lab: jax.Array
-        [3] Laboratory basis vector for the slow direction on the detector.
-    fc_lab: jax.Array
-        [3] Laboratory basis vector for the fast direction on the detector.
-    norm_lab: jax.Array
-        [3] Laboratory basis vector for the detector normal.
+    s_step_lab: jax.Array
+        [3] Lab-frame step of one pixel along the slow direction.
+    f_step_lab: jax.Array
+        [3] Lab-frame step of one pixel along the fast direction.
+    det_origin_lab: jax.Array
+        [3] Lab-frame position of pixel (0, 0).
     """
-    # Find vectors in the fast, slow directions in the detector plane
-    # 3 basis vectors as pixels in the detector
-    sc = jnp.array([1.0, 0.0, 0])
-    fc = jnp.array([0.0, 1.0, 0])
-
-    # 3 basis vectors in the lab frame
-    sc_lab = det_to_lab(sc[0], fc[0], det_trans, beam_cen_shift, x_distance_shift)
-    fc_lab = det_to_lab(sc[1], fc[1], det_trans, beam_cen_shift, x_distance_shift)
-    norm_lab = det_to_lab(sc[2], fc[2], det_trans, beam_cen_shift, x_distance_shift)
-
-    return sc_lab, fc_lab, norm_lab
+    s_step_lab = det_trans @ jnp.array([1.0, 0.0, 0.0], dtype=det_trans.dtype)
+    f_step_lab = det_trans @ jnp.array([0.0, 1.0, 0.0], dtype=det_trans.dtype)
+    det_origin_lab = det_to_lab(0.0, 0.0, det_trans, beam_cen_shift, x_distance_shift)
+    return s_step_lab, f_step_lab, det_origin_lab
 
 
 @jax.jit
 def raytrace_to_det(
     vec_lab: jax.Array,
     origin_lab: jax.Array,
-    sc_lab: jax.Array,
-    fc_lab: jax.Array,
-    norm_lab: jax.Array,
+    s_step_lab: jax.Array,
+    f_step_lab: jax.Array,
+    det_origin_lab: jax.Array,
 ) -> tuple[jax.Array, jax.Array]:
     r"""Ray-trace from vector in lab frame (unknown length) to detector coordinates (sc, fc).
 
@@ -319,12 +314,12 @@ def raytrace_to_det(
         [3] Outgoing scaled normalised wave-vector in lab frame
     origin_lab
         [3] Origin of diffraction in lab frame
-    sc_lab
-        [3] Laboratory basis vector for the slow direction on the detector from :func:`detector_basis_vectors_lab`.
-    fc_lab
-        [3] Laboratory basis vector for the fast direction on the detector from :func:`detector_basis_vectors_lab`.
-    norm_lab
-        [3] Laboratory basis vector for the detector normal from :func:`detector_basis_vectors_lab`.
+    s_step_lab
+        [3] Lab-frame step of one pixel along the slow direction, from :func:`detector_basis_vectors_lab`.
+    f_step_lab
+        [3] Lab-frame step of one pixel along the fast direction, from :func:`detector_basis_vectors_lab`.
+    det_origin_lab
+        [3] Lab-frame position of pixel (0, 0), from :func:`detector_basis_vectors_lab`.
 
     Returns
     -------
@@ -335,7 +330,7 @@ def raytrace_to_det(
 
     See Also
     --------
-    anri.geom.detector_basis_vectors_lab : Compute detector basis vectors in lab frame, needed for `sc_lab`, `fc_lab`, `norm_lab`.
+    anri.geom.detector_basis_vectors_lab : Computes `s_step_lab`, `f_step_lab` and `det_origin_lab`.
 
     Notes
     -----
@@ -351,9 +346,9 @@ def raytrace_to_det(
     # ensure vec_lab is unit vector
     unit_vec_lab = vec_lab / jnp.linalg.norm(vec_lab)
 
-    ds = sc_lab - norm_lab  # 1,0 in plane is (1,0)-(0,0)
-    df = fc_lab - norm_lab  # 0,1 in plane
-    dO = norm_lab  # origin pixel
+    ds = s_step_lab  # one pixel along slow
+    df = f_step_lab  # one pixel along fast
+    dO = det_origin_lab  # pixel (0, 0)
 
     # Cross products to get the detector normal
     det_norm = jnp.cross(ds, df)

@@ -59,16 +59,16 @@ def geom_from_pars(
     det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(
         *(float(pars[k]) for k in _GEOMETRY_KEYS), *(float(pars[k]) for k in _ORIENTATION_KEYS)
     )
-    sc_lab, fc_lab, norm_lab = anri.geom.detector_basis_vectors_lab(det_trans, beam_cen_shift, x_distance_shift)
+    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(det_trans, beam_cen_shift, x_distance_shift)
     return {
         "wavelength": float(pars["wavelength"]),
         "k_in_lab": jnp.array([1.0, 0.0, 0.0]),
         "wedge": float(pars.get("wedge", 0.0)),
         "chi": float(pars.get("chi", 0.0)),
         "y0": y0,
-        "sc_lab": sc_lab,
-        "fc_lab": fc_lab,
-        "norm_lab": norm_lab,
+        "s_step_lab": s_step_lab,
+        "f_step_lab": f_step_lab,
+        "det_origin_lab": det_origin_lab,
         "sig_wavelength": sig_wavelength,
         "sig_ky": sig_ky,
         "sig_kz": sig_kz,

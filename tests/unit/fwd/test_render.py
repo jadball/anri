@@ -74,12 +74,12 @@ def _single_peak_setup():
         *(pars[k] for k in ("y_center", "y_size", "tilt_y", "z_center", "z_size", "tilt_z", "tilt_x", "distance")),
         *(pars[k] for k in ("o11", "o12", "o21", "o22")),
     )
-    sc_lab, fc_lab, norm_lab = anri.geom.detector_basis_vectors_lab(det_trans, shift, xshift)
+    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(det_trans, shift, xshift)
     voxel = 1.0
     geom = {
         "wavelength": pars["wavelength"], "k_in_lab": jnp.array([1.0, 0.0, 0.0]),
         "wedge": 0.0, "chi": 0.0, "y0": 0.0,
-        "sc_lab": sc_lab, "fc_lab": fc_lab, "norm_lab": norm_lab,
+        "s_step_lab": s_step_lab, "f_step_lab": f_step_lab, "det_origin_lab": det_origin_lab,
         # broad enough that spots cover a few pixels and frames, so moments are unbiased
         "sig_wavelength": pars["wavelength"] * 1e-3, "sig_ky": 1e-3, "sig_kz": 1e-3,
         "sig_beam": 0.5, "voxel_size": voxel, "pol_factor": 1.0,
@@ -95,7 +95,7 @@ def _single_peak_setup():
     # first {110} reflection, etasign +1, that lands well inside the detector with |sin(eta)| > 0.5
     centroid_fn = jax.vmap(get_centroid_scan, in_axes=(None, None, 0) + (None,) * 11)
     hkls = np.array([h for h in np.ndindex(3, 3, 3) if sorted(np.abs(np.array(h) - 1)) == [0, 1, 1]]) - 1
-    args = (1.0, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, 0.0, 0.0, 0.0, sc_lab, fc_lab, norm_lab)
+    args = (1.0, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, 0.0, 0.0, 0.0, s_step_lab, f_step_lab, det_origin_lab)
     cen, valid = centroid_fn(ubi, jnp.zeros(3), jnp.asarray(hkls, float), *args)
     xyz = jax.vmap(anri.geom.det_to_lab, in_axes=(0, 0, None, None, None))(
         cen[:, 0], cen[:, 1], det_trans, shift, xshift
@@ -135,7 +135,7 @@ class TestSinglePeak(unittest.TestCase):
         centroids, _ = jax.vmap(get_centroid_scan, in_axes=(0, 0) + (None,) * 12)(
             jnp.asarray(entries["ubi"]), jnp.asarray(entries["pos"]), jnp.asarray(hkl), 1.0,
             geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, 0.0, 0.0, geom["y0"],
-            geom["sc_lab"], geom["fc_lab"], geom["norm_lab"],
+            geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
         )  # fmt: skip
         centroids = np.asarray(centroids)
         n_rows_checked = 0

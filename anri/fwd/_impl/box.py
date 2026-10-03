@@ -20,9 +20,9 @@ def get_centroid_box(
     kz: float,
     wedge: float,
     chi: float,
-    sc_lab: jax.Array,
-    fc_lab: jax.Array,
-    norm_lab: jax.Array,
+    s_step_lab: jax.Array,
+    f_step_lab: jax.Array,
+    det_origin_lab: jax.Array,
 ) -> tuple[jax.Array, bool]:
     r"""Forward project (ubi, hkl) to get 3D peak centroid on detector (sc, fc, omega) in the box-beam case.
 
@@ -51,12 +51,12 @@ def get_centroid_box(
         Wedge motor value (degrees)
     chi
         Chi motor value (degrees)
-    sc_lab
-        [3] Laboratory basis vector for the slow direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    fc_lab
-        [3] Laboratory basis vector for the fast direction on the detector from :func:`anri.geom.detector_basis_vectors_lab`.
-    norm_lab
-        [3] Laboratory basis vector for the detector normal from :func:`anri.geom.detector_basis_vectors_lab`.
+    s_step_lab
+        [3] Lab-frame step of one pixel along the slow direction, from :func:`anri.geom.detector_basis_vectors_lab`.
+    f_step_lab
+        [3] Lab-frame step of one pixel along the fast direction, from :func:`anri.geom.detector_basis_vectors_lab`.
+    det_origin_lab
+        [3] Lab-frame position of pixel (0, 0), from :func:`anri.geom.detector_basis_vectors_lab`.
 
     Returns
     -------
@@ -85,7 +85,7 @@ def get_centroid_box(
 
     origin_lab = sample_to_lab(origin_sample, omega, wedge, chi, 0.0, 0.0)
 
-    sc, fc = raytrace_to_det(k_out_lab, origin_lab, sc_lab, fc_lab, norm_lab)
+    sc, fc = raytrace_to_det(k_out_lab, origin_lab, s_step_lab, f_step_lab, det_origin_lab)
 
     centroid = jnp.array([sc, fc, omega])
 
