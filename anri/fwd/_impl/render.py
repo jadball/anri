@@ -168,9 +168,9 @@ def beam_weight(pos_lab: jax.Array, omega: ArrayLike, geom: dict) -> jax.Array:
 
 
 def lorentz(k_in: jax.Array, k_out: jax.Array, rot_axis: jax.Array) -> jax.Array:
-    """Lorentz factor for rotation about ``rot_axis``: 1 / |rot_axis . (k_in x k_out)|.
+    """Lorentz factor for rotation about ``rot_axis``.
 
-    Equal to 1 / :func:`ImageD11.refinegrains.lf` = 1 / (sin(2theta) |sin(eta)|) for a vertical rotation axis.
+    It is ``1 / |rot_axis . (k_in x k_out)|``, equal to 1 / :func:`ImageD11.refinegrains.lf` = ``1 / (sin(2theta) |sin(eta)|)`` for a vertical rotation axis.
     """
     k_in = k_in / jnp.linalg.norm(k_in)
     k_out = k_out / jnp.linalg.norm(k_out)
