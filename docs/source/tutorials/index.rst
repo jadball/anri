@@ -57,9 +57,10 @@ Anri currently uses the FABLE geometry definitions for detector space.
 Forward Modeling
 ================
 
-There's a very basic demonstration of how to perform a forward model with Anri.
+There's a very basic demonstration of how to perform a forward model with Anri, and a walk through the renderer that simulates whole scanning 3DXRD datasets.
 
 .. nbgallery::
     
     forward_model_simple
     forward_model_covariance
+    renderer
