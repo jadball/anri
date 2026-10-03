@@ -55,6 +55,54 @@ class TestDtyWeight(unittest.TestCase):
         np.testing.assert_allclose(w[0], w[2], rtol=1e-3)
 
 
+def _brute_force_weight(delta, omega, size, sig_h, k_in, sig_v=None, n=400, nz=600):
+    """Integrate the beam profile over a square voxel rotated by omega, shifted by delta along lab y.
+
+    The beam passes through the origin along k_in, Gaussian across it horizontally (sig_h). With sig_v, it is a
+    pencil that is also Gaussian vertically, and the voxel is a column, integrated over height on a grid.
+    """
+    k = np.asarray(k_in, float) / np.linalg.norm(k_in)
+    e_h = np.cross([0.0, 0.0, 1.0], k)
+    e_h /= np.linalg.norm(e_h)
+    e_v = np.cross(k, e_h)
+    t = (np.arange(n) + 0.5) / n * size - size / 2
+    s, u = np.meshgrid(t, t, indexing="ij")
+    c, sn = np.cos(np.radians(omega)), np.sin(np.radians(omega))
+    x, y = c * s - sn * u, sn * s + c * u + delta  # voxel rotated by +omega about z, then moved by delta along y
+    area = (size / n) ** 2
+    gauss = lambda d, sig: np.exp(-0.5 * (d / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
+    if sig_v is None:
+        return np.sum(gauss(x * e_h[0] + y * e_h[1], sig_h)) * area
+    zmax = 8 * (sig_v + size) / e_v[2]
+    z = (np.arange(nz) + 0.5) / nz * 2 * zmax - zmax
+    p_h = gauss(x * e_h[0] + y * e_h[1], sig_h)[..., None]
+    p_v = gauss(x[..., None] * e_v[0] + y[..., None] * e_v[1] + z * e_v[2], sig_v)
+    return np.sum(p_h * p_v) * area * (2 * zmax / nz)
+
+
+class TestDtyWeightBeamDirection(unittest.TestCase):
+    def test_horizontal_beam(self):
+        # a beam at psi from lab x in the horizontal plane
+        for psi, omega, delta in ((20.0, 30.0, 0.3), (-35.0, 70.0, -0.5), (10.0, 0.0, 0.0)):
+            k = [np.cos(np.radians(psi)), np.sin(np.radians(psi)), 0.0]
+            expected = _brute_force_weight(delta, omega, 1.2, 0.4, k)
+            np.testing.assert_allclose(dty_weight(delta, omega, 1.2, 0.4, jnp.asarray(k)), expected, rtol=2e-4)
+
+    def test_tilted_pencil(self):
+        # tilted out of the horizontal plane, and turned in it: the pencil's vertical profile integrates out
+        for alpha, psi, omega, delta in ((25.0, 0.0, 30.0, 0.2), (40.0, 15.0, 50.0, -0.4)):
+            a, p = np.radians(alpha), np.radians(psi)
+            k = [np.cos(a) * np.cos(p), np.cos(a) * np.sin(p), np.sin(a)]
+            expected = _brute_force_weight(delta, omega, 1.2, 0.4, k, sig_v=0.3, n=200)
+            np.testing.assert_allclose(dty_weight(delta, omega, 1.2, 0.4, jnp.asarray(k)), expected, rtol=1e-3)
+
+    def test_along_x_unchanged(self):
+        for omega, delta in ((30.0, 0.3), (0.0, -0.2)):
+            np.testing.assert_allclose(
+                dty_weight(delta, omega, 1.2, 0.4, jnp.array([1.0, 0.0, 0.0])), dty_weight(delta, omega, 1.2, 0.4)
+            )
+
+
 class TestIntensityFactors(unittest.TestCase):
     def test_id11(self):
         from ImageD11.refinegrains import lf, polarization
@@ -282,6 +330,15 @@ class TestCheckRender(unittest.TestCase):
         # Monte Carlo noise is ~0.002 per cell; holding omega at its frame mean gave a median of 0.011
         self.assertLess(np.median(r["max_cell_error"]), 0.004)
         self.assertLess(r["max_cell_error"].max(), 0.012)
+
+    def test_tilted_beam(self):
+        # a beam turned 10 degrees in the horizontal plane and tilted 3 degrees up
+        a, p = np.radians(3.0), np.radians(10.0)
+        k = jnp.array([np.cos(a) * np.cos(p), np.cos(a) * np.sin(p), np.sin(a)])
+        geom = dict(self.geom, sig_wavelength=self.wavelength * 1e-4, sig_ky=1e-4, sig_kz=1e-4, sig_psf=0.3, k_in_lab=k)
+        r = check_render(self.entries, self.hkls, geom, self.row, self.det_shape, n_peaks=24, n_samples=200_000)
+        self.assertGreater(len(r["entry"]), 10)
+        self.assertLess(np.median(r["max_cell_error"]), 0.004)
 
     def test_broad_peaks_captured(self):
         # broad spreads (~2 px, truncated by the window): the fraction inside the window must match

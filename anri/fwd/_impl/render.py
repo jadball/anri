@@ -73,14 +73,21 @@ def _ramp_integral(x: ArrayLike, sigma: ArrayLike) -> jax.Array:
     return x * ndtr(x / sigma) + sigma * jnp.asarray(norm.pdf(x / sigma))
 
 
-def dty_weight(delta: ArrayLike, omega: ArrayLike, voxel_size: ArrayLike, sig_beam: ArrayLike) -> jax.Array:
-    """Diffracting area of a square voxel when the beam centre is ``delta`` away from the voxel centre.
+def dty_weight(
+    delta: ArrayLike, omega: ArrayLike, voxel_size: ArrayLike, sig_beam: ArrayLike, k_in_lab: ArrayLike | None = None
+) -> jax.Array:
+    """Diffracting volume, per unit height, of a square voxel column when the beam is ``delta`` (in dty) off its centre.
 
-    The beam is Gaussian across lab y with standard deviation ``sig_beam``.
-    The voxel is a uniform square of side ``voxel_size`` in the sample xy plane, rotated by ``omega`` (degrees).
-    Its chord length along the beam, as a function of lab y, is a trapezoid of area ``voxel_size**2``;
-    the weight is that trapezoid convolved with the beam profile, in closed form.
-    Integrated over ``delta`` it gives ``voxel_size**2``.
+    The voxel is a uniform square of side ``voxel_size`` in the sample xy plane, rotated by ``omega`` (degrees), and
+    extends uniformly in height (a 2D map). The beam is a pencil, Gaussian across it horizontally with standard
+    deviation ``sig_beam``; its vertical profile integrates out, as all of it crosses the column.
+
+    In the horizontal plane, the beam's path length through the voxel, as a function of the horizontal distance
+    across the beam, is a trapezoid of area ``voxel_size**2``; the weight is that trapezoid convolved with the beam
+    profile, in closed form. A beam at ``psi`` from lab x in the horizontal plane sees the voxel rotated by
+    ``omega - psi``, and a dty offset moves the voxel ``delta * cos(psi)`` across it. A beam tilted by ``alpha`` out of
+    the horizontal plane travels ``1 / cos(alpha)`` further through the column. For a beam along lab x, integrated
+    over ``delta`` the weight is ``voxel_size**2``.
 
     Parameters
     ----------
@@ -91,8 +98,16 @@ def dty_weight(delta: ArrayLike, omega: ArrayLike, voxel_size: ArrayLike, sig_be
     voxel_size
         Side length of the voxel
     sig_beam
-        Standard deviation of the beam profile across lab y
+        Standard deviation of the beam profile across it, horizontally
+    k_in_lab
+        [3] Direction of the beam (default lab x). It must not be vertical.
     """
+    if k_in_lab is not None:
+        k = jnp.asarray(k_in_lab)
+        horizontal = jnp.hypot(k[0], k[1])
+        delta = delta * k[0] / horizontal  # cos(psi): the distance across the beam that a dty offset gives
+        omega = omega - jnp.degrees(jnp.arctan2(k[1], k[0]))  # the voxel as seen along the beam
+        return dty_weight(delta, omega, voxel_size, sig_beam) * jnp.linalg.norm(k) / horizontal  # / cos(alpha)
     c = jnp.abs(jnp.cos(jnp.radians(omega)))
     s = jnp.abs(jnp.sin(jnp.radians(omega)))
     a = 0.5 * voxel_size * (c + s)  # half-width of the trapezoid at its base
@@ -339,7 +354,9 @@ def render_peaks(
         captured = jnp.sum(frac)
 
         # per-frame factors: beam over voxel at that frame's dty, and transmission
-        w_dty = dty_weight(row["dty_sorted"][fclip] - dty_c, mu_o, geom["voxel_size"], geom["sig_beam"])
+        w_dty = dty_weight(
+            row["dty_sorted"][fclip] - dty_c, mu_o, geom["voxel_size"], geom["sig_beam"], geom["k_in_lab"]
+        )
         per_frame = w_dty * row["transmission_sorted"][fclip]  # [wo]
 
         amp = entries["density"][e] * F2[h] * _peak_factors(ubi, hkl, etasign, geom)
@@ -476,6 +493,16 @@ def _valid_from_shards(x: jax.Array, count: np.ndarray, per_shard: int) -> np.nd
     return np.concatenate(out)
 
 
+def _select_margin(window: tuple[int, int, int], row: dict, geom: dict, dtype: jnp.dtype) -> jax.Array:
+    """[4] How far outside the row a centroid may be and still contribute: (slow, fast, omega, dty)."""
+    wo, ws, wf = window
+    ostep = float(np.max(np.diff(np.asarray(row["omega_edges"]))))
+    k = np.asarray(geom["k_in_lab"], dtype=float)
+    cos_psi = abs(k[0]) / np.hypot(k[0], k[1])  # a dty step moves the voxel cos(psi) across the beam
+    dty = (4 * float(geom["sig_beam"]) + float(geom["voxel_size"])) / cos_psi
+    return jnp.array([ws // 2 + 1, wf // 2 + 1, (wo // 2 + 1) * ostep, dty], dtype=dtype)
+
+
 def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict) -> tuple:
     """Convert the renderer's inputs to JAX arrays, in the dtype of the entries' UBIs."""
     ubi = jnp.asarray(entries["ubi"])
@@ -550,11 +577,7 @@ def render_row(
 
     # 1. Which peaks can reach this row? Chunks of entries, padded to a multiple of the device count.
     wo, ws, wf = window
-    ostep = float(np.max(np.diff(np.asarray(row["omega_edges"]))))
-    margin = jnp.array(
-        [ws // 2 + 1, wf // 2 + 1, (wo // 2 + 1) * ostep, 4 * float(geom["sig_beam"]) + float(geom["voxel_size"])],
-        dtype=dtype,
-    )
+    margin = _select_margin(window, row, geom, dtype)
     ce = max(nd, (select_chunk // n_hkls) // nd * nd)
     found = []
     for start in range(0, n_entries, ce):
@@ -660,11 +683,7 @@ def check_render(
 
     # 1. Peaks of a random subset of entries that reach this row
     sub = rng.choice(ubi.shape[0], size=min(n_entries, ubi.shape[0]), replace=False)
-    ostep = float(np.max(np.diff(np.asarray(row["omega_edges"]))))
-    margin = jnp.array(
-        [ws // 2 + 1, wf // 2 + 1, (wo // 2 + 1) * ostep, 4 * float(geom["sig_beam"]) + float(geom["voxel_size"])],
-        dtype=dtype,
-    )
+    margin = _select_margin(window, row, geom, dtype)
     e, h, b = np.nonzero(np.asarray(select_peaks(ubi[sub], pos[sub], hkls_j, geom, row_j, margin, det_shape)))
     pick = rng.choice(e.size, size=min(n_peaks, e.size), replace=False)
     e, h, b = sub[e[pick]].astype(np.int32), h[pick].astype(np.int32), b[pick].astype(np.int32)
