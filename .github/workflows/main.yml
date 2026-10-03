@@ -25,11 +25,12 @@ jobs:
     defaults:
       run:
         shell: bash -l {0}
-    timeout-minutes: 15
+    # Pushes and PRs test on Ubuntu only. Release tags run the full sweep, with more time for the slow macOS runners.
+    timeout-minutes: ${{ startsWith(github.ref, 'refs/tags/') && 30 || 15 }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
+        os: ${{ fromJSON(startsWith(github.ref, 'refs/tags/') && '["ubuntu-22.04", "ubuntu-latest", "windows-latest", "macos-latest", "macos-15-intel"]' || '["ubuntu-latest"]') }}
         python-version: ["3.9", "3.14"]
         task:
           - name: Test
