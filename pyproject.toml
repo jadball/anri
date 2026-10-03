@@ -55,6 +55,13 @@ exclude = [
     "anri/sandbox",
 ]
 
+[tool.coverage.run]
+source = ["anri"]
+omit = ["anri/sandbox/*"]
+
+[tool.coverage.report]
+exclude_also = ['if __name__ == "__main__":']
+
 [tool.pytest.ini_options]
 testpaths = "tests/"
 python_classes = [
