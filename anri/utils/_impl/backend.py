@@ -38,7 +38,7 @@ def setup(n_cpu: int = 4, preallocate: bool = False) -> None:
     Notes
     -----
     With jaxlib >= 0.11, this also turns off XLA:CPU's YNNPACK fusions (``--xla_cpu_experimental_ynn_fusion_type=``),
-    unless ``XLA_FLAGS`` already sets that flag. They miscompile :func:`anri.fwd._impl.render.render_peaks` for
+    unless ``XLA_FLAGS`` already sets that flag. They miscompile :func:`anri.fwd.render_peaks` for
     batches of more than a few thousand peaks: in jaxlib 0.11.1 and 0.11.2 most peaks were squeezed into a single
     pixel (float64) or came out as NaN (float32, from 0.11.0). Older jaxlib does not have the flag, and XLA
     aborts on unknown flags.

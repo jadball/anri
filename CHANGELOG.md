@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The renderer is public: `anri.fwd.render_row`, `make_row`, `select_peaks`, `render_peaks`, `dty_weight`, `lorentz` and `polarisation` (previously only importable from `anri.fwd._impl.render`).
 - `anri.io.detector_from_pars`, `gonio_from_pars` and `beam_from_pars`: the detector, goniometer and beam parts of `geom_from_pars`, usable on their own (e.g. without the renderer's spreads). `detector_from_pars` also returns the pixel-to-lab transforms for `anri.geom.det_to_lab`, and so does `geom_from_pars`.
 - `anri.fwd.get_centroid_box_both` (and `_all_grains_both`, `_all_both`): both Friedel peak centroids of a box-beam forward projection from one call, like `get_centroid_scan_both`.
 

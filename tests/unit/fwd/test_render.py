@@ -6,7 +6,7 @@ import numpy as np
 
 import anri.crystal
 import anri.geom
-from anri.fwd._impl.render import dty_weight, lorentz, make_row, polarisation, render_row
+from anri.fwd import dty_weight, lorentz, make_row, polarisation, render_peaks, render_row, select_peaks
 from anri.fwd._impl.scan import get_centroid_scan
 
 jax.config.update("jax_enable_x64", True)
@@ -219,7 +219,6 @@ class TestLargeBatch(unittest.TestCase):
 
         from ImageD11.sinograms.tensor_map import TensorMap
 
-        from anri.fwd._impl.render import render_peaks, select_peaks
         from anri.io import entries_from_tensormap, geom_from_pars
 
         data = os.path.join(os.path.dirname(__file__), "..", "..", "data")

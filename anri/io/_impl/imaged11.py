@@ -106,7 +106,7 @@ def geom_from_pars(
     pol_factor: float = 1.0,
     sig_psf: float = 0.0,
 ) -> dict:
-    """Build the geometry dict for :func:`anri.fwd._impl.render.render_row` from ImageD11 parameters.
+    """Build the geometry dict for :func:`anri.fwd.render_row` from ImageD11 parameters.
 
     Combines :func:`beam_from_pars`, :func:`gonio_from_pars` and :func:`detector_from_pars` with the spreads
     the renderer needs.
@@ -125,7 +125,7 @@ def geom_from_pars(
     voxel_size
         Side length of the voxels (same units as dty)
     pol_factor
-        Degree of horizontal polarisation, see :func:`anri.fwd._impl.render.polarisation`
+        Degree of horizontal polarisation, see :func:`anri.fwd.polarisation`
     sig_psf
         Standard deviation of the detector point spread, in pixels. Spots much narrower than a pixel have
         intensity-weighted centroids snapped towards pixel centres (by up to ~0.3 px at 0.1 px wide); a real
@@ -229,7 +229,7 @@ def write_scan(
     """Write one dty row of sparse pixels as an ImageD11 scan group.
 
     Values are rounded to integer counts and only counts ``> cut`` are kept, as ImageD11's segmenter does.
-    Pixels must be sorted by (frame, pixel), as :func:`anri.fwd._impl.render.render_row` returns them.
+    Pixels must be sorted by (frame, pixel), as :func:`anri.fwd.render_row` returns them.
 
     Parameters
     ----------
@@ -434,7 +434,7 @@ def simulate_sparse(
     path
         Output HDF5 file; must not exist
     entries, hkls, F2, geom
-        See :func:`anri.fwd._impl.render.render_row`, for a single phase
+        See :func:`anri.fwd.render_row`, for a single phase
     omega, dty
         [n_rows, n_frames] motor positions, e.g. from :func:`motor_grid` or an ImageD11 DataSet
     det_shape
@@ -446,7 +446,7 @@ def simulate_sparse(
     omega_motor, dty_motor
         Motor names written to the file
     window, batch
-        Passed on to :func:`anri.fwd._impl.render.render_row`
+        Passed on to :func:`anri.fwd.render_row`
 
     Returns
     -------
