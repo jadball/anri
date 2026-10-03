@@ -1,8 +1,14 @@
-"""Render peaks from a voxel map into sparse detector pixels, one scanning-3DXRD dty row at a time.
+"""Render peaks from a voxel map into sparse detector pixels, one dty row (one rotation scan) at a time.
 
 A map is a flat list of entries (position, UBI, density), so several orientations per voxel are allowed.
-Each peak is an (entry, hkl, branch) triple. Its 4D centroid and covariance come from
-:func:`anri.fwd.get_centroid_scan` and :func:`anri.fwd._impl.base.make_propagator`.
+Each peak is an (entry, hkl, branch) triple. Its (slow, fast, omega) centroid is found with the voxel at its
+real position for the row's dty, and its covariance by propagating the beam's spreads with
+:func:`anri.fwd._impl.base.make_propagator`.
+
+The beam is described by its profile across it, horizontally and vertically: each a flat top of some width,
+blurred by a Gaussian (a pure Gaussian with zero width). A pencil beam is narrow both ways, a line beam wide one
+way, a box beam wide both ways. Voxels are either columns (2D maps: the beam's vertical profile integrates out)
+or cubes (3D maps). See :func:`beam_weight`.
 
 Pixel values are differentiable with respect to the map. Which pixels a peak touches is not:
 window placement is computed from rounded centroids.
@@ -27,17 +33,12 @@ except ImportError:  # JAX < 0.6, e.g. 0.4.30, the last release for Python 3.9
     from jax.experimental.shard_map import shard_map
 
 import anri.utils
-from anri.geom import beam_basis, sample_to_lab
+from anri.geom import beam_basis, raytrace_to_det, sample_to_lab
 
-from .base import get_cov_in, hkl_to_k_omega, make_propagator
-from .scan import get_centroid_scan, get_centroid_scan_both
+from .base import hkl_to_k_omega, hkl_to_k_omega_both, make_propagator
 
-# Covariance of (sc, fc, omega) from wavelength, ky and kz spreads (dims 3, 4, 5 of argnums).
-# Origin spread (dims 0-2) is not propagated: the voxel's extent and the beam profile enter through dty_weight.
+# Elements of the (sc, fc, omega) covariance that the renderer uses
 _COV_ELEMS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
-_propagate = make_propagator(
-    get_centroid_scan, argnums=(1, 4, 6, 7), has_aux=True, active_dims=(3, 4, 5), out_elems=_COV_ELEMS
-)
 
 # Added to the variances so that a peak with no instrumental broadening still renders (pixels, pixels, degrees).
 _VAR_FLOOR = (1e-4, 1e-4, 1e-8)
@@ -73,41 +74,36 @@ def _ramp_integral(x: ArrayLike, sigma: ArrayLike) -> jax.Array:
     return x * ndtr(x / sigma) + sigma * jnp.asarray(norm.pdf(x / sigma))
 
 
-def dty_weight(
-    delta: ArrayLike, omega: ArrayLike, voxel_size: ArrayLike, sig_beam: ArrayLike, k_in_lab: ArrayLike | None = None
-) -> jax.Array:
-    """Diffracting volume, per unit height, of a square voxel column when the beam is ``delta`` (in dty) off its centre.
+def _ramp_integral2(x: ArrayLike, sigma: ArrayLike) -> jax.Array:
+    """Antiderivative of :func:`_ramp_integral`: (x^2 + sigma^2) / 2 * Phi(x / sigma) + x sigma / 2 * phi(x / sigma)."""
+    x, sigma = jnp.asarray(x), jnp.asarray(sigma)
+    return 0.5 * (x**2 + sigma**2) * ndtr(x / sigma) + 0.5 * x * sigma * jnp.asarray(norm.pdf(x / sigma))
 
-    The voxel is a uniform square of side ``voxel_size`` in the sample xy plane, rotated by ``omega`` (degrees), and
-    extends uniformly in height (a 2D map). The beam is a pencil, Gaussian across it horizontally with standard
-    deviation ``sig_beam``; its vertical profile integrates out, as all of it crosses the column.
 
-    In the horizontal plane, the beam's path length through the voxel, as a function of the horizontal distance
-    across the beam, is a trapezoid of area ``voxel_size**2``; the weight is that trapezoid convolved with the beam
-    profile, in closed form. A beam at ``psi`` from lab x in the horizontal plane sees the voxel rotated by
-    ``omega - psi``, and a dty offset moves the voxel ``delta * cos(psi)`` across it. A beam tilted by ``alpha`` out of
-    the horizontal plane travels ``1 / cos(alpha)`` further through the column. For a beam along lab x, integrated
-    over ``delta`` the weight is ``voxel_size**2``.
+def _smoothed(order: int, x: ArrayLike, width: ArrayLike, sigma: ArrayLike) -> jax.Array:
+    """Antiderivative ``order`` of the beam profile: a flat top of ``width`` blurred by a Gaussian of ``sigma``.
 
-    Parameters
-    ----------
-    delta
-        dty of the frame minus the dty that centres the voxel in the beam (same units as voxel_size)
-    omega
-        Omega angle (degrees)
-    voxel_size
-        Side length of the voxel
-    sig_beam
-        Standard deviation of the beam profile across it, horizontally
-    k_in_lab
-        [3] Direction of the beam (default lab x). It must not be vertical.
+    Order 1 is the profile's cumulative distribution, order 2 its integral. The profile integrates to 1. For a
+    width much smaller than sigma it is the Gaussian's (the difference quotient below would lose precision).
     """
-    if k_in_lab is not None:
-        k = jnp.asarray(k_in_lab)
-        horizontal = jnp.hypot(k[0], k[1])
-        delta = delta * k[0] / horizontal  # cos(psi): the distance across the beam that a dty offset gives
-        omega = omega - jnp.degrees(jnp.arctan2(k[1], k[0]))  # the voxel as seen along the beam
-        return dty_weight(delta, omega, voxel_size, sig_beam) * jnp.linalg.norm(k) / horizontal  # / cos(alpha)
+    x, width, sigma = jnp.asarray(x), jnp.asarray(width), jnp.asarray(sigma)
+    gauss = width < 0.01 * sigma
+    w = jnp.where(gauss, 1.0, width)  # double-where: no NaN gradients from either branch
+    if order == 1:
+        flat_top = (_ramp_integral(x + w / 2, sigma) - _ramp_integral(x - w / 2, sigma)) / w
+        return jnp.where(gauss, ndtr(x / sigma), flat_top)
+    flat_top = (_ramp_integral2(x + w / 2, sigma) - _ramp_integral2(x - w / 2, sigma)) / w
+    return jnp.where(gauss, _ramp_integral(x, sigma), flat_top)
+
+
+def _chord_weight(
+    u: ArrayLike, omega: ArrayLike, voxel_size: ArrayLike, sigma: ArrayLike, width: ArrayLike
+) -> jax.Array:
+    """Beam profile integrated over a square voxel, per unit height, for a beam along lab x.
+
+    The voxel is a square of side ``voxel_size`` rotated by ``omega`` (degrees) and ``u`` across the beam's centre
+    (lab y). Its chord along the beam, as a function of lab y, is a trapezoid of area ``voxel_size**2``.
+    """
     c = jnp.abs(jnp.cos(jnp.radians(omega)))
     s = jnp.abs(jnp.sin(jnp.radians(omega)))
     a = 0.5 * voxel_size * (c + s)  # half-width of the trapezoid at its base
@@ -118,18 +114,57 @@ def dty_weight(
     # Double-where so neither branch produces NaN gradients.
     is_box = (a - b) < 1e-6 * voxel_size
     ab = jnp.where(is_box, 1.0, a - b)
-    trapezoid = (
-        height
-        / ab
-        * (
-            _ramp_integral(delta + a, sig_beam)
-            - _ramp_integral(delta + b, sig_beam)
-            - _ramp_integral(delta - b, sig_beam)
-            + _ramp_integral(delta - a, sig_beam)
-        )
-    )
-    box = height * bin_fractions(-a, a, delta, sig_beam)
+    s2 = partial(_smoothed, 2, width=width, sigma=sigma)
+    trapezoid = height / ab * (s2(u + a) - s2(u + b) - s2(u - b) + s2(u - a))
+    box = height * (_smoothed(1, u + a, width, sigma) - _smoothed(1, u - a, width, sigma))
     return jnp.where(is_box, box, trapezoid)
+
+
+def _beam_offsets(pos_lab: jax.Array, geom: dict) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Return a point's horizontal distance across the beam, its height above the beam, and the beam's tilt cosine.
+
+    The beam's centre line passes through the lab origin along ``geom["k_in_lab"]``.
+    """
+    k, e_h, _ = beam_basis(geom["k_in_lab"])
+    cos_alpha = jnp.hypot(k[0], k[1])
+    along = (pos_lab[0] * k[0] + pos_lab[1] * k[1]) / cos_alpha  # horizontal distance along the beam
+    return pos_lab @ e_h, pos_lab[2] - k[2] / cos_alpha * along, cos_alpha
+
+
+def beam_weight(pos_lab: jax.Array, omega: ArrayLike, geom: dict) -> jax.Array:
+    """How much of a voxel the beam illuminates: its profile integrated over the voxel.
+
+    The beam's profile across it, horizontally (``geom["width_beam"]``, ``geom["sig_beam"]``) and vertically
+    (``geom["width_beam_v"]``, ``geom["sig_beam_v"]``), is a flat top of that width blurred by a Gaussian of that
+    standard deviation, and integrates to 1: a wider beam spreads the same flux. A voxel is a square of side
+    ``geom["voxel_size"]`` in the sample xy plane, rotated by ``omega``, centred at ``pos_lab``, and either:
+
+    - a column (2D map, ``geom["voxel_3d"]`` false): the whole vertical profile crosses it, so it integrates out;
+      a beam tilted by ``alpha`` out of the horizontal plane travels ``1 / cos(alpha)`` further through it.
+    - a cube (3D map): the vertical profile is integrated over the cube's height, measured vertically. For a
+      tilted beam this treats the horizontal and vertical directions separately, which is exact only when it is
+      horizontal.
+
+    A beam at ``psi`` from lab x in the horizontal plane sees the voxel rotated by ``omega - psi``.
+
+    Parameters
+    ----------
+    pos_lab
+        [3] Lab position of the voxel's centre (in that frame, with its dty)
+    omega
+        Omega angle (degrees)
+    geom
+        Geometry dict, see :func:`render_row`
+    """
+    k = beam_basis(geom["k_in_lab"])[0]
+    u, dz, cos_alpha = _beam_offsets(pos_lab, geom)
+    size = geom["voxel_size"]
+    psi = jnp.degrees(jnp.arctan2(k[1], k[0]))
+    w = _chord_weight(u, omega - psi, size, geom["sig_beam"], geom["width_beam"]) / cos_alpha
+    sig_v = jnp.where(geom["voxel_3d"], geom["sig_beam_v"], 1.0) / cos_alpha  # unused for columns
+    width_v = geom["width_beam_v"] / cos_alpha
+    v = _smoothed(1, dz + size / 2, width_v, sig_v) - _smoothed(1, dz - size / 2, width_v, sig_v)
+    return w * jnp.where(geom["voxel_3d"], v, 1.0)
 
 
 def lorentz(k_in: jax.Array, k_out: jax.Array, rot_axis: jax.Array) -> jax.Array:
@@ -154,24 +189,43 @@ def polarisation(k_in: jax.Array, k_out: jax.Array, factor: ArrayLike) -> jax.Ar
     return 0.5 * (1 + factor) * (1 - (k_out @ e_h) ** 2) + 0.5 * (1 - factor) * (1 - (k_out @ e_v) ** 2)
 
 
-def _peak_centroid(
-    ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, geom: dict
-) -> tuple[jax.Array, jax.Array]:
-    return get_centroid_scan(
-        ubi, pos, hkl, etasign,
-        geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], geom["y0"],
-        geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
-    )  # fmt: skip
+def _scattering_origin(pos: jax.Array, omega: ArrayLike, dty: ArrayLike, geom: dict) -> jax.Array:
+    """Where a voxel scatters, in the lab: its real position at this omega and dty.
+
+    For a column (2D map), at the height of the beam where it crosses the column: the beam is taken to cross the
+    rotation axis at the voxel's own height, so a voxel's height never depends on other layers.
+    """
+    lab = sample_to_lab(pos, omega, geom["wedge"], geom["chi"], dty, geom["y0"])
+    k = beam_basis(geom["k_in_lab"])[0]
+    cos_alpha = jnp.hypot(k[0], k[1])
+    rise = k[2] / cos_alpha * (lab[0] * k[0] + lab[1] * k[1]) / cos_alpha
+    return lab + jnp.where(geom["voxel_3d"], 0.0, 1.0) * jnp.array([0.0, 0.0, 1.0]) * rise
 
 
-def _peak_cov(ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, geom: dict) -> jax.Array:
+def _centroid(
+    ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, wavelength: ArrayLike, ky: ArrayLike,
+    kz: ArrayLike, dty: ArrayLike, geom: dict,
+) -> tuple[jax.Array, jax.Array]:  # fmt: skip
+    """(sc, fc, omega) of a peak, with the voxel at its real position for this dty, and whether it diffracts."""
+    _, k_out, omega, valid = hkl_to_k_omega(
+        ubi, hkl, etasign, wavelength, geom["k_in_lab"], ky, kz, geom["wedge"], geom["chi"]
+    )
+    origin = _scattering_origin(pos, omega, dty, geom)
+    sc, fc = raytrace_to_det(k_out, origin, geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"])
+    return jnp.array([sc, fc, omega]), valid
+
+
+# Covariance of (sc, fc, omega) from the wavelength, ky and kz spreads. The voxel's extent and the beam profile
+# enter through beam_weight instead.
+_propagate = make_propagator(_centroid, argnums=(4, 5, 6), has_aux=True, out_elems=_COV_ELEMS)
+
+
+def _peak_cov(
+    ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, dty: ArrayLike, geom: dict
+) -> jax.Array:
     """[6] elements of the (sc, fc, omega) covariance, in the order of _COV_ELEMS."""
-    cov_in = get_cov_in(jnp.zeros(3), geom["sig_wavelength"], geom["sig_ky"], geom["sig_kz"])
-    return _propagate(
-        ubi, pos, hkl, etasign,
-        geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], geom["y0"],
-        geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"], cov_in,
-    )  # fmt: skip
+    cov_in = jnp.diag(jnp.array([geom["sig_wavelength"], geom["sig_ky"], geom["sig_kz"]]) ** 2)
+    return _propagate(ubi, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty, geom, cov_in)
 
 
 def _peak_factors(ubi: jax.Array, hkl: jax.Array, etasign: ArrayLike, geom: dict) -> jax.Array:
@@ -211,7 +265,8 @@ def select_peaks(
     row
         Row dict, see :func:`render_row`
     margin
-        [4] how far outside the row a centroid may be and still contribute: (sc, fc, omega, dty)
+        [5] how far outside the row a centroid may be and still contribute: (sc, fc, omega), and how far a voxel
+        may be from the beam's centre line, across it horizontally and vertically (vertically only for cubes)
     det_shape
         (n_slow, n_fast) detector shape
 
@@ -220,23 +275,35 @@ def select_peaks(
     mask: jax.Array
         [Ne, Nh, 2] bool, branch 0 is etasign +1
     """
+    dty = 0.5 * (row["dty_min"] + row["dty_max"])
 
-    def one(u: jax.Array, p: jax.Array, h: jax.Array) -> tuple[jax.Array, jax.Array]:
-        centroids, valid = get_centroid_scan_both(
-            u, p, h, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], geom["y0"],
-            geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
-        )  # fmt: skip
-        return centroids, valid
+    def one(u: jax.Array, p: jax.Array, h: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+        _, k_outs, omegas, valid = hkl_to_k_omega_both(
+            u, h, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
+        )
+        cens, near_h, near_v = [], [], []
+        for i in range(2):
+            origin = _scattering_origin(p, omegas[i], dty, geom)
+            sc, fc = raytrace_to_det(k_outs[i], origin, geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"])
+            cens.append(jnp.array([sc, fc, omegas[i]]))
+            across, height, _ = _beam_offsets(
+                sample_to_lab(p, omegas[i], geom["wedge"], geom["chi"], dty, geom["y0"]), geom
+            )
+            near_h.append(jnp.abs(across) < margin[3])
+            near_v.append(jnp.abs(height) < margin[4])
+        return jnp.stack(cens), valid, jnp.stack(near_h), jnp.stack(near_v)
 
-    centroids, valid = jax.vmap(jax.vmap(one, in_axes=(None, None, 0)), in_axes=(0, 0, None))(ubi, pos, hkls)
-    sc, fc, om, dty = centroids[..., 0], centroids[..., 1], centroids[..., 2], centroids[..., 3]
+    centroids, valid, near_h, near_v = jax.vmap(jax.vmap(one, in_axes=(None, None, 0)), in_axes=(0, 0, None))(
+        ubi, pos, hkls
+    )
+    sc, fc, om = centroids[..., 0], centroids[..., 1], centroids[..., 2]
     om = _wrap_omega(om, 0.5 * (row["omega_min"] + row["omega_max"]))
     keep = (
         valid[..., None]
         & (sc > -margin[0]) & (sc < det_shape[0] - 1 + margin[0])
         & (fc > -margin[1]) & (fc < det_shape[1] - 1 + margin[1])
         & (om > row["omega_min"] - margin[2]) & (om < row["omega_max"] + margin[2])
-        & (dty > row["dty_min"] - margin[3]) & (dty < row["dty_max"] + margin[3])
+        & near_h & (near_v | ~geom["voxel_3d"])
     )  # fmt: skip
     return keep
 
@@ -295,13 +362,15 @@ def render_peaks(
     def one(e: jax.Array, h: jax.Array, br: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
         ubi, pos, hkl = entries["ubi"][e], entries["pos"][e], hkls[h]
         etasign = 1.0 - 2.0 * br
-        centroid, valid = _peak_centroid(ubi, pos, hkl, etasign, geom)
-        cov = _peak_cov(ubi, pos, hkl, etasign, geom)
+        dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
+        centroid, valid = _centroid(ubi, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty_row, geom)
+        cov = _peak_cov(ubi, pos, hkl, etasign, dty_row, geom)
         # detector point spread adds to the slow and fast variances (pixels^2)
         psf2 = geom["sig_psf"] ** 2
         ss, ff, oo = cov[0] + psf2 + _VAR_FLOOR[0], cov[1] + psf2 + _VAR_FLOOR[1], cov[2] + _VAR_FLOOR[2]
         sf, so, fo = cov[3], cov[4], cov[5]
-        mu_s, mu_f, mu_o, dty_c = centroid
+        mu_s, mu_f, mu_o = centroid
+        omega_peak = mu_o  # before wrapping
         mu_o = _wrap_omega(mu_o, 0.5 * (row["omega_min"] + row["omega_max"]))
 
         # Window origin: no gradient through which cells a peak touches
@@ -353,11 +422,11 @@ def render_peaks(
         )  # fmt: skip
         captured = jnp.sum(frac)
 
-        # per-frame factors: beam over voxel at that frame's dty, and transmission
-        w_dty = dty_weight(
-            row["dty_sorted"][fclip] - dty_c, mu_o, geom["voxel_size"], geom["sig_beam"], geom["k_in_lab"]
-        )
-        per_frame = w_dty * row["transmission_sorted"][fclip]  # [wo]
+        # per-frame factors: the beam's profile over the voxel at that frame's dty, and transmission
+        lab0 = sample_to_lab(pos, omega_peak, geom["wedge"], geom["chi"], geom["y0"], geom["y0"])  # dty = y0
+        lab = lab0 + jnp.array([0.0, 1.0, 0.0]) * (row["dty_sorted"][fclip] - geom["y0"])[:, None]  # [wo, 3]
+        w_beam = jax.vmap(beam_weight, in_axes=(0, None, None))(lab, omega_peak, geom)
+        per_frame = w_beam * row["transmission_sorted"][fclip]  # [wo]
 
         amp = entries["density"][e] * F2[h] * _peak_factors(ubi, hkl, etasign, geom)
         value = amp * per_frame[:, None, None] * frac
@@ -494,13 +563,20 @@ def _valid_from_shards(x: jax.Array, count: np.ndarray, per_shard: int) -> np.nd
 
 
 def _select_margin(window: tuple[int, int, int], row: dict, geom: dict, dtype: jnp.dtype) -> jax.Array:
-    """[4] How far outside the row a centroid may be and still contribute: (slow, fast, omega, dty)."""
+    """Return the [5] margins for select_peaks.
+
+    How far outside the row a centroid may be and still contribute, (slow, fast, omega) in pixels and degrees, and
+    how far a voxel's centre may be from the beam's centre line, across it horizontally and vertically.
+    """
     wo, ws, wf = window
     ostep = float(np.max(np.diff(np.asarray(row["omega_edges"]))))
     k = np.asarray(geom["k_in_lab"], dtype=float)
-    cos_psi = abs(k[0]) / np.hypot(k[0], k[1])  # a dty step moves the voxel cos(psi) across the beam
-    dty = (4 * float(geom["sig_beam"]) + float(geom["voxel_size"])) / cos_psi
-    return jnp.array([ws // 2 + 1, wf // 2 + 1, (wo // 2 + 1) * ostep, dty], dtype=dtype)
+    cos_alpha = np.hypot(k[0], k[1]) / np.linalg.norm(k)
+    size = float(geom["voxel_size"])
+    dty_range = float(row["dty_max"]) - float(row["dty_min"])  # frames of a row may have different dty
+    across = float(geom["width_beam"]) / 2 + 4 * float(geom["sig_beam"]) + size + dty_range
+    vertical = (float(geom["width_beam_v"]) / 2 + 4 * float(geom["sig_beam_v"])) / cos_alpha + size
+    return jnp.array([ws // 2 + 1, wf // 2 + 1, (wo // 2 + 1) * ostep, across, vertical], dtype=dtype)
 
 
 def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict) -> tuple:
@@ -645,7 +721,7 @@ def check_render(
     """Check rendered peaks against a Monte Carlo simulation of the beam spreads.
 
     For a random sample of peaks of the row, samples wavelength, ky and kz from their Gaussian spreads, pushes
-    every sample through the forward model (:func:`anri.fwd.get_centroid_scan`), adds the detector point spread
+    every sample through the forward model (with the voxel at its real position), adds the detector point spread
     and the renderer's variance floor, and histograms the (slow, fast, omega) positions into the peak's window
     cells. :func:`render_peaks` linearises the forward model and integrates the resulting Gaussian over the cells
     approximately, so this checks both approximations, for your own map and geometry.
@@ -706,11 +782,9 @@ def check_render(
         ky: jax.Array,
         kz: jax.Array,
     ) -> jax.Array:
-        return get_centroid_scan(
-            u, p, q, etasign, wavelength, geom["k_in_lab"], ky, kz,
-            geom["wedge"], geom["chi"], geom["y0"], geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
-        )[0][:3]  # fmt: skip
+        return _centroid(u, p, q, etasign, wavelength, ky, kz, dty_row, geom)[0]
 
+    dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
     sample = jax.jit(jax.vmap(centroid, in_axes=(None, None, None, None, 0, 0, 0)))
     sd_beam = np.array([float(geom["sig_wavelength"]), float(geom["sig_ky"]), float(geom["sig_kz"])])
     psf2 = float(geom["sig_psf"]) ** 2

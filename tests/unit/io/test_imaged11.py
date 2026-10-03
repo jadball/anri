@@ -213,6 +213,20 @@ class TestGeomFromPars(unittest.TestCase):
         geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0, k_in_lab=[2.0, 0.0, 0.1])
         np.testing.assert_allclose(geom["k_in_lab"], k)
 
+    def test_beam_widths(self):
+        pars = {
+            "y_center": 1024.0, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1024.0, "z_size": 75.0, "tilt_z": 0.0,
+            "tilt_x": 0.0, "distance": 150e3, "o11": 1, "o12": 0, "o21": 0, "o22": 1, "wavelength": 0.3,
+        }  # fmt: skip
+        with self.assertRaises(ValueError):
+            geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.0, voxel_size=1.0)
+        with self.assertRaises(ValueError):  # cubes need a vertical profile
+            geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0, voxel_3d=True)
+        geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, 0.5, 1.0, width_beam=100.0, sig_beam_v=0.2, voxel_3d=True)
+        self.assertEqual(
+            (geom["width_beam"], geom["sig_beam_v"], geom["width_beam_v"], geom["voxel_3d"]), (100.0, 0.2, 0.0, True)
+        )
+
     def test_omegasign(self):
         self.assertEqual(gonio_from_pars({"wedge": 2.5, "chi": 1.0}, 0.3), {"wedge": -2.5, "chi": 1.0, "y0": 0.3})
         with self.assertRaises(ValueError):

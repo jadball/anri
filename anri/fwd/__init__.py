@@ -13,8 +13,8 @@ from ._impl.box import (
     propagate_cov_box_all_grains,
 )
 from ._impl.render import (
+    beam_weight,
     check_render,
-    dty_weight,
     guess_batch_size,
     lorentz,
     make_row,
@@ -40,8 +40,8 @@ from ._impl.scan import (
 
 # fmt: off
 __all__ = [
+    "beam_weight",
     "check_render",
-    "dty_weight",
     "get_centroid_box",
     "get_centroid_box_all",
     "get_centroid_box_all_both",

@@ -116,6 +116,10 @@ def geom_from_pars(
     pol_factor: float = 1.0,
     sig_psf: float = 0.0,
     k_in_lab: ArrayLike | None = None,
+    width_beam: float = 0.0,
+    sig_beam_v: float = 0.0,
+    width_beam_v: float = 0.0,
+    voxel_3d: bool = False,
 ) -> dict:
     """Build the geometry dict for :func:`anri.fwd.render_row` from ImageD11 parameters.
 
@@ -131,8 +135,10 @@ def geom_from_pars(
         dty at which the rotation axis is in the beam
     sig_wavelength, sig_ky, sig_kz
         Standard deviations of the wavelength (angstrom) and of the beam divergence (radians)
-    sig_beam
-        Standard deviation of the beam profile across lab y (same units as dty)
+    sig_beam, width_beam
+        The beam's profile across it, horizontally: a flat top of ``width_beam`` (default 0: a Gaussian) blurred by a
+        Gaussian of standard deviation ``sig_beam`` (same units as dty; must be > 0), see
+        :func:`anri.fwd.beam_weight`. A pencil beam is narrow, a box or horizontal line beam wider than the sample.
     voxel_size
         Side length of the voxels (same units as dty)
     pol_factor
@@ -143,7 +149,15 @@ def geom_from_pars(
         detector's point spread prevents that.
     k_in_lab
         [3] Direction of the incoming beam (default lab x), see :func:`beam_from_pars`
+    sig_beam_v, width_beam_v
+        The beam's profile across it, vertically, as for ``sig_beam`` and ``width_beam``. Only used for cubes: for
+        columns (2D maps) the whole vertical profile crosses the voxel.
+    voxel_3d
+        Whether the voxels are cubes (a 3D map) rather than columns (a 2D map, e.g. a TensorMap layer)
     """
+    if sig_beam <= 0 or (voxel_3d and sig_beam_v <= 0):
+        msg = "the beam's Gaussian widths must be > 0 (a small one gives a sharp-edged flat top)"
+        raise ValueError(msg)
     return {
         **beam_from_pars(pars, k_in_lab),
         **gonio_from_pars(pars, y0),
@@ -152,6 +166,10 @@ def geom_from_pars(
         "sig_ky": sig_ky,
         "sig_kz": sig_kz,
         "sig_beam": sig_beam,
+        "width_beam": width_beam,
+        "sig_beam_v": sig_beam_v,
+        "width_beam_v": width_beam_v,
+        "voxel_3d": voxel_3d,
         "voxel_size": voxel_size,
         "pol_factor": pol_factor,
         "sig_psf": sig_psf,

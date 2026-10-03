@@ -7,8 +7,8 @@ import numpy as np
 import anri.crystal
 import anri.geom
 from anri.fwd import (
+    beam_weight,
     check_render,
-    dty_weight,
     guess_batch_size,
     lorentz,
     make_row,
@@ -17,8 +17,9 @@ from anri.fwd import (
     render_row,
     select_peaks,
 )
-from anri.fwd._impl.render import _free_memory
+from anri.fwd._impl.render import _centroid, _free_memory
 from anri.fwd._impl.scan import get_centroid_scan
+from anri.geom import sample_to_lab
 
 jax.config.update("jax_enable_x64", True)
 
@@ -28,39 +29,66 @@ def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
     return float(np.sum(0.5 * (y[1:] + y[:-1]) * np.diff(x)))
 
 
-class TestDtyWeight(unittest.TestCase):
+def _geom(sig, width=0.0, size=1.2, k=(1.0, 0.0, 0.0), sig_v=0.0, width_v=0.0, cube=False):
+    """The beam_weight part of a geometry dict."""
+    return {"k_in_lab": jnp.asarray(k), "sig_beam": sig, "width_beam": width, "sig_beam_v": sig_v,
+            "width_beam_v": width_v, "voxel_3d": cube, "voxel_size": size}  # fmt: skip
+
+
+def _weight(delta, omega, geom, z=0.0):
+    """beam_weight of a voxel at lab (0, delta, z): delta along lab y from the beam's centre line."""
+    return beam_weight(jnp.array([0.0, delta, z]), omega, geom)
+
+
+class TestBeamWeight(unittest.TestCase):
     def test_area(self):
-        # integrated over dty, the weight is the voxel area for any omega and beam size
+        # a column's weight integrated over its distance from the beam is its area, for any beam: the profile
+        # integrates to 1
         delta = np.linspace(-20, 20, 40001)
         for omega in [0.0, 10.0, 45.0, 90.0, 123.4]:
-            for sig in [0.05, 0.5, 3.0]:
-                w = dty_weight(jnp.asarray(delta), omega, 2.0, sig)
+            for sig, width in [(0.05, 0.0), (0.5, 0.0), (3.0, 0.0), (0.05, 2.0), (0.5, 6.0)]:
+                g = _geom(sig, width, size=2.0)
+                w = jax.vmap(_weight, in_axes=(0, None, None))(jnp.asarray(delta), omega, g)
                 np.testing.assert_allclose(_trapezoid(np.asarray(w), delta), 4.0, rtol=1e-6)
 
     def test_convolution(self):
-        # compare with a brute-force convolution of the chord length with a Gaussian beam
-        size, sig, omega = 1.5, 0.4, 30.0
-        u = np.linspace(-3, 3, 6001)
+        # compare with a brute-force convolution of the chord length with the profile, Gaussian and flat-top
+        from scipy.special import ndtr
+
+        size, omega = 1.5, 30.0
+        u = np.linspace(-6, 6, 12001)
         c, s = np.abs(np.cos(np.radians(omega))), np.abs(np.sin(np.radians(omega)))
         a, b = 0.5 * size * (c + s), 0.5 * size * abs(c - s)
         chord = np.clip((a - np.abs(u)) / (a - b), 0, 1) * size / max(c, s)
-        for d in [-1.0, 0.0, 0.3, 1.2]:
-            g = np.exp(-0.5 * ((d - u) / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
-            np.testing.assert_allclose(dty_weight(d, omega, size, sig), _trapezoid(chord * g, u), rtol=1e-4)
+        for sig, width in [(0.4, 0.0), (0.1, 2.0), (0.4, 1.0)]:
+            for d in [-1.0, 0.0, 0.3, 1.2]:
+                if width == 0:
+                    p = np.exp(-0.5 * ((d - u) / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
+                else:
+                    p = (ndtr((d - u + width / 2) / sig) - ndtr((d - u - width / 2) / sig)) / width
+                np.testing.assert_allclose(
+                    _weight(d, omega, _geom(sig, width, size)), _trapezoid(chord * p, u), rtol=1e-4
+                )
 
-    def test_continuous_near_box(self):
-        # the rectangle branch at omega = 0 joins the trapezoid smoothly
-        w = [dty_weight(0.3, om, 1.0, 0.4) for om in (0.0, 1e-3, 1e-1)]
+    def test_continuous(self):
+        # the rectangle branch at omega = 0 joins the trapezoid, and the Gaussian limit joins the flat top
+        w = [_weight(0.3, om, _geom(0.4, size=1.0)) for om in (0.0, 1e-3, 1e-1)]
         np.testing.assert_allclose(w[0], w[1], rtol=1e-5)
         np.testing.assert_allclose(w[0], w[2], rtol=1e-3)
+        w = [_weight(0.3, 30.0, _geom(0.4, width)) for width in (0.0, 0.0039, 0.0041)]  # switch at 0.01 sigma
+        np.testing.assert_allclose(w[0], w[1], rtol=1e-6)
+        np.testing.assert_allclose(w[0], w[2], rtol=1e-5)
 
 
-def _brute_force_weight(delta, omega, size, sig_h, k_in, sig_v=None, n=400, nz=600):
+def _brute_force_weight(delta, omega, size, sig_h, k_in, sig_v=None, width_h=0.0, cube_z=None, n=400, nz=600):
     """Integrate the beam profile over a square voxel rotated by omega, shifted by delta along lab y.
 
-    The beam passes through the origin along k_in, Gaussian across it horizontally (sig_h). With sig_v, it is a
-    pencil that is also Gaussian vertically, and the voxel is a column, integrated over height on a grid.
+    The beam passes through the origin along k_in, across it horizontally a flat top of width_h blurred by a
+    Gaussian of sig_h. With sig_v, it is also Gaussian vertically, and the voxel is a column, integrated over height
+    on a grid; with cube_z too, the voxel is a cube centred at that height.
     """
+    from scipy.special import ndtr
+
     k = np.asarray(k_in, float) / np.linalg.norm(k_in)
     e_h = np.cross([0.0, 0.0, 1.0], k)
     e_h /= np.linalg.norm(e_h)
@@ -70,37 +98,46 @@ def _brute_force_weight(delta, omega, size, sig_h, k_in, sig_v=None, n=400, nz=6
     c, sn = np.cos(np.radians(omega)), np.sin(np.radians(omega))
     x, y = c * s - sn * u, sn * s + c * u + delta  # voxel rotated by +omega about z, then moved by delta along y
     area = (size / n) ** 2
-    gauss = lambda d, sig: np.exp(-0.5 * (d / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
+
+    def profile(d, sig, width=0.0):
+        if width == 0:
+            return np.exp(-0.5 * (d / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
+        return (ndtr((d + width / 2) / sig) - ndtr((d - width / 2) / sig)) / width
+
+    p_h = profile(x * e_h[0] + y * e_h[1], sig_h, width_h)
     if sig_v is None:
-        return np.sum(gauss(x * e_h[0] + y * e_h[1], sig_h)) * area
-    zmax = 8 * (sig_v + size) / e_v[2]
-    z = (np.arange(nz) + 0.5) / nz * 2 * zmax - zmax
-    p_h = gauss(x * e_h[0] + y * e_h[1], sig_h)[..., None]
-    p_v = gauss(x[..., None] * e_v[0] + y[..., None] * e_v[1] + z * e_v[2], sig_v)
-    return np.sum(p_h * p_v) * area * (2 * zmax / nz)
+        return np.sum(p_h) * area
+    if cube_z is None:
+        zmax = 8 * (sig_v + size) / e_v[2]
+        z = (np.arange(nz) + 0.5) / nz * 2 * zmax - zmax
+    else:
+        z = cube_z + (np.arange(nz) + 0.5) / nz * size - size / 2
+    p_v = profile(x[..., None] * e_v[0] + y[..., None] * e_v[1] + z * e_v[2], sig_v)
+    return np.sum(p_h[..., None] * p_v) * area * (z[1] - z[0])
 
 
-class TestDtyWeightBeamDirection(unittest.TestCase):
+class TestBeamWeightGeometry(unittest.TestCase):
     def test_horizontal_beam(self):
-        # a beam at psi from lab x in the horizontal plane
-        for psi, omega, delta in ((20.0, 30.0, 0.3), (-35.0, 70.0, -0.5), (10.0, 0.0, 0.0)):
+        # a beam at psi from lab x in the horizontal plane, Gaussian and flat-top
+        for psi, omega, delta, width in ((20.0, 30.0, 0.3, 0.0), (-35.0, 70.0, -0.5, 0.0), (10.0, 0.0, 0.0, 1.5)):
             k = [np.cos(np.radians(psi)), np.sin(np.radians(psi)), 0.0]
-            expected = _brute_force_weight(delta, omega, 1.2, 0.4, k)
-            np.testing.assert_allclose(dty_weight(delta, omega, 1.2, 0.4, jnp.asarray(k)), expected, rtol=2e-4)
+            expected = _brute_force_weight(delta, omega, 1.2, 0.4, k, width_h=width)
+            np.testing.assert_allclose(_weight(delta, omega, _geom(0.4, width, k=k)), expected, rtol=2e-4)
 
     def test_tilted_pencil(self):
-        # tilted out of the horizontal plane, and turned in it: the pencil's vertical profile integrates out
+        # a column, tilted beam: the pencil's vertical profile integrates out
         for alpha, psi, omega, delta in ((25.0, 0.0, 30.0, 0.2), (40.0, 15.0, 50.0, -0.4)):
             a, p = np.radians(alpha), np.radians(psi)
             k = [np.cos(a) * np.cos(p), np.cos(a) * np.sin(p), np.sin(a)]
             expected = _brute_force_weight(delta, omega, 1.2, 0.4, k, sig_v=0.3, n=200)
-            np.testing.assert_allclose(dty_weight(delta, omega, 1.2, 0.4, jnp.asarray(k)), expected, rtol=1e-3)
+            np.testing.assert_allclose(_weight(delta, omega, _geom(0.4, k=k)), expected, rtol=1e-3)
 
-    def test_along_x_unchanged(self):
-        for omega, delta in ((30.0, 0.3), (0.0, -0.2)):
-            np.testing.assert_allclose(
-                dty_weight(delta, omega, 1.2, 0.4, jnp.array([1.0, 0.0, 0.0])), dty_weight(delta, omega, 1.2, 0.4)
-            )
+    def test_cube(self):
+        # a cube (3D map), horizontal beam: the vertical profile over the cube's height
+        for omega, delta, z in ((30.0, 0.3, 0.0), (10.0, -0.2, 0.5), (60.0, 0.1, -1.0)):
+            expected = _brute_force_weight(delta, omega, 1.2, 0.4, [1, 0, 0], sig_v=0.3, cube_z=z, n=200, nz=400)
+            g = _geom(0.4, sig_v=0.3, cube=True)
+            np.testing.assert_allclose(_weight(delta, omega, g, z=z), expected, rtol=1e-3)
 
 
 class TestIntensityFactors(unittest.TestCase):
@@ -141,7 +178,8 @@ def _single_peak_setup():
         "s_step_lab": s_step_lab, "f_step_lab": f_step_lab, "det_origin_lab": det_origin_lab,
         # broad enough that spots cover a few pixels and frames, so moments are unbiased
         "sig_wavelength": pars["wavelength"] * 1e-3, "sig_ky": 1e-3, "sig_kz": 1e-3,
-        "sig_beam": 0.5, "voxel_size": voxel, "pol_factor": 1.0, "sig_psf": 0.0,
+        "sig_beam": 0.5, "width_beam": 0.0, "sig_beam_v": 0.0, "width_beam_v": 0.0, "voxel_3d": False,
+        "voxel_size": voxel, "pol_factor": 1.0, "sig_psf": 0.0,
     }  # fmt: skip
 
     U = np.asarray(anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0) @ anri.geom.rot_y(10.0))
@@ -191,12 +229,6 @@ class TestSinglePeak(unittest.TestCase):
         m = sparseframe.sparse_moments(toy, "intensity", "cp")[0]
         self.assertEqual((m[cImageD11.s2D_sI] / m[cImageD11.s2D_I], m[cImageD11.s2D_fI] / m[cImageD11.s2D_I]), (3, 7))
 
-        centroids, _ = jax.vmap(get_centroid_scan, in_axes=(0, 0) + (None,) * 12)(
-            jnp.asarray(entries["ubi"]), jnp.asarray(entries["pos"]), jnp.asarray(hkl), 1.0,
-            geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, 0.0, 0.0, geom["y0"],
-            geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
-        )  # fmt: skip
-        centroids = np.asarray(centroids)
         n_rows_checked = 0
         for dty in np.arange(-7.0, 8.0):
             row = make_row(omega, np.full_like(omega, dty))
@@ -207,11 +239,22 @@ class TestSinglePeak(unittest.TestCase):
                 continue
             self.assertGreater(stats["captured"].min(), 0.999)
 
-            # expected: centroids of the voxels weighted by how much of each sits in the beam
-            w = np.asarray(dty_weight(dty - centroids[:, 3], centroids[:, 2], geom["voxel_size"], geom["sig_beam"]))
+            # expected: centroids of the voxels, at their real positions for this dty, weighted by how much of each
+            # the beam illuminates
+            g = jax.tree.map(jnp.asarray, geom)
+            pos = jnp.asarray(entries["pos"])
+            in_axes = (None, 0) + (None,) * 7
+            centroids = np.asarray(
+                jax.vmap(_centroid, in_axes=in_axes)(jnp.asarray(ubi), pos, jnp.asarray(hkl), 1.0, g["wavelength"],
+                                                     0.0, 0.0, dty, g)[0]
+            )  # fmt: skip
+            om = centroids[0, 2]  # one orientation: every voxel diffracts at the same omega
+            lab = jax.vmap(sample_to_lab, in_axes=(0,) + (None,) * 5)(pos, om, 0.0, 0.0, dty, g["y0"])
+            w = np.asarray(jax.vmap(beam_weight, in_axes=(0, None, None))(lab, om, g))
+            lab = np.asarray(lab)
             if w.sum() < 0.05 * geom["voxel_size"] ** 2:
                 continue  # the grain is barely in this row
-            expected = (w[:, None] * centroids[:, :3]).sum(0) / w.sum()
+            expected = (w[:, None] * centroids).sum(0) / w.sum()
 
             # ImageD11: connected pixels and moments per frame, then merge frames by intensity
             sumI = srI = sfI = soI = 0.0
@@ -230,12 +273,10 @@ class TestSinglePeak(unittest.TestCase):
             np.testing.assert_allclose(measured[:2], expected[:2], atol=0.02)  # pixels
             np.testing.assert_allclose(measured[2], expected[2], atol=2e-3)  # degrees
 
-            # ImageD11 geometry: lab xyz of the measured spot, shift x by the diffraction origin, g, then hkl
-            sx, sy = entries["pos"][:, 0], entries["pos"][:, 1]
-            om = np.radians(measured[2])
-            lx = (w * (sx * np.cos(om) - sy * np.sin(om))).sum() / w.sum()
+            # ImageD11 geometry: lab xyz of the measured spot, less the (weighted) diffraction origin, g, then hkl
+            origin = (w[:, None] * lab).sum(0) / w.sum()
             xyz = transform.compute_xyz_lab(np.array([[measured[0]], [measured[1]]]), **pars)
-            xyz[0] -= lx
+            xyz[:, 0] -= origin
             tth, eta = transform.compute_tth_eta_from_xyz(xyz, np.array([measured[2]]))
             g = transform.compute_g_vectors(tth, eta, np.array([measured[2]]), pars["wavelength"])
             np.testing.assert_allclose((ubi @ g).ravel(), hkl, atol=2e-4)
@@ -450,3 +491,60 @@ class TestEmptyRow(unittest.TestCase):
         row = make_row(omega, np.full_like(omega, 1000.0))  # the beam misses the grain
         frame, pixel, value, stats = render_row(entries, hkl[None], np.ones(1), geom, row, det_shape)
         self.assertEqual((frame.size, pixel.size, value.size, stats["n_peaks"], stats["captured"].size), (0,) * 5)
+
+
+class TestBoxBeam(unittest.TestCase):
+    def test_dct_spot(self):
+        """A cube of voxels in a box beam bigger than it, near-field detector: every voxel is lit equally, and the
+        spot is the cube projected along the diffracted beam."""
+        from anri.fwd._impl.render import _peak_cov
+        from anri.io import geom_from_pars
+
+        wl = 0.2845704100778472
+        pars = {
+            "y_center": 1023.5, "z_center": 1023.5, "y_size": 1.0, "z_size": 1.0, "tilt_x": 0.0, "tilt_y": 0.0,
+            "tilt_z": 0.0, "distance": 5000.0, "o11": -1, "o12": 0, "o21": 0, "o22": -1, "wavelength": wl,
+        }  # fmt: skip
+        det_shape = (2048, 2048)
+        geom = geom_from_pars(
+            pars, 0.0, wl * 1e-4, 1e-4, 1e-4, sig_beam=0.5, voxel_size=1.0, sig_psf=0.3,
+            width_beam=1000.0, sig_beam_v=0.5, width_beam_v=1000.0, voxel_3d=True,
+        )  # fmt: skip
+        g = jax.tree.map(jnp.asarray, geom)
+        B = anri.crystal.lpars_to_B(jnp.array([2.8665, 2.8665, 2.8665, 90.0, 90.0, 90.0]))
+        ubi = jnp.linalg.inv(anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0) @ anri.geom.rot_y(10.0) @ B)
+        i, j, k = np.mgrid[0:6, 0:6, 0:6]
+        pos = (np.stack([i.ravel(), j.ravel(), k.ravel()], 1) - 2.5).astype(float)
+        entries = {"ubi": np.repeat(np.asarray(ubi)[None], len(pos), 0), "pos": pos, "density": np.ones(len(pos))}
+
+        # a 110-type spot well inside the detector, from the grain's centre
+        for hkl in np.array([[1, 1, 0], [1, 0, 1], [0, 1, 1], [1, -1, 0], [1, 0, -1], [0, 1, -1]], float):
+            c, valid = _centroid(ubi, jnp.zeros(3), jnp.asarray(hkl), 1.0, g["wavelength"], 0.0, 0.0, 0.0, g)
+            if valid and 200 < c[0] < 1850 and 200 < c[1] < 1850:
+                break
+        omega = np.arange(float(c[2]) - 2.0, float(c[2]) + 2.0, 0.25) + 0.125
+        row = make_row(omega, np.zeros_like(omega))
+        _, pixel, value, stats = render_row(
+            entries, hkl[None], np.ones(1), geom, row, det_shape, window=(3, 9, 9), min_value=0.0
+        )
+        self.assertEqual(stats["n_peaks"], len(pos))  # every voxel is in the beam
+        self.assertGreater(stats["captured"].min(), 0.999)
+
+        # every voxel is lit by the same fraction of the beam: its volume over the beam's cross-section
+        lab = jax.vmap(sample_to_lab, in_axes=(0,) + (None,) * 5)(jnp.asarray(pos), c[2], 0.0, 0.0, 0.0, 0.0)
+        w = jax.vmap(beam_weight, in_axes=(0, None, None))(lab, c[2], g)
+        np.testing.assert_allclose(w, 1.0 / 1000.0**2, rtol=1e-9)
+
+        # the spot: the voxel centres projected along the diffracted beam, blurred by the point spread and spreads
+        proj = jax.vmap(_centroid, in_axes=(None, 0) + (None,) * 7)(
+            ubi, jnp.asarray(pos), jnp.asarray(hkl), 1.0, g["wavelength"], 0.0, 0.0, 0.0, g
+        )[0]
+        proj = np.asarray(proj)[:, :2]
+        cov6 = np.asarray(_peak_cov(ubi, jnp.zeros(3), jnp.asarray(hkl), 1.0, 0.0, g))
+        blur = np.array([[cov6[0], cov6[3]], [cov6[3], cov6[1]]]) + np.eye(2) * (0.3**2 + 1e-4)
+        s, f = pixel // det_shape[1], pixel % det_shape[1]
+        sf = np.stack([s, f], 1).astype(float)
+        mean = (value[:, None] * sf).sum(0) / value.sum()
+        cov = ((sf - mean).T * value) @ (sf - mean) / value.sum()
+        np.testing.assert_allclose(mean, proj.mean(0), atol=0.02)
+        np.testing.assert_allclose(cov, np.cov(proj.T, bias=True) + blur + np.eye(2) / 12, atol=0.02 * np.trace(cov))
