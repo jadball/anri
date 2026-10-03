@@ -37,6 +37,11 @@ def setup(n_cpu: int = 4, preallocate: bool = False) -> None:
 
     Notes
     -----
+    Matrix products run at full float32 precision (``jax_default_matmul_precision = "highest"``), unless
+    ``JAX_DEFAULT_MATMUL_PRECISION`` is set. JAX's default on NVIDIA GPUs from Ampere on uses TF32 for float32
+    matrix products, with a 10-bit mantissa: on an L40S it moved rendered spots ~1000 px from the beam centre by
+    up to 0.3 px, a strain error of ~1e-5. The products in anri are small (3x3), so this costs nothing measurable.
+
     With jaxlib >= 0.11, this also turns off XLA:CPU's YNNPACK fusions (``--xla_cpu_experimental_ynn_fusion_type=``),
     unless ``XLA_FLAGS`` already sets that flag. They miscompile :func:`anri.fwd.render_peaks` for
     batches of more than a few thousand peaks: in jaxlib 0.11.1 and 0.11.2 most peaks were squeezed into a single
@@ -56,6 +61,8 @@ def setup(n_cpu: int = 4, preallocate: bool = False) -> None:
         flags += " --xla_cpu_experimental_ynn_fusion_type="
     os.environ["XLA_FLAGS"] = flags.strip()
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", str(preallocate).lower())
+    if "JAX_DEFAULT_MATMUL_PRECISION" not in os.environ:
+        jax.config.update("jax_default_matmul_precision", "highest")
 
 
 def mesh() -> Mesh:

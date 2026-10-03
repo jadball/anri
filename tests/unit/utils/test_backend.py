@@ -2,6 +2,7 @@ import os
 import unittest
 from unittest import mock
 
+import jax
 import jax.numpy as jnp
 
 import anri.utils
@@ -36,6 +37,21 @@ class TestSetup(unittest.TestCase):
         # older jaxlib doesn't know the YNN flag
         flags, _ = self.flags("", "0.4.30")
         self.assertEqual(flags, "--xla_force_host_platform_device_count=4")
+
+    def test_matmul_precision(self):
+        """Full float32 matrix products (no TF32 on GPUs), unless the user chose a precision."""
+        before = jax.config.jax_default_matmul_precision
+        try:
+            self.flags(None, "0.11.2")
+            self.assertEqual(jax.config.jax_default_matmul_precision, "highest")
+            jax.config.update("jax_default_matmul_precision", None)
+            with mock.patch.dict(os.environ, {"JAX_DEFAULT_MATMUL_PRECISION": "default"}):
+                started = mock.patch("jax._src.xla_bridge.backends_are_initialized", return_value=False)
+                with started:
+                    anri.utils.setup()
+            self.assertIsNone(jax.config.jax_default_matmul_precision)
+        finally:
+            jax.config.update("jax_default_matmul_precision", before)
 
 
 if __name__ == "__main__":

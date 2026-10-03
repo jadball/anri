@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Wrong spot positions in float32 on recent NVIDIA GPUs: JAX's default precision for float32 matrix products there is TF32 (10-bit mantissa), which moved rendered spots ~1000 px from the beam centre by up to 0.3 px on an L40S, a strain error of ~1e-5. `anri.utils.setup()` now sets `jax_default_matmul_precision` to `"highest"` (unless `JAX_DEFAULT_MATMUL_PRECISION` is set). GPU renders made in float32 without this fix should be redone.
 - Beam divergence (`ky`, `kz`) was applied along lab y and z, which is only across the beam when it is along lab x: for a tilted beam the vertical divergence shrank by cos(tilt). It is now applied along the beam's own horizontal and vertical (`anri.geom.beam_basis`), in every forward model.
 - `anri.geom.step_grid_from_ybincens` always raised: it was jitted, but the size of its grid depends on its inputs.
 - `Structure` warned about missing thermal factors for crystals built in code (not read from a CIF), even when their atoms had U_iso.
