@@ -50,6 +50,28 @@ Earlier AI-written attempts were removed for exactly this reason: they were hard
 - Check in before adding new abstractions or API surface.
 - Going slower with better understanding beats a fast, opaque result.
 
+## Git
+
+- **Never push without asking the maintainer first.** Committing locally is fine.
+- Keep commits small and focused, one topic each.
+- Don't commit notebook metadata churn (kernel name, Python version, widget state) or files written by running the docs notebooks.
+
+## CI and compatibility
+
+CI (`.github/workflows/main.yml`) tests Python 3.9 and 3.14 on Linux, Windows and macOS (Intel and ARM). It runs `ruff check .` and `ty check .` with the **latest** ruff and ty, and has no GPU. Each job times out after 15 minutes.
+
+- **Python 3.9+.** No `match`, `zip(..., strict=True)`, parenthesised context managers, or `X | Y` types evaluated at runtime (fine in annotations with `from __future__ import annotations`).
+- **Old JAX and NumPy.** Python 3.9 gets JAX 0.4.30 and NumPy 1.26. So:
+  - no `np.trapezoid` (NumPy 2+);
+  - `jax.shard_map` needs a fallback to `jax.experimental.shard_map`;
+  - check that any newer JAX API exists in 0.4.30 before using it.
+- **Cross-platform.** Avoid Linux-only calls (e.g. `os.sched_getaffinity`). Use `os.path`/`tempfile` for paths, not hard-coded `/tmp`.
+- **Lint the whole repo.** Run `ruff check .` from the repo root, not just `anri tests`: root files like `conftest.py` are checked too. Local ruff/ty may lag the versions CI installs.
+- **Don't start JAX at import time.** No module-level `jnp` arrays or computations; use Python or NumPy constants. Starting the backend on import stops `anri.backend.setup()` from working.
+- **Keep tests small.** They run on CPU-only runners, so keep each test to seconds and modest memory. Don't pad small problems up to production batch sizes.
+- **PRs that touch `anri/**` must update `CHANGELOG.md`** (`pr_checks.yml`).
+- **Testing on Python 3.9 locally:** build a throwaway env the way CI does: a conda-forge `python=3.9` env, then `unidep install -p <env> ".[dev]"`.
+
 ## Development
 
 - Lint and format with `ruff`, type-check with `ty`, test with `pytest tests/`. All code outside `anri/sandbox` must pass.
