@@ -50,6 +50,11 @@ Earlier AI-written attempts were removed for exactly this reason: they were hard
 - Check in before adding new abstractions or API surface.
 - Going slower with better understanding beats a fast, opaque result.
 
+## Installing software
+
+**Never install anything without asking the maintainer first:** no `pip`, `conda`/`mamba`, `npm` or downloaded binaries, not even into a temporary folder.
+Packages are how malware gets in. Use what is already installed, or ask.
+
 ## Git
 
 - **Never push without asking the maintainer first.** Committing locally is fine.
