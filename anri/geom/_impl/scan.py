@@ -63,7 +63,6 @@ import jax
 import jax.numpy as jnp
 
 
-@jax.jit
 def step_grid_from_ybincens(
     ybincens: jax.Array, step_size: float, gridstep: float, y0: float
 ) -> tuple[jax.Array, jax.Array]:

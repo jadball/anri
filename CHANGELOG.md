@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `anri.geom.step_grid_from_ybincens` always raised: it was jitted, but the size of its grid depends on its inputs.
 - `Structure` warned about missing thermal factors for crystals built in code (not read from a CIF), even when their atoms had U_iso.
 - `render_peaks` put up to ~3% of a peak's intensity in the wrong cells (and lost up to ~7% from broad, truncated peaks): when conditioning fast on slow it held omega at its frame mean, ignoring that slow and omega are correlated within the frame. It now integrates omega out within the frame. Errors against a Monte Carlo of the beam spreads went from 1% (median worst cell) to 0.13%, the Monte Carlo noise.
 - Wrong renders on CPU with jaxlib >= 0.11: XLA:CPU's YNNPACK fusions miscompiled `render_peaks` for batches of more than a few thousand peaks (in float64, most peaks squeezed into one pixel; in float32, NaNs). `anri.utils.setup()` now turns them off with `--xla_cpu_experimental_ynn_fusion_type=`. CPU renders made with jaxlib 0.11.x without this fix should be redone.
