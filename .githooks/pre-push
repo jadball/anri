@@ -1,0 +1,35 @@
+#!/bin/sh
+# Build the docs like the deploy job (sphinx-build -W) before every push, so a docs error shows up here and not
+# after CI. Notebooks are not executed, so this takes about half a minute instead of ten.
+# It builds a clean export of the commit being pushed, not the working tree (which may hold uncommitted
+# changes and stale autosummary stubs).
+# Enable once per clone with:  git config core.hooksPath .githooks
+# Skip for one push with:      git push --no-verify
+
+root=$(git rev-parse --show-toplevel)
+cd "$root" || exit 1
+
+# pushes from an IDE often run without the conda env active, so look in the usual env folders first
+for sphinx in "$root/.conda/bin/sphinx-build" "$root/.venv/bin/sphinx-build" "$(command -v sphinx-build)"; do
+    [ -x "$sphinx" ] && break
+done
+if [ ! -x "$sphinx" ]; then
+    echo "pre-push: sphinx-build not found; install the dev dependencies or push with --no-verify" >&2
+    exit 1
+fi
+
+# stdin has one line per ref being pushed: <local ref> <local sha> <remote ref> <remote sha>
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue  # deleting a remote branch
+    tmp=$(mktemp -d) || exit 1
+    git archive "$local_sha" | tar -x -C "$tmp"
+    echo "pre-push: building the docs for ${local_ref#refs/heads/} ($(git rev-parse --short "$local_sha"))" >&2
+    if ! (cd "$tmp/docs" && "$sphinx" -W --keep-going -q -b html -D nbsphinx_execute=never \
+            source "$tmp/docs/build/html"); then
+        rm -rf "$tmp"
+        echo "pre-push: the docs build failed (as the deploy job would); fix the errors above or push with --no-verify" >&2
+        exit 1
+    fi
+    rm -rf "$tmp"
+done
