@@ -55,6 +55,21 @@ site/
 docs/source/reference/generated/
 docs/source/tutorials/*.cif
 docs/source/tutorials/*.mcif
+# files written when running the docs notebooks
+docs/source/tutorials/*.ubi
+docs/source/tutorials/*.map
+docs/source/tutorials/*.par
+docs/source/tutorials/*.flt
+docs/source/tutorials/*.flt.new
+docs/source/examples/*.ubi
+docs/source/examples/*.map
+docs/source/examples/*.par
+docs/source/examples/*.flt
+docs/source/examples/*.flt.new
+docs/source/*/dual_peaks.png
+docs/source/*/dual_peaks.pdf
+docs/source/*/graz_peaks.png
+docs/source/*/graz_peaks.pdf
 
 # local packages
 anri/sandbox/jaxkd
