@@ -21,6 +21,7 @@ from ._impl.scan import (
     propagate_cov_scan_all_both,
     propagate_cov_scan_all_grains,
     propagate_cov_scan_all_grains_both,
+    propagate_cov_scan_both,
 )
 
 # fmt: off
@@ -34,7 +35,6 @@ __all__ = [
     "get_centroid_scan_all_grains",
     "get_centroid_scan_all_grains_both",
     "get_centroid_scan_both",
-    "get_centroid_scan_pairs_both",
     "get_cov_in",
     "hkl_to_k_omega",
     "hkl_to_k_omega_both",
