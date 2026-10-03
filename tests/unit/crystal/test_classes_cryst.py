@@ -78,9 +78,38 @@ class TestUnitCell(unittest.TestCase):
 CIF_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cif")
 
 
+class TestSymmetry(unittest.TestCase):
+    def test_number_and_name(self):
+        by_number = anri.crystal.Symmetry.from_number(225)
+        by_name = anri.crystal.Symmetry.from_name("Fm-3m")
+        for sym in (by_number, by_name):
+            self.assertEqual(sym.sgno, 225)
+            self.assertIn("Fm-3m", sym.sgname)
+        ops = np.asarray(by_number.sym_ops)
+        self.assertEqual(ops.shape, (192, 3, 3))  # 48 point operations x 4 F-centring translations
+        np.testing.assert_allclose(ops @ ops.transpose(0, 2, 1), np.broadcast_to(np.eye(3), ops.shape), atol=1e-12)
+
+
 class TestStructure(unittest.TestCase):
     def setUp(self):
         self.struc = anri.crystal.Structure.from_cif(os.path.join(CIF_DIR, "Fe.cif"))
+
+    def test_needs_make_hkls(self):
+        for name in ("allhkls", "alltth", "allds", "rings_table", "rings_dict", "ringhkls", "ringhkls_arr", "ringtth",
+                     "ringds", "ringmult"):  # fmt: skip
+            with self.subTest(name), self.assertRaises(AttributeError):
+                getattr(self.struc, name)
+
+    def test_expand_to_p1(self):
+        self.struc.make_hkls(dsmax=1.0, wavelength=0.3)
+        n_p1 = self.struc.allhkls.shape[0]
+        self.assertEqual(self.struc.alltth.shape, (n_p1,))
+        self.assertEqual(self.struc.allds.shape, (n_p1,))
+        unique = anri.crystal.Structure.from_cif(os.path.join(CIF_DIR, "Fe.cif"))
+        unique.make_hkls(dsmax=1.0, wavelength=0.3, expand_to_p1=False)
+        # one hkl per set of symmetry-equivalent reflections: fewer hkls, the same d* values
+        self.assertLess(unique.allhkls.shape[0], n_p1)
+        np.testing.assert_allclose(np.unique(np.round(unique.allds, 5)), np.unique(np.round(self.struc.allds, 5)))
 
     def test_thermal_factor_warning(self):
         import warnings
@@ -98,3 +127,18 @@ class TestStructure(unittest.TestCase):
             warnings.simplefilter("error")
             _ = built.rings_table
 
+
+class TestGrain(unittest.TestCase):
+    def test_u_and_ub(self):
+        from ImageD11.grain import grain as grain_id11
+
+        import anri.geom
+
+        B = anri.crystal.lpars_to_B(jnp.array([4.9, 4.9, 5.4, 90.0, 90.0, 120.0]))
+        U = anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0) @ anri.geom.rot_y(10.0)
+        ubi = jnp.linalg.inv(U @ B)
+        g = anri.crystal.Grain(ubi)
+        np.testing.assert_allclose(g.UB, U @ B, atol=1e-12)
+        np.testing.assert_allclose(g.U, U, atol=1e-12)
+        np.testing.assert_allclose(g.U, grain_id11(np.asarray(ubi)).U, atol=1e-10)
+        np.testing.assert_allclose(g.lattice_parameters, [4.9, 4.9, 5.4, 90.0, 90.0, 120.0], atol=1e-10)
