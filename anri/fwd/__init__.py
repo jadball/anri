@@ -4,7 +4,10 @@ from ._impl.base import get_cov_in, hkl_to_k_omega, hkl_to_k_omega_both, propaga
 from ._impl.box import (
     get_centroid_box,
     get_centroid_box_all,
+    get_centroid_box_all_both,
     get_centroid_box_all_grains,
+    get_centroid_box_all_grains_both,
+    get_centroid_box_both,
     propagate_cov_box,
     propagate_cov_box_all,
     propagate_cov_box_all_grains,
@@ -28,7 +31,10 @@ from ._impl.scan import (
 __all__ = [
     "get_centroid_box",
     "get_centroid_box_all",
+    "get_centroid_box_all_both",
     "get_centroid_box_all_grains",
+    "get_centroid_box_all_grains_both",
+    "get_centroid_box_both",
     "get_centroid_scan",
     "get_centroid_scan_all",
     "get_centroid_scan_all_both",

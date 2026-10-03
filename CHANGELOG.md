@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- `anri.fwd.get_centroid_box_both` (and `_all_grains_both`, `_all_both`): both Friedel peak centroids of a box-beam forward projection from one call, like `get_centroid_scan_both`.
+
 ### Fixed
 
 - `anri.crystal.__all__` and `anri.fwd.__all__` listed functions that don't exist, so `from anri.crystal import *` failed. `anri.fwd` now exports `propagate_cov_scan_both`.
