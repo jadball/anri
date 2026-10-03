@@ -7,6 +7,7 @@ import jax
 import numpy as np
 
 from anri.io import (
+    beam_from_pars,
     detector_from_pars,
     entries_from_tensormap,
     geom_from_pars,
@@ -201,6 +202,17 @@ class TestSimulateSparse(unittest.TestCase):
 
 
 class TestGeomFromPars(unittest.TestCase):
+    def test_beam_direction(self):
+        np.testing.assert_allclose(beam_from_pars({"wavelength": 0.3})["k_in_lab"], [1.0, 0.0, 0.0])
+        k = beam_from_pars({"wavelength": 0.3}, k_in_lab=[2.0, 0.0, 0.1])["k_in_lab"]
+        np.testing.assert_allclose(k, np.array([2.0, 0.0, 0.1]) / np.hypot(2.0, 0.1))
+        pars = {
+            "y_center": 1024.0, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1024.0, "z_size": 75.0, "tilt_z": 0.0,
+            "tilt_x": 0.0, "distance": 150e3, "o11": 1, "o12": 0, "o21": 0, "o22": 1, "wavelength": 0.3,
+        }  # fmt: skip
+        geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0, k_in_lab=[2.0, 0.0, 0.1])
+        np.testing.assert_allclose(geom["k_in_lab"], k)
+
     def test_omegasign(self):
         self.assertEqual(gonio_from_pars({"wedge": 2.5, "chi": 1.0}, 0.3), {"wedge": -2.5, "chi": 1.0, "y0": 0.3})
         with self.assertRaises(ValueError):

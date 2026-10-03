@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import h5py
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import ArrayLike
 
 import anri.geom
 from anri.fwd._impl.render import make_row, render_row
@@ -84,15 +85,24 @@ def gonio_from_pars(pars: dict, y0: float) -> dict:
     }
 
 
-def beam_from_pars(pars: dict) -> dict:
-    """Beam from ImageD11 parameters: ``wavelength`` (angstrom), along the lab x axis.
+def beam_from_pars(pars: dict, k_in_lab: ArrayLike | None = None) -> dict:
+    """Beam from ImageD11 parameters: ``wavelength`` (angstrom), and a direction.
+
+    Parameters
+    ----------
+    pars
+        ImageD11 parameters with ``wavelength``. ImageD11 has no beam direction: its beam is along lab x.
+    k_in_lab
+        [3] Direction of the incoming beam in the lab frame (default lab x), normalised here. It must not be
+        vertical: beam divergence and polarisation are defined across it, see :func:`anri.geom.beam_basis`.
 
     Returns
     -------
     beam: dict
         "wavelength" and "k_in_lab" [3], the unit vector of the incoming beam
     """
-    return {"wavelength": float(pars["wavelength"]), "k_in_lab": jnp.array([1.0, 0.0, 0.0])}
+    k = jnp.array([1.0, 0.0, 0.0]) if k_in_lab is None else jnp.asarray(k_in_lab, dtype=float)
+    return {"wavelength": float(pars["wavelength"]), "k_in_lab": k / jnp.linalg.norm(k)}
 
 
 def geom_from_pars(
@@ -105,6 +115,7 @@ def geom_from_pars(
     voxel_size: float,
     pol_factor: float = 1.0,
     sig_psf: float = 0.0,
+    k_in_lab: ArrayLike | None = None,
 ) -> dict:
     """Build the geometry dict for :func:`anri.fwd.render_row` from ImageD11 parameters.
 
@@ -130,9 +141,11 @@ def geom_from_pars(
         Standard deviation of the detector point spread, in pixels. Spots much narrower than a pixel have
         intensity-weighted centroids snapped towards pixel centres (by up to ~0.3 px at 0.1 px wide); a real
         detector's point spread prevents that.
+    k_in_lab
+        [3] Direction of the incoming beam (default lab x), see :func:`beam_from_pars`
     """
     return {
-        **beam_from_pars(pars),
+        **beam_from_pars(pars, k_in_lab),
         **gonio_from_pars(pars, y0),
         **detector_from_pars(pars),
         "sig_wavelength": sig_wavelength,
