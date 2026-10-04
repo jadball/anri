@@ -57,10 +57,20 @@ Anri currently uses the FABLE geometry definitions for detector space.
 Forward Modeling
 ================
 
-There's a very basic demonstration of how to perform a forward model with Anri, and a walk through the renderer that simulates whole scanning 3DXRD datasets.
+There's a very basic demonstration of how to perform a forward model with Anri, a walk through the renderer that simulates whole scanning 3DXRD datasets, and a DCT scan rendered with it (a stored run: it needs a GPU, so it is not re-executed when the docs are built).
 
 .. nbgallery::
     
     forward_model_simple
     forward_model_covariance
     renderer
+    dct
+
+Refinement
+==========
+
+The renderer is differentiable, so a map can be refined against measured sparse pixels directly.
+
+.. nbgallery::
+
+    refine
