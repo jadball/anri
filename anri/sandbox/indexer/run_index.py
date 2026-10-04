@@ -38,7 +38,7 @@ p.add_argument("--rings", type=int, default=6, help="number of rings used (defau
 p.add_argument("--grid", type=float, help="orientation grid step, deg (default: the coarsest of 3, 2.5, 2, 1.5, 1 whose "
                "chance completeness is at most --max-chance)")
 p.add_argument("--max-chance", type=float, default=0.5, help="chance completeness allowed by the automatic grid (default 0.5)")
-p.add_argument("--keep", type=int, default=3000, help="at most this many orientations for the occupancy fit (default 3000)")
+p.add_argument("--keep", type=int, default=100000, help="at most this many orientations for the occupancy fit (default 100000)")
 p.add_argument("--min-comp", type=float, help="keep orientations with at least this completeness (default: halfway "
                "between the grid's median, the chance level, and its maximum)")
 p.add_argument("--iter", type=int, default=10, help="MLEM iterations (default 10)")
