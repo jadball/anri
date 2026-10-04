@@ -79,6 +79,13 @@ anri/sandbox/forward_backward/optax
 # sandbox
 # for now, ignore whole sandbox during dev
 anri/sandbox/*
+# except the indexer's code (not its outputs)
+!anri/sandbox/indexer/
+anri/sandbox/indexer/*.h5
+anri/sandbox/indexer/*.npz
+anri/sandbox/indexer/*.png
+anri/sandbox/indexer/*.log
+anri/sandbox/indexer/*.xdmf
 anri/sandbox/forward_backward/*.cif
 anri/sandbox/forward_backward/*.par
 anri/sandbox/forward_backward/*.json
