@@ -16,6 +16,8 @@ API reference
     diffract
     geom
     fwd
+    index
     io
+    phantom
     refine
     utils

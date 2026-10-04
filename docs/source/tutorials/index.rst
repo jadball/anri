@@ -74,3 +74,15 @@ The renderer is differentiable, so a map can be refined against measured sparse 
 .. nbgallery::
 
     refine
+
+Indexing
+========
+
+Indexing finds each voxel's orientations from the data alone, by fitting every voxel's orientation occupancies jointly with the forward model.
+The first notebook makes a phantom microstructure (grains, misoriented cells and twins), the second simulates a scan of it and indexes it from scratch.
+Both are stored runs: they are not re-executed when the docs are built.
+
+.. nbgallery::
+
+    phantom
+    indexing
