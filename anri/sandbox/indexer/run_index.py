@@ -1,7 +1,8 @@
 """Index an ImageD11 S3DXRD dataset from scratch and write a TensorMap (the highest-occupancy orientation per voxel).
 
 Coarse histograms of the sparse pixels, a cubic fundamental-zone grid pruned by completeness, then MLEM occupancy of
-the kept orientations on an NK x NK voxel grid (NK = number of dty bins, voxel = dty step).
+the kept orientations on an NR x NR voxel grid (voxel = dty step; NR = number of dty bins + ImageD11's
+sino_shift_and_pad padding, so the grid matches ImageD11's reconstructions and is centred on the rotation axis).
 
     python run_index.py <analysisroot> <sample> <dataset> [--phase NAME] [--parfile pars.json] [--check] ...
 
@@ -144,7 +145,20 @@ hkls = jnp.asarray(h_all[ok][sel], F32)
 ring_of_h = jnp.asarray(np.repeat(ring_all[sel], 2), jnp.int32)  # j = h * 2 + branch
 ring_tth = jnp.asarray(ring_tth_all[: args.rings], F32)
 NJ = 2 * hkls.shape[0]
-NV = NK * NK
+
+
+def sino_shift_and_pad(y0: float, ny: int, ymin: float, ystep: float) -> tuple:
+    """ImageD11.sinograms.geometry.sino_shift_and_pad as of 2026-10 (older installed versions lack the odd-size rule)."""
+    shift = ny // 2 - (y0 - ymin) / ystep
+    pad = int(np.ceil(abs(shift) * 2)) + 1
+    if (ny + pad) % 2 == 0:  # keep the reconstruction odd-sized
+        pad += 1
+    return shift, pad
+
+
+_, PAD = sino_shift_and_pad(Y0, NK, float(ybin[0]), YSTEP)  # as ImageD11 pads its reconstructions
+NR = NK + int(PAD)  # recon grid NR x NR, centred on the rotation axis
+NV = NR * NR
 QC = int(max(1, 2 ** np.floor(np.log2(max(1, 2e9 / (NV * NJ * 64))))))  # orientations per chunk: ~2 GB of system entries
 
 log(f"dataset {dsfile}")
@@ -155,7 +169,7 @@ log(f"geometry: wavelength {WL:.5f}, distance {geo['distance']:g}; y0 {Y0:.6g}"
     f"(motor {DTYM}); omega {OM0:.4g} .. {oedge[-1]:.4g} in {len(oedge) - 1} frames (motor {OMM}); beam FWHM {BEAM:g}"
     + ("" if args.beam is not None else " (placeholder: one dty step)"))
 log(f"{hkls.shape[0]} hkls in {args.rings} rings at 2theta {', '.join(f'{v:.2f}' for v in ring_tth_all[: args.rings])}; "
-    f"grid {args.grid} deg, keep {args.keep}, {args.iter} MLEM iterations, voxels {NK} x {NK}, {QC} orientations per chunk")
+    f"grid {args.grid} deg, keep {args.keep}, {args.iter} MLEM iterations, voxels {NR} x {NR} ({NK} dty bins + pad {int(PAD)}), {QC} orientations per chunk")
 if args.check:
     raise SystemExit(0)
 
@@ -219,8 +233,8 @@ eta, om, ok_, lp = X.predict_lp(rod_s, jnp.asarray(B), hkls, geom)
 use = ok_ & (jnp.abs(jnp.sin(jnp.radians(eta))) > args.etacut) & (jnp.arange(nq + pad_q) < nq)[:, None]
 pred = (eta, om, use, jnp.where(use, lp, 0.0))  # F^2 = 1
 dims = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O)
-ri, rj = np.meshgrid(np.arange(NK), np.arange(NK), indexing="ij")
-sx, sy = recon_to_sample(ri, rj, (NK, NK), YSTEP)
+ri, rj = np.meshgrid(np.arange(NR), np.arange(NR), indexing="ij")
+sx, sy = recon_to_sample(ri, rj, (NR, NR), YSTEP)
 pos = jnp.asarray(np.stack([sx.ravel(), sy.ravel(), np.zeros(NV)], 1), F32)
 scan = {"y0": Y0, "dty0": DTY0, "ystep": YSTEP, "n_rows": NK, "om0": OM0}
 f0 = jnp.ones((NV, nq + pad_q), F32)
@@ -244,10 +258,10 @@ occupied = tot > 0.05 * np.percentile(tot, 99)
 log(f"voxels with occupancy: {occupied.sum()} of {NV}; top share median {np.median(share[occupied]):.2f}; "
     f"distinct orientations used {len(np.unique(best[occupied]))}")
 to_map = TensorMap.recon_order_to_map_order
-tmap = TensorMap(maps={"UBI": to_map(np.where(occupied[:, None, None], ubi, np.nan).reshape(NK, NK, 3, 3)),
-                       "phase_ids": to_map(np.where(occupied, 0, -1).reshape(NK, NK)),
-                       "occupancy": to_map(tot.reshape(NK, NK)), "best_share": to_map(share.reshape(NK, NK)),
-                       "orientation_id": to_map(np.where(occupied, best, -1).reshape(NK, NK))}, steps=[YSTEP] * 3)  # fmt: skip
+tmap = TensorMap(maps={"UBI": to_map(np.where(occupied[:, None, None], ubi, np.nan).reshape(NR, NR, 3, 3)),
+                       "phase_ids": to_map(np.where(occupied, 0, -1).reshape(NR, NR)),
+                       "occupancy": to_map(tot.reshape(NR, NR)), "best_share": to_map(share.reshape(NR, NR)),
+                       "orientation_id": to_map(np.where(occupied, best, -1).reshape(NR, NR))}, steps=[YSTEP] * 3)  # fmt: skip
 tmap.phases = {0: unitcell(lpars, sg, name=phase)}
 tmap.get_ipf_maps()
 _ = tmap.euler
