@@ -99,8 +99,9 @@ def _prepare(peaks: list, rows: list, meas: list, window: tuple[int, int, int], 
             sel = k == c
             if not sel.any():
                 continue
-            size = max(1024, batch * window[0] // wo)  # bigger windows, smaller batches
             n = int(sel.sum())
+            # bigger windows, smaller batches; small problems, small batches (a power of two: few compiled shapes)
+            size = min(max(1024, batch * window[0] // wo), max(256, 1 << int(np.ceil(np.log2(n)))))
             nb = 1 << int(np.ceil(np.log2(-(-n // size))))
             pad = nb * size - n
             arr = [jnp.asarray(np.pad(x[sel], (0, pad)).reshape(nb, size)) for x in (e, h, b)]
