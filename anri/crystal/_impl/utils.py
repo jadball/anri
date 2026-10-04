@@ -9,6 +9,8 @@ I have deliberately avoided defining the direct matrix $\matr{A}$, because you h
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+from jax.typing import ArrayLike
 
 
 @jax.jit
@@ -306,3 +308,32 @@ def lpars_to_B(lpars: jax.Array) -> jax.Array:
     rlpars = mt_to_lpars(rmt)
     B = lpars_rlpars_to_B(lpars, rlpars)
     return B
+
+
+def allowed_hkls(hkls: ArrayLike, sym_matrices: ArrayLike, tol: float = 1e-6) -> np.ndarray:
+    """Mark the reflections that are not systematically absent in a space group.
+
+    ``h`` is absent if some operation ``(R, t)`` has ``h R = h`` and ``h . t`` not an integer: then
+    ``F(h) = exp(2 pi i h . t) F(h)``, so ``F(h) = 0``. This covers lattice centring, screw axes and glide planes.
+
+    Parameters
+    ----------
+    hkls
+        [N, 3] reflections
+    sym_matrices
+        [M, 4, 4] space-group operations ``(R, t)`` on fractional coordinates, e.g.
+        :attr:`anri.crystal.Symmetry.sym_matrices`
+    tol
+        Tolerance for integers
+
+    Returns
+    -------
+    np.ndarray
+        [N] True where the reflection is allowed
+    """
+    hkls, sym = np.asarray(hkls, float), np.asarray(sym_matrices, float)
+    R, t = sym[:, :3, :3], sym[:, :3, 3]
+    fixed = np.all(np.abs(np.einsum("ni,mij->nmj", hkls, R) - hkls[:, None, :]) < tol, -1)  # [N, M]: h R = h
+    phase = np.einsum("ni,mi->nm", hkls, t)
+    shifted = np.abs(phase - np.round(phase)) > tol
+    return ~np.any(fixed & shifted, 1)

@@ -1,9 +1,23 @@
 """Crystallography-related utilities and functions."""
 
 from ._impl.classes import Crystal, Grain, Structure, Symmetry, UnitCell
+from ._impl.orientation import (
+    cubic_grid_misorientation,
+    cubochoric_quaternions,
+    disorientation,
+    laue_rotations,
+    mat_to_quat,
+    mat_to_rod,
+    orientation_grid,
+    quat_mul,
+    quat_to_mat,
+    rod_to_mat,
+    to_fundamental_zone,
+)
 from ._impl.utils import (
     B_to_rmt,
     UBI_to_mt,
+    allowed_hkls,
     lpars_rlpars_to_B,
     lpars_to_B,
     lpars_to_mt,
@@ -21,11 +35,23 @@ __all__ = [
     "Symmetry",
     "UBI_to_mt",
     "UnitCell",
+    "allowed_hkls",
+    "cubic_grid_misorientation",
+    "cubochoric_quaternions",
+    "disorientation",
+    "laue_rotations",
     "lpars_rlpars_to_B",
     "lpars_to_B",
     "lpars_to_mt",
+    "mat_to_quat",
+    "mat_to_rod",
     "metric_to_volume",
     "mt_to_lpars",
     "mt_to_rmt",
+    "orientation_grid",
+    "quat_mul",
+    "quat_to_mat",
     "rmt_to_mt",
+    "rod_to_mat",
+    "to_fundamental_zone",
 ]

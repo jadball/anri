@@ -6,6 +6,7 @@ import Dans_Diffraction as dif
 import Dans_Diffraction.functions_lattice
 import jax
 import jax.numpy as jnp
+import numpy as np
 import polars as pd
 from Dans_Diffraction.classes_crystal import Cell as dd_Cell
 from Dans_Diffraction.classes_crystal import Crystal as dd_Crystal
@@ -165,6 +166,11 @@ class Symmetry:
     def sym_ops(self) -> jax.Array:
         """Return the symmetry operators."""
         return jnp.array(self._sym.symmetry_matrices)[:, :3, :3]
+
+    @property
+    def sym_matrices(self) -> np.ndarray:
+        """Return the symmetry operations as [M, 4, 4] matrices ``(R, t)`` on fractional coordinates."""
+        return np.asarray(self._sym.symmetry_matrices, float)
 
 
 class Crystal(UnitCell, Symmetry):
