@@ -9,7 +9,8 @@ sino_shift_and_pad padding, so the grid matches ImageD11's reconstructions and i
 Paths follow ImageD11's layout: {analysisroot}/{sample}/{sample}_{dataset}/{sample}_{dataset}_dataset.h5 and _sparse.h5.
 Parameters: the geometry and the phase's lattice and space group (number) come from pars.json (the dataset's parfile
 if it exists here, else pars/pars.json beside PROCESSED_DATA, or --parfile). The scan (y0, dty and omega bins, motor
-names) comes from the dataset file (y0 can be overridden with --y0); each frame's row is the dty bin of its motor reading. Lengths are in the units of
+names) comes from the dataset file (y0 can be overridden with --y0, and must be if the dataset has none; if the
+sparse file has no dty column, each scan's dty comes from the dataset); each frame's row is the dty bin of its motor reading. Lengths are in the units of
 the dataset's dty and the geometry file, which must agree. No spatial distortion correction yet; F^2 = 1 (no atoms).
 """
 
@@ -44,6 +45,8 @@ p.add_argument("--tth-tol", type=float, help="2theta tolerance of the rings (deg
 p.add_argument("--tol-eta", type=float, help="eta tolerance (deg; default: per prediction, from the grid and the rings)")
 p.add_argument("--tol-omega", type=float, help="omega tolerance (deg; default: per prediction, from the grid and frames)")
 p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the dataset's y0)")
+p.add_argument("--gridstep", type=int, default=1,
+               help="voxel = gridstep x dty step; data rows are summed in groups of gridstep to match (default 1)")
 p.add_argument("--outdir", default=os.path.dirname(os.path.abspath(__file__)))
 p.add_argument("--check", action="store_true", help="print the resolved paths and parameters, then stop")
 args = p.parse_args()
@@ -92,12 +95,18 @@ dsfile = os.path.join(dsdir, f"{dsname}_dataset.h5")
 sparsefile = os.path.join(dsdir, f"{dsname}_sparse.h5")
 with h5py.File(dsfile, "r") as h:
     attrs = dict(h.attrs)
+    if args.y0 is None and "y0" not in attrs:
+        raise SystemExit(f"{dsfile} has no y0: give it with --y0")
     Y0 = float(attrs["y0"]) if args.y0 is None else args.y0
     ybin, yedge = h["ybincens"][()], h["ybinedges"][()]
+    ds_dty = h["dty"][()]  # [scans, frames]: for sparse files without a dty column
+    ds_scans = [x.decode() if isinstance(x, bytes) else str(x) for x in h["scans"][()]]
     oedge = h["obinedges"][()]
 parfile = args.parfile
 if parfile is None:
     parfile = str(attrs.get("parfile", ""))
+    if parfile and not os.path.isabs(parfile):
+        parfile = os.path.normpath(os.path.join(dsdir, parfile))
     if not os.path.exists(parfile):  # e.g. the dataset was processed elsewhere: pars/ beside PROCESSED_DATA
         root = os.path.abspath(args.analysisroot)
         while os.path.basename(root) != "PROCESSED_DATA" and root != os.path.dirname(root):
@@ -109,11 +118,21 @@ phases = pj["phases"]
 phase = args.phase or (next(iter(phases)) if len(phases) == 1 else None)
 if phase is None:
     raise SystemExit(f"several phases in {parfile}: {list(phases)}; choose one with --phase")
-geo = read_par(os.path.join(pdir, pj["geometry"]["file"]))
-ph = read_par(os.path.join(pdir, phases[phase]["file"]))
+
+
+def par_path(f: str) -> str:
+    """A file named in pars.json: relative to it, or (absolute but missing here) by name beside it."""
+    f = os.path.join(pdir, f)
+    return f if os.path.exists(f) else os.path.join(pdir, os.path.basename(f))
+
+
+geo = read_par(par_path(pj["geometry"]["file"]))
+ph = read_par(par_path(phases[phase]["file"]))
 
 # ------------------------------------------------------------------------------------------------- scan
-YSTEP, DTY0, NK = float(np.median(np.diff(ybin))), float(ybin[0]), len(ybin)
+G = args.gridstep
+YSTEP0, NK0 = float(np.median(np.diff(ybin))), len(ybin)
+YSTEP, DTY0, NK = G * YSTEP0, float(ybin[0]) + 0.5 * (G - 1) * YSTEP0, -(-NK0 // G)  # rows summed in groups of G
 OM0 = float(oedge[0])
 OSTEP = float(np.median(np.diff(oedge)))
 N_E, N_O = int(round(360 / B_E)), int(round((oedge[-1] - oedge[0]) / B_O))
@@ -170,8 +189,10 @@ log(f"sparse  {sparsefile}")
 log(f"pars    {parfile}: phase {phase}, lattice {', '.join(f'{v:g}' for v in lpars)}, space group {sg} ({crystal.sgname})")
 log(f"geometry: wavelength {WL:.5f}, distance {geo['distance']:g}; y0 {Y0:.6g}"
     f"{' (override)' if args.y0 is not None else ''}; dty {DTY0:.6g} + {NK} x {YSTEP:.6g} "
-    f"(motor {DTYM}); omega {OM0:.4g} .. {oedge[-1]:.4g} in {len(oedge) - 1} frames of {OSTEP:.4g} (motor {OMM}); beam FWHM {BEAM:g}"
+    f"(motor {DTYM}{'' if G == 1 else f', rows summed in groups of {G}'}); omega {OM0:.4g} .. {oedge[-1]:.4g} in "
+    f"{len(oedge) - 1} frames of {OSTEP:.4g} (motor {OMM}); beam FWHM {BEAM:g}"
     + ("" if args.beam is not None else " (placeholder: one dty step)"))
+log(f"occupancies: {NV} voxels x {args.keep} orientations = {NV * args.keep * 4 / 1e9:.1f} GB (float32)")
 log(f"{hkls.shape[0]} hkls in {args.rings} rings at 2theta {', '.join(f'{v:.2f}' for v in ring_tth_all[: args.rings])}; "
     f"grid {args.grid} deg, keep {args.keep}, {args.iter} MLEM iterations, voxels {NR} x {NR} ({NK} dty bins + pad {int(PAD)}), {QC} orientations per chunk")
 if args.check:
@@ -184,9 +205,12 @@ def stream(h, names):  # noqa: ANN001, ANN201
         gr = h[name]
         nnz = gr["nnz"][()]
         om_f = gr[f"measurement/{OMM}"][()].astype(np.float32)
-        dty_f = np.broadcast_to(gr[f"measurement/{DTYM}"][()], nnz.shape)
+        if DTYM in gr["measurement"]:
+            dty_f = np.broadcast_to(gr[f"measurement/{DTYM}"][()], nnz.shape)
+        else:  # no dty column in this sparse file: the dataset's dty for this scan
+            dty_f = ds_dty[ds_scans.index(name)][: len(nnz)]
         k_f = (np.searchsorted(yedge, dty_f) - 1).astype(np.int32)
-        k_f[(k_f < 0) | (k_f >= NK)] = -1
+        k_f = np.where((k_f >= 0) & (k_f < NK0), k_f // G, -1).astype(np.int32)
         ends = np.cumsum(nnz)
         n = int(ends[-1]) if len(ends) else 0
         for s0 in range(0, n, CHUNK):
