@@ -12,6 +12,25 @@ Never make assumptions about the grain maps Anri will see. They can come from ph
 
 **If a method depends on an assumption about the physics, ask the maintainer before relying on it.**
 
+### Microstructures, and why there are no smoothness priors
+
+Anri targets everything from perfect crystals to heavily deformed metals. At the scales that matter (voxels of 0.1-1 µm, rays tens to hundreds of µm long):
+
+- **Annealed grains and single crystals:** orientation constant to below the instrument resolution, with sharp boundaries.
+- **Annealing twins** (Σ3 in 316L, Cu, Ni): sharp planar boundaries (60° about ⟨111⟩), and constant domains from ~100 nm to tens of µm.
+- **Deformed FCC/BCC metals:** lattice curvature is carried by dislocations, which pattern into cells and walls. Orientation is piecewise nearly constant: cells of 0.5-2 µm, walls with 0.1-10° misorientation, accumulating like a random walk. Peaks are sharp sub-spots plus a diffuse cloud (Jakobsen et al., Science 2006), not smooth streaks.
+- **Additively manufactured metals** (e.g. L-PBF 316L): melt pools, then columnar grains, then solidification cells of 0.3-1 µm with dislocation walls and ≲0.5° misorientations, plus degrees of drift along a column and large cell-scale residual stresses.
+- **Lath martensite, bainite, Ti α laths:** a few discrete variants per voxel, related by an orientation relationship, each with 1-2° spread; sometimes two phases.
+- **Deformation and nano-twins:** lamellae much thinner than a voxel, so a voxel holds two orientations with a volume fraction.
+- **Genuinely smooth fields** (elastic bending, undulose extinction, elastic strain away from defects): the exception, not the rule.
+
+Consequences for models:
+
+- **A voxel's orientation distribution is a small mixture of populations** (cells, domains, variants), each nearly constant with a small intrinsic spread. Represent it with multiple map entries per voxel, each with its own density (volume fraction) and, where needed, its own spread.
+- **No coupling between voxels:** no smoothness, interpolation, total variation or basis-function priors on orientation or strain. They suppress exactly the local variation Anri exists to measure, as ImageD11's path averaging does.
+- **Report what the data cannot resolve:** populations closer than the instrument resolution cannot be separated, so report a mean and a spread rather than inventing structure.
+- **Test on realistic phantoms:** with orientation spread along the rays (cell structures, twins, AM-like hierarchies), not uniform grains or linear gradients on a voxel grid. A uniform orientation per voxel turns a gradient into an unphysical ladder of sub-peaks.
+
 ## Use JAX
 
 Anri code should use JAX wherever possible: `jit`, `vmap`, `lax.map`/`scan`, sharding.
