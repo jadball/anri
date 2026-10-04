@@ -223,6 +223,15 @@ def _centroid(
 _propagate = make_propagator(_centroid, argnums=(4, 5, 6), has_aux=True, out_elems=_COV_ELEMS)
 
 
+_CROSS_GENERATORS = np.array(
+    [
+        [[0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]],
+        [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [-1.0, 0.0, 0.0]],
+        [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+    ]
+)  # [r]x = sum_i r_i G_i
+
+
 def _centroid_rotated(
     ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, rotvec: jax.Array, dty: ArrayLike, geom: dict
 ) -> tuple[jax.Array, jax.Array]:
@@ -230,9 +239,9 @@ def _centroid_rotated(
 
     UB -> R UB, so UBI -> UBI R^T, with R = I + [rotvec]x: exact to first order, which is all the propagation uses.
     """
-    rx, ry, rz = rotvec[0], rotvec[1], rotvec[2]
-    zero = jnp.zeros_like(rx)
-    cross = jnp.stack([jnp.stack([zero, -rz, ry]), jnp.stack([rz, zero, -rx]), jnp.stack([-ry, rx, zero])])
+    # [rotvec]x as a sum over generators, not a stack: under shard_map the rotation's tangent varies across devices
+    # while a zeros_like does not, and newer JAX refuses to stack the two
+    cross = jnp.tensordot(rotvec, jnp.asarray(_CROSS_GENERATORS, rotvec.dtype), 1)
     return _centroid(
         ubi @ (jnp.eye(3, dtype=ubi.dtype) + cross).T, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty, geom
     )
