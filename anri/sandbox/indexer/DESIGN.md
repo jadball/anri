@@ -1,3 +1,5 @@
+> **Moved (2026-10-05):** the indexer is now `anri.index` (and `python -m anri.index`), the phantom `anri.phantom`, orientations and grids `anri.crystal`. This file is the design history.
+
 # A forward-model indexer for scanning 3DXRD (draft for review)
 
 Status (2026-10-04 20:10). The text below is the first draft. Since then the maintainer decided:
