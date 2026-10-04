@@ -237,3 +237,18 @@ def mlem(d, pred, ring_j, pos, scan, dims, f0, n_iter, log=print, qc=16):  # noq
             dev = 2 * float(jnp.sum(jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / jnp.maximum(Af, 1e-30)), 0.0) - d + Af))
             log(f"  MLEM {it}: deviance {dev:.4g}")
     return f
+
+
+# ----------------------------------------------------------------------------------------------- crystallography
+def allowed(hkls: np.ndarray, sym_matrices: np.ndarray, tol: float = 1e-6) -> np.ndarray:
+    """[N] False for systematically absent reflections of a space group.
+
+    hkls [N, 3]; sym_matrices [M, 4, 4] space-group operations (R, t) on fractional coordinates (Dans_Diffraction's
+    Symmetry.symmetry_matrices). h is absent if some operation has h R = h and h . t not an integer: then F(h) =
+    exp(2 pi i h . t) F(h), so F(h) = 0. Covers lattice centring, screw axes and glide planes.
+    """
+    R, t = sym_matrices[:, :3, :3], sym_matrices[:, :3, 3]
+    fixed = np.all(np.abs(np.einsum("ni,mij->nmj", hkls, R) - hkls[:, None, :]) < tol, -1)  # [N, M]: h R = h
+    phase = np.einsum("ni,mi->nm", hkls, t)
+    shifted = np.abs(phase - np.round(phase)) > tol
+    return ~np.any(fixed & shifted, 1)
