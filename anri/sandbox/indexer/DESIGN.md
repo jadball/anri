@@ -10,6 +10,12 @@ Implemented in index.py, run_phantom.py and run_tognan.py:
 - **Phantom:** 99.3% of voxels within 1°.
 - **Tognan:** a map that matches ImageD11's well but with poor fidelity. Pruning is arbitrary on crowded data; see the memory note "indexer" for the issues and next steps.
 
+Since then (2026-10-04, run_index.py):
+
+- **Tolerances from the data:** ring widths are measured in a pre-pass (2theta tolerance per ring); each prediction gets its own eta and omega box from the grid's worst-case misorientation, its ring and |sin eta| (`match_tolerances`), checked with a summed-area table of the lit map (`completeness_tol`). Orientations are kept above a completeness threshold halfway between chance (the grid median) and the maximum.
+- **Test phantom:** `make_phantom.py` renders an AM-like 316L phantom (grains, 1.5 um cells, a twinned grain) as an ImageD11 dataset. On a crowded one (r = 25 um, 40 grains, 0.25 um voxels), at the same number of orientations, the weighted-mean orientation is within 1 deg for 82% of voxels (71% with the old fixed tolerances).
+- **Beam size:** not measurable from edges along dty: inclined boundaries widen every edge (1.4 um beam read as ~2-2.4 um). Measure it at the beamline, or fit it in the refinement.
+
 Written 2026-10-04 after the refinement study (`anri/sandbox/math/NOTES.md`, `anri/sandbox/moments/`).
 
 ## Goal

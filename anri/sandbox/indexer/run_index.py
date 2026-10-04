@@ -33,11 +33,16 @@ p.add_argument("--phase", help="phase name in pars.json (default: the only one)"
 p.add_argument("--parfile", help="pars.json (default: the dataset's parfile, else pars/pars.json beside PROCESSED_DATA)")
 p.add_argument("--rings", type=int, default=6, help="number of rings used (default 6)")
 p.add_argument("--grid", type=float, default=2.5, help="orientation grid step, degrees (default 2.5)")
-p.add_argument("--keep", type=int, default=3000, help="orientations kept for the occupancy fit (default 3000)")
+p.add_argument("--keep", type=int, default=3000, help="at most this many orientations for the occupancy fit (default 3000)")
+p.add_argument("--min-comp", type=float, help="keep orientations with at least this completeness (default: halfway "
+               "between the grid's median, the chance level, and its maximum)")
 p.add_argument("--iter", type=int, default=10, help="MLEM iterations (default 10)")
 p.add_argument("--lit", type=float, default=1.0, help="lit threshold, x the median non-empty bin (default 1)")
-p.add_argument("--etacut", type=float, default=0.1, help="use reflections with |sin eta| above this (default 0.1)")
+p.add_argument("--etacut", type=float, default=0.2, help="use reflections with |sin eta| above this (default 0.2)")
 p.add_argument("--beam", type=float, help="beam FWHM (dty units; default one dty step; not used by the fit yet)")
+p.add_argument("--tth-tol", type=float, help="2theta tolerance of the rings (deg; default: measured per ring)")
+p.add_argument("--tol-eta", type=float, help="eta tolerance (deg; default: per prediction, from the grid and the rings)")
+p.add_argument("--tol-omega", type=float, help="omega tolerance (deg; default: per prediction, from the grid and frames)")
 p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the dataset's y0)")
 p.add_argument("--outdir", default=os.path.dirname(os.path.abspath(__file__)))
 p.add_argument("--check", action="store_true", help="print the resolved paths and parameters, then stop")
@@ -65,8 +70,6 @@ from anri.io import geom_from_pars  # noqa: E402
 F32 = jnp.float32
 B_E, B_O = 0.5, 0.25  # lit-map bins (deg): eta, omega
 R_E, R_O = 2, 4  # MLEM data bins = lit bins x these (1 x 1 deg)
-TOL_E, TOL_O = 0.5, 1.0  # matching tolerance (deg) of the completeness test
-CHUNK = 1 << 24
 
 
 def read_par(path: str) -> dict:
@@ -112,11 +115,12 @@ ph = read_par(os.path.join(pdir, phases[phase]["file"]))
 # ------------------------------------------------------------------------------------------------- scan
 YSTEP, DTY0, NK = float(np.median(np.diff(ybin))), float(ybin[0]), len(ybin)
 OM0 = float(oedge[0])
+OSTEP = float(np.median(np.diff(oedge)))
 N_E, N_O = int(round(360 / B_E)), int(round((oedge[-1] - oedge[0]) / B_O))
 N_O -= N_O % R_O
 DTYM, OMM = str(attrs["dtymotor"]), str(attrs["omegamotor"])
-BEAM = args.beam if args.beam is not None else YSTEP
 WL = geo["wavelength"]
+BEAM = args.beam if args.beam is not None else YSTEP
 geom = geom_from_pars(geo, Y0, WL * 2e-3 / 2.355, 1.5e-4, 1.5e-4, sig_beam=BEAM / 2.355, voxel_size=YSTEP, sig_psf=0.5)
 geom = {k: jnp.asarray(v, F32) if jnp.issubdtype(jnp.asarray(v).dtype, jnp.floating) else v for k, v in geom.items()}
 
@@ -166,7 +170,7 @@ log(f"sparse  {sparsefile}")
 log(f"pars    {parfile}: phase {phase}, lattice {', '.join(f'{v:g}' for v in lpars)}, space group {sg} ({crystal.sgname})")
 log(f"geometry: wavelength {WL:.5f}, distance {geo['distance']:g}; y0 {Y0:.6g}"
     f"{' (override)' if args.y0 is not None else ''}; dty {DTY0:.6g} + {NK} x {YSTEP:.6g} "
-    f"(motor {DTYM}); omega {OM0:.4g} .. {oedge[-1]:.4g} in {len(oedge) - 1} frames (motor {OMM}); beam FWHM {BEAM:g}"
+    f"(motor {DTYM}); omega {OM0:.4g} .. {oedge[-1]:.4g} in {len(oedge) - 1} frames of {OSTEP:.4g} (motor {OMM}); beam FWHM {BEAM:g}"
     + ("" if args.beam is not None else " (placeholder: one dty step)"))
 log(f"{hkls.shape[0]} hkls in {args.rings} rings at 2theta {', '.join(f'{v:.2f}' for v in ring_tth_all[: args.rings])}; "
     f"grid {args.grid} deg, keep {args.keep}, {args.iter} MLEM iterations, voxels {NR} x {NR} ({NK} dty bins + pad {int(PAD)}), {QC} orientations per chunk")
@@ -174,14 +178,9 @@ if args.check:
     raise SystemExit(0)
 
 # ------------------------------------------------------------------------------------------------- 1. histograms
-# the lit map (no rows, fine bins) for pruning; the MLEM data (1 x 1 deg, with rows). Every frame's row is the dty bin
-# of its motor reading, so one group per row and one group for the whole scan both work.
-H_lit = jnp.zeros(args.rings * N_E * N_O, F32)
-H = jnp.zeros(args.rings * (N_E // R_E) * (N_O // R_O) * NK, F32)
-t1 = time.perf_counter()
-n_tot = 0
-with h5py.File(sparsefile, "r") as h:
-    for name in h.keys():
+def stream(h, names):  # noqa: ANN001, ANN201
+    """(x, val, row) per chunk of CHUNK pixels (padded: val 0, row -1) of the groups names of the sparse file h."""
+    for name in names:
         gr = h[name]
         nnz = gr["nnz"][()]
         om_f = gr[f"measurement/{OMM}"][()].astype(np.float32)
@@ -190,19 +189,49 @@ with h5py.File(sparsefile, "r") as h:
         k_f[(k_f < 0) | (k_f >= NK)] = -1
         ends = np.cumsum(nnz)
         n = int(ends[-1]) if len(ends) else 0
-        n_tot += n
         for s0 in range(0, n, CHUNK):
             m = min(CHUNK, n - s0)
             fr = np.searchsorted(ends, np.arange(s0, s0 + m), side="right")
             pad = lambda a, dt=np.float32: jnp.asarray(np.pad(np.asarray(a).astype(dt), (0, CHUNK - m)))  # noqa: E731
             x = X.pixels_to_x(pad(gr["row"][s0:s0 + m]), pad(gr["col"][s0:s0 + m]), pad(om_f[fr]), geom)
             live = jnp.arange(CHUNK) < m
-            v = jnp.where(live, pad(gr["intensity"][s0:s0 + m]), 0.0)
-            H_lit = H_lit + X.histogram(x, v, jnp.zeros(CHUNK, jnp.int32), ring_tth, 0.1, OM0, B_E, B_O, n_ring=args.rings,
-                                        n_e=N_E, n_o=N_O, n_k=1)  # fmt: skip
-            rows = jnp.where(live, pad(k_f[fr], np.int32), -1)
-            H = H + X.histogram(x, v, rows, ring_tth, 0.1, OM0, B_E * R_E, B_O * R_O, n_ring=args.rings, n_e=N_E // R_E,
-                                n_o=N_O // R_O, n_k=NK)  # fmt: skip
+            yield x, jnp.where(live, pad(gr["intensity"][s0:s0 + m]), 0.0), jnp.where(live, pad(k_f[fr], np.int32), -1), m
+
+
+with h5py.File(sparsefile, "r") as h:
+    names = list(h.keys())
+    n_max = max(int(h[nm]["nnz"][()].sum()) for nm in names)
+CHUNK = int(min(1 << 24, 1 << max(10, int(np.ceil(np.log2(max(n_max, 1)))))))
+
+# 1a. ring widths (2theta profile of a few groups): the 2theta tolerance per ring, and the rings' spread for eta
+TTH_STEP = 0.002
+tth_lo = float(ring_tth[0]) - 0.5
+n_tth = int(np.ceil((float(ring_tth[-1]) + 0.5 - tth_lo) / TTH_STEP))
+prof = jnp.zeros(n_tth, F32)
+t1 = time.perf_counter()
+with h5py.File(sparsefile, "r") as h:
+    sample = [names[i] for i in np.unique(np.linspace(0, len(names) - 1, min(len(names), 9)).round().astype(int))]
+    for x, v, _, _ in stream(h, sample):
+        prof = prof + X.tth_profile(x, v, tth_lo, TTH_STEP, n=n_tth)
+ring_off, ring_hw = X.ring_widths(np.asarray(prof), tth_lo, TTH_STEP, np.asarray(ring_tth))
+TTH_TOL = np.abs(ring_off) + ring_hw if args.tth_tol is None else np.full(args.rings, args.tth_tol)
+log(f"ring widths from {len(sample)} groups ({time.perf_counter() - t1:.0f} s): offset / half-width (95%) / tolerance, deg: "
+    + "; ".join(f"{o:+.3f} / {w:.3f} / {t:.3f}" for o, w, t in zip(ring_off, ring_hw, TTH_TOL)))
+
+# the lit map (no rows, fine bins) for pruning; the MLEM data (1 x 1 deg, with rows). Every frame's row is the dty bin
+# of its motor reading, so one group per row and one group for the whole scan both work.
+tth_tol = jnp.asarray(TTH_TOL, F32)
+H_lit = jnp.zeros(args.rings * N_E * N_O, F32)
+H = jnp.zeros(args.rings * (N_E // R_E) * (N_O // R_O) * NK, F32)
+t1 = time.perf_counter()
+n_tot = 0
+with h5py.File(sparsefile, "r") as h:
+    for x, v, rows, m in stream(h, names):
+        n_tot += m
+        H_lit = H_lit + X.histogram(x, v, jnp.zeros(CHUNK, jnp.int32), ring_tth, tth_tol, OM0, B_E, B_O, n_ring=args.rings,
+                                    n_e=N_E, n_o=N_O, n_k=1)  # fmt: skip
+        H = H + X.histogram(x, v, rows, ring_tth, tth_tol, OM0, B_E * R_E, B_O * R_O, n_ring=args.rings, n_e=N_E // R_E,
+                            n_o=N_O // R_O, n_k=NK)  # fmt: skip
 jax.block_until_ready(H)
 log(f"histograms: {n_tot / 1e6:.0f}M pixels in {time.perf_counter() - t1:.0f} s; MLEM data {H.size / 1e6:.0f}M bins, "
     f"{float(jnp.mean(H > 0)) * 100:.1f}% non-empty")
@@ -212,19 +241,40 @@ Hs = H_lit.reshape(args.rings, N_E, N_O)
 med = float(jnp.median(Hs[Hs > 0]))
 for kk in (0.0, 1.0, 3.0, 10.0):
     log(f"  lit fraction at {kk:g} x median: {float(jnp.mean(Hs > kk * med)) * 100:.1f}%")
-lit = X.dilate(Hs > args.lit * med, de=int(round(TOL_E / B_E)), do=int(round(TOL_O / B_O)))
-log(f"lit (> {args.lit} x median, dilated +-{TOL_E} / +-{TOL_O} deg): {float(jnp.mean(lit)) * 100:.1f}%")
+table = X.lit_table(Hs > args.lit * med)
+DELTA = X.grid_misorientation(args.grid)
+ring_hw_j = jnp.asarray(ring_hw, F32)
+
+
+def tolerances(eta):  # noqa: ANN001, ANN202
+    te, to = X.match_tolerances(eta, ring_of_h, ring_tth, ring_hw_j, DELTA, OSTEP)
+    te = te if args.tol_eta is None else jnp.full_like(te, args.tol_eta)
+    return te, (to if args.tol_omega is None else jnp.full_like(to, args.tol_omega))
+
+
+th_ = np.radians(np.asarray(ring_tth) / 2)
+log(f"grid {args.grid} deg: up to {DELTA:.2f} deg from the truth; tolerances at |sin eta| = 1 / {args.etacut}: eta "
+    f"{DELTA / np.cos(th_[0]) + ring_hw[0] / np.sin(2 * th_[0]) / np.cos(2 * th_[0]):.2f} (ring 0) .. "
+    f"{DELTA / np.cos(th_[-1]) + ring_hw[-1] / np.sin(2 * th_[-1]) / np.cos(2 * th_[-1]):.2f} (ring {args.rings - 1}) / "
+    f"up to {DELTA / np.cos(th_[-1]) * (1 + np.tan(th_[-1]) / np.tan(np.arcsin(args.etacut))) + ring_hw[-1] / np.sin(2 * th_[-1]) / np.cos(2 * th_[-1]):.2f}; "
+    f"omega {DELTA / np.cos(th_[0]) + OSTEP / 2:.2f} / {DELTA / np.cos(th_[-1]) / args.etacut + OSTEP / 2:.2f}"
+    + (" (overridden)" if args.tol_eta is not None or args.tol_omega is not None else ""))
 t1 = time.perf_counter()
 rod = jnp.asarray(X.cubic_fz_grid(args.grid))
 comp = []
 for s0 in range(0, rod.shape[0], 1 << 15):
     eta, om, ok_ = X.predict(rod[s0:s0 + (1 << 15)], jnp.asarray(B), hkls, geom)
-    comp.append(X.completeness(lit, eta, om, ok_, ring_of_h, OM0, B_E, B_O, n_e=N_E, n_o=N_O, etacut=args.etacut)[0])
+    te, to = tolerances(eta)
+    ok_ = ok_ & (jnp.abs(jnp.sin(jnp.radians(eta))) > args.etacut)
+    comp.append(X.completeness_tol(table, eta, om, ok_, ring_of_h, te, to, OM0, B_E, B_O, n_e=N_E, n_o=N_O)[0])
 comp = np.asarray(jnp.concatenate(comp))
-keep = np.argsort(comp)[::-1][: args.keep]
-log(f"completeness of {rod.shape[0]} orientations: {time.perf_counter() - t1:.1f} s; median {np.median(comp):.2f}, 99th "
-    f"{np.percentile(comp, 99):.2f}, max {comp.max():.2f}; keeping the top {len(keep)} (completeness >= {comp[keep[-1]]:.2f})")
-
+chance = float(np.median(comp))
+min_comp = args.min_comp if args.min_comp is not None else chance + 0.5 * (comp.max() - chance)
+keep = np.flatnonzero(comp >= min_comp)
+keep = keep[np.argsort(comp[keep])[::-1]][: args.keep]
+log(f"completeness of {rod.shape[0]} orientations: {time.perf_counter() - t1:.1f} s; median (chance) {chance:.2f}, 99th "
+    f"{np.percentile(comp, 99):.2f}, max {comp.max():.2f}; {int((comp >= min_comp).sum())} at >= {min_comp:.2f}"
+    + (f", the top {args.keep} kept (--keep; completeness >= {comp[keep[-1]]:.2f})" if (comp >= min_comp).sum() > args.keep else ", all kept"))
 # ------------------------------------------------------------------------------------------------- 3. MLEM occupancy
 nq = len(keep)
 pad_q = -nq % QC

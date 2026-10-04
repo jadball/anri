@@ -110,10 +110,12 @@ def predict(rod: jax.Array, B: jax.Array, hkls: jax.Array, geom: dict) -> tuple:
 # ----------------------------------------------------------------------------------------------- data
 @partial(jax.jit, static_argnames=("n_ring", "n_e", "n_o", "n_k"))
 def histogram(x, val, row, ring_tth, tth_tol, om0, b_e, b_o, n_ring, n_e, n_o, n_k):  # noqa: ANN001, ANN201
-    """Add pixels (x [N, 3] = (2theta, eta, omega), val, row) into H[ring, eta, omega, row] (flat, float32)."""
+    """Add pixels (x [N, 3] = (2theta, eta, omega), val, row) into H[ring, eta, omega, row] (flat, float32).
+
+    A pixel goes to the nearest ring if within tth_tol of it (deg; a scalar or one per ring)."""
     i = jnp.clip(jnp.searchsorted(ring_tth, x[:, 0]), 1, n_ring - 1)
     ring = jnp.where(jnp.abs(x[:, 0] - ring_tth[i - 1]) < jnp.abs(x[:, 0] - ring_tth[i]), i - 1, i)
-    ok = jnp.abs(x[:, 0] - ring_tth[ring]) < tth_tol
+    ok = jnp.abs(x[:, 0] - ring_tth[ring]) < jnp.broadcast_to(tth_tol, ring_tth.shape)[ring]
     ie = jnp.floor((x[:, 1] + 180.0) / b_e).astype(jnp.int32) % n_e
     io = jnp.floor((x[:, 2] - om0) / b_o).astype(jnp.int32)
     ok = ok & (io >= 0) & (io < n_o) & (row >= 0) & (row < n_k)
@@ -138,6 +140,97 @@ def completeness(lit, eta, om, ok, ring_of_h, om0, b_e, b_o, n_e, n_o, etacut=0.
     io = jnp.floor((om_w - om0) / b_o).astype(jnp.int32)
     inside = ok & (io >= 0) & (io < n_o)
     hit = lit[ring_of_h[None, :], ie, jnp.clip(io, 0, n_o - 1)] & inside
+    return jnp.sum(hit, 1) / jnp.maximum(jnp.sum(inside, 1), 1), jnp.sum(inside, 1)
+
+
+# ----------------------------------------------------------------------------------------------- tolerances
+def grid_misorientation(step_deg: float) -> float:
+    """Largest misorientation (deg) from any orientation to its nearest point of cubic_fz_grid(step_deg).
+
+    Half the diagonal of a grid cell, at the origin where the grid is coarsest.
+    """
+    return float(np.degrees(2 * np.arctan(np.sqrt(3) / 2 * np.tan(np.radians(step_deg) / 2))))
+
+
+@partial(jax.jit, static_argnames=("n",))
+def tth_profile(x, val, lo, step, n):  # noqa: ANN001, ANN201
+    """[n] intensity of pixels (x [N, 3] = (2theta, eta, omega), val) in 2theta bins of width step from lo."""
+    i = jnp.floor((x[:, 0] - lo) / step).astype(jnp.int32)
+    ok = (i >= 0) & (i < n)
+    return jax.ops.segment_sum(jnp.where(ok, val, 0.0), jnp.where(ok, i, n), n + 1)[:-1]
+
+
+def ring_widths(prof: np.ndarray, lo: float, step: float, ring_tth: np.ndarray, frac: float = 0.95,
+                max_hw: float = 0.5) -> tuple:  # fmt: skip
+    """Measured (offset, half-width) [Nr] of each ring (deg 2theta) from a 2theta profile (tth_profile).
+
+    Each ring is looked at within half the gap to its neighbours (at most max_hw). Background: the median of the outer
+    fifth of that window on each side. Offset: the centroid minus ring_tth. Half-width: the distance from the centroid
+    that holds frac of the ring's net intensity. It sums everything that spreads a ring: parallax (sample size /
+    distance), strain, peak size, detector distortion. A ring without intensity gets offset 0 and the whole window.
+    """
+    x = lo + (np.arange(len(prof)) + 0.5) * step
+    gaps = np.diff(ring_tth)
+    half = np.minimum(np.concatenate([[2 * max_hw], gaps]), np.concatenate([gaps, [2 * max_hw]])) / 2
+    off, hw = np.zeros(len(ring_tth)), np.zeros(len(ring_tth))
+    for r, t in enumerate(ring_tth):
+        m = np.abs(x - t) < half[r]
+        xr, pr = x[m], prof[m]
+        outer = np.abs(xr - t) > 0.8 * half[r]
+        net = np.maximum(pr - (np.median(pr[outer]) if outer.any() else 0.0), 0.0)
+        if net.sum() <= 0:
+            hw[r] = half[r]
+            continue
+        c = np.sum(xr * net) / net.sum()
+        d = np.abs(xr - c)
+        o = np.argsort(d)
+        k = np.searchsorted(np.cumsum(net[o]), frac * net.sum())
+        off[r], hw[r] = c - t, d[o][min(k, len(o) - 1)] + step / 2
+    return off, hw
+
+
+def match_tolerances(eta, ring_j, ring_tth, ring_hw, delta, frame_step):  # noqa: ANN001, ANN201
+    """Matching tolerances (tol_eta, tol_omega) [Nq, Nj] (deg) for predictions at eta [Nq, Nj] of grid orientations.
+
+    The truth is up to delta (deg) from the nearest grid point (grid_misorientation). To first order a rotation by delta
+    moves a reflection by up to delta / cos(theta) (1 + tan(theta) |cot(eta)|) in eta and delta / (cos(theta)
+    |sin(eta)|) in omega (checked numerically up to 2 deg for |sin(eta)| > 0.3). Added: in eta, the ring's measured
+    half-width ring_hw (deg 2theta, ring_widths) as the same displacement on the detector across the ring; in omega,
+    half a frame. Peak widths are not added: a broad peak lights a broad region of the lit map.
+    """
+    th = jnp.radians(ring_tth[ring_j] / 2)[None]
+    s = jnp.maximum(jnp.abs(jnp.sin(jnp.radians(eta))), 1e-3)
+    c = jnp.abs(jnp.cos(jnp.radians(eta)))
+    tol_e = delta / jnp.cos(th) * (1 + jnp.tan(th) * c / s) + ring_hw[ring_j][None] / (jnp.sin(2 * th) * jnp.cos(2 * th))
+    tol_o = delta / (jnp.cos(th) * s) + frame_step / 2
+    return tol_e, tol_o
+
+
+@jax.jit
+def lit_table(lit):  # noqa: ANN001, ANN201
+    """Summed-area table [Nr, 3 n_e + 1, n_o + 1] (int32) of a lit map [Nr, n_e, n_o], eta tiled 3 times (periodic)."""
+    t = jnp.concatenate([lit, lit, lit], 1).astype(jnp.int32)
+    return jnp.pad(jnp.cumsum(jnp.cumsum(t, 1), 2), ((0, 0), (1, 0), (1, 0)))
+
+
+@partial(jax.jit, static_argnames=("n_e", "n_o"))
+def completeness_tol(table, eta, om, ok, ring_j, tol_e, tol_o, om0, b_e, b_o, n_e, n_o):  # noqa: ANN001, ANN201
+    """Fraction of each orientation's valid predictions with a lit bin within +-tol_e in eta and +-tol_o in omega.
+
+    table from lit_table; eta, om, ok, tol_e, tol_o [Nq, Nj]. Each prediction checks its own box (bins that may hold a
+    point within its tolerance); tol_e must be below 360 deg. Returns (completeness [Nq], valid predictions [Nq]).
+    """
+    om_w = jnp.mod(om - om0, 360.0) + om0
+    ie = jnp.floor((eta + 180.0) / b_e).astype(jnp.int32) % n_e
+    io = jnp.floor((om_w - om0) / b_o).astype(jnp.int32)
+    de = jnp.minimum(jnp.ceil(tol_e / b_e).astype(jnp.int32), n_e - 1)
+    do = jnp.ceil(tol_o / b_o).astype(jnp.int32)
+    inside = ok & (io >= 0) & (io < n_o)
+    e0, e1 = ie + n_e - de, ie + n_e + de + 1
+    o0, o1 = jnp.clip(io - do, 0, n_o), jnp.clip(io + do + 1, 0, n_o)
+    r = ring_j[None, :]
+    count = table[r, e1, o1] - table[r, e0, o1] - table[r, e1, o0] + table[r, e0, o0]
+    hit = (count > 0) & inside
     return jnp.sum(hit, 1) / jnp.maximum(jnp.sum(inside, 1), 1), jnp.sum(inside, 1)
 
 
