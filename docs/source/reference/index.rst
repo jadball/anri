@@ -17,4 +17,5 @@ API reference
     geom
     fwd
     io
+    refine
     utils

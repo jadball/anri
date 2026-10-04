@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `anri.refine`: refine a map's UBIs and densities against measured sparse pixels, with the renderer as a differentiable forward model. `anri.refine.measured` sorts one row's measured pixels, `anri.refine.refine` fits a deformation gradient and a log density per map entry by Levenberg-Marquardt (each step solved by conjugate gradients with matrix-free J p and J^T u products, preconditioned per entry), with a trust region per entry. Voxels along the same beam path are fitted jointly, and the segmentation cut is treated as censoring. The start must be close (within about a tenth of a peak width). Tutorial: `docs/source/tutorials/refine.ipynb`.
 - `anri.fwd.render_row(max_frames=...)` (and `anri.io.simulate_sparse`): peaks broad in omega get windows with more frames, in a few size classes (window[0], 2 window[0] + 1, ... up to max_frames), so they are not clipped. `stats["window_frames"]` gives each peak's window.
 - Optional `sig_omega` in the geometry (and `anri.io.geom_from_pars(..., sig_omega=...)`): an extra spread of every peak in omega, in degrees.
 - `anri.geom.beam_basis`: unit vectors along a beam and across it (horizontal and vertical).
