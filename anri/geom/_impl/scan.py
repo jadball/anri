@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 
 def step_grid_from_ybincens(
@@ -181,3 +182,57 @@ def step_to_sample(
     sx = si * ystep
     sy = -sj * ystep
     return sx, sy
+
+
+def recon_positions(n: int, step: float) -> jax.Array:
+    """Sample-frame positions of every voxel of an n x n reconstruction grid, in reconstruction order.
+
+    The grid is centred on the rotation axis, as ImageD11 reconstructs (see :func:`recon_to_step` and
+    :func:`step_to_sample`).
+
+    Parameters
+    ----------
+    n
+        Voxels along each side
+    step
+        Voxel size
+
+    Returns
+    -------
+    jax.Array
+        [n * n, 3] positions (x, y, 0), voxel (ri, rj) at row ri * n + rj
+    """
+    ri, rj = jnp.meshgrid(jnp.arange(n), jnp.arange(n), indexing="ij")
+    si, sj = recon_to_step(ri, rj, (n, n))
+    sx, sy = step_to_sample(si, sj, step)
+    return jnp.stack([sx.ravel(), sy.ravel(), jnp.zeros(n * n)], 1)
+
+
+def sino_shift_and_pad(y0: float, ny: int, ymin: float, ystep: float) -> tuple[float, int]:
+    """Shift and padding that centre a sinogram of ny dty rows on the rotation axis, as ImageD11 does.
+
+    Follows ``ImageD11.sinograms.geometry.sino_shift_and_pad``: the reconstruction is ``ny + pad`` voxels wide, odd.
+
+    Parameters
+    ----------
+    y0
+        dty at which the rotation axis is in the beam
+    ny
+        Number of dty rows
+    ymin
+        dty of the first row
+    ystep
+        dty step
+
+    Returns
+    -------
+    shift: float
+        Shift in rows
+    pad: int
+        Padding in rows
+    """
+    shift = ny // 2 - (y0 - ymin) / ystep
+    pad = int(np.ceil(abs(shift) * 2)) + 1
+    if (ny + pad) % 2 == 0:  # keep the reconstruction odd-sized
+        pad += 1
+    return shift, pad

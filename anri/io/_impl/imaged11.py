@@ -10,6 +10,7 @@ ImageD11 itself is only imported by the functions that need it.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import h5py
@@ -185,6 +186,206 @@ def write_par(path: str, pars: dict) -> None:
     """Write ImageD11 parameters as a ``.par`` file of ``key value`` lines."""
     with open(path, "w") as f:
         f.writelines(f"{key} {value}\n" for key, value in pars.items())
+
+
+def read_par(path: str) -> dict:
+    """Read an ImageD11 ``.par`` file of ``key value`` lines (numbers as floats, other values as strings).
+
+    Parameters
+    ----------
+    path
+        The file
+
+    Returns
+    -------
+    dict
+        Parameters
+    """
+    out = {}
+    with open(path) as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) >= 2:
+                try:
+                    out[parts[0]] = float(parts[1])
+                except ValueError:
+                    out[parts[0]] = parts[1]
+    return out
+
+
+def read_dataset(dsfile: str) -> dict:
+    """Read the scan layout of an ImageD11 DataSet file, without ImageD11.
+
+    Parameters
+    ----------
+    dsfile
+        ``<sample>_<dset>_dataset.h5``
+
+    Returns
+    -------
+    dict
+        "y0" (None if absent), "ybincens", "ybinedges", "obinedges", "dtymotor", "omegamotor", "parfile" (made
+        absolute: a relative path is relative to the DataSet's folder; "" if absent), and "dty" [scans, frames] and
+        "scans" (None if absent): each scan's dty, for sparse files without a dty column
+    """
+    with h5py.File(dsfile, "r") as h:
+        attrs = dict(h.attrs)
+        out = {k: h[k][()] for k in ("ybincens", "ybinedges", "obinedges")}
+        out["dty"] = h["dty"][()] if "dty" in h else None
+        out["scans"] = [x.decode() if isinstance(x, bytes) else str(x) for x in h["scans"][()]] if "scans" in h else None
+    parfile = str(attrs.get("parfile", ""))
+    if parfile and not os.path.isabs(parfile):
+        parfile = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(dsfile)), parfile))
+    out.update(
+        y0=float(attrs["y0"]) if "y0" in attrs else None,
+        dtymotor=str(attrs["dtymotor"]),
+        omegamotor=str(attrs["omegamotor"]),
+        parfile=parfile,
+    )
+    return out
+
+
+def read_pars_json(parfile: str, phase: str | None = None) -> tuple[dict, str, dict]:
+    """Read the geometry and one phase from an ImageD11 ``pars.json``.
+
+    A file it names is looked up relative to ``pars.json``, or, if missing there (e.g. an absolute path from another
+    machine), by its name beside ``pars.json``.
+
+    Parameters
+    ----------
+    parfile
+        ``pars.json``
+    phase
+        Phase name; may be omitted if there is only one
+
+    Returns
+    -------
+    geometry: dict
+        Detector and beam parameters
+    phase: str
+        The phase's name
+    cell: dict
+        The phase's parameters (``cell__a`` ... ``cell_lattice_[P,A,B,C,I,F,R]``)
+    """
+    import json
+
+    with open(parfile) as f:
+        pj = json.load(f)
+    pdir = os.path.dirname(os.path.abspath(parfile))
+
+    def path(name: str) -> str:
+        p = os.path.join(pdir, name)
+        return p if os.path.exists(p) else os.path.join(pdir, os.path.basename(name))
+
+    phases = pj["phases"]
+    if phase is None:
+        if len(phases) != 1:
+            msg = f"several phases in {parfile}: {list(phases)}; choose one"
+            raise ValueError(msg)
+        phase = next(iter(phases))
+    return read_par(path(pj["geometry"]["file"])), phase, read_par(path(phases[phase]["file"]))
+
+
+def stream_sparse(
+    sparsefile: str,
+    ybinedges: ArrayLike,
+    omega_motor: str,
+    dty_motor: str,
+    chunk: int,
+    groups: list | None = None,
+    gridstep: int = 1,
+    dataset_dty: np.ndarray | None = None,
+    scans: list | None = None,
+) -> Iterator[tuple]:
+    """Read sparse pixels a chunk at a time, with each frame's dty row.
+
+    A frame's row is the bin of ``ybinedges`` holding its dty reading, divided by ``gridstep`` (rows summed in
+    groups); frames outside the bins get row -1.
+
+    Parameters
+    ----------
+    sparsefile
+        ImageD11 sparse pixels file, one group per scan
+    ybinedges
+        [n_rows + 1] dty bin edges
+    omega_motor, dty_motor
+        Motor names in each group's ``measurement``
+    chunk
+        Pixels per chunk at most
+    groups
+        Groups to read (default: all)
+    gridstep
+        Rows summed in groups of this
+    dataset_dty, scans
+        [scans, frames] dty and scan names from the DataSet, for files without a dty column
+
+    Yields
+    ------
+    tuple
+        (slow, fast, omega, row, value): NumPy arrays of at most ``chunk`` pixels
+    """
+    ybinedges = np.asarray(ybinedges)
+    n_rows = len(ybinedges) - 1
+    with h5py.File(sparsefile, "r") as h:
+        for name in groups if groups is not None else list(h.keys()):
+            gr = h[name]
+            nnz = gr["nnz"][()]
+            om_f = gr[f"measurement/{omega_motor}"][()].astype(np.float32)
+            if dty_motor in gr["measurement"]:
+                dty_f = np.broadcast_to(gr[f"measurement/{dty_motor}"][()], nnz.shape)
+            elif dataset_dty is not None and scans is not None:
+                dty_f = np.asarray(dataset_dty)[scans.index(name)][: len(nnz)]
+            else:
+                msg = f"{sparsefile}:{name} has no {dty_motor}; pass the DataSet's dty and scans"
+                raise KeyError(msg)
+            k_f = np.searchsorted(ybinedges, dty_f) - 1
+            k_f = np.where((k_f >= 0) & (k_f < n_rows), k_f // gridstep, -1).astype(np.int32)
+            ends = np.cumsum(nnz)
+            n = int(ends[-1]) if len(ends) else 0
+            for s0 in range(0, n, chunk):
+                m = min(chunk, n - s0)
+                fr = np.searchsorted(ends, np.arange(s0, s0 + m), side="right")
+                yield (
+                    gr["row"][s0 : s0 + m].astype(np.float32),
+                    gr["col"][s0 : s0 + m].astype(np.float32),
+                    om_f[fr],
+                    k_f[fr],
+                    gr["intensity"][s0 : s0 + m].astype(np.float32),
+                )
+
+
+def tensormap_from_recon(
+    maps: dict, lattice_parameters: ArrayLike, spacegroup: int, phase_name: str, step: float
+) -> TensorMap:
+    """Build a single-phase 2D ImageD11 TensorMap from maps in reconstruction order.
+
+    Parameters
+    ----------
+    maps
+        ``{name: [n, n, ...] array}`` in reconstruction order (e.g. on the grid of :func:`anri.geom.recon_to_step`),
+        including "UBI" [n, n, 3, 3] (NaN outside the sample) and "phase_ids" [n, n] (0 inside, -1 outside)
+    lattice_parameters
+        a, b, c, alpha, beta, gamma
+    spacegroup
+        Space group number
+    phase_name
+        Name of the phase
+    step
+        Voxel size
+
+    Returns
+    -------
+    TensorMap
+        ``ImageD11.sinograms.tensor_map.TensorMap`` with shape (1, n, n)
+    """
+    from ImageD11.sinograms.tensor_map import TensorMap
+    from ImageD11.unitcell import unitcell
+
+    tmap = TensorMap(
+        maps={k: TensorMap.recon_order_to_map_order(np.asarray(v)) for k, v in maps.items()}, steps=[step] * 3
+    )
+    tmap.phases = {0: unitcell(list(np.asarray(lattice_parameters, float)), int(spacegroup), name=phase_name)}
+    return tmap
 
 
 def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0) -> dict:
