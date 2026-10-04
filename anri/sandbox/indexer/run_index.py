@@ -43,6 +43,8 @@ p.add_argument("--min-comp", type=float, help="keep orientations with at least t
                "between the grid's median, the chance level, and its maximum)")
 p.add_argument("--iter", type=int, default=10, help="MLEM iterations (default 10)")
 p.add_argument("--cand", type=int, default=64, help="candidate orientations per voxel (default 64)")
+p.add_argument("--min-frac", type=float, default=0.1, help="report populations holding at least this fraction of a "
+               "voxel's occupancy (default 0.1; smaller ones are mostly decoys on the phantom)")
 p.add_argument("--block-gb", type=float, default=1.0, help="memory for one block of voxels' system entries (default 1 GB)")
 p.add_argument("--lit", type=float, default=1.0, help="lit threshold, x the median non-empty bin (default 1)")
 p.add_argument("--etacut", type=float, default=0.2, help="use reflections with |sin eta| above this (default 0.2)")
@@ -77,6 +79,7 @@ F32 = jnp.float32
 B_E, B_O = 0.5, 0.25  # lit-map bins (deg): eta, omega
 R_E, R_O = 2, 4  # MLEM data bins = lit bins x these (1 x 1 deg)
 GRID_STEPS = (3.0, 2.5, 2.0, 1.5, 1.0)  # tried by the automatic grid, coarsest first
+N_POP = 4  # populations per voxel at most
 
 
 def read_par(path: str) -> dict:
@@ -350,19 +353,28 @@ f, cand = np.asarray(f)[:NV], np.asarray(cand)[:NV]
 log(f"MLEM {args.iter} iterations: {time.perf_counter() - t1:.0f} s")
 
 # ------------------------------------------------------------------------------------------------- 4. TensorMap
-kbest = np.argmax(f, 1)
-best = cand[np.arange(NV), kbest]  # index into the orientation list
 tot = f.sum(1)
-share = f[np.arange(NV), kbest] / np.maximum(tot, 1e-30)
-ubi = np.linalg.inv(np.asarray(X.rod_to_mat(rod_s[:nq]))[best] @ B)
 occupied = tot > 0.05 * np.percentile(tot, 99)
-log(f"voxels with occupancy: {occupied.sum()} of {NV}; top share median {np.median(share[occupied]):.2f}; "
-    f"distinct orientations used {len(np.unique(best[occupied]))}")
+U_list = X.rod_to_mat(rod_s[:nq])
+t1 = time.perf_counter()
+frac, U_pop, spread, n_pop = X.populations(f, cand, U_list, GRID, p=N_POP)
+present = (frac >= args.min_frac) & occupied[:, None]
+present[:, 0] = occupied  # the main population always
+comp_pop = np.zeros(frac.shape, np.float32)  # completeness of each population's mean orientation
+comp_pop[present] = completeness(jnp.asarray(X.mat_to_rod(U_pop[present]), F32), GRID)
+n_occ = present.sum(1)
+log(f"{occupied.sum()} of {NV} voxels occupied; populations ({time.perf_counter() - t1:.1f} s; up to {N_POP} per voxel, members within "
+    f"1.8 grid steps): per occupied "
+    f"voxel {', '.join(f'{k}: {np.mean(n_occ[occupied] == k) * 100:.1f}%' for k in range(1, N_POP + 1))}; top fraction "
+    f"median {np.median(frac[occupied, 0]):.2f}; spread median {np.median(spread[present]):.2f} deg (includes the grid); "
+    f"below --min-frac {np.mean(np.where(present, 0.0, frac).sum(1)[occupied]):.2f} of the occupancy on average; completeness median {np.median(comp_pop[present]):.2f}, 5th percentile {np.percentile(comp_pop[present], 5):.2f}")
+ubi = np.linalg.inv(U_pop[:, 0] @ B)  # the main population's mean
 to_map = TensorMap.recon_order_to_map_order
 tmap = TensorMap(maps={"UBI": to_map(np.where(occupied[:, None, None], ubi, np.nan).reshape(NR, NR, 3, 3)),
                        "phase_ids": to_map(np.where(occupied, 0, -1).reshape(NR, NR)),
-                       "occupancy": to_map(tot.reshape(NR, NR)), "best_share": to_map(share.reshape(NR, NR)),
-                       "orientation_id": to_map(np.where(occupied, best, -1).reshape(NR, NR))}, steps=[YSTEP] * 3)  # fmt: skip
+                       "occupancy": to_map(tot.reshape(NR, NR)), "n_populations": to_map(n_occ.reshape(NR, NR)),
+                       "fraction": to_map(frac[:, 0].reshape(NR, NR)), "spread": to_map(spread[:, 0].reshape(NR, NR)),
+                       "completeness": to_map(comp_pop[:, 0].reshape(NR, NR))}, steps=[YSTEP] * 3)  # fmt: skip
 tmap.phases = {0: unitcell(lpars, sg, name=phase)}
 tmap.get_ipf_maps()
 _ = tmap.euler
@@ -374,5 +386,11 @@ if os.path.exists(out):
     os.remove(out)
 tmap.to_h5(out)
 tmap.to_paraview(out)
-np.savez(os.path.join(args.outdir, f"{tag}.npz"), f=f, cand=cand, rod=np.asarray(rod_s[:nq]), comp=comp[keep])
+np.savez(os.path.join(args.outdir, f"{tag}.npz"), f=f, cand=cand, rod=np.asarray(rod_s[:nq]), comp=comp[keep], frac=frac,
+         U=U_pop, spread=spread, n=n_pop, comp_pop=comp_pop, occupied=occupied, present=present)  # fmt: skip
+# every present population as an anri map entry (renderer / anri.refine): density = the voxel's occupancy x fraction
+v, q = np.nonzero(present)
+np.savez(os.path.join(args.outdir, f"{tag}_entries.npz"), ubi=np.linalg.inv(U_pop[v, q] @ B), pos=np.asarray(pos)[v],
+         density=tot[v] * frac[v, q], sig_rot=np.radians(spread[v, q]), voxel=v, population=q,
+         completeness=comp_pop[v, q])  # fmt: skip
 log(f"-> {out}")
