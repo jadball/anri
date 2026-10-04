@@ -109,6 +109,9 @@ with h5py.File(os.path.join(dsdir, "phantom_am_dataset.h5"), "w") as h:
     h["ybincens"] = dty
     h["ybinedges"] = np.concatenate([dty - YSTEP / 2, dty[-1:] + YSTEP / 2])
     h["obinedges"] = np.concatenate([omega - args.ostep / 2, omega[-1:] + args.ostep / 2])
+    h["scans"] = [f"{k + 1}.1" for k in range(NK)]
+    h["dty"] = np.repeat(dty[:, None], len(omega), 1)
+    h["omega"] = np.repeat(omega[None], NK, 0)
 
 scale = 2000.0  # counts per unit rendered intensity, roughly
 with h5py.File(os.path.join(dsdir, "phantom_am_sparse.h5"), "w") as h:
