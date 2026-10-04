@@ -120,6 +120,7 @@ def geom_from_pars(
     sig_beam_v: float = 0.0,
     width_beam_v: float = 0.0,
     voxel_3d: bool = False,
+    sig_omega: float = 0.0,
 ) -> dict:
     """Build the geometry dict for :func:`anri.fwd.render_row` from ImageD11 parameters.
 
@@ -154,6 +155,9 @@ def geom_from_pars(
         columns (2D maps) the whole vertical profile crosses the voxel.
     voxel_3d
         Whether the voxels are cubes (a 3D map) rather than columns (a 2D map, e.g. a TensorMap layer)
+    sig_omega
+        Extra standard deviation of every peak in omega, in degrees (default 0): a simple stand-in for mosaicity,
+        and a way to smooth the loss at the start of a refinement.
     """
     if sig_beam <= 0 or (voxel_3d and sig_beam_v <= 0):
         msg = "the beam's Gaussian widths must be > 0 (a small one gives a sharp-edged flat top)"
@@ -173,6 +177,7 @@ def geom_from_pars(
         "voxel_size": voxel_size,
         "pol_factor": pol_factor,
         "sig_psf": sig_psf,
+        "sig_omega": sig_omega,
     }
 
 
@@ -457,6 +462,7 @@ def simulate_sparse(
     dty_motor: str = "dty",
     window: tuple[int, int, int] = (3, 7, 7),
     batch: int = 2**16,
+    max_frames: int | None = None,
 ) -> dict:
     """Render every dty row of a scan and write the sparse pixels file, one row at a time.
 
@@ -476,7 +482,7 @@ def simulate_sparse(
         Optional [n_rows, n_frames] transmission factor per frame
     omega_motor, dty_motor
         Motor names written to the file
-    window, batch
+    window, batch, max_frames
         Passed on to :func:`anri.fwd.render_row`
 
     Returns
@@ -490,7 +496,7 @@ def simulate_sparse(
         for i in range(n_rows):
             row = make_row(omega[i], dty[i], None if transmission is None else transmission[i])
             frame, pixel, value, rstats = render_row(
-                entries, hkls, F2, geom, row, det_shape, window=window, batch=batch
+                entries, hkls, F2, geom, row, det_shape, window=window, batch=batch, max_frames=max_frames
             )
             stats["n_peaks"][i] = rstats["n_peaks"]
             if rstats["captured"].size:

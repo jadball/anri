@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `anri.fwd.render_row(max_frames=...)` (and `anri.io.simulate_sparse`): peaks broad in omega get windows with more frames, in a few size classes (window[0], 2 window[0] + 1, ... up to max_frames), so they are not clipped. `stats["window_frames"]` gives each peak's window.
+- Optional `sig_omega` in the geometry (and `anri.io.geom_from_pars(..., sig_omega=...)`): an extra spread of every peak in omega, in degrees.
 - `anri.geom.beam_basis`: unit vectors along a beam and across it (horizontal and vertical).
 - `anri.io.beam_from_pars` and `geom_from_pars` take a beam direction, `k_in_lab` (default lab x).
 - `anri.fwd.guess_batch_size`: the largest `batch` for `render_row` that fits in a fraction (default 25%) of the free GPU or host memory, from XLA's memory analysis of the compiled render step. Adds `psutil` as a dependency. Raises `RuntimeError` where XLA gives no usable memory analysis (e.g. jaxlib 0.4.28 on macOS).
@@ -19,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `anri.fwd.render_peaks` centres each frame's pixel window on the peak's mean position in that frame (it used to centre every frame on the peak's overall centroid), so a peak that moves across the detector with omega stays inside its window. Peaks within one or two frames are unchanged.
 - `anri.fwd.render_row` is faster on GPUs: duplicate pixels (neighbouring voxels light up the same pixels, ~100x for a grain) are summed on the device, so only unique pixels go to the host, and batches are 1024 peaks per device times a power of 4, so a scan compiles at most a few shapes (XLA:GPU took up to a minute to compile very small batches). A 153-row scan of a 6818-voxel grain renders in 1 minute instead of 3. Output is unchanged up to float rounding; CPUs keep the host merge, as XLA's CPU sort is slower than NumPy's.
 - For a beam tilted out of the horizontal plane, the scattering origin in the scanning model is where the pencil crosses the voxel's column: the beam is taken to cross the rotation axis at the voxel's own height (the layer's height in a 2D map), so the origin is raised by (k_z / k_x) x. Nothing changes for a horizontal beam.
 - The renderer handles pencil, line and box beams (e.g. DCT) with one model. Every voxel sits at its real lab position for the row's dty (it used to be moved onto the pencil's centre line), and `anri.fwd.beam_weight` (replacing `dty_weight`) integrates the beam's profile across it over the voxel: horizontally and vertically, each a flat top blurred by a Gaussian (`geom_from_pars(..., sig_beam, width_beam, sig_beam_v, width_beam_v)`). Voxels are columns for 2D maps or cubes for 3D maps (`voxel_3d`). The beam can point anywhere (`k_in_lab`): it sees the voxel rotated by omega - psi, and travels 1/cos(alpha) further through a column. `select_peaks` keeps peaks whose voxel is within reach of the beam.

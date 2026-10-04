@@ -370,7 +370,8 @@ def render_peaks(
         cov = _peak_cov(ubi, pos, hkl, etasign, dty_row, geom)
         # detector point spread adds to the slow and fast variances (pixels^2)
         psf2 = geom["sig_psf"] ** 2
-        ss, ff, oo = cov[0] + psf2 + _VAR_FLOOR[0], cov[1] + psf2 + _VAR_FLOOR[1], cov[2] + _VAR_FLOOR[2]
+        om2 = geom.get("sig_omega", 0.0) ** 2  # optional extra omega spread (degrees), e.g. to smooth a refinement
+        ss, ff, oo = cov[0] + psf2 + _VAR_FLOOR[0], cov[1] + psf2 + _VAR_FLOOR[1], cov[2] + om2 + _VAR_FLOOR[2]
         sf, so, fo = cov[3], cov[4], cov[5]
         mu_s, mu_f, mu_o = centroid
         omega_peak = mu_o  # before wrapping
@@ -378,11 +379,7 @@ def render_peaks(
 
         # Window origin: no gradient through which cells a peak touches
         jo = jnp.searchsorted(row["omega_edges"], jax.lax.stop_gradient(mu_o)) - 1 - wo // 2
-        i0 = jnp.round(jax.lax.stop_gradient(mu_s)).astype(int) - ws // 2
-        j0 = jnp.round(jax.lax.stop_gradient(mu_f)).astype(int) - wf // 2
         frames = jo + jnp.arange(wo)  # [wo] in sorted-omega order
-        rows = i0 + jnp.arange(ws)  # [ws]
-        cols = j0 + jnp.arange(wf)  # [wf]
         nfr = row["omega_sorted"].shape[0]
         fclip = jnp.clip(frames, 0, nfr - 1)
 
@@ -397,9 +394,14 @@ def render_peaks(
         slope = so / oo
         mu_s_o = mu_s + slope * d_o  # [wo]
         sd_s_o = jnp.sqrt(ss - so**2 / oo + slope**2 * v_o)  # [wo]
-        p_s, m_s, v_s = truncated_moments(
-            rows[None, :] - 0.5, rows[None, :] + 0.5, mu_s_o[:, None], sd_s_o[:, None]
-        )  # [wo, ws]
+
+        # Each frame's pixel window is centred on the peak's mean position in that frame, so a peak that moves
+        # across the detector with omega (broad in omega, e.g. near eta = 0) stays inside its window
+        i0 = jnp.round(jax.lax.stop_gradient(mu_s_o)).astype(int) - ws // 2  # [wo]
+        j0 = jnp.round(jax.lax.stop_gradient(mu_f + fo / oo * d_o)).astype(int) - wf // 2  # [wo]
+        rows = i0[:, None] + jnp.arange(ws)  # [wo, ws]
+        cols = j0[:, None] + jnp.arange(wf)  # [wo, wf]
+        p_s, m_s, v_s = truncated_moments(rows - 0.5, rows + 0.5, mu_s_o[:, None], sd_s_o[:, None])  # [wo, ws]
 
         # fast | slow in the row, omega in the frame. Within the frame, omega is taken as N(m_o, v_o) and slow | omega
         # is Gaussian, so (slow, omega) are jointly Gaussian there: integrate omega out given slow, then average over
@@ -415,13 +417,15 @@ def render_peaks(
         mu_f_so = mu_f + g_s * (m_s - mu_s) + g_o * (e_o - mu_o)  # [wo, ws]
         dfds = g_s + g_o * k  # [wo] slope of E[fast | slow] within the frame
         sd_f_so = jnp.sqrt(var_f_so + g_o**2 * var_o_s[:, None] + dfds[:, None] ** 2 * v_s)  # [wo, ws]
-        p_f = bin_fractions(cols - 0.5, cols + 0.5, mu_f_so[..., None], sd_f_so[..., None])  # [wo, ws, wf]
+        p_f = bin_fractions(
+            cols[:, None, :] - 0.5, cols[:, None, :] + 0.5, mu_f_so[..., None], sd_f_so[..., None]
+        )  # [wo, ws, wf]
 
         frac = p_o[:, None, None] * p_s[:, :, None] * p_f  # [wo, ws, wf]
         inside = (
             (frames >= 0)[:, None, None] & (frames < nfr)[:, None, None]
-            & (rows >= 0)[None, :, None] & (rows < ns)[None, :, None]
-            & (cols >= 0)[None, None, :] & (cols < nf)[None, None, :]
+            & (rows >= 0)[:, :, None] & (rows < ns)[:, :, None]
+            & (cols >= 0)[:, None, :] & (cols < nf)[:, None, :]
         )  # fmt: skip
         captured = jnp.sum(frac)
 
@@ -436,7 +440,7 @@ def render_peaks(
         use = inside & valid
         value = jnp.where(use, value, 0.0)
         frame_out = jnp.where(use, row["order"][fclip][:, None, None], -1)
-        pixel = rows[None, :, None] * nf + cols[None, None, :]
+        pixel = rows[:, :, None] * nf + cols[:, None, :]
         pixel_out = jnp.where(use, pixel, 0)
         return frame_out.ravel(), pixel_out.ravel(), value.ravel(), captured
 
@@ -593,6 +597,20 @@ def _valid_from_shards(x: jax.Array, count: np.ndarray, per_shard: int) -> np.nd
     return np.concatenate(out)
 
 
+@jax.jit
+def _omega_sigma(
+    ubi: jax.Array, pos: jax.Array, hkls: jax.Array, e: jax.Array, h: jax.Array, b: jax.Array, geom: dict, row: dict
+) -> jax.Array:
+    """Return the standard deviation in omega (degrees) of each peak, as render_peaks spreads it."""
+    dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
+
+    def one(ei: jax.Array, hi: jax.Array, bi: jax.Array) -> jax.Array:
+        cov = _peak_cov(ubi[ei], pos[ei], hkls[hi], 1.0 - 2.0 * bi, dty_row, geom)
+        return jnp.sqrt(cov[2] + geom.get("sig_omega", 0.0) ** 2 + _VAR_FLOOR[2])
+
+    return jax.vmap(one)(e, h, b)
+
+
 def _select_margin(window: tuple[int, int, int], row: dict, geom: dict, dtype: jnp.dtype) -> jax.Array:
     """Return the [5] margins for select_peaks.
 
@@ -635,6 +653,7 @@ def render_row(
     select_chunk: int = 2**20,
     min_value: float = 1e-3,
     mesh: Mesh | None = None,
+    max_frames: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """Render all peaks of one phase that reach one dty row into sparse pixels.
 
@@ -652,7 +671,7 @@ def render_row(
         Dict with "wavelength", "k_in_lab" [3], "wedge", "chi" (degrees), "y0",
         "s_step_lab", "f_step_lab", "det_origin_lab" [3] (from :func:`anri.geom.detector_basis_vectors_lab`),
         "sig_wavelength", "sig_ky", "sig_kz", "sig_beam", "sig_psf" (detector point spread, pixels), "voxel_size"
-        and "pol_factor"
+        and "pol_factor"; optionally "sig_omega", an extra spread of every peak in omega (degrees, default 0)
     row
         From :func:`make_row`
     det_shape
@@ -667,6 +686,10 @@ def render_row(
         Contributions below this are dropped
     mesh
         Devices to use, default :func:`anri.utils.mesh`
+    max_frames
+        If set, peaks broad in omega get more frames: each peak's window has the fewest frames out of
+        window[0], 2 window[0] + 1, ... (up to max_frames) that hold +-3.5 sigma of it in omega, and each size is
+        rendered in its own batches. Default None: every peak gets window[0] frames.
 
     Returns
     -------
@@ -684,7 +707,11 @@ def render_row(
 
     # 1. Which peaks can reach this row? Chunks of entries, padded to a multiple of the device count.
     wo, ws, wf = window
-    margin = _select_margin(window, row, geom, dtype)
+    classes = [wo]  # frames per window, smallest first
+    if max_frames is not None:
+        while 2 * classes[-1] + 1 <= max_frames:
+            classes.append(2 * classes[-1] + 1)
+    margin = _select_margin((classes[-1], ws, wf), row, geom, dtype)
     ce = max(nd, (select_chunk // n_hkls) // nd * nd)
     found = []
     for start in range(0, n_entries, ce):
@@ -701,30 +728,55 @@ def render_row(
         empty = np.zeros(0, np.int32)
         return empty, empty, np.zeros(0), {"n_peaks": 0, "captured": np.zeros(0)}
 
-    # 2. Render in fixed-size batches split over the devices. Small problems use smaller batches: 1024 peaks per
-    # device times a power of 4, so a scan compiles few shapes. Each compile takes seconds, and XLA:GPU takes up to
-    # a minute for very small batches. Padding peaks are marked not live.
-    per_device = _MIN_BATCH
-    while per_device < -(-n_peaks // nd):
-        per_device *= 4
-    per_device = min(max(batch // nd, 1), per_device)
-    batch = per_device * nd
-    per_shard = per_device * wo * ws * wf
-    min_value_j = jnp.asarray(min_value, dtype=dtype)
-    frames, pixels, values, captured = [], [], [], []
-    for start in range(0, n_peaks, batch):
-        stop = min(start + batch, n_peaks)
-        pad = batch - (stop - start)
-        idx = [np.pad(x[start:stop], (0, pad)) for x in (e, h, b)]
-        live = np.arange(batch) < stop - start
-        fr, px, val, count, cap = _render_sharded(
-            *idx, live, entries, hkls_j, F2_j, geom, row_j, min_value_j, window, det_shape, mesh
+    # Window size class of each peak: the fewest frames that hold +-3.5 sigma of it in omega
+    peak_class = np.zeros(n_peaks, np.int32)
+    if len(classes) > 1:
+        ostep = float(np.median(np.diff(np.asarray(row["omega_edges"]))))
+        chunk = 2**16  # fixed size: one compile
+        pad = -n_peaks % chunk
+        ehb = [jnp.asarray(np.pad(x, (0, pad))) for x in (e, h, b)]
+        sig_frames = (
+            np.concatenate(
+                [
+                    np.asarray(_omega_sigma(ubi, pos, hkls_j, *(x[i : i + chunk] for x in ehb), geom, row_j))
+                    for i in range(0, n_peaks + pad, chunk)
+                ]
+            )[:n_peaks]
+            / ostep
         )
-        count = np.asarray(count)
-        frames.append(_valid_from_shards(fr, count, per_shard))
-        pixels.append(_valid_from_shards(px, count, per_shard))
-        values.append(_valid_from_shards(val, count, per_shard))
-        captured.append(np.asarray(cap)[: stop - start])
+        needed = 2 * np.ceil(3.5 * sig_frames + 0.5) + 1
+        peak_class = np.minimum(np.searchsorted(np.asarray(classes), needed), len(classes) - 1).astype(np.int32)
+
+    # 2. Render in fixed-size batches split over the devices, one window size at a time. Small problems use smaller
+    # batches: 1024 peaks per device times a power of 4, so a scan compiles few shapes. Each compile takes seconds,
+    # and XLA:GPU takes up to a minute for very small batches. Padding peaks are marked not live.
+    min_value_j = jnp.asarray(min_value, dtype=dtype)
+    frames, pixels, values = [], [], []
+    captured_all = np.zeros(n_peaks)
+    for k, wo_k in enumerate(classes):
+        sel = np.flatnonzero(peak_class == k)
+        if sel.size == 0:
+            continue
+        window_k = (wo_k, ws, wf)
+        per_device = _MIN_BATCH
+        while per_device < -(-sel.size // nd):
+            per_device *= 4
+        per_device = min(max(batch // nd, 1), per_device)
+        batch_k = per_device * nd
+        per_shard = per_device * wo_k * ws * wf
+        for start in range(0, sel.size, batch_k):
+            stop = min(start + batch_k, sel.size)
+            pad = batch_k - (stop - start)
+            idx = [np.pad(x[sel[start:stop]], (0, pad)) for x in (e, h, b)]
+            live = np.arange(batch_k) < stop - start
+            fr, px, val, count, cap = _render_sharded(
+                *idx, live, entries, hkls_j, F2_j, geom, row_j, min_value_j, window_k, det_shape, mesh
+            )
+            count = np.asarray(count)
+            frames.append(_valid_from_shards(fr, count, per_shard))
+            pixels.append(_valid_from_shards(px, count, per_shard))
+            values.append(_valid_from_shards(val, count, per_shard))
+            captured_all[sel[start:stop]] = np.asarray(cap)[: stop - start]
 
     # 3. Merge batches and devices: sort by (frame, pixel) and sum duplicates
     npix = det_shape[0] * det_shape[1]
@@ -737,7 +789,9 @@ def render_row(
     starts = np.flatnonzero(new)
     value = np.add.reduceat(value, starts)
     frame, pixel = np.divmod(key[starts], npix)
-    stats = {"n_peaks": n_peaks, "captured": np.concatenate(captured)}
+    stats = {"n_peaks": n_peaks, "captured": captured_all}
+    if len(classes) > 1:
+        stats["window_frames"] = np.asarray(classes)[peak_class]
     return frame.astype(np.int32), pixel.astype(np.int32), value, stats
 
 
@@ -823,7 +877,9 @@ def check_render(
     sample = jax.jit(jax.vmap(centroid, in_axes=(None, None, None, None, 0, 0, 0)))
     sd_beam = np.array([float(geom["sig_wavelength"]), float(geom["sig_ky"]), float(geom["sig_kz"])])
     psf2 = float(geom["sig_psf"]) ** 2
-    sd_extra = np.sqrt([psf2 + _VAR_FLOOR[0], psf2 + _VAR_FLOOR[1], _VAR_FLOOR[2]])
+    sd_extra = np.sqrt(
+        [psf2 + _VAR_FLOOR[0], psf2 + _VAR_FLOOR[1], float(geom.get("sig_omega", 0.0)) ** 2 + _VAR_FLOOR[2]]
+    )
     sorted_index = np.argsort(np.asarray(row["order"]))  # file-order frame -> sorted-omega frame
     edges_all = np.asarray(row["omega_edges"])
     omega_mid = 0.5 * (row["omega_min"] + row["omega_max"])
@@ -836,10 +892,13 @@ def check_render(
         )
         x += rng.standard_normal((n_samples, 3)) * sd_extra
         x[:, 2] += 360.0 * np.round((omega_mid - x[:, 2]) / 360.0)
-        s0, f0 = divmod(int(pixel[i, 0, 0, 0]), det_shape[1])
         jo = sorted_index[frame[i, 0, 0, 0]]
-        cells = [s0 - 0.5 + np.arange(ws + 1), f0 - 0.5 + np.arange(wf + 1), edges_all[jo : jo + wo + 1]]
-        mc = np.moveaxis(np.histogramdd(x, bins=cells)[0], 2, 0) / n_samples  # (frame, slow, fast)
+        in_frame = np.searchsorted(edges_all[jo : jo + wo + 1], x[:, 2]) - 1  # which window frame each sample is in
+        mc = np.zeros((wo, ws, wf))
+        for j in range(wo):  # each frame has its own pixel window
+            s0, f0 = divmod(int(pixel[i, j, 0, 0]), det_shape[1])
+            cells = [s0 - 0.5 + np.arange(ws + 1), f0 - 0.5 + np.arange(wf + 1)]
+            mc[j] = np.histogram2d(x[in_frame == j, 0], x[in_frame == j, 1], bins=cells)[0] / n_samples
         rendered = value[i] / total[i] * captured[i]
         keep.append(i)
         err.append(np.abs(rendered - mc).max())

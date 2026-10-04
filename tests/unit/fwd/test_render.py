@@ -308,6 +308,46 @@ class TestPointSpread(unittest.TestCase):
         self.assertGreater(errors[0.0], errors[0.7])
 
 
+class TestOmegaSpread(unittest.TestCase):
+    def test_sig_omega_broadens_omega(self):
+        """sig_omega adds its variance to every peak's omega variance, and leaves its centroid in place."""
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        one = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        omega = (np.floor(omega_c / 0.01) + np.arange(-60, 61)) * 0.01 + 0.005  # fine frames around the peak
+        row = make_row(omega, np.zeros_like(omega))
+        moments = {}
+        for sig in (0.0, 0.05):
+            frame, _, value, _ = render_row(
+                one, hkl[None], np.ones(1), {**geom, "sig_omega": sig}, row, det_shape, window=(61, 7, 7), min_value=0.0
+            )
+            w = np.bincount(frame, weights=value, minlength=omega.size)
+            mean = (w * omega).sum() / w.sum()
+            moments[sig] = (mean, (w * (omega - mean) ** 2).sum() / w.sum() - 0.01**2 / 12)  # minus the frame width
+        self.assertAlmostEqual(moments[0.05][0], moments[0.0][0], delta=1e-4)
+        self.assertAlmostEqual(moments[0.05][1] - moments[0.0][1], 0.05**2, delta=0.02 * 0.05**2)
+
+
+class TestWindowClasses(unittest.TestCase):
+    def test_broad_peak_gets_more_frames(self):
+        """With max_frames, a peak broad in omega is rendered in a larger window and nothing is lost."""
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        one = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        omega = (np.floor(omega_c / 0.05) + np.arange(-40, 41)) * 0.05 + 0.025
+        row = make_row(omega, np.zeros_like(omega))
+        broad = {**geom, "sig_omega": 0.2}  # 4 frames
+        win = (3, 21, 21)  # this peak is a few pixels wide on the detector: wide enough in pixels for all of it
+        _, _, value_3, stats_3 = render_row(
+            one, hkl[None], np.ones(1), broad, row, det_shape, window=win, min_value=0.0
+        )
+        _, _, value_31, stats_31 = render_row(
+            one, hkl[None], np.ones(1), broad, row, det_shape, window=win, min_value=0.0, max_frames=31
+        )
+        self.assertLess(stats_3["captured"].max(), 0.5)
+        self.assertGreater(stats_31["captured"].min(), 0.999)
+        self.assertEqual(int(stats_31["window_frames"][0]), 31)
+        self.assertGreater(value_31.sum(), 2 * value_3.sum())
+
+
 class TestLargeBatch(unittest.TestCase):
     def test_matches_small_batches(self):
         """A batch of 4096 peaks renders the same as batches of 256.
@@ -385,7 +425,7 @@ class TestCheckRender(unittest.TestCase):
         # broad spreads (~2 px, truncated by the window): the fraction inside the window must match
         geom = dict(self.geom, sig_psf=0.3)
         r = check_render(
-            self.entries, self.hkls, geom, self.row, self.det_shape, window=(7, 15, 15), n_peaks=24, n_samples=200_000
+            self.entries, self.hkls, geom, self.row, self.det_shape, window=(7, 11, 11), n_peaks=24, n_samples=200_000
         )
         self.assertGreater(len(r["entry"]), 10)
         self.assertLess(r["captured"].min(), 0.995)  # the window does truncate these peaks
