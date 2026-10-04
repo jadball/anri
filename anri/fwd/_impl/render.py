@@ -325,7 +325,8 @@ def select_peaks(
             across, height, _ = _beam_offsets(
                 sample_to_lab(p, omegas[i], geom["wedge"], geom["chi"], dty, geom["y0"]), geom
             )
-            near_h.append(jnp.abs(across) < margin[3])
+            # within the omega margin an off-axis voxel moves across the beam by up to |p_xy| x margin (radians)
+            near_h.append(jnp.abs(across) < margin[3] + jnp.hypot(p[0], p[1]) * jnp.radians(margin[2]))
             near_v.append(jnp.abs(height) < margin[4])
         return jnp.stack(cens), valid, jnp.stack(near_h), jnp.stack(near_v)
 
@@ -463,9 +464,12 @@ def render_peaks(
         captured = jnp.sum(frac)
 
         # per-frame factors: the beam's profile over the voxel at that frame's dty, and transmission
-        lab0 = sample_to_lab(pos, omega_peak, geom["wedge"], geom["chi"], geom["y0"], geom["y0"])  # dty = y0
+        # at the mean omega of the peak's mass within each frame: a peak spread in omega (e.g. by sig_rot) diffracts
+        # at different omegas, where an off-axis voxel sits at a different place across the beam
+        om_fr = omega_peak + d_o  # [wo]
+        lab0 = jax.vmap(lambda o: sample_to_lab(pos, o, geom["wedge"], geom["chi"], geom["y0"], geom["y0"]))(om_fr)
         lab = lab0 + jnp.array([0.0, 1.0, 0.0]) * (row["dty_sorted"][fclip] - geom["y0"])[:, None]  # [wo, 3]
-        w_beam = jax.vmap(beam_weight, in_axes=(0, None, None))(lab, omega_peak, geom)
+        w_beam = jax.vmap(beam_weight, in_axes=(0, 0, None))(lab, om_fr, geom)
         per_frame = w_beam * row["transmission_sorted"][fclip]  # [wo]
 
         amp = entries["density"][e] * F2[h] * _peak_factors(ubi, hkl, etasign, geom)

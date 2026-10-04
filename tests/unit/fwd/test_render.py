@@ -252,8 +252,11 @@ class TestSinglePeak(unittest.TestCase):
             lab = jax.vmap(sample_to_lab, in_axes=(0,) + (None,) * 5)(pos, om, 0.0, 0.0, dty, g["y0"])
             w = np.asarray(jax.vmap(beam_weight, in_axes=(0, None, None))(lab, om, g))
             lab = np.asarray(lab)
-            if w.sum() < 0.05 * geom["voxel_size"] ** 2:
-                continue  # the grain is barely in this row
+            if w.sum() < 0.5 * geom["voxel_size"] ** 2:
+                # the grain is barely in this row. Only voxels in the beam's tail are lit, where the beam's weight
+                # changes steeply across the few frames of the peak; the renderer weights each frame separately, which
+                # moves the spot (~0.02 px here) away from this single-omega expectation
+                continue
             expected = (w[:, None] * centroids).sum(0) / w.sum()
 
             # ImageD11: connected pixels and moments per frame, then merge frames by intensity
@@ -369,6 +372,33 @@ class TestOrientationSpread(unittest.TestCase):
         self.assertAlmostEqual(d1[0, 0] / d2[0, 0], 1.0, delta=0.2)  # Monte Carlo, 400 samples: ~7% statistical
         self.assertLess(np.linalg.norm(d1 - d2) / np.linalg.norm(d2), 0.2)
 
+
+    def test_off_axis_rows(self):
+        """Off the rotation axis, the spread's parts diffract at different omegas, where the voxel sits at different
+        places across the beam: the intensity per dty row must match the sub-entries'."""
+        from scipy.spatial.transform import Rotation
+
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        geom = {**geom, "sig_beam": 0.1}
+        sig, r = np.radians(0.25), 50.0
+        omega = (np.floor(omega_c / 0.05) + np.arange(-30, 31)) * 0.05 + 0.025
+        ubi = entries["ubi"][:1]
+        pos = np.array([[r, 0.0, 0.0]])
+        one = {"ubi": ubi, "pos": pos, "density": np.ones(1), "sig_rot": np.array([sig])}
+        rng = np.random.default_rng(1)
+        rv = rng.normal(size=(100, 3)) * sig
+        rv = np.concatenate([rv, -rv])
+        R = Rotation.from_rotvec(rv).as_matrix()
+        cloud = {"ubi": ubi[0] @ np.swapaxes(R, -1, -2), "pos": np.repeat(pos, 200, 0), "density": np.full(200, 1 / 200)}
+        y_c = -r * np.sin(np.radians(omega_c))
+        dtys = np.round(y_c / 0.25) * 0.25 + np.arange(-6, 7) * 0.25
+        totals = []
+        for ent, win in ((one, (61, 9, 9)), (cloud, (5, 7, 7))):
+            totals.append([render_row(ent, hkl[None], np.ones(1), geom, make_row(omega, np.full_like(omega, y)), det_shape,
+                                      window=win, min_value=0.0, batch=256, select_chunk=1024)[2].sum() for y in dtys])  # fmt: skip
+        a, b = np.array(totals)
+        self.assertLess(b.max() / b.sum(), 0.5)  # the cloud is spread over several rows
+        self.assertLess(np.linalg.norm(a - b) / np.linalg.norm(b), 0.08)  # 0.19 with one omega per peak
 
     def test_absent_equals_zero(self):
         """No "sig_rot" and sig_rot = 0 render the same pixels."""
