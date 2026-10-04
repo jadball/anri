@@ -35,7 +35,9 @@ p.add_argument("dataset")
 p.add_argument("--phase", help="phase name in pars.json (default: the only one)")
 p.add_argument("--parfile", help="pars.json (default: the dataset's parfile, else pars/pars.json beside PROCESSED_DATA)")
 p.add_argument("--rings", type=int, default=6, help="number of rings used (default 6)")
-p.add_argument("--grid", type=float, default=2.5, help="orientation grid step, degrees (default 2.5)")
+p.add_argument("--grid", type=float, help="orientation grid step, deg (default: the coarsest of 3, 2.5, 2, 1.5, 1 whose "
+               "chance completeness is at most --max-chance)")
+p.add_argument("--max-chance", type=float, default=0.3, help="chance completeness allowed by the automatic grid (default 0.3)")
 p.add_argument("--keep", type=int, default=3000, help="at most this many orientations for the occupancy fit (default 3000)")
 p.add_argument("--min-comp", type=float, help="keep orientations with at least this completeness (default: halfway "
                "between the grid's median, the chance level, and its maximum)")
@@ -44,10 +46,7 @@ p.add_argument("--cand", type=int, default=64, help="candidate orientations per 
 p.add_argument("--block-gb", type=float, default=1.0, help="memory for one block of voxels' system entries (default 1 GB)")
 p.add_argument("--lit", type=float, default=1.0, help="lit threshold, x the median non-empty bin (default 1)")
 p.add_argument("--etacut", type=float, default=0.2, help="use reflections with |sin eta| above this (default 0.2)")
-p.add_argument("--beam", type=float, help="beam FWHM (dty units; default one dty step; not used by the fit yet)")
 p.add_argument("--tth-tol", type=float, help="2theta tolerance of the rings (deg; default: measured per ring)")
-p.add_argument("--tol-eta", type=float, help="eta tolerance (deg; default: per prediction, from the grid and the rings)")
-p.add_argument("--tol-omega", type=float, help="omega tolerance (deg; default: per prediction, from the grid and frames)")
 p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the dataset's y0)")
 p.add_argument("--gridstep", type=int, default=1,
                help="voxel = gridstep x dty step; data rows are summed in groups of gridstep to match (default 1)")
@@ -77,6 +76,7 @@ from anri.io import geom_from_pars  # noqa: E402
 F32 = jnp.float32
 B_E, B_O = 0.5, 0.25  # lit-map bins (deg): eta, omega
 R_E, R_O = 2, 4  # MLEM data bins = lit bins x these (1 x 1 deg)
+GRID_STEPS = (3.0, 2.5, 2.0, 1.5, 1.0)  # tried by the automatic grid, coarsest first
 
 
 def read_par(path: str) -> dict:
@@ -143,8 +143,8 @@ N_E, N_O = int(round(360 / B_E)), int(round((oedge[-1] - oedge[0]) / B_O))
 N_O -= N_O % R_O
 DTYM, OMM = str(attrs["dtymotor"]), str(attrs["omegamotor"])
 WL = geo["wavelength"]
-BEAM = args.beam if args.beam is not None else YSTEP
-geom = geom_from_pars(geo, Y0, WL * 2e-3 / 2.355, 1.5e-4, 1.5e-4, sig_beam=BEAM / 2.355, voxel_size=YSTEP, sig_psf=0.5)
+# the geometry for predictions and pixel angles (the spreads are unused here)
+geom = geom_from_pars(geo, Y0, WL * 2e-3 / 2.355, 1.5e-4, 1.5e-4, sig_beam=YSTEP / 2.355, voxel_size=YSTEP, sig_psf=0.5)
 geom = {k: jnp.asarray(v, F32) if jnp.issubdtype(jnp.asarray(v).dtype, jnp.floating) else v for k, v in geom.items()}
 
 # ------------------------------------------------------------------------------------------------- crystal and rings
@@ -197,13 +197,12 @@ log(f"pars    {parfile}: phase {phase}, lattice {', '.join(f'{v:g}' for v in lpa
 log(f"geometry: wavelength {WL:.5f}, distance {geo['distance']:g}; y0 {Y0:.6g}"
     f"{' (override)' if args.y0 is not None else ''}; dty {DTY0:.6g} + {NK} x {YSTEP:.6g} "
     f"(motor {DTYM}{'' if G == 1 else f', rows summed in groups of {G}'}); omega {OM0:.4g} .. {oedge[-1]:.4g} in "
-    f"{len(oedge) - 1} frames of {OSTEP:.4g} (motor {OMM}); beam FWHM {BEAM:g}"
-    + ("" if args.beam is not None else " (placeholder: one dty step)"))
+    f"{len(oedge) - 1} frames of {OSTEP:.4g} (motor {OMM})")
 log(f"memory: data {N_CELLS * 4 / 1e9:.2f} GB (x ~4 in MLEM); occupancies {NV} voxels x {K} candidates = "
     f"{NV * K * 8 / 1e9:.2f} GB; blocks of {X.block_voxels(QC, NJ, args.block_gb * 1e9)} / {X.block_voxels(K, NJ, args.block_gb * 1e9)} "
     f"voxels (candidates / MLEM), ~{args.block_gb:g} GB each")
 log(f"{hkls.shape[0]} hkls in {args.rings} rings at 2theta {', '.join(f'{v:.2f}' for v in ring_tth_all[: args.rings])}; "
-    f"grid {args.grid} deg, keep {args.keep}, {args.iter} MLEM iterations, voxels {NR} x {NR} ({NK} dty bins + pad {int(PAD)})")
+    f"grid {'auto' if args.grid is None else args.grid} deg, keep {args.keep}, {args.iter} MLEM iterations, voxels {NR} x {NR} ({NK} dty bins + pad {int(PAD)})")
 if args.check:
     raise SystemExit(0)
 
@@ -275,32 +274,44 @@ med = float(jnp.median(Hs[Hs > 0]))
 for kk in (0.0, 1.0, 3.0, 10.0):
     log(f"  lit fraction at {kk:g} x median: {float(jnp.mean(Hs > kk * med)) * 100:.1f}%")
 table = X.lit_table(Hs > args.lit * med)
-DELTA = X.grid_misorientation(args.grid)
 ring_hw_j = jnp.asarray(ring_hw, F32)
 
 
-def tolerances(eta):  # noqa: ANN001, ANN202
-    te, to = X.match_tolerances(eta, ring_of_h, ring_tth, ring_hw_j, DELTA, OSTEP)
-    te = te if args.tol_eta is None else jnp.full_like(te, args.tol_eta)
-    return te, (to if args.tol_omega is None else jnp.full_like(to, args.tol_omega))
+def completeness(rod, step):  # noqa: ANN001, ANN202
+    """Completeness [N] of orientations rod [N, 3], with the tolerances of a grid of this step (deg)."""
+    out = []
+    for s0 in range(0, rod.shape[0], 1 << 15):
+        eta, om, ok_ = X.predict(rod[s0:s0 + (1 << 15)], jnp.asarray(B), hkls, geom)
+        te, to = X.match_tolerances(eta, ring_of_h, ring_tth, ring_hw_j, X.grid_misorientation(step), OSTEP)
+        ok_ = ok_ & (jnp.abs(jnp.sin(jnp.radians(eta))) > args.etacut)
+        out.append(X.completeness_tol(table, eta, om, ok_, ring_of_h, te, to, OM0, B_E, B_O, n_e=N_E, n_o=N_O)[0])
+    return np.asarray(jnp.concatenate(out))
 
 
+# grid step: the coarsest whose chance completeness (the median over a random sample of the grid: most orientations
+# are wrong) is at most --max-chance. A coarser grid has larger tolerances, so more chance matches.
+GRID = args.grid
+if GRID is None:
+    rng = np.random.default_rng(0)
+    for GRID in GRID_STEPS:
+        g = X.cubic_fz_grid(GRID)
+        c = float(np.median(completeness(jnp.asarray(g[rng.choice(len(g), min(len(g), 1 << 14), replace=False)]), GRID)))
+        log(f"  grid {GRID} deg ({len(g)} orientations): chance completeness {c:.2f}")
+        if c <= args.max_chance:
+            break
+    else:
+        log(f"  no grid step reaches chance <= {args.max_chance}: using the finest, {GRID} deg")
+DELTA = X.grid_misorientation(GRID)
 th_ = np.radians(np.asarray(ring_tth) / 2)
-log(f"grid {args.grid} deg: up to {DELTA:.2f} deg from the truth; tolerances at |sin eta| = 1 / {args.etacut}: eta "
+log(f"grid {GRID} deg{'' if args.grid is not None else ' (auto)'}: up to {DELTA:.2f} deg from the truth; tolerances at "
+    f"|sin eta| = 1 / {args.etacut}: eta "
     f"{DELTA / np.cos(th_[0]) + ring_hw[0] / np.sin(2 * th_[0]) / np.cos(2 * th_[0]):.2f} (ring 0) .. "
     f"{DELTA / np.cos(th_[-1]) + ring_hw[-1] / np.sin(2 * th_[-1]) / np.cos(2 * th_[-1]):.2f} (ring {args.rings - 1}) / "
     f"up to {DELTA / np.cos(th_[-1]) * (1 + np.tan(th_[-1]) / np.tan(np.arcsin(args.etacut))) + ring_hw[-1] / np.sin(2 * th_[-1]) / np.cos(2 * th_[-1]):.2f}; "
-    f"omega {DELTA / np.cos(th_[0]) + OSTEP / 2:.2f} / {DELTA / np.cos(th_[-1]) / args.etacut + OSTEP / 2:.2f}"
-    + (" (overridden)" if args.tol_eta is not None or args.tol_omega is not None else ""))
+    f"omega {DELTA / np.cos(th_[0]) + OSTEP / 2:.2f} / {DELTA / np.cos(th_[-1]) / args.etacut + OSTEP / 2:.2f}")
 t1 = time.perf_counter()
-rod = jnp.asarray(X.cubic_fz_grid(args.grid))
-comp = []
-for s0 in range(0, rod.shape[0], 1 << 15):
-    eta, om, ok_ = X.predict(rod[s0:s0 + (1 << 15)], jnp.asarray(B), hkls, geom)
-    te, to = tolerances(eta)
-    ok_ = ok_ & (jnp.abs(jnp.sin(jnp.radians(eta))) > args.etacut)
-    comp.append(X.completeness_tol(table, eta, om, ok_, ring_of_h, te, to, OM0, B_E, B_O, n_e=N_E, n_o=N_O)[0])
-comp = np.asarray(jnp.concatenate(comp))
+rod = jnp.asarray(X.cubic_fz_grid(GRID))
+comp = completeness(rod, GRID)
 chance = float(np.median(comp))
 min_comp = args.min_comp if args.min_comp is not None else chance + 0.5 * (comp.max() - chance)
 keep = np.flatnonzero(comp >= min_comp)
@@ -356,7 +367,7 @@ tmap.get_ipf_maps()
 _ = tmap.euler
 _ = tmap.eps_devia
 _ = tmap.eps_crystal
-tag = f"{dsname}_mlem_{args.keep}_{args.iter}_{args.lit:g}_{args.grid:g}"
+tag = f"{dsname}_mlem_{args.keep}_{args.iter}_{args.lit:g}_{GRID:g}"
 out = os.path.join(args.outdir, f"{tag}_tmap.h5")
 if os.path.exists(out):
     os.remove(out)
