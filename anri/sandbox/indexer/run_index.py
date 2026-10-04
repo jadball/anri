@@ -43,6 +43,8 @@ p.add_argument("--min-comp", type=float, help="keep orientations with at least t
                "between the grid's median, the chance level, and its maximum)")
 p.add_argument("--iter", type=int, default=10, help="MLEM iterations (default 10)")
 p.add_argument("--cand", type=int, default=64, help="candidate orientations per voxel (default 64)")
+p.add_argument("--coarse", type=int, default=1, help="first fit voxels this many times larger, then give each voxel "
+               "the candidates of its coarse neighbourhood (default 1: off; 4 is ~16x cheaper on large maps)")
 p.add_argument("--min-frac", type=float, default=0.1, help="report populations holding at least this fraction of a "
                "voxel's occupancy (default 0.1; smaller ones are mostly decoys on the phantom)")
 p.add_argument("--block-gb", type=float, default=1.0, help="memory for one block of voxels' system entries (default 1 GB)")
@@ -336,11 +338,27 @@ sx, sy = recon_to_sample(ri, rj, (NR, NR), YSTEP)
 pos = jnp.asarray(np.stack([sx.ravel(), sy.ravel(), np.zeros(NV)], 1), F32)
 scan = {"y0": Y0, "dty0": DTY0, "ystep": YSTEP, "n_rows": NK, "om0": OM0}
 pos_p = X.pad_voxels(pos, VB)
-log(f"candidates: {NV} voxels x {nq} orientations, the top {K} per voxel")
-t1 = time.perf_counter()
-f0, cand = X.candidates(H, pred, ring_of_h, pos_p, scan, dims, K, X.block_voxels(QC, NJ, args.block_gb * 1e9), qc=QC, log=log)
-t2 = time.perf_counter()
 vb = X.block_voxels(K, NJ, args.block_gb * 1e9)
+vb_all = X.block_voxels(QC, NJ, args.block_gb * 1e9)  # blocks for passes over every orientation
+t1 = time.perf_counter()
+if args.coarse == 1:
+    log(f"candidates: {NV} voxels x {nq} orientations, the top {K} per voxel")
+    f0, cand = X.candidates(H, pred, ring_of_h, pos_p, scan, dims, K, vb_all, qc=QC, log=log)
+else:  # coarse to fine: the full candidate pass on G x G fewer voxels, then each voxel scores what its neighbourhood found
+    G_C = args.coarse
+    H_c, NK_c = X.coarsen_rows(H, NK, G_C)
+    scan_c = {**scan, "dty0": DTY0 + 0.5 * (G_C - 1) * YSTEP, "ystep": G_C * YSTEP, "n_rows": NK_c}
+    n_c = -(-NR // G_C) + 2
+    gc = (np.arange(n_c) - (n_c - 1) / 2) * G_C * YSTEP
+    pos_c = jnp.asarray(np.stack([*(a.ravel() for a in np.meshgrid(gc, gc, indexing="ij")), np.zeros(n_c * n_c)], 1), F32)
+    pos_cp = X.pad_voxels(pos_c, VB)
+    log(f"coarse: {n_c} x {n_c} voxels of {G_C * YSTEP:g} x {nq} orientations, the top {K} per voxel")
+    f_c, cand_c = X.candidates(H_c, pred, ring_of_h, pos_cp, scan_c, dims, K, vb_all, qc=QC, log=log)
+    f_c = X.mlem_sparse(H_c, cand_c, pred, ring_of_h, pos_cp, scan_c, dims, f_c, args.iter, vb, log=log)
+    cand_in = X.inherit_candidates(pos_p, pos_c, f_c[: n_c * n_c], cand_c[: n_c * n_c], 2 * K)
+    log(f"fine: {NV} voxels x {2 * K} candidates inherited from the coarse neighbourhood ({time.perf_counter() - t1:.1f} s so far)")
+    f0, cand = X.candidates_from(H, cand_in, pred, ring_of_h, pos_p, scan, dims, K, vb // 2, log=log)
+t2 = time.perf_counter()
 jax.block_until_ready(X.forward_sparse(f0, cand, pred, ring_of_h, pos_p, scan, dims, N_CELLS, vb))
 t3 = time.perf_counter()
 jax.block_until_ready(X.forward_sparse(f0, cand, pred, ring_of_h, pos_p, scan, dims, N_CELLS, vb))

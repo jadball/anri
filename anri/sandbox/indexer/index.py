@@ -512,3 +512,53 @@ def populations(f, cand, U_list, step_deg, p=4, m=16, eps=0.02, link=1.8, vb=1 <
         out.append([np.asarray(x)[: vb - pad] for x in _populations(fb, cb, U_list, ops, radius, eps, m=min(m, f.shape[1]), p=p)])
     frac, U, spread, n = (np.concatenate(x) for x in zip(*out))
     return frac, U, np.degrees(spread), n
+
+
+# ----------------------------------------------------------------------------------------------- coarse to fine
+def coarsen_rows(d, n_k: int, g: int):  # noqa: ANN001, ANN201
+    """Data [..., n_k] (flat) with rows summed in groups of g -> (flat data, rows): row k goes to k // g."""
+    d = jnp.asarray(d).reshape(-1, n_k)
+    d = jnp.pad(d, ((0, 0), (0, -n_k % g)))
+    return d.reshape(d.shape[0], -1, g).sum(-1).ravel(), -(-n_k // g)
+
+
+@partial(jax.jit, static_argnames=("k2",))
+def _inherit(near9, f_c, cand_c, k2):  # noqa: ANN001, ANN202
+    def one(nb):  # noqa: ANN001, ANN202
+        c, w = cand_c[nb].ravel(), f_c[nb].ravel()  # [9 K]: the neighbourhood's candidates and coarse occupancies
+        o = jnp.argsort(c)
+        c, w = c[o], w[o]
+        dup = jnp.concatenate([jnp.array([False]), c[1:] == c[:-1]])
+        _, i = jax.lax.top_k(jnp.where(dup, -1.0, w), k2)  # each orientation once, by its first copy's occupancy
+        return c[i]
+
+    return jax.vmap(one)(near9)
+
+
+def inherit_candidates(pos, pos_c, f_c, cand_c, k2, vb=1 << 14):  # noqa: ANN001, ANN201
+    """[Nv, k2] candidates of fine voxels pos [Nv, 3] from a coarse fit (f_c, cand_c [Nc, K] at pos_c [Nc, 3]): the
+    orientations occupied in the nearest coarse voxel and its 8 neighbours (nearest 9 by distance), most occupied first.
+    """
+    pc = np.asarray(pos_c)[:, :2]
+    out = []
+    for s0 in range(0, pos.shape[0], vb):
+        p = np.asarray(pos[s0:s0 + vb])[:, :2]
+        near9 = np.argsort(np.linalg.norm(p[:, None] - pc[None], axis=2), 1)[:, :9]
+        out.append(np.asarray(_inherit(jnp.asarray(near9), jnp.asarray(f_c), jnp.asarray(cand_c), k2=k2)))
+    return jnp.asarray(np.concatenate(out))
+
+
+def candidates_from(d, cand_in, pred, ring_j, pos, scan, dims, k, vb, log=print):  # noqa: ANN001, ANN201
+    """As candidates, but each voxel scores only its own list cand_in [Nv, K2] (e.g. inherit_candidates): f1 =
+    A^T(d / A 1) / A^T 1 over those, then the top k. Cost ~ Nv x K2, not Nv x all orientations."""
+    t0 = time.perf_counter()
+    n_cells = d.shape[0]
+    a1 = forward_sparse(jnp.ones(cand_in.shape, jnp.float32), cand_in, pred, ring_j, pos, scan, dims, n_cells, vb)
+    r = jnp.where(a1 > 0, d / jnp.maximum(a1, 1e-30), 0.0)
+    f1 = backward_sparse(r, cand_in, pred, ring_j, pos, scan, dims, vb) / jnp.maximum(
+        backward_sparse(jnp.ones(n_cells, jnp.float32), cand_in, pred, ring_j, pos, scan, dims, vb), 1e-30)
+    val, i = jax.lax.top_k(f1, k)
+    cand = jnp.take_along_axis(cand_in, i, 1)
+    jax.block_until_ready(cand)
+    log(f"  candidates: top {k} of {cand_in.shape[1]} inherited per voxel: {time.perf_counter() - t0:.1f} s")
+    return val, cand
