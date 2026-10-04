@@ -37,7 +37,7 @@ p.add_argument("--parfile", help="pars.json (default: the dataset's parfile, els
 p.add_argument("--rings", type=int, default=6, help="number of rings used (default 6)")
 p.add_argument("--grid", type=float, help="orientation grid step, deg (default: the coarsest of 3, 2.5, 2, 1.5, 1 whose "
                "chance completeness is at most --max-chance)")
-p.add_argument("--max-chance", type=float, default=0.3, help="chance completeness allowed by the automatic grid (default 0.3)")
+p.add_argument("--max-chance", type=float, default=0.5, help="chance completeness allowed by the automatic grid (default 0.5)")
 p.add_argument("--keep", type=int, default=3000, help="at most this many orientations for the occupancy fit (default 3000)")
 p.add_argument("--min-comp", type=float, help="keep orientations with at least this completeness (default: halfway "
                "between the grid's median, the chance level, and its maximum)")
@@ -300,7 +300,8 @@ if GRID is None:
         if c <= args.max_chance:
             break
     else:
-        log(f"  no grid step reaches chance <= {args.max_chance}: using the finest, {GRID} deg")
+        log(f"  no grid step reaches chance <= {args.max_chance}: using the finest, {GRID} deg. The lit map is crowded: "
+            "raise --lit, and keep everything above the threshold (raise --keep)")
 DELTA = X.grid_misorientation(GRID)
 th_ = np.radians(np.asarray(ring_tth) / 2)
 log(f"grid {GRID} deg{'' if args.grid is not None else ' (auto)'}: up to {DELTA:.2f} deg from the truth; tolerances at "
