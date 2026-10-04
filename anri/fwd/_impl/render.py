@@ -223,12 +223,45 @@ def _centroid(
 _propagate = make_propagator(_centroid, argnums=(4, 5, 6), has_aux=True, out_elems=_COV_ELEMS)
 
 
+def _centroid_rotated(
+    ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, rotvec: jax.Array, dty: ArrayLike, geom: dict
+) -> tuple[jax.Array, jax.Array]:
+    """Return the centroid with the lattice turned by a small sample-frame rotation (rotation vector, radians).
+
+    UB -> R UB, so UBI -> UBI R^T, with R = I + [rotvec]x: exact to first order, which is all the propagation uses.
+    """
+    rx, ry, rz = rotvec[0], rotvec[1], rotvec[2]
+    zero = jnp.zeros_like(rx)
+    cross = jnp.stack([jnp.stack([zero, -rz, ry]), jnp.stack([rz, zero, -rx]), jnp.stack([-ry, rx, zero])])
+    return _centroid(
+        ubi @ (jnp.eye(3, dtype=ubi.dtype) + cross).T, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty, geom
+    )
+
+
+# Covariance of (sc, fc, omega) from an entry's intrinsic orientation spread (isotropic, sample frame)
+_propagate_rotation = make_propagator(_centroid_rotated, argnums=(4,), has_aux=True, out_elems=_COV_ELEMS)
+
+
 def _peak_cov(
-    ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, dty: ArrayLike, geom: dict
+    ubi: jax.Array,
+    pos: jax.Array,
+    hkl: jax.Array,
+    etasign: ArrayLike,
+    dty: ArrayLike,
+    geom: dict,
+    sig_rot: ArrayLike | None = None,
 ) -> jax.Array:
-    """[6] elements of the (sc, fc, omega) covariance, in the order of _COV_ELEMS."""
+    """[6] elements of the (sc, fc, omega) covariance, in the order of _COV_ELEMS.
+
+    sig_rot: the entry's intrinsic orientation spread, the standard deviation of each component of a small
+    sample-frame rotation vector (radians). None (the default) leaves it out entirely, at no cost.
+    """
     cov_in = jnp.diag(jnp.array([geom["sig_wavelength"], geom["sig_ky"], geom["sig_kz"]]) ** 2)
-    return _propagate(ubi, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty, geom, cov_in)
+    cov = _propagate(ubi, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty, geom, cov_in)
+    if sig_rot is not None:
+        rot_in = jnp.eye(3, dtype=ubi.dtype) * jnp.asarray(sig_rot, ubi.dtype) ** 2
+        cov = cov + _propagate_rotation(ubi, pos, hkl, etasign, jnp.zeros(3, ubi.dtype), dty, geom, rot_in)
+    return cov
 
 
 def _peak_factors(ubi: jax.Array, hkl: jax.Array, etasign: ArrayLike, geom: dict) -> jax.Array:
@@ -338,7 +371,7 @@ def render_peaks(
     entry, hkl_idx, branch
         [B] int indices of the peaks: map entry, row of ``hkls``, and 0 / 1 for etasign +1 / -1
     entries
-        Dict with "ubi" [N, 3, 3], "pos" [N, 3] and "density" [N]
+        Dict with "ubi" [N, 3, 3], "pos" [N, 3] and "density" [N]; optionally "sig_rot" [N], see :func:`render_row`
     hkls, F2
         [Nh, 3] hkls and [Nh] structure factors squared
     geom, row
@@ -367,7 +400,7 @@ def render_peaks(
         etasign = 1.0 - 2.0 * br
         dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
         centroid, valid = _centroid(ubi, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty_row, geom)
-        cov = _peak_cov(ubi, pos, hkl, etasign, dty_row, geom)
+        cov = _peak_cov(ubi, pos, hkl, etasign, dty_row, geom, entries["sig_rot"][e] if "sig_rot" in entries else None)
         # detector point spread adds to the slow and fast variances (pixels^2)
         psf2 = geom["sig_psf"] ** 2
         om2 = geom.get("sig_omega", 0.0) ** 2  # optional extra omega spread (degrees), e.g. to smooth a refinement
@@ -599,13 +632,23 @@ def _valid_from_shards(x: jax.Array, count: np.ndarray, per_shard: int) -> np.nd
 
 @jax.jit
 def _omega_sigma(
-    ubi: jax.Array, pos: jax.Array, hkls: jax.Array, e: jax.Array, h: jax.Array, b: jax.Array, geom: dict, row: dict
+    ubi: jax.Array,
+    pos: jax.Array,
+    hkls: jax.Array,
+    e: jax.Array,
+    h: jax.Array,
+    b: jax.Array,
+    geom: dict,
+    row: dict,
+    sig_rot: jax.Array | None = None,
 ) -> jax.Array:
     """Return the standard deviation in omega (degrees) of each peak, as render_peaks spreads it."""
     dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
 
     def one(ei: jax.Array, hi: jax.Array, bi: jax.Array) -> jax.Array:
-        cov = _peak_cov(ubi[ei], pos[ei], hkls[hi], 1.0 - 2.0 * bi, dty_row, geom)
+        cov = _peak_cov(
+            ubi[ei], pos[ei], hkls[hi], 1.0 - 2.0 * bi, dty_row, geom, None if sig_rot is None else sig_rot[ei]
+        )
         return jnp.sqrt(cov[2] + geom.get("sig_omega", 0.0) ** 2 + _VAR_FLOOR[2])
 
     return jax.vmap(one)(e, h, b)
@@ -632,11 +675,14 @@ def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict
     """Convert the renderer's inputs to JAX arrays, in the dtype of the entries' UBIs."""
     ubi = jnp.asarray(entries["ubi"])
     dtype = ubi.dtype
-    entries = {
+    out = {
         "ubi": ubi,
         "pos": jnp.asarray(entries["pos"], dtype=dtype),
         "density": jnp.asarray(entries["density"], dtype=dtype),
     }
+    if "sig_rot" in entries:  # only when given, so renders without it compile and cost the same as before
+        out["sig_rot"] = jnp.broadcast_to(jnp.asarray(entries["sig_rot"], dtype=dtype), ubi.shape[:1])
+    entries = out
     hkls, F2 = jnp.asarray(hkls, dtype=dtype), jnp.asarray(F2, dtype=dtype)
     return entries, hkls, F2, jax.tree.map(jnp.asarray, geom), jax.tree.map(jnp.asarray, row)
 
@@ -664,7 +710,11 @@ def render_row(
     ----------
     entries
         Dict with "ubi" [N, 3, 3], "pos" [N, 3] (sample frame, same length units as dty)
-        and "density" [N], for map entries of a single phase
+        and "density" [N], for map entries of a single phase. Optionally "sig_rot" [N] (or a scalar): each entry's
+        intrinsic orientation spread, the standard deviation (radians) of each component of a small sample-frame
+        rotation vector, isotropic. It widens the entry's peaks in omega and on the detector through the same
+        linearised propagation as the beam's spreads, so it suits spreads up to a few degrees. Widen ``window``
+        (pixels) for spreads that move spots by several pixels.
     hkls, F2
         [Nh, 3] hkls of that phase and [Nh] their structure factors squared
     geom
@@ -738,7 +788,11 @@ def render_row(
         sig_frames = (
             np.concatenate(
                 [
-                    np.asarray(_omega_sigma(ubi, pos, hkls_j, *(x[i : i + chunk] for x in ehb), geom, row_j))
+                    np.asarray(
+                        _omega_sigma(
+                            ubi, pos, hkls_j, *(x[i : i + chunk] for x in ehb), geom, row_j, entries.get("sig_rot")
+                        )
+                    )
                     for i in range(0, n_peaks + pad, chunk)
                 ]
             )[:n_peaks]

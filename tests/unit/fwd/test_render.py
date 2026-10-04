@@ -327,6 +327,62 @@ class TestOmegaSpread(unittest.TestCase):
         self.assertAlmostEqual(moments[0.05][1] - moments[0.0][1], 0.05**2, delta=0.02 * 0.05**2)
 
 
+class TestOrientationSpread(unittest.TestCase):
+    """An entry's "sig_rot" (intrinsic orientation spread) against a cloud of explicitly rotated sub-entries."""
+
+    @staticmethod
+    def _moments(frame, pixel, value, omega, nf):
+        x = np.stack([omega[frame], pixel // nf, pixel % nf], 1).astype(float)  # (omega, slow, fast)
+        w = value / value.sum()
+        mean = w @ x
+        d = x - mean
+        return mean, (d * w[:, None]).T @ d
+
+    def test_matches_rotated_sub_entries(self):
+        """One entry with sig_rot adds the same to the peak's moments as 400 sub-entries with rotations drawn from it."""
+        from scipy.spatial.transform import Rotation
+
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        sig = 2e-3  # rad per component, 0.11 degrees: comparable to this setup's beam spreads
+        omega = (np.floor(omega_c / 0.04) + np.arange(-15, 16)) * 0.04 + 0.02
+        row = make_row(omega, np.zeros_like(omega))
+        win = (31, 17, 17)  # wide enough (+-4 sigma) that no peak is clipped: clipping would bias the moments
+        ubi = entries["ubi"][:1]
+        one = {"ubi": ubi, "pos": np.zeros((1, 3)), "density": np.ones(1), "sig_rot": np.array([sig])}
+        rng = np.random.default_rng(0)
+        rv = rng.normal(size=(200, 3)) * sig
+        rv = np.concatenate([rv, -rv])  # antithetic pairs: first-order errors in the mean cancel
+        R = Rotation.from_rotvec(rv).as_matrix()  # UB -> R UB, so UBI -> UBI R^T
+        cloud = {"ubi": ubi[0] @ np.swapaxes(R, -1, -2), "pos": np.zeros((400, 3)), "density": np.full(400, 1 / 400)}
+        base = {k: v for k, v in one.items() if k != "sig_rot"}
+        res = []
+        for ent in (base, one, cloud):
+            frame, pixel, value, stats = render_row(ent, hkl[None], np.ones(1), geom, row, det_shape, window=win,
+                                                    min_value=0.0)  # fmt: skip
+            self.assertGreater(stats["captured"].min(), 0.999)
+            res.append(self._moments(frame, pixel, value, omega, det_shape[1]))
+        (_, c0), (m1, c1), (m2, c2) = res
+        for a, b_, tol in zip(m1, m2, (2e-3, 0.02, 0.02)):  # degrees, pixels
+            self.assertLess(abs(a - b_), tol)
+        d1, d2 = c1 - c0, c2 - c0  # what the spread adds, over the beam's own spreads
+        self.assertGreater(d2[0, 0], 0.5 * c0[0, 0])  # the spread matters in omega here
+        self.assertAlmostEqual(d1[0, 0] / d2[0, 0], 1.0, delta=0.2)  # Monte Carlo, 400 samples: ~7% statistical
+        self.assertLess(np.linalg.norm(d1 - d2) / np.linalg.norm(d2), 0.2)
+
+
+    def test_absent_equals_zero(self):
+        """No "sig_rot" and sig_rot = 0 render the same pixels."""
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        omega = (np.floor(omega_c / 0.05) + np.arange(-5, 6)) * 0.05 + 0.025
+        row = make_row(omega, np.zeros_like(omega))
+        base = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        a = render_row(base, hkl[None], np.ones(1), geom, row, det_shape, window=(5, 7, 7), min_value=0.0)
+        b = render_row({**base, "sig_rot": np.zeros(1)}, hkl[None], np.ones(1), geom, row, det_shape, window=(5, 7, 7),
+                       min_value=0.0)  # fmt: skip
+        for x, y in zip(a[:3], b[:3]):
+            np.testing.assert_allclose(x, y, rtol=1e-12, atol=1e-12)
+
+
 class TestWindowClasses(unittest.TestCase):
     def test_broad_peak_gets_more_frames(self):
         """With max_frames, a peak broad in omega is rendered in a larger window and nothing is lost."""
