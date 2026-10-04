@@ -2,7 +2,9 @@
 
 Coarse histograms of the sparse pixels, a cubic fundamental-zone grid pruned by completeness, then MLEM occupancy of
 the kept orientations on an NR x NR voxel grid (voxel = dty step; NR = number of dty bins + ImageD11's
-sino_shift_and_pad padding, so the grid matches ImageD11's reconstructions and is centred on the rotation axis).
+sino_shift_and_pad padding, so the grid matches ImageD11's reconstructions and is centred on the rotation axis). The
+occupancies are sparse: each voxel keeps its --cand best orientations by the first MLEM update, and the work runs over
+blocks of voxels, so memory is set by --block-gb and the map's size x --cand, not by the number of orientations.
 
     python run_index.py <analysisroot> <sample> <dataset> [--phase NAME] [--parfile pars.json] [--check] ...
 
@@ -38,6 +40,8 @@ p.add_argument("--keep", type=int, default=3000, help="at most this many orienta
 p.add_argument("--min-comp", type=float, help="keep orientations with at least this completeness (default: halfway "
                "between the grid's median, the chance level, and its maximum)")
 p.add_argument("--iter", type=int, default=10, help="MLEM iterations (default 10)")
+p.add_argument("--cand", type=int, default=64, help="candidate orientations per voxel (default 64)")
+p.add_argument("--block-gb", type=float, default=1.0, help="memory for one block of voxels' system entries (default 1 GB)")
 p.add_argument("--lit", type=float, default=1.0, help="lit threshold, x the median non-empty bin (default 1)")
 p.add_argument("--etacut", type=float, default=0.2, help="use reflections with |sin eta| above this (default 0.2)")
 p.add_argument("--beam", type=float, help="beam FWHM (dty units; default one dty step; not used by the fit yet)")
@@ -182,7 +186,10 @@ def sino_shift_and_pad(y0: float, ny: int, ymin: float, ystep: float) -> tuple:
 _, PAD = sino_shift_and_pad(Y0, NK, float(ybin[0]), YSTEP)  # as ImageD11 pads its reconstructions
 NR = NK + int(PAD)  # recon grid NR x NR, centred on the rotation axis
 NV = NR * NR
-QC = int(max(1, 2 ** np.floor(np.log2(max(1, 2e9 / (NV * NJ * 64))))))  # orientations per chunk: ~2 GB of system entries
+QC = 16  # orientations per chunk in the candidate pass
+K = args.cand
+VB = max(X.block_voxels(QC, NJ, args.block_gb * 1e9), X.block_voxels(K, NJ, args.block_gb * 1e9))  # voxels padded to this
+N_CELLS = args.rings * (N_E // R_E) * (N_O // R_O) * NK
 
 log(f"dataset {dsfile}")
 log(f"sparse  {sparsefile}")
@@ -192,9 +199,11 @@ log(f"geometry: wavelength {WL:.5f}, distance {geo['distance']:g}; y0 {Y0:.6g}"
     f"(motor {DTYM}{'' if G == 1 else f', rows summed in groups of {G}'}); omega {OM0:.4g} .. {oedge[-1]:.4g} in "
     f"{len(oedge) - 1} frames of {OSTEP:.4g} (motor {OMM}); beam FWHM {BEAM:g}"
     + ("" if args.beam is not None else " (placeholder: one dty step)"))
-log(f"occupancies: {NV} voxels x {args.keep} orientations = {NV * args.keep * 4 / 1e9:.1f} GB (float32)")
+log(f"memory: data {N_CELLS * 4 / 1e9:.2f} GB (x ~4 in MLEM); occupancies {NV} voxels x {K} candidates = "
+    f"{NV * K * 8 / 1e9:.2f} GB; blocks of {X.block_voxels(QC, NJ, args.block_gb * 1e9)} / {X.block_voxels(K, NJ, args.block_gb * 1e9)} "
+    f"voxels (candidates / MLEM), ~{args.block_gb:g} GB each")
 log(f"{hkls.shape[0]} hkls in {args.rings} rings at 2theta {', '.join(f'{v:.2f}' for v in ring_tth_all[: args.rings])}; "
-    f"grid {args.grid} deg, keep {args.keep}, {args.iter} MLEM iterations, voxels {NR} x {NR} ({NK} dty bins + pad {int(PAD)}), {QC} orientations per chunk")
+    f"grid {args.grid} deg, keep {args.keep}, {args.iter} MLEM iterations, voxels {NR} x {NR} ({NK} dty bins + pad {int(PAD)})")
 if args.check:
     raise SystemExit(0)
 
@@ -311,22 +320,28 @@ ri, rj = np.meshgrid(np.arange(NR), np.arange(NR), indexing="ij")
 sx, sy = recon_to_sample(ri, rj, (NR, NR), YSTEP)
 pos = jnp.asarray(np.stack([sx.ravel(), sy.ravel(), np.zeros(NV)], 1), F32)
 scan = {"y0": Y0, "dty0": DTY0, "ystep": YSTEP, "n_rows": NK, "om0": OM0}
-f0 = jnp.ones((NV, nq + pad_q), F32)
+pos_p = X.pad_voxels(pos, VB)
+log(f"candidates: {NV} voxels x {nq} orientations, the top {K} per voxel")
 t1 = time.perf_counter()
-jax.block_until_ready(X.forward(f0, pred, ring_of_h, pos, scan, dims, H.shape[0], qc=QC))
+f0, cand = X.candidates(H, pred, ring_of_h, pos_p, scan, dims, K, X.block_voxels(QC, NJ, args.block_gb * 1e9), qc=QC, log=log)
 t2 = time.perf_counter()
-jax.block_until_ready(X.forward(f0, pred, ring_of_h, pos, scan, dims, H.shape[0], qc=QC))
+vb = X.block_voxels(K, NJ, args.block_gb * 1e9)
+jax.block_until_ready(X.forward_sparse(f0, cand, pred, ring_of_h, pos_p, scan, dims, N_CELLS, vb))
 t3 = time.perf_counter()
-log(f"MLEM: {NV} voxels x {nq} orientations; one forward projection {t3 - t2:.1f} s (first {t2 - t1:.1f} s); "
-    f"estimate ~{2.2 * (t3 - t2) * args.iter / 60:.1f} min for {args.iter} iterations")
+jax.block_until_ready(X.forward_sparse(f0, cand, pred, ring_of_h, pos_p, scan, dims, N_CELLS, vb))
+t4 = time.perf_counter()
+log(f"MLEM: one forward projection {t4 - t3:.1f} s (first {t3 - t2:.1f} s); estimate ~{2.2 * (t4 - t3) * args.iter / 60:.1f} "
+    f"min for {args.iter} iterations")
 t1 = time.perf_counter()
-f = np.asarray(X.mlem(H, pred, ring_of_h, pos, scan, dims, f0, args.iter, log=log, qc=QC))[:, :nq]
+f = X.mlem_sparse(H, cand, pred, ring_of_h, pos_p, scan, dims, f0, args.iter, vb, log=log)
+f, cand = np.asarray(f)[:NV], np.asarray(cand)[:NV]
 log(f"MLEM {args.iter} iterations: {time.perf_counter() - t1:.0f} s")
 
 # ------------------------------------------------------------------------------------------------- 4. TensorMap
-best = np.argmax(f, 1)
+kbest = np.argmax(f, 1)
+best = cand[np.arange(NV), kbest]  # index into the orientation list
 tot = f.sum(1)
-share = f[np.arange(NV), best] / np.maximum(tot, 1e-30)
+share = f[np.arange(NV), kbest] / np.maximum(tot, 1e-30)
 ubi = np.linalg.inv(np.asarray(X.rod_to_mat(rod_s[:nq]))[best] @ B)
 occupied = tot > 0.05 * np.percentile(tot, 99)
 log(f"voxels with occupancy: {occupied.sum()} of {NV}; top share median {np.median(share[occupied]):.2f}; "
@@ -347,5 +362,5 @@ if os.path.exists(out):
     os.remove(out)
 tmap.to_h5(out)
 tmap.to_paraview(out)
-np.savez(os.path.join(args.outdir, f"{tag}.npz"), f=f, rod=np.asarray(rod_s[:nq]), comp=comp[keep])
+np.savez(os.path.join(args.outdir, f"{tag}.npz"), f=f, cand=cand, rod=np.asarray(rod_s[:nq]), comp=comp[keep])
 log(f"-> {out}")

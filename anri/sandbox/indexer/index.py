@@ -9,6 +9,7 @@ All angles in degrees unless stated.
 
 from __future__ import annotations
 
+import time
 from functools import partial
 
 import jax
@@ -253,7 +254,9 @@ def predict_lp(rod, B, hkls, geom):  # noqa: ANN001, ANN201
 
 
 def system(eta, om, use, w_qj, ring_j, pos, scan, b_e, b_o, n_e, n_o):  # noqa: ANN001, ANN201
-    """Entries of the system matrix for a chunk of orientations: (cell index, weight) [Nv, Nq, Nj, 8].
+    """Entries of the system matrix for voxels pos [Nv, 3] and predictions [1 or Nv, Q, Nj]: (cell index, weight)
+    [Nv, Q, Nj, 8]. Predictions with a leading 1 are the same orientations for every voxel (dense); with Nv, each
+    voxel's own (sparse: its candidates).
 
     A prediction (eta, omega) of orientation q, reflection j is spread bilinearly over the 2 x 2 nearest (eta, omega) bins
     and linearly over the 2 rows nearest to where voxel v sits at that omega; weight w_qj (F^2 x Lorentz x polarisation).
@@ -267,7 +270,7 @@ def system(eta, om, use, w_qj, ring_j, pos, scan, b_e, b_o, n_e, n_o):  # noqa: 
     te, to = fe - e0, fo - o0
     # row of each voxel at each prediction's omega: lab y = x sin(om) + y cos(om) for a rotation about z
     c, s_ = jnp.cos(jnp.radians(om)), jnp.sin(jnp.radians(om))
-    ylab = pos[:, 0, None, None] * s_[None] + pos[:, 1, None, None] * c[None]  # [Nv, Nq, Nj]
+    ylab = pos[:, 0, None, None] * s_ + pos[:, 1, None, None] * c  # [Nv, Q, Nj]
     fk = (scan["y0"] - ylab - scan["dty0"]) / scan["ystep"]
     k0 = jnp.floor(fk).astype(jnp.int32)
     tk = fk - k0
@@ -278,10 +281,10 @@ def system(eta, om, use, w_qj, ring_j, pos, scan, b_e, b_o, n_e, n_o):  # noqa: 
                 ie = (e0 + de) % n_e
                 io = o0 + do
                 kk = k0 + dk
-                good = (use & (io >= 0) & (io < n_o))[None] & (kk >= 0) & (kk < n_k)
-                cell = ((ring_j[None, None, :] * n_e + ie[None]) * n_o + io[None]) * n_k + kk
+                good = use & (io >= 0) & (io < n_o) & (kk >= 0) & (kk < n_k)
+                cell = ((ring_j[None, None, :] * n_e + ie) * n_o + io) * n_k + kk
                 idx.append(jnp.where(good, cell, -1))
-                wt.append(jnp.where(good, (w_qj * we * wo)[None] * wk, 0.0))
+                wt.append(jnp.where(good, w_qj * we * wo * wk, 0.0))
     return jnp.stack(idx, -1), jnp.stack(wt, -1)
 
 
@@ -296,7 +299,7 @@ def forward(f, pred, ring_j, pos, scan, dims, n_cells, qc=16):  # noqa: ANN001, 
 
     def step(acc, ch):  # noqa: ANN001, ANN202
         fq, eta, om, use, w = ch
-        idx, wt = system(eta, om, use, w, ring_j, pos, scan, b_e, b_o, n_e, n_o)
+        idx, wt = system(eta[None], om[None], use[None], w[None], ring_j, pos, scan, b_e, b_o, n_e, n_o)
         contrib = fq.T[:, :, None, None] * wt
         return acc + jax.ops.segment_sum(contrib.ravel(), jnp.where(idx >= 0, idx, n_cells).ravel(), n_cells + 1)[:-1], None
 
@@ -310,7 +313,7 @@ def backward(r, pred, ring_j, pos, scan, dims, qc=16):  # noqa: ANN001, ANN201
     b_e, b_o, n_e, n_o = dims
 
     def one(ch):  # noqa: ANN001, ANN202
-        idx, wt = system(*ch, ring_j, pos, scan, b_e, b_o, n_e, n_o)
+        idx, wt = system(*(c[None] for c in ch), ring_j, pos, scan, b_e, b_o, n_e, n_o)
         return jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (2, 3))  # [Nv, qc]
 
     out = jax.lax.map(one, tuple(_chunks(p, qc) for p in pred))  # [Nq / qc, Nv, qc]
@@ -345,3 +348,112 @@ def allowed(hkls: np.ndarray, sym_matrices: np.ndarray, tol: float = 1e-6) -> np
     phase = np.einsum("ni,mi->nm", hkls, t)
     shifted = np.abs(phase - np.round(phase)) > tol
     return ~np.any(fixed & shifted, 1)
+
+
+# ----------------------------------------------------------------------------------------------- sparse occupancy
+# Each voxel keeps K candidate orientations: occupancies f [Nv, K] of orientations cand [Nv, K] (indices into the
+# orientation list). Work runs over blocks of vb voxels, so memory is set by vb, not by the map's size.
+def block_voxels(q: int, n_j: int, budget_bytes: float) -> int:
+    """Voxels per block (a power of 2) so that one block's system entries for q orientations take ~budget_bytes.
+
+    ~256 bytes per (voxel, orientation, reflection): 8 corners of index and weight, their temporaries, the gathers.
+    """
+    return int(2 ** max(0, np.floor(np.log2(budget_bytes / (256 * q * n_j)))))
+
+
+def pad_voxels(pos: jax.Array, vb: int) -> jax.Array:
+    """pos [Nv, 3] padded to a multiple of vb with voxels far outside the scan (they reach no rows)."""
+    return jnp.concatenate([pos, jnp.full((-pos.shape[0] % vb, 3), 1e6, pos.dtype)])
+
+
+@partial(jax.jit, static_argnames=("n_cells", "dims", "qc"))
+def _ones_block(pos_b, pred, ring_j, scan, dims, n_cells, qc):  # noqa: ANN001, ANN202
+    """A 1 from one block of voxels: every orientation at unit occupancy -> [n_cells]."""
+
+    def step(acc, ch):  # noqa: ANN001, ANN202
+        idx, wt = system(*(c[None] for c in ch), ring_j, pos_b, scan, *dims)
+        return acc + jax.ops.segment_sum(wt.ravel(), jnp.where(idx >= 0, idx, n_cells).ravel(), n_cells + 1)[:-1], None
+
+    acc, _ = jax.lax.scan(step, jnp.zeros(n_cells, jnp.float32), tuple(_chunks(p, qc) for p in pred))
+    return acc
+
+
+@partial(jax.jit, static_argnames=("dims", "qc", "k"))
+def _top_block(r, pos_b, pred, ring_j, scan, dims, qc, k):  # noqa: ANN001, ANN202
+    """(A^T r / A^T 1) for one block of voxels and every orientation, reduced to its top k: (value, index) [vb, k]."""
+
+    def one(ch):  # noqa: ANN001, ANN202
+        idx, wt = system(*(c[None] for c in ch), ring_j, pos_b, scan, *dims)
+        num = jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (2, 3))
+        return num / jnp.maximum(jnp.sum(wt, (2, 3)), 1e-30)  # [vb, qc]
+
+    s = jax.lax.map(one, tuple(_chunks(p, qc) for p in pred))  # [Nq / qc, vb, qc]
+    val, ind = jax.lax.top_k(jnp.moveaxis(s, 0, 1).reshape(pos_b.shape[0], -1), k)
+    return val, ind.astype(jnp.int32)
+
+
+def candidates(d, pred, ring_j, pos, scan, dims, k, vb, qc=16, log=print):  # noqa: ANN001, ANN201
+    """Each voxel's k best orientations by the first MLEM update from unit occupancy, f1 = A^T(d / A 1) / A^T 1.
+
+    Two passes over every (voxel, orientation), in blocks of vb voxels (pos a multiple of vb, pad_voxels). The
+    division by A 1 down-weights crowded cells, as MLEM does. Returns (f1 [Nv, k], cand [Nv, k] int32).
+    """
+    n_cells = d.shape[0]
+    blocks = pos.reshape(-1, vb, 3)
+    t0 = time.perf_counter()
+    a1 = jnp.zeros(n_cells, jnp.float32)
+    for b in blocks:
+        a1 = a1 + _ones_block(b, pred, ring_j, scan, dims, n_cells, qc)
+    jax.block_until_ready(a1)
+    log(f"  candidates: A 1 over {blocks.shape[0]} blocks of {vb} voxels: {time.perf_counter() - t0:.1f} s")
+    t0 = time.perf_counter()
+    r = jnp.where(a1 > 0, d / jnp.maximum(a1, 1e-30), 0.0)
+    out = [_top_block(r, b, pred, ring_j, scan, dims, qc, k) for b in blocks]
+    f1, cand = jnp.concatenate([o[0] for o in out]), jnp.concatenate([o[1] for o in out])
+    jax.block_until_ready(cand)
+    log(f"  candidates: top {k} per voxel: {time.perf_counter() - t0:.1f} s")
+    return f1, cand
+
+
+@partial(jax.jit, static_argnames=("n_cells", "dims", "vb"))
+def forward_sparse(f, cand, pred, ring_j, pos, scan, dims, n_cells, vb):  # noqa: ANN001, ANN201
+    """A f for occupancies f [Nv, K] of orientations cand [Nv, K] (Nv a multiple of vb) -> [n_cells]."""
+    k = f.shape[1]
+
+    def step(acc, ch):  # noqa: ANN001, ANN202
+        fb, cb, pb = ch
+        idx, wt = system(*(p[cb] for p in pred), ring_j, pb, scan, *dims)  # [vb, K, Nj, 8]
+        contrib = fb[:, :, None, None] * wt
+        return acc + jax.ops.segment_sum(contrib.ravel(), jnp.where(idx >= 0, idx, n_cells).ravel(), n_cells + 1)[:-1], None
+
+    xs = (f.reshape(-1, vb, k), cand.reshape(-1, vb, k), pos.reshape(-1, vb, 3))
+    acc, _ = jax.lax.scan(step, jnp.zeros(n_cells, f.dtype), xs)
+    return acc
+
+
+@partial(jax.jit, static_argnames=("dims", "vb"))
+def backward_sparse(r, cand, pred, ring_j, pos, scan, dims, vb):  # noqa: ANN001, ANN201
+    """A^T r at each voxel's candidates: r [n_cells] -> [Nv, K]."""
+    k = cand.shape[1]
+
+    def one(ch):  # noqa: ANN001, ANN202
+        cb, pb = ch
+        idx, wt = system(*(p[cb] for p in pred), ring_j, pb, scan, *dims)
+        return jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (2, 3))  # [vb, K]
+
+    return jax.lax.map(one, (cand.reshape(-1, vb, k), pos.reshape(-1, vb, 3))).reshape(-1, k)
+
+
+def mlem_sparse(d, cand, pred, ring_j, pos, scan, dims, f0, n_iter, vb, log=print):  # noqa: ANN001, ANN201
+    """MLEM on sparse occupancies: f <- f A^T(d / A f) / A^T 1, n_iter times. Logs the Poisson deviance."""
+    n_cells = d.shape[0]
+    norm = jnp.maximum(backward_sparse(jnp.ones(n_cells, d.dtype), cand, pred, ring_j, pos, scan, dims, vb), 1e-30)
+    f = f0
+    for it in range(n_iter):
+        Af = forward_sparse(f, cand, pred, ring_j, pos, scan, dims, n_cells, vb)
+        ratio = jnp.where(Af > 0, d / jnp.maximum(Af, 1e-30), 0.0)
+        f = f * backward_sparse(ratio, cand, pred, ring_j, pos, scan, dims, vb) / norm
+        if it % 5 == 0 or it == n_iter - 1:
+            dev = 2 * float(jnp.sum(jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / jnp.maximum(Af, 1e-30)), 0.0) - d + Af))
+            log(f"  MLEM {it}: deviance {dev:.4g}")
+    return f
