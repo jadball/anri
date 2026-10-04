@@ -39,6 +39,16 @@ Development happens on shared machines (e.g. an ESRF node with one L40S GPU and 
 - **Don't hog the CPU.** Don't use every core: pin CPU runs with `taskset` (e.g. `taskset -c 0-15`).
 - **Clean up.** Don't leave long-running or idle processes holding memory.
 
+## Running jobs: small, timed, visible
+
+The maintainer is often watching. A machine that sits idle while they wait is a failure.
+
+- **Test small first.** Use a cut-down case (one dty row, a few hundred voxels) that compiles and runs in seconds, so you understand the answer quickly. Go to full size only once the small case is understood.
+- **Estimate the run time before you start**, and say what it is. Count XLA compile time: it is single-threaded and often longer than the run.
+- **Always set a timeout** a little above your estimate (e.g. `timeout 120 python ...`), so a hung or still-compiling job dies instead of blocking for 30 minutes.
+- **Log, don't tail.** Write timestamped progress to a log file. Don't pipe output through `tail` or `grep` that buffers it until the end. Watch the log and report each step as it starts and finishes.
+- **Watch the machine.** If CPU or GPU use is near zero, or one core is busy, find out why (usually compiling) and fix it. Don't just wait.
+
 ## Keep it simple (no "Claudish" code)
 
 No bloated frameworks, layers of abstraction or complicated APIs that the maintainer can't follow.
