@@ -126,8 +126,11 @@ population.
   Measured on one heavily deformed HCP dataset (same geometry as a lightly deformed one): **sub-peaks stay sharp**
   (clean peaks: 2 frames, unresolved, at every eta) but **multiply**: 5x the 3D peaks and 14x the 2D peaks per row.
   Merged labels span degrees in omega (90th percentile 2.7-4.6 deg), so a "peak width" from a peak table is then set
-  by the segmentation's connectivity, not the sample. Unexplained: the merged labels are longest at |sin eta| ~ 1, the
-  opposite of an isotropic spread.
+  by the segmentation's connectivity, not the sample. The sample was loaded along z (the
+  rotation axis). Slip then rotates lattices about horizontal axes, which predicts omega widths ~ |cot eta| (none at
+  |sin eta| = 1) and arcs in eta. The merged labels are instead longest at |sin eta| ~ 1: probably the segmentation
+  again (long eta arcs crowd the ring at 3 and 9 o'clock and chain neighbouring reflections across frames). Testing
+  the prediction needs eta widths, which `peak_widths.py` does not measure yet.
   Consequences: the stage 2 grid sees cells within ~2 steps as one population (mean + spread); an isotropic `sig_rot`
   fits these spreads poorly; the measured ring widths must cover the strain; peak tables and the "clean" filter
   (`peak_widths.py`) break down, so widths must come from the histograms. Needs a test phantom and real data.

@@ -59,6 +59,10 @@ Consequences:
   - a tilt of the rotation axis about y acts like vertical convergence (|cot η|): a steady wobble shifts peaks, a vibration faster than a peak's frames widens them;
   - energy bandwidth: (Δλ/λ) tan θ / |sin η|, the only term that grows with 2θ.
 
+  Example: a uniaxial load along the rotation axis (z) rotates lattices about axes perpendicular to the load
+  (z × b for slip direction b), i.e. horizontal axes: omega widths grow as |cot η| (none at 3 and 9 o'clock), and
+  peaks spread in η into arcs.
+
   A peak's width is three-dimensional. Omega sees only two of the three rotation components; η sees the third (and
   part of the others); 2θ sees strain, Δ2θ = 2 ε tan θ (plus the energy bandwidth). An orientation spread is
   measured from omega and η together, a strain spread from 2θ.
