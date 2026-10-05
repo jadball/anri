@@ -31,9 +31,10 @@ p.add_argument("--sig", type=float, nargs="+", default=[0.3, 0.1, 0.03], help="s
 p.add_argument("--bin", type=int, nargs="+", default=[5, 2, 1], help="frames summed per round (one per --sig)")
 p.add_argument(
     "--method",
-    choices=("entry", "cg"),
-    default="entry",
-    help="entry: refine_per_entry, one sweep per iteration (default); cg: refine, Gauss-Newton by CG",
+    choices=("linear", "entry", "cg"),
+    default="linear",
+    help="linear: refine_orientations, geometry linearised, cheap sweeps (default; --iter = sweeps per round, frames "
+    "not binned); entry: refine_per_entry; cg: refine",
 )
 p.add_argument("--iter", type=int, default=5)
 p.add_argument("--rows", type=int, default=0)
@@ -41,6 +42,8 @@ p.add_argument("--max-frames", type=int, default=63)
 p.add_argument("--window", type=int, nargs=3, default=(3, 11, 11))
 p.add_argument("--beam", type=float, help="beam FWHM as rendered (default: the voxel)")
 p.add_argument("--n-cg", type=int, default=15, help="conjugate gradient steps per iteration (default 15)")
+p.add_argument("--relin", type=int, default=5, help="linear: accepted sweeps between linearisations")
+p.add_argument("--win-px", type=int, default=7, help="linear: window size in pixels (slow and fast)")
 p.add_argument("--n-cpu", type=int, default=8)
 args = p.parse_args()
 
@@ -141,9 +144,16 @@ if len(args.bin) != len(args.sig):
     raise SystemExit("--bin needs one value per --sig")
 for sig, k in zip(args.sig, args.bin):
     e_in = {**entries, "sig_rot": np.full(len(vox), np.radians(sig))}
-    rows_k, meas_k = binned(k)
+    rows_k, meas_k = binned(1 if args.method == "linear" else k)
     log(f"spread {sig} deg, frames summed in {k}s: {sum(m['value'].size for m in meas_k)} measured pixels")
-    if args.method == "entry":
+    if args.method == "linear":  # frames as measured; the window wide enough for the spread
+        ostep = float(np.median(np.diff(np.asarray(rows[0]["omega_edges"]))))
+        wo = min(31, 2 * int(np.ceil(2.5 * sig / ostep)) + 3)
+        log(f"  window {wo} frames x {args.win_px} x {args.win_px} pixels")
+        out, hist = anri.refine.refine_orientations(e_in, hkls, F2, geom, rows, meas, det_shape,
+                                                    window=(wo, args.win_px, args.win_px), n_sweeps=args.iter,
+                                                    relinearise=args.relin, cut=1.0, log=lambda m: log("  " + m))  # fmt: skip
+    elif args.method == "entry":
         out, hist = anri.refine.refine_per_entry(e_in, hkls, F2, geom, rows_k, meas_k, det_shape, n_iter=args.iter,
                                                  cut=1.0 * k, max_frames=args.max_frames, window=tuple(args.window),
                                                  log=lambda m: log("  " + m))  # fmt: skip

@@ -6,7 +6,7 @@ from scipy.spatial.transform import Rotation
 import anri.crystal
 from anri.fwd import make_row, render_row
 from anri.io import geom_from_pars
-from anri.refine import bin_frames, measured, refine, refine_per_entry
+from anri.refine import bin_frames, measured, refine, refine_orientations, refine_per_entry
 
 
 def _problem():
@@ -110,6 +110,29 @@ class TestRefine(unittest.TestCase):
         self.assertLess(history[-1]["loss"], 1e-4 * history[0]["loss"])
         self.assertLess(err.max(), 1e-3)
         np.testing.assert_array_equal(out["density"], entries["density"])
+
+    def test_orientations_linearised(self):
+        """The linearised refiner: a single entry 0.11 deg off converges."""
+        entries, hkls, F2, geom, rows, det_shape = _problem()
+        entries = {k: v[:1] for k, v in entries.items()}
+        entries["sig_rot"] = np.full(1, np.radians(0.3))
+        meas = []
+        for row in rows:
+            frame, pixel, value, _ = render_row(entries, hkls, F2, geom, row, det_shape, min_value=0.0, max_frames=7)
+            meas.append(measured(frame, pixel, value, len(row["order"])))
+        rot = Rotation.from_rotvec(np.radians([0.06, -0.08, 0.05])).as_matrix()[None]
+        start = {**entries, "ubi": entries["ubi"] @ np.swapaxes(rot, -1, -2)}
+        out, history = refine_orientations(start, hkls, F2, geom, rows, meas, det_shape, window=(7, 7, 7), n_sweeps=10,
+                                           relinearise=3, cut=0.0, chunk=256, log=None)  # fmt: skip
+
+        def orientation(m):
+            u, _, vt = np.linalg.svd(np.linalg.inv(m))
+            return u @ vt
+
+        r = orientation(out["ubi"]) @ np.swapaxes(orientation(entries["ubi"]), -1, -2)
+        err = np.degrees(np.linalg.norm(Rotation.from_matrix(r).as_rotvec(), axis=1))
+        self.assertLess(err.max(), 1e-3)
+        self.assertLess(history[-1]["loss"], 1e-4 * history[0]["loss"])
 
 
 class TestBinFrames(unittest.TestCase):
