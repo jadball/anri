@@ -41,9 +41,8 @@ p.add_argument("--map", help="also save a map of each voxel's twin share (occupa
 args = p.parse_args()
 
 r = np.load(args.npz)
-crystal = anri.crystal.Crystal(anri.crystal.UnitCell.from_lpars(np.array(args.lattice)), anri.crystal.Symmetry.from_number(args.sg))
-B = np.asarray(crystal.B, float)
-ops = anri.crystal.laue_rotations(np.asarray(crystal.sym_ops), B)
+B = anri.crystal.B_matrix(args.lattice)
+ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(args.sg), B)
 A = np.linalg.inv(B).T  # direct lattice vectors as columns: a direction [u v w] is A @ [u v w]
 axis = A @ np.array(args.axis)
 R = anri.phantom.axis_angle(axis, args.angle)  # crystal frame

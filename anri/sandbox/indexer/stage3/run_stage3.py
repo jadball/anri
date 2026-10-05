@@ -66,11 +66,11 @@ ds = anri.io.read_dataset(dsfile)
 sparsefile = ds["sparsefile"] if ds["sparsefile"] and os.path.exists(ds["sparsefile"]) else dsfile.replace("_dataset.h5", "_sparse.h5")
 parfile = args.parfile or ds["parfile"]
 geo, phase, cell = anri.io.read_pars_json(parfile, args.phase)
-lpars = [cell[k] for k in ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")]
+lpars = np.array([cell[k] for k in ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")])
 sg = int(cell["cell_lattice_[P,A,B,C,I,F,R]"])
-crystal = anri.crystal.Crystal(anri.crystal.UnitCell.from_lpars(jnp.asarray(lpars)), anri.crystal.Symmetry.from_number(sg))
-B = np.asarray(crystal.B, np.float32)
-ops = anri.crystal.laue_rotations(np.asarray(crystal.sym_ops), B)
+B64 = anri.crystal.B_matrix(lpars)
+B = B64.astype(np.float32)
+ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(sg), B64)
 WL = geo["wavelength"]
 r = np.load(args.npz)
 Y0 = ds["y0"]
@@ -79,7 +79,7 @@ YSTEP, NK = float(np.median(np.diff(ybin))), len(ybin)
 OM0 = float(oedge[0])
 geom = anri.io.geom_from_pars(geo, Y0, WL * 2e-3 / 2.355, 1.5e-4, 1.5e-4, sig_beam=args.beam / 2.355, voxel_size=YSTEP)
 geom = {k: jnp.asarray(v, jnp.float32) if np.issubdtype(np.asarray(v).dtype, np.floating) else v for k, v in geom.items()}
-rings = ix.ring_table(crystal, WL, args.rings)
+rings = ix.ring_table(lpars, sg, WL, args.rings)
 B_E, B_O = args.bins
 N_E, N_O = round(360 / B_E), round(float(oedge[-1] - oedge[0]) / B_O)
 log(f"{dsname}: {NK} rows x {len(oedge) - 1} frames; fine bins {B_E} x {B_O} deg ({args.rings} rings x {N_E} x {N_O} cells "

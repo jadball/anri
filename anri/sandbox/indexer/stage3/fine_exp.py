@@ -35,8 +35,7 @@ NV = int(os.environ.get("NVOX", "0"))  # profile on the first NV voxels
 sub = slice(0, NV) if NV else slice(None)
 occ = p1["occ"][sub]
 wl = 0.2843
-crystal = anri.crystal.Crystal(anri.crystal.UnitCell.from_lpars(jnp.asarray([3.5966] * 3 + [90.0] * 3)), anri.crystal.Symmetry.from_number(225))
-rings = ix.ring_table(crystal, wl, 6)
+rings = ix.ring_table(np.array([3.5966] * 3 + [90.0] * 3), 225, wl, 6)
 ds = anri.io.read_dataset(os.path.join(root, "phantom", "phantom_am316l", "phantom_am316l_dataset.h5"))
 geo, _, _ = anri.io.read_pars_json(ds["parfile"])
 geom = anri.io.geom_from_pars(geo, ds["y0"], wl * 2e-3 / 2.355, 1.5e-4, 1.5e-4, sig_beam=BEAM / 2.355, voxel_size=1.0)

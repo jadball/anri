@@ -51,9 +51,8 @@ lpars = np.asarray(uc.lattice_parameters, float)
 sg = args.sg if args.sg is not None else uc.symmetry
 if not isinstance(sg, (int, np.integer)) and not str(sg).isdigit():
     raise SystemExit(f"the reference phase's symmetry is {sg!r}: give the space-group number with --sg")
-crystal = anri.crystal.Crystal(anri.crystal.UnitCell.from_lpars(lpars), anri.crystal.Symmetry.from_number(int(sg)))
-B = np.asarray(crystal.B, float)
-ops = anri.crystal.laue_rotations(np.asarray(crystal.sym_ops), B)
+B = anri.crystal.B_matrix(lpars)
+ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(int(sg)), B)
 ref_U = rotations(ref_ubi, B)
 tree = KDTree(ref_pos)
 print(f"reference {args.reference}: {len(ref_pos)} voxels of phase {args.phase_id} ({uc.lattice_parameters}, "

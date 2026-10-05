@@ -27,9 +27,9 @@ out = sys.argv[1]
 os.makedirs(out, exist_ok=True)
 truth = TensorMap.from_h5("/home/james/Code/anri/tests/data/phantoms/am316l/am316l_tmap.h5")
 a = truth.phases[0].lattice_parameters[0]
-crystal = anri.crystal.Crystal(anri.crystal.UnitCell.from_lpars(jnp.asarray([a, a, a, 90.0, 90.0, 90.0])), anri.crystal.Symmetry.from_number(225))
-B = np.asarray(crystal.B, np.float32)
-ops = anri.crystal.laue_rotations(np.asarray(crystal.sym_ops), B)
+lpars = np.array([a, a, a, 90.0, 90.0, 90.0])
+B = anri.crystal.B_matrix(lpars).astype(np.float32)
+ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(225), anri.crystal.B_matrix(lpars))
 wl = 0.2843
 pars = {
     "y_center": 1023.5, "y_size": 75.0, "tilt_y": 1e-3, "z_center": 1023.5, "z_size": 75.0, "tilt_z": -2e-3,
@@ -42,7 +42,7 @@ if not os.path.exists(sparse):
     geom_r = anri.io.geom_from_pars(pars, y0, wl * 2e-4 / 2.355, 5e-5, 5e-5, sig_beam=1.4 / 2.355, voxel_size=0.5, sig_psf=0.5)
     entries = anri.io.entries_from_tensormap(truth)
     entries["density"] = np.full(len(entries["pos"]), 30.0)
-    rings8 = ix.ring_table(crystal, wl, 8)
+    rings8 = ix.ring_table(lpars, 225, wl, 8)
     omega, dty = anri.io.motor_grid((0.0, 180.0), 0.1, (y0 - 30.0, y0 + 30.0), 1.0)
     anri.io.simulate_sparse(sparse, entries, rings8["hkls"], np.ones(len(rings8["hkls"])), geom_r, omega, dty, (2048, 2048))
     cell = {"cell__a": a, "cell__b": a, "cell__c": a, "cell_alpha": 90.0, "cell_beta": 90.0, "cell_gamma": 90.0, "cell_lattice_[P,A,B,C,I,F,R]": 225}
@@ -53,7 +53,7 @@ ds = anri.io.read_dataset(os.path.join(out, "phantom", "phantom_am316l", "phanto
 geo, _, _ = anri.io.read_pars_json(ds["parfile"])
 geom = anri.io.geom_from_pars(geo, ds["y0"], wl * 2e-3 / 2.355, 1.5e-4, 1.5e-4, sig_beam=1.0, voxel_size=1.0)
 geom = {k: jnp.asarray(v, jnp.float32) if np.issubdtype(np.asarray(v).dtype, np.floating) else v for k, v in geom.items()}
-rings = ix.ring_table(crystal, wl, 6)
+rings = ix.ring_table(lpars, 225, wl, 6)
 chunk = 1 << 20
 
 
