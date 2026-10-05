@@ -7,7 +7,7 @@ This page contains tutorials on how to use Anri.
 Crystallography
 ===============
 
-Anri has some basic crystallography classes that extend the Dan's Diffraction library but are interfaced with similarly to ImageD11. This currently contains the minimum needed to load a CIF, get the lattice parameters, compute hkls, group them into rings (based on d-star), get multiplicities and structure factors.
+Anri's crystallography is a set of plain functions. Dan's Diffraction reads the CIF; Anri gets the lattice parameters and space group from it, computes the B matrix, lists the reflections, groups them into rings (by d-star) and computes structure factors.
 
 .. nbgallery::
 
