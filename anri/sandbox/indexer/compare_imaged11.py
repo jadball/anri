@@ -36,7 +36,7 @@ def voxels(path: str, phase_id: int) -> tuple:
     step = float(t.steps[1])
     si, sj = recon_to_step(ri, rj, ph.shape)
     sx, sy = step_to_sample(si, sj, step)
-    return np.stack([np.asarray(sx), np.asarray(sy)], 1), ubi[ri, rj], step, t, ph.shape
+    return np.stack([np.asarray(sx), np.asarray(sy)], 1), ubi[ri, rj], step, t, ph.shape, (ri, rj)
 
 
 def rotations(ubi: np.ndarray, B: np.ndarray) -> np.ndarray:
@@ -45,7 +45,7 @@ def rotations(ubi: np.ndarray, B: np.ndarray) -> np.ndarray:
     return u @ vt
 
 
-ref_pos, ref_ubi, ref_step, ref_t, _ = voxels(args.reference, args.phase_id)
+ref_pos, ref_ubi, ref_step, ref_t, _, _ = voxels(args.reference, args.phase_id)
 uc = ref_t.phases[args.phase_id]
 lpars = np.asarray(uc.lattice_parameters, float)
 sg = args.sg if args.sg is not None else uc.symmetry
@@ -61,11 +61,13 @@ print(f"reference {args.reference}: {len(ref_pos)} voxels of phase {args.phase_i
 
 results = []
 for path in args.anri:
-    pos, ubi, step, _, shape = voxels(path, 0)
+    pos, ubi, step, _, shape, (ri, rj) = voxels(path, 0)
     d, i = tree.query(pos)
     ok = d <= 0.5 * max(step, ref_step) + 1e-9
     mis = anri.crystal.disorientation(rotations(ubi[ok], B), ref_U[i[ok]], ops)
-    results.append((path, pos[ok], mis, step, shape))
+    img = np.full(shape, np.nan)  # the map's own grid, reconstruction order
+    img[ri[ok], rj[ok]] = mis
+    results.append((path, img, mis))
     print(f"{path}: {ok.sum()} of {len(pos)} voxels matched; misorientation to the reference: median {np.median(mis):.3f} "
           f"deg, 90th {np.percentile(mis, 90):.3f}; within 0.1 {np.mean(mis < 0.1) * 100:.1f}%, 0.25 "
           f"{np.mean(mis < 0.25) * 100:.1f}%, 0.5 {np.mean(mis < 0.5) * 100:.1f}%, 1 {np.mean(mis < 1) * 100:.1f}%")  # fmt: skip
@@ -77,9 +79,11 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 n = len(results)
 fig, ax = plt.subplots(1, n, figsize=(min(5.5 * n, 19), 5), layout="constrained", squeeze=False)
-for a, (path, pos, mis, step, _) in zip(ax[0], results):
-    sc = a.scatter(pos[:, 0], pos[:, 1], c=mis, s=max(0.5, 3000 / max(len(pos), 1)), marker="s", cmap="viridis", vmin=0, vmax=1)
-    a.set_aspect("equal")
+for a, (path, img, mis) in zip(ax[0], results):
+    # one pixel per voxel, in map order as TensorMap.plot shows it (origin lower)
+    sc = a.imshow(TensorMap.recon_order_to_map_order(img)[0], origin="lower", cmap="viridis", vmin=0, vmax=1,
+                  interpolation="nearest")  # fmt: skip
+    a.set_facecolor("0.85")
     a.set_title(f"{path.split('/')[-1][:40]}\nmedian {np.median(mis):.2f} deg", fontsize=9)
     a.set_xticks([]), a.set_yticks([])
 fig.colorbar(sc, ax=ax[0, -1], label="misorientation to ImageD11 (deg)", shrink=0.8)
