@@ -224,8 +224,8 @@ def read_dataset(dsfile: str) -> dict:
     Returns
     -------
     dict
-        "y0" (None if absent), "ybincens", "ybinedges", "obinedges", "dtymotor", "omegamotor", "parfile" and
-        "sparsefile" (made absolute: a relative path is relative to the DataSet's folder; "" if absent), and "dty"
+        "y0" (None if absent), "ybincens", "ybinedges", "obinedges", "dtymotor", "omegamotor", "parfile",
+        "sparsefile" and "masterfile" (made absolute: a relative path is relative to the DataSet's folder; "" if absent), and "dty"
         [scans, frames] and
         "scans" (None if absent): each scan's dty, for sparse files without a dty column
     """
@@ -246,6 +246,7 @@ def read_dataset(dsfile: str) -> dict:
     out.update(
         parfile=absolute("parfile"),
         sparsefile=absolute("sparsefile"),
+        masterfile=absolute("masterfile"),
         y0=float(attrs["y0"]) if "y0" in attrs else None,
         dtymotor=str(attrs["dtymotor"]),
         omegamotor=str(attrs["omegamotor"]),
@@ -294,6 +295,51 @@ def read_pars_json(parfile: str, phase: str | None = None) -> tuple[dict, str, d
     return read_par(path(pj["geometry"]["file"])), phase, read_par(path(phases[phase]["file"]))
 
 
+def read_monitor(sparsefile: str, groups: list, name: str, masterfile: str | None = None) -> dict:
+    """Read a counter (e.g. "fpico6") for each scan group, frame by frame, as ImageD11's ``DataSet.get_monitor``.
+
+    It is read from the sparse file's ``<group>/measurement``, or, if absent there, from the raw master file's
+    scan of the same name: a sparse group holds the frames of that scan, in order. Values are cut to the group's
+    number of frames.
+
+    Parameters
+    ----------
+    sparsefile
+        ImageD11 sparse pixels file
+    groups
+        Scan groups, e.g. "1.1"
+    name
+        Counter name
+    masterfile
+        The raw data's master file (``read_dataset(...)["masterfile"]``), for counters the sparse file lacks
+
+    Returns
+    -------
+    dict
+        ``{group: [n_frames] array}``
+    """
+    out = {}
+    with h5py.File(sparsefile, "r") as h:
+        n_frames = {g: len(h[f"{g}/nnz"]) for g in groups}
+        missing = [g for g in groups if name not in h[f"{g}/measurement"]]
+        out.update({g: np.asarray(h[f"{g}/measurement/{name}"][()], float) for g in groups if g not in missing})
+    if missing:
+        if not masterfile or not os.path.exists(masterfile):
+            msg = (
+                f"{name} is not in {sparsefile} for scans {missing[:3]}, and no master file was found ({masterfile!r})"
+            )
+            raise KeyError(msg)
+        with h5py.File(masterfile, "r") as h:
+            for g in missing:
+                out[g] = np.asarray(h[f"{g}/measurement/{name}"][()], float)
+    for g in groups:
+        if len(out[g]) < n_frames[g]:
+            msg = f"{name} has {len(out[g])} values for scan {g}, which has {n_frames[g]} frames"
+            raise ValueError(msg)
+        out[g] = out[g][: n_frames[g]]
+    return out
+
+
 def stream_sparse(
     sparsefile: str,
     ybinedges: ArrayLike,
@@ -306,6 +352,7 @@ def stream_sparse(
     scans: list | None = None,
     monitor: str | None = None,
     monitor_ref: float | None = None,
+    masterfile: str | None = None,
 ) -> Iterator[tuple]:
     """Read sparse pixels a chunk at a time, with each frame's dty row.
 
@@ -335,6 +382,8 @@ def stream_sparse(
         Frames where it is not positive are dropped.
     monitor_ref
         Reference value; default the counter's mean over the groups read
+    masterfile
+        Where to find the monitor if the sparse file lacks it, see :func:`read_monitor`
 
     Yields
     ------
@@ -343,11 +392,14 @@ def stream_sparse(
     """
     ybinedges = np.asarray(ybinedges)
     n_rows = len(ybinedges) - 1
+    if groups is None:
+        with h5py.File(sparsefile, "r") as h:
+            groups = list(h.keys())
+    mons = read_monitor(sparsefile, groups, monitor, masterfile) if monitor is not None else {}
+    if monitor is not None and monitor_ref is None:
+        monitor_ref = float(np.mean(np.concatenate(list(mons.values()))))
     with h5py.File(sparsefile, "r") as h:
-        names = groups if groups is not None else list(h.keys())
-        if monitor is not None and monitor_ref is None:
-            monitor_ref = float(np.mean(np.concatenate([h[f"{nm}/measurement/{monitor}"][()] for nm in names])))
-        for name in names:
+        for name in groups:
             gr = h[name]
             nnz = gr["nnz"][()]
             om_f = gr[f"measurement/{omega_motor}"][()].astype(np.float32)
@@ -362,7 +414,7 @@ def stream_sparse(
             k_f = np.where((k_f >= 0) & (k_f < n_rows), k_f // gridstep, -1).astype(np.int32)
             scale = np.ones(len(nnz), np.float32)
             if monitor is not None:
-                mon = np.asarray(gr[f"measurement/{monitor}"][()], float)[: len(nnz)]
+                mon = mons[name]
                 scale = np.where(mon > 0, monitor_ref / np.where(mon > 0, mon, 1.0), 0.0).astype(np.float32)
                 k_f = np.where(mon > 0, k_f, -1).astype(np.int32)
             frame = np.repeat(np.arange(len(nnz), dtype=np.int32), nnz)  # each pixel's frame

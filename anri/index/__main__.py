@@ -172,8 +172,7 @@ def main() -> None:
 
     monitor_ref = None
     if args.monitor:  # one reference for every scan, as ImageD11 (the mean)
-        with __import__("h5py").File(sparsefile, "r") as h:
-            mon = np.concatenate([h[f"{g}/measurement/{args.monitor}"][()] for g in groups])
+        mon = np.concatenate(list(anri.io.read_monitor(sparsefile, groups, args.monitor, ds["masterfile"]).values()))
         monitor_ref = float(np.mean(mon))
         log(f"monitor {args.monitor}: mean {monitor_ref:.4g}, min / max {mon.min() / monitor_ref:.3f} / "
             f"{mon.max() / monitor_ref:.3f} of the mean; intensities normalised to the mean")  # fmt: skip
@@ -192,6 +191,7 @@ def main() -> None:
                 ds["scans"],
                 args.monitor,
                 monitor_ref,
+                ds["masterfile"],
             )
         )
 

@@ -339,3 +339,23 @@ class TestStreamMonitor(unittest.TestCase):
             np.testing.assert_array_equal(row, [0, 0, 0, -1])  # no beam: dropped
             _, _, _, _, val = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100, monitor="fpico6")))
             np.testing.assert_allclose(val[:3], 10.0 * mon.mean() / mon[:3])  # default reference: the mean
+
+    def test_monitor_from_the_master_file(self):
+        """A counter the sparse file lacks is read from the master file's scan of the same name, cut to the frames."""
+        from anri.io import read_monitor, stream_sparse
+
+        det_shape = (20, 30)
+        omega, dty = np.arange(3) + 0.5, np.full(3, 0.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path, master = os.path.join(tmp, "s.h5"), os.path.join(tmp, "master.h5")
+            with h5py.File(path, "w") as h:
+                write_scan(h, "1.1", np.arange(3), np.array([1, 2, 3]), np.full(3, 8.0), omega, dty, det_shape, cut=0)
+            with h5py.File(master, "w") as h:
+                h["1.1/measurement/fpico6"] = np.array([1.0, 2.0, 4.0, 99.0])  # one frame more than the sparse scan
+            mon = read_monitor(path, ["1.1"], "fpico6", master)
+            np.testing.assert_allclose(mon["1.1"], [1.0, 2.0, 4.0])
+            val = next(stream_sparse(path, np.array([-0.5, 0.5]), "rot_center", "dty", 100, monitor="fpico6",
+                                     monitor_ref=4.0, masterfile=master))[4]  # fmt: skip
+            np.testing.assert_allclose(val, [32.0, 16.0, 8.0])
+            with self.assertRaises(KeyError):
+                read_monitor(path, ["1.1"], "fpico6")  # no master file to fall back on
