@@ -68,7 +68,7 @@ Read this first. Below it is the design history (the first draft); where they di
   - On the 25 um phantom: the local grid on the coarse 1 deg data already gave main population within 0.5 deg 33.6% -> 73.2%, median 0.60 -> 0.36 deg, and removed most decoys.
   - The fine data did not improve further: 0.25 deg median against each voxel's mean truth. That phantom's truth varies inside a 1 um voxel (0.5 um cells), so it may be the test's limit. **Next: a phantom on the indexing grid with cells larger than a voxel.**
   - Speed: ~100 s per iteration on a laptop CPU for 2060 voxels x 250 candidates. A subset of voxels cannot be fitted alone (other voxels' spots share the rays).
-  - Prototype code: `fine.py`, `fine_exp.py`, `local_exp.py` in the session scratchpad. Not in the repo: rebuild from this description.
+  - Prototype code: `anri/sandbox/indexer/stage3/` (scratch quality, see its README).
 
 ## Next steps, in order
 
