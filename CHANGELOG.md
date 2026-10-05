@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `anri.refine.refine` runs each pass over blocks of stacked rows (one jitted scan per window class over every batch of every row in a block) and sums the loss on the device. It made one call per row and batch, and copied each row's residual to the host to sum it, which left the GPU mostly idle; the first gradient on 10 phantom rows took 75 s instead of ~180 s on a laptop CPU, with the same loss. `block_pixels` (default 2^26) sets the measured pixels per block.
 - `python -m anri.index`: `--iter` defaults to 50 MLEM iterations (was 10). Features 1-2 voxels thin, such as twin lamellae, are still converging long after the deviance flattens: at 10 iterations a twin lost to its parent in voxels it fills. On a phantom, more iterations keep improving the map (pure voxels wrong: 0.36% at 10, 0.22% at 30, 0.14% at 100).
 - `anri.index.histogram_pixels` takes a list of `((b_e, b_o, n_e, n_o), n_rows)` and fills all of them in one pass over the data. `python -m anri.index` reads the sparse pixels once again (it read them twice, which doubled the slowest step on large scans), and preparing each chunk is cheaper.
 - Tests run on CPU by default, as in CI (`conftest.py` sets `JAX_PLATFORMS=cpu` unless it is set): on a GPU they mostly waited for XLA:GPU to compile small one-off shapes.
