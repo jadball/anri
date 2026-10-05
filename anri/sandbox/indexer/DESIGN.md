@@ -1,6 +1,33 @@
-# Indexer: current state and next steps (2026-10-05, evening)
+# Indexer: current state and next steps (2026-10-05, night)
 
 Read this first. Below it is the design history (the first draft); where they differ, this section is current.
+
+## Latest (2026-10-05, night): what made maps good or bad
+
+Naming: **the indexer** is `python -m anri.index` (histograms, grid search, occupancy fit); everything after it is
+**refinement**. The old "stage" numbers below are historical.
+
+- **The indexer's grid must be fine enough for its bins.** It predicts point spots from grid orientations and fits
+  them to 1 x 1 deg bins. A grain between grid points has its spots up to ~the grid's worst case away; above about a
+  bin the model cannot represent it, MLEM spreads it over several grid points differently per voxel, and boundaries
+  go noisy. The automatic grid only asks whether pruning can beat chance: crowded FCC data got 1 deg (worst case
+  0.87 deg) by luck, sparser HCP data got 1.5 deg (worst case 1.8 deg; HCP's cubochoric grid covers ~40% worse than
+  cubic's Rodrigues grid at the same step). At 1 deg the HCP grain shapes were as good as ImageD11's tomo route.
+  Phantom (am316l, same data): pure voxels wrong 2.6% at 2 deg, 0.36% at 1 deg. Open: make the default grid follow
+  this rule (the search may stay coarse, the fit needs the fine grid).
+- **Thin features need many MLEM iterations.** Twins 1-2 voxels thick lost to their parents at 10 iterations (the
+  tomo route's per-grain normalisation lets them win); at 50 they win where they should, and grain shapes stay clean.
+  The deviance flattens by ~15 iterations, so it is no guide. Default now 50; phantom: wrong 0.36% / 0.22% / 0.14% at
+  10 / 30 / 100 iterations, isolated flips 2.3% / 2.7% / 2.8%.
+- **Refinement must not re-decide who owns a voxel.** The local-grid prototype (now `archive_local_grid/`) gave each
+  population ~125 free occupancies on a private fine grid against fine bins; it re-decided near-ties at boundaries
+  and made shapes worse. The modelled beam width made no difference. A point-spot-vs-footprint test on the phantom
+  (each grid point projecting its whole orientation cell) also removed all errors away from boundaries, at 11x the
+  cost: the same cause as the grid rule above, which is the cheap fix.
+- **Refinement now: `anri.refine` from the indexer's `_entries.npz`,** densities fixed (`fit_density=False`), each
+  entry's peaks widened by a spread (`sig_rot`) that shrinks over rounds, so a start ~0.3 deg off is in the basin.
+  `refine_phantom.py` tests this on the phantom against the truth. `compare_truth.py` scores indexer runs against a
+  phantom's truth; `peak_widths.py` measures peak widths from a peaks table.
 
 ## Where things are
 
