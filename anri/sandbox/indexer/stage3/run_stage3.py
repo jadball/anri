@@ -140,7 +140,13 @@ def local_pass(U_centre, f_centre, half, step, label):  # noqa: ANN001, ANN201
     log(f"{label}: {time.perf_counter() - t0:.0f} s")
     cand = np.arange(n * K).reshape(n, K)
     _, U_m, spread, _ = ix.populations(f, cand, U_c.reshape(-1, 3, 3), ops, 4 * half, p=1, eps=0.0)
-    return U_m[:, 0], spread[:, 0], f.sum(1)
+    tot = f.sum(1)
+    empty = tot <= 0  # the fit emptied the unit: no mean to take, so keep its input orientation
+    log(f"{label}: {empty.sum()} of {n} units emptied by the fit")
+    U_m, spread = U_m[:, 0], spread[:, 0]
+    U_m[empty] = U_centre[empty]
+    spread[empty] = np.nan
+    return U_m, spread, tot
 
 
 f_unit = r["frac"][v_unit, p_unit] * r["f"].sum(1)[v_unit]
@@ -155,8 +161,10 @@ nv = len(present)
 vox_tot = np.bincount(v_unit, weights=tot2, minlength=nv)
 frac = tot2 / np.maximum(vox_tot[v_unit], 1e-30)
 moved = anri.crystal.disorientation(U_pop[v_unit, p_unit].astype(float), U2.astype(float), ops)
-log(f"moved from stage 2: median {np.median(moved):.3f} deg, 90th {np.percentile(moved, 90):.3f}, max {moved.max():.2f}; "
-    f"spread median {np.median(s2):.3f} deg (stage 2: {np.median(r['spread'][v_unit, p_unit]):.3f})")  # fmt: skip
+live = tot2 > 0
+log(f"{live.sum()} of {len(live)} units kept by the fit; for those: moved from stage 2 median {np.median(moved[live]):.3f} "
+    f"deg, 90th {np.percentile(moved[live], 90):.3f}, max {moved[live].max():.2f}; spread median {np.nanmedian(s2[live]):.3f} "
+    f"deg (stage 2: {np.median(r['spread'][v_unit, p_unit][live]):.3f})")  # fmt: skip
 main = np.full(nv, -1)
 order = np.lexsort((-frac, v_unit))  # by voxel, largest fraction first
 first = np.unique(v_unit[order], return_index=True)[1]
