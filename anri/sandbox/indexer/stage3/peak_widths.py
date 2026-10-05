@@ -120,3 +120,35 @@ if __name__ == "__main__":
             q = np.percentile(fwhm[mm], [10, 50, 90])
             print(f"brightest 10%, |sin eta| {lo:.2f}-{hi:.2f}: {mm.sum():6d} peaks, FWHM {q[0]:.3f} / {q[1]:.3f} / "
                   f"{q[2]:.3f} deg (10/50/90th), frames {np.median(n_fr[mm]):.0f}")  # fmt: skip
+
+    # Selection check: does the clean filter drop the broad peaks at low |sin eta|? Brighter half per ring of all peaks
+    # off the scan ends, clean or not. Overlapping peaks' widths include their neighbours, so they read wide; what
+    # matters is whether they are much wider at low |sin eta| than the clean ones.
+    m = near & ~edge
+    bright = np.zeros(n, bool)
+    for r in range(len(r_tth)):
+        mr = m & (ring == r)
+        if mr.any():
+            bright |= mr & (I >= np.median(I[mr]))
+    hi_bin = bright & clean & (sin_eta >= s_edges[-2])
+    w_ref, s_ref = np.median(fwhm[hi_bin]), np.median(sin_eta[hi_bin])
+    print(f"\nselection check (brighter half per ring, clean or not). Isotropic spread: clean FWHM ~ {w_ref:.3f} x "
+          f"{s_ref:.2f} / |sin eta|, from the clean peaks at |sin eta| > {s_edges[-2]}")  # fmt: skip
+    print("|sin eta|    share (uniform eta)  clean   predicted   clean FWHM 10/50/90 (frames)    overlapping FWHM 10/50/90 (frames)")  # fmt: skip
+    for lo, hi in zip(s_edges[:-1], s_edges[1:]):
+        mm = bright & (sin_eta >= lo) & (sin_eta < hi + 1e-9)
+        if mm.sum() < 10:
+            continue
+        uniform = 2 / np.pi * (np.arcsin(hi) - np.arcsin(lo))
+        pred = w_ref * s_ref / max(np.median(sin_eta[mm]), 0.02)
+        cols = []
+        for sel in (mm & clean, mm & ~clean):
+            if sel.sum() < 5:
+                cols.append(f"{'-':>32}")
+                continue
+            q = np.percentile(fwhm[sel], [10, 50, 90])
+            cols.append(f"{q[0]:6.3f} {q[1]:6.3f} {q[2]:6.3f} ({np.median(n_fr[sel]):3.0f}) n={sel.sum():6d}")
+        print(f"{lo:.2f}-{hi:.2f}    {mm.sum() / bright.sum():5.1%} ({uniform:5.1%})     {(mm & clean).sum() / mm.sum():5.1%}"
+              f"   {pred:7.3f}    {cols[0]}    {cols[1]}")  # fmt: skip
+    print("If the clean median is well under the prediction at low |sin eta| and the overlapping peaks there are broad, "
+          "the flat floor is a selection effect; if the overlapping peaks are as narrow, the widths really are flat.")  # fmt: skip
