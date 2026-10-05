@@ -314,3 +314,28 @@ class TestPrefetch(unittest.TestCase):
         for x in prefetch(iter(range(10**9))):  # stopping early must not hang
             if x == 5:
                 break
+
+
+class TestStreamMonitor(unittest.TestCase):
+    def test_normalised_frame_by_frame(self):
+        from anri.io import stream_sparse
+
+        det_shape = (20, 30)
+        omega, dty = np.arange(4) + 0.5, np.full(4, 0.0)
+        frame, pixel, value = np.array([0, 1, 2, 3]), np.array([5, 6, 7, 8]), np.array([10.0, 10.0, 10.0, 10.0])
+        mon = np.array([1.0, 2.0, 4.0, 0.0])  # the last frame has no beam
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "s.h5")
+            with h5py.File(path, "w") as h:
+                write_scan(h, "1.1", frame, pixel, value, omega, dty, det_shape, cut=0)
+                h["1.1/measurement/fpico6"] = mon
+            edges = np.array([-0.5, 0.5])
+            plain = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100)))
+            np.testing.assert_allclose(plain[4], 10.0)
+            _, _, _, row, val = next(
+                iter(stream_sparse(path, edges, "rot_center", "dty", 100, monitor="fpico6", monitor_ref=2.0))
+            )
+            np.testing.assert_allclose(val[:3], [20.0, 10.0, 5.0])  # x monitor_ref / monitor
+            np.testing.assert_array_equal(row, [0, 0, 0, -1])  # no beam: dropped
+            _, _, _, _, val = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100, monitor="fpico6")))
+            np.testing.assert_allclose(val[:3], 10.0 * mon.mean() / mon[:3])  # default reference: the mean

@@ -304,11 +304,15 @@ def stream_sparse(
     gridstep: int = 1,
     dataset_dty: np.ndarray | None = None,
     scans: list | None = None,
+    monitor: str | None = None,
+    monitor_ref: float | None = None,
 ) -> Iterator[tuple]:
     """Read sparse pixels a chunk at a time, with each frame's dty row.
 
     A frame's row is the bin of ``ybinedges`` holding its dty reading, divided by ``gridstep`` (rows summed in
-    groups); frames outside the bins get row -1.
+    groups); frames outside the bins get row -1. With a monitor, intensities are normalised to the flux as
+    ImageD11's ``DataSet.set_monitor`` does: multiplied by ``monitor_ref / monitor`` frame by frame, so beam decay
+    within a rotation and between the dty rows' scans does not show in the data.
 
     Parameters
     ----------
@@ -326,6 +330,11 @@ def stream_sparse(
         Rows summed in groups of this
     dataset_dty, scans
         [scans, frames] dty and scan names from the DataSet, for files without a dty column
+    monitor
+        Name of a counter in each group's ``measurement``, e.g. "fpico6"; None (default) for no normalisation.
+        Frames where it is not positive are dropped.
+    monitor_ref
+        Reference value; default the counter's mean over the groups read
 
     Yields
     ------
@@ -335,7 +344,10 @@ def stream_sparse(
     ybinedges = np.asarray(ybinedges)
     n_rows = len(ybinedges) - 1
     with h5py.File(sparsefile, "r") as h:
-        for name in groups if groups is not None else list(h.keys()):
+        names = groups if groups is not None else list(h.keys())
+        if monitor is not None and monitor_ref is None:
+            monitor_ref = float(np.mean(np.concatenate([h[f"{nm}/measurement/{monitor}"][()] for nm in names])))
+        for name in names:
             gr = h[name]
             nnz = gr["nnz"][()]
             om_f = gr[f"measurement/{omega_motor}"][()].astype(np.float32)
@@ -348,6 +360,11 @@ def stream_sparse(
                 raise KeyError(msg)
             k_f = np.searchsorted(ybinedges, dty_f) - 1
             k_f = np.where((k_f >= 0) & (k_f < n_rows), k_f // gridstep, -1).astype(np.int32)
+            scale = np.ones(len(nnz), np.float32)
+            if monitor is not None:
+                mon = np.asarray(gr[f"measurement/{monitor}"][()], float)[: len(nnz)]
+                scale = np.where(mon > 0, monitor_ref / np.where(mon > 0, mon, 1.0), 0.0).astype(np.float32)
+                k_f = np.where(mon > 0, k_f, -1).astype(np.int32)
             frame = np.repeat(np.arange(len(nnz), dtype=np.int32), nnz)  # each pixel's frame
             n = len(frame)
             for s0 in range(0, n, chunk):
@@ -358,7 +375,7 @@ def stream_sparse(
                     gr["col"][s0 : s0 + m].astype(np.float32),
                     om_f[fr],
                     k_f[fr],
-                    gr["intensity"][s0 : s0 + m].astype(np.float32),
+                    gr["intensity"][s0 : s0 + m].astype(np.float32) * scale[fr],
                 )
 
 

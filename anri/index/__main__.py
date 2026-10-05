@@ -63,6 +63,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cand", type=int, default=64, help="candidate orientations per voxel (default 64)")
     p.add_argument("--coarse", type=int, default=1, help="first fit voxels this many times larger, then give each voxel "
                    "the candidates of its coarse neighbourhood (default 1: off; 4 is ~16x cheaper on large maps)")  # fmt: skip
+    p.add_argument("--monitor", help="normalise intensities by this counter in each scan's measurement, frame by frame, "
+                   "as ImageD11's DataSet.set_monitor does (e.g. fpico6; default: no normalisation)")  # fmt: skip
     p.add_argument("--occupied", type=float, default=0.2, help="voxels count as occupied (in the TensorMap and entries) "
                    "above this x the 99th percentile of the total occupancy (default 0.2; the raw occupancy is always saved)")  # fmt: skip
     p.add_argument("--min-frac", type=float, default=0.1, help="report populations holding at least this fraction of a "
@@ -168,10 +170,28 @@ def main() -> None:
         n_max = max(int(h[g]["nnz"][()].sum()) for g in groups)
     chunk = int(min(1 << 24, 1 << max(10, int(np.ceil(np.log2(max(n_max, 1)))))))
 
+    monitor_ref = None
+    if args.monitor:  # one reference for every scan, as ImageD11 (the mean)
+        with __import__("h5py").File(sparsefile, "r") as h:
+            mon = np.concatenate([h[f"{g}/measurement/{args.monitor}"][()] for g in groups])
+        monitor_ref = float(np.mean(mon))
+        log(f"monitor {args.monitor}: mean {monitor_ref:.4g}, min / max {mon.min() / monitor_ref:.3f} / "
+            f"{mon.max() / monitor_ref:.3f} of the mean; intensities normalised to the mean")  # fmt: skip
+
     def stream(groups_: list) -> Iterator[tuple]:  # read the next chunk while this one is binned
         return anri.io.prefetch(
             anri.io.stream_sparse(
-                sparsefile, yedge, ds["omegamotor"], ds["dtymotor"], chunk, groups_, G, ds["dty"], ds["scans"]
+                sparsefile,
+                yedge,
+                ds["omegamotor"],
+                ds["dtymotor"],
+                chunk,
+                groups_,
+                G,
+                ds["dty"],
+                ds["scans"],
+                args.monitor,
+                monitor_ref,
             )
         )
 
