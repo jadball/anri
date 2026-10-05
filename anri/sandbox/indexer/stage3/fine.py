@@ -165,12 +165,12 @@ def fine_mlem(data, U, pos, f0, rings, geom, scan, bins, etacut, n_side, n_iter,
     for it in range(n_iter):
         t0 = time.time()
         mu, norm = fine_forward(f, U, pos, hk, F2, rj, geom, scan, bins, etacut, n_side, dj, n_steps)
+        if it % 5 == 0 or it == n_iter - 1:  # the deviance of this f (mu, and the sum of mu over every bin, empty ones too)
+            dev = 2 * float(jnp.sum(jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / jnp.maximum(mu, 1e-30)), 0.0) - d)
+                            + jnp.sum(f * norm))
+            log(f"  fine MLEM {it}: deviance {dev:.5g}")
         ratio = jnp.where(mu > 0, d / jnp.maximum(mu, 1e-30), 0.0)
         f = f * fine_backward(ratio, U, pos, hk, F2, rj, geom, scan, bins, etacut, n_side, dj, n_steps) / jnp.maximum(norm, 1e-30)
         jax.block_until_ready(f)
         log(f"  fine MLEM iteration {it}: {time.time() - t0:.1f} s")
-        if it % 5 == 0 or it == n_iter - 1:
-            dev = 2 * float(jnp.sum(jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / jnp.maximum(mu, 1e-30)), 0.0) - d)
-                            + jnp.sum(f * norm))  # sum of mu over every bin, empty ones included
-            log(f"  fine MLEM {it}: deviance {dev:.5g}")
     return f

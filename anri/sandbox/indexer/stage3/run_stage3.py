@@ -36,6 +36,9 @@ p.add_argument("--monitor")
 p.add_argument("--rings", type=int, default=6)
 p.add_argument("--bins", type=float, nargs=2, default=(0.25, 0.05), help="fine bins: eta and omega (deg)")
 p.add_argument("--iter", type=int, default=20, help="MLEM iterations per pass")
+p.add_argument("--pass1", type=float, nargs=2, default=(1.0, 0.5), help="pass 1 local grid: half-width and step (deg)")
+p.add_argument("--pass2", type=float, nargs=2, default=(1.0, 0.25), help="pass 2 local grid: half-width and step (deg); "
+               "a half-width of 0 skips it. Keep it at least as wide as the populations' spread")
 p.add_argument("--min-frac", type=float, default=0.1)
 p.add_argument("--block", type=int, default=0, help="units per block (default: from a ~1 GB budget)")
 p.add_argument("--n-cpu", type=int, default=4)
@@ -141,8 +144,11 @@ def local_pass(U_centre, f_centre, half, step, label):  # noqa: ANN001, ANN201
 
 
 f_unit = r["frac"][v_unit, p_unit] * r["f"].sum(1)[v_unit]
-U1, s1, t1_ = local_pass(U_pop[v_unit, p_unit].astype(float), f_unit, 1.0, 0.5, "pass 1")
-U2, s2, tot2 = local_pass(U1.astype(float), t1_, 0.5, 0.25, "pass 2")
+U1, s1, t1_ = local_pass(U_pop[v_unit, p_unit].astype(float), f_unit, *args.pass1, "pass 1")
+if args.pass2[0] > 0:
+    U2, s2, tot2 = local_pass(U1.astype(float), t1_, *args.pass2, "pass 2")
+else:
+    U2, s2, tot2 = U1, s1, t1_
 
 # ------------------------------------------------------------------------------------------------- per voxel
 nv = len(present)
