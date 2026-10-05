@@ -65,7 +65,7 @@ def _classes(window: tuple[int, int, int], max_frames: int) -> list[int]:
 
 
 def _select(ubi: jax.Array, pos: jax.Array, hkls: jax.Array, geom: dict, rows: list, det_shape: tuple[int, int],
-            window: tuple[int, int, int], max_frames: int) -> list:  # fmt: skip
+            window: tuple[int, int, int], max_frames: int, sig_rot: jax.Array | None = None) -> list:  # fmt: skip
     """Per row: (entry, hkl, branch, window class) of the peaks that reach it."""
     classes = np.asarray(_classes(window, max_frames))
     sel = jax.jit(select_peaks, static_argnames="det_shape")
@@ -79,7 +79,7 @@ def _select(ubi: jax.Array, pos: jax.Array, hkls: jax.Array, geom: dict, rows: l
             ostep = float(np.median(np.diff(np.asarray(row["omega_edges"]))))
             n = 1 << int(np.ceil(np.log2(e.size)))  # padded to a power of two: few compiled shapes
             ehb = [jnp.asarray(np.pad(x, (0, n - e.size))) for x in (e, h, b)]
-            sig = np.asarray(_omega_sigma(ubi, pos, hkls, *ehb, geom, row))[: e.size] / ostep
+            sig = np.asarray(_omega_sigma(ubi, pos, hkls, *ehb, geom, row, sig_rot))[: e.size] / ostep
             k = np.searchsorted(classes, 2 * np.ceil(3.5 * sig + 0.5) + 1)
             k = np.minimum(k, len(classes) - 1).astype(np.int32)
         out.append((e, h, b, k))
@@ -122,13 +122,16 @@ def _jit_window(f: Callable) -> Callable:
 
 
 def _make_fns(hkls: jax.Array, F2: jax.Array, geom: dict, pos: jax.Array, det_shape: tuple[int, int], cut: float,
-              n_search: int) -> dict:  # fmt: skip
+              n_search: int, sig_rot: jax.Array | None = None) -> dict:  # fmt: skip
     """Jitted per-class passes over a row: forward, gradient and blocks, J p, J^T u."""
     dtype = pos.dtype
+    sig = jnp.zeros(pos.shape[0], dtype) if sig_rot is None else sig_rot  # gathered per peak; unused if None
 
-    def peak_values(th, ubi0_e, pos_e, h, b, row, window):  # noqa: ANN001, ANN202
+    def peak_values(th, ubi0_e, pos_e, sig_e, h, b, row, window):  # noqa: ANN001, ANN202
         F = jnp.eye(3, dtype=dtype) + th[:9].reshape(3, 3)
         one = {"ubi": (ubi0_e @ F.T)[None], "pos": pos_e[None], "density": jnp.exp(th[9])[None]}
+        if sig_rot is not None:
+            one["sig_rot"] = sig_e[None]
         fr, px, val, cap = render_peaks(
             jnp.zeros(1, jnp.int32), h[None], b[None], one, hkls, F2, geom, row, window, det_shape
         )
@@ -151,12 +154,12 @@ def _make_fns(hkls: jax.Array, F2: jax.Array, geom: dict, pos: jax.Array, det_sh
 
     def cells(theta, ubi0, e, h, b, live, row, pix, fs, window):  # noqa: ANN001, ANN202
         def values(th_b):  # noqa: ANN001, ANN202
-            return jax.vmap(lambda t, u, p, hh, bb: peak_values(t, u, p, hh, bb, row, window)[2])(
-                th_b, ubi0[e], pos[e], h, b
+            return jax.vmap(lambda t, u, p, sg, hh, bb: peak_values(t, u, p, sg, hh, bb, row, window)[2])(
+                th_b, ubi0[e], pos[e], sig[e], h, b
             )
 
-        fr, px, val, cap = jax.vmap(lambda t, u, p, hh, bb: peak_values(t, u, p, hh, bb, row, window))(
-            theta[e], ubi0[e], pos[e], h, b)  # fmt: skip
+        fr, px, val, cap = jax.vmap(lambda t, u, p, sg, hh, bb: peak_values(t, u, p, sg, hh, bb, row, window))(
+            theta[e], ubi0[e], pos[e], sig[e], h, b)  # fmt: skip
         idx = jnp.where(live[:, None], match(fr, px, pix, fs), -1)
         return idx, val, jnp.where(live, cap, 1.0), values
 
@@ -178,8 +181,8 @@ def _make_fns(hkls: jax.Array, F2: jax.Array, geom: dict, pos: jax.Array, det_sh
             grad, block = carry
             e, h, b, live = xs
             idx, val, _, _ = cells(theta, ubi0, e, h, b, live, row, pix, fs, window)
-            J = jax.vmap(jax.jacfwd(lambda t, u, p, hh, bb: peak_values(t, u, p, hh, bb, row, window)[2]))(
-                theta[e], ubi0[e], pos[e], h, b
+            J = jax.vmap(jax.jacfwd(lambda t, u, p, sg, hh, bb: peak_values(t, u, p, sg, hh, bb, row, window)[2]))(
+                theta[e], ubi0[e], pos[e], sig[e], h, b
             )  # fmt: skip  [B, W, 10]
             matched = idx >= 0
             res = jnp.where(matched, r[jnp.maximum(idx, 0)], jnp.maximum(val - cut, 0.0))
@@ -264,24 +267,29 @@ def _jtj(fns: dict, rows: list, theta: jax.Array, ubi0: jax.Array, p: jax.Array)
 
 
 def _cg_step(fns: dict, rows: list, theta: jax.Array, ubi0: jax.Array, grad: jax.Array, block: jax.Array, lam: float,
-             n_cg: int) -> jax.Array:  # fmt: skip
-    """Solve (J^T J + lam D) d = -g by conjugate gradients, preconditioned by each entry's block."""
+             n_cg: int, free: jax.Array) -> jax.Array:  # fmt: skip
+    """Solve (J^T J + lam D) d = -g by conjugate gradients, preconditioned by each entry's block.
+
+    Only the parameters where ``free`` [10] is 1 move: the others are left out of the system (their step is 0).
+    """
+    has = (jnp.diagonal(block, axis1=1, axis2=2).sum(1) > 0)[:, None]  # entries with data
+    grad = grad * free
+    block = block * free[:, None] * free[None, :] + jnp.diag(1.0 - free)
     D = jnp.diagonal(block, axis1=1, axis2=2)
-    has = (D.sum(1) > 0)[:, None]
     D = D + 1e-12 + 1e-9 * jnp.max(D)
     Minv = jnp.linalg.inv(block + lam * jax.vmap(jnp.diag)(D))
     x = jnp.zeros_like(grad)
     r = -jnp.where(has, grad, 0.0)
-    z = jnp.where(has, jnp.einsum("nkl,nl->nk", Minv, r), 0.0)
+    z = jnp.where(has, jnp.einsum("nkl,nl->nk", Minv, r), 0.0) * free
     p, rz = z, jnp.vdot(r, z)
     r0 = float(jnp.linalg.norm(r))
     for _ in range(n_cg):
-        Ap = jnp.where(has, _jtj(fns, rows, theta, ubi0, p) + lam * D * p, 0.0)
+        Ap = jnp.where(has, (_jtj(fns, rows, theta, ubi0, p) + lam * D * p) * free, 0.0)
         alpha = rz / jnp.vdot(p, Ap)
         x, r = x + alpha * p, r - alpha * Ap
         if float(jnp.linalg.norm(r)) < 1e-4 * r0:
             break
-        z = jnp.where(has, jnp.einsum("nkl,nl->nk", Minv, r), 0.0)
+        z = jnp.where(has, jnp.einsum("nkl,nl->nk", Minv, r), 0.0) * free
         rz_new = jnp.vdot(r, z)
         p, rz = z + (rz_new / rz) * p, rz_new
     return x
@@ -307,6 +315,7 @@ def refine(
     max_frames: int = 31,
     cut: float = 1.0,
     n_cg: int = 15,
+    fit_density: bool = True,
     batch: int = 16384,
     log: Callable | None = print,
 ) -> tuple[dict, list]:
@@ -317,6 +326,8 @@ def refine(
     entries
         Starting map: "ubi" [N, 3, 3], "pos" [N, 3] and "density" [N], as for :func:`anri.fwd.render_row`, for one
         phase. The start must be close: the loss is near quadratic only within about a tenth of a peak width.
+        Optional "sig_rot" [N] (radians), each entry's orientation spread, held fixed: it widens the entry's peaks
+        and so the basin. Refining with a large spread, then again with a smaller one, brings a distant start in.
     hkls, F2, geom
         As for :func:`anri.fwd.render_row`. The precision of the UBIs (float32 or float64) sets the precision used.
     rows
@@ -333,6 +344,8 @@ def refine(
         The segmentation threshold of the measured pixels: a model cell where nothing was measured may be up to it
     n_cg
         Conjugate gradient iterations per step
+    fit_density
+        Refine each entry's density (default). False holds the densities fixed, so only the lattices move
     batch
         Peaks per batch (for the smallest windows)
     log
@@ -354,9 +367,11 @@ def refine(
                  jnp.asarray(v, dtype) if np.asarray(v).dtype.kind == "f" else jnp.asarray(v)) for k, v in r.items()}
             for r in rows]  # fmt: skip
     n_search = int(np.ceil(np.log2(max(int(np.diff(m["frame_start"]).max()) for m in meas) + 1))) + 1
-    fns = _make_fns(hkls_j, F2_j, geom, pos, tuple(det_shape), float(cut), n_search)
+    sig_rot = None if "sig_rot" not in entries else jnp.asarray(entries["sig_rot"], dtype)
+    fns = _make_fns(hkls_j, F2_j, geom, pos, tuple(det_shape), float(cut), n_search, sig_rot)
+    free = jnp.ones(N_PARAMS, dtype).at[9].set(1.0 if fit_density else 0.0)
     theta = jnp.zeros((ubi0.shape[0], N_PARAMS), dtype).at[:, 9].set(jnp.log(jnp.asarray(entries["density"], dtype)))
-    peaks = _select(ubi0, pos, hkls_j, geom, rows, tuple(det_shape), window, max_frames)
+    peaks = _select(ubi0, pos, hkls_j, geom, rows, tuple(det_shape), window, max_frames, sig_rot)
     rd = _prepare(peaks, rows, meas, window, max_frames, batch)
     t0 = time.perf_counter()
     loss, grad, block, cap = _gradient(fns, rd, theta, ubi0)
@@ -365,7 +380,7 @@ def refine(
         log(f"iteration 0: loss {loss:.5g}")
     r_F, r_rho, lam = 1e-3, 0.1, 1e-3
     for it in range(1, n_iter + 1):
-        step = _cg_step(fns, rd, theta, ubi0, grad, block, lam, n_cg)
+        step = _cg_step(fns, rd, theta, ubi0, grad, block, lam, n_cg, free)
         for _ in range(8):  # shrink the trust region until the loss drops
             trial = theta + _clip(step, r_F, r_rho)
             if _loss(fns, rd, trial, ubi0) < loss:

@@ -61,6 +61,32 @@ class TestRefine(unittest.TestCase):
         )
         self.assertLess(np.abs(out["density"] - 1.0).max(), 0.02)
 
+    def test_spread_and_fixed_density(self):
+        """With a spread (sig_rot) the peaks are wider, so a start 10x further off still comes in; fixed densities stay."""
+        entries, hkls, F2, geom, rows, det_shape = _problem()
+        entries["sig_rot"] = np.full(4, np.radians(0.3))
+        meas = []
+        for row in rows:
+            frame, pixel, value, _ = render_row(entries, hkls, F2, geom, row, det_shape, min_value=0.0, max_frames=3)
+            meas.append(measured(frame, pixel, value, len(row["order"])))
+        rng = np.random.default_rng(1)
+        rot = Rotation.from_rotvec(np.radians(0.1) * rng.normal(size=(4, 3)) / np.sqrt(3)).as_matrix()
+        start = {**entries, "ubi": entries["ubi"] @ np.swapaxes(rot, -1, -2)}
+
+        def misorientation(ubi):
+            def orientation(m):
+                u, _, vt = np.linalg.svd(np.linalg.inv(m))
+                return u @ vt
+
+            r = orientation(ubi) @ np.swapaxes(orientation(entries["ubi"]), -1, -2)
+            return np.degrees(np.linalg.norm(Rotation.from_matrix(r).as_rotvec(), axis=1))
+
+        out, history = refine(start, hkls, F2, geom, rows, meas, det_shape, n_iter=6, cut=0.0, max_frames=3, n_cg=8,
+                              fit_density=False, log=None)  # fmt: skip
+        self.assertLess(history[-1]["loss"], 1e-2 * history[0]["loss"])
+        self.assertLess(np.sqrt((misorientation(out["ubi"]) ** 2).mean()), 0.01)
+        np.testing.assert_array_equal(out["density"], entries["density"])
+
 
 if __name__ == "__main__":
     unittest.main()
