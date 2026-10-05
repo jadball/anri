@@ -41,6 +41,7 @@ p.add_argument("--pass1", type=float, nargs=2, default=(1.0, 0.5), help="pass 1 
 p.add_argument("--pass2", type=float, nargs=2, default=(1.0, 0.25), help="pass 2 local grid: half-width and step (deg); "
                "a half-width of 0 skips it. Keep it at least as wide as the populations' spread")
 p.add_argument("--min-frac", type=float, default=0.1)
+p.add_argument("--unit-frac", type=float, help="make units of stage-2 populations with at least this fraction (e.g. 0.03, for weak twins; default: the npz's present ones, from its --min-frac)")
 p.add_argument("--block", type=int, default=0, help="units per block (default: from a ~1 GB budget)")
 p.add_argument("--n-cpu", type=int, default=4)
 p.add_argument("--outdir", default=".")
@@ -115,6 +116,11 @@ log(f"fine histogram: {len(data['value']) / 1e6:.1f}M non-empty bins ({(len(data
 
 # ------------------------------------------------------------------------------------------------- units
 present, U_pop, pos = r["present"], r["U_pop"], r["pos"]
+if args.unit_frac is not None:  # populations stage 2 found but did not report (it keeps those above 2% of a voxel)
+    n_before = present.sum()
+    present = (r["frac"] >= args.unit_frac) & r["occupied"][:, None]
+    present[:, 0] = r["occupied"]
+    log(f"--unit-frac {args.unit_frac}: {present.sum()} units (stage 2 reported {n_before})")
 v_unit, p_unit = np.nonzero(present)
 log(f"{present[:, 0].sum()} voxels, {len(v_unit)} (voxel, population) units")
 n_side = int(np.ceil((0.5 * YSTEP + 3 * args.beam / 2.355) / YSTEP))
