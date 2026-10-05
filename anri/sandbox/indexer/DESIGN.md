@@ -110,8 +110,9 @@ population.
     ~0.1 deg FWHM, growing as 1 / |sin eta| (isotropic). Heavily deformed samples will be far wider (see below). Brighter peaks
     (longer chords through larger grains) are often wider: a peak in one row sums the voxels along the ray, so the
     measured spread includes orientation changes along the chord, and a voxel's own spread may be smaller;
-  - at |sin eta| < 0.25 broad peaks overlap and fail the "clean" filter, so medians there read low; the share of
-    peaks there is low anyway (g near the rotation axis never diffracts);
+  - at |sin eta| < 0.25 broad peaks overlap and fail the "clean" filter, so medians there read low. (For random
+    orientations the count of peaks is uniform in eta; the blind region near the rotation axis is only ~theta^2 / 2 of
+    orientations. A low share there means texture or selection.)
   - widths under a frame are unresolved: a sub-frame peak split over two frames reads ~0.9 frame.
 - **Heavy deformation (e.g. 50% rolled or compressed) is a different regime**, not measured yet:
   - dislocation cells of ~0.5-2 um, 1-3 deg apart across their walls, and deformation bands and microbands
@@ -122,6 +123,11 @@ population.
   - heterogeneous elastic strain (type II/III, ~1e-3) widens 2theta;
   - a 1 um voxel holds several cells: a few populations 1-3 deg apart, each sharp. Along a ray, hundreds of cells
     merge into streaks and arcs degrees long in omega and eta, so spots overlap within a ring.
+  Measured on one heavily deformed HCP dataset (same geometry as a lightly deformed one): **sub-peaks stay sharp**
+  (clean peaks: 2 frames, unresolved, at every eta) but **multiply**: 5x the 3D peaks and 14x the 2D peaks per row.
+  Merged labels span degrees in omega (90th percentile 2.7-4.6 deg), so a "peak width" from a peak table is then set
+  by the segmentation's connectivity, not the sample. Unexplained: the merged labels are longest at |sin eta| ~ 1, the
+  opposite of an isotropic spread.
   Consequences: the stage 2 grid sees cells within ~2 steps as one population (mean + spread); an isotropic `sig_rot`
   fits these spreads poorly; the measured ring widths must cover the strain; peak tables and the "clean" filter
   (`peak_widths.py`) break down, so widths must come from the histograms. Needs a test phantom and real data.
