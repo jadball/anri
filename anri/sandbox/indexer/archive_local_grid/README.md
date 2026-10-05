@@ -1,4 +1,11 @@
-# Stage 3 prototype (local refinement)
+# Archived: local-grid refinement prototype
+
+**Retired 2026-10-05.** It re-fitted which population owns each voxel, with ~125 free occupancies per population on a
+private fine grid against fine bins, and made grain boundaries worse than the indexer's on real data. Refinement now
+starts from the indexer's map entries in `anri.refine` (see `../DESIGN.md`). Kept for reference; paths and APIs in
+these scripts may be out of date.
+
+## Original notes
 
 **To run on a dataset:** `run_stage3.py`, on the `_index.npz` of `python -m anri.index` (see its docstring). Tested
 end to end on the am316l phantom (1 MLEM iteration per pass: spread 0.82 -> 0.45 deg, voxels with 2+ populations
