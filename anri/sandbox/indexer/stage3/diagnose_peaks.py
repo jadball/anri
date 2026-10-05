@@ -12,7 +12,9 @@ of the spots' FWHM, per ring:
   own). A distribution (10th, 50th, 90th percentile), but segmentation cuts the tails (too narrow) and overlapping
   spots merge (too wide).
 
-If the two agree, the widths are measured. Stage 3 predicts a spot as a point: bins narrower than these widths let it
+If the two agree, the widths are measured. The segmentation threshold cuts the tails of faint spots, so they read
+narrow (on a simulation with peaks a few counts high, by 10-20%; within 2% when bright): if the brightest 10% of
+spots read wider than the median, trust them. Stage 3 predicts a spot as a point: bins narrower than these widths let it
 fake the width by mixing units (the bleeding at grain boundaries).
 """
 
@@ -165,8 +167,9 @@ if __name__ == "__main__":
             return float(x[o][np.searchsorted(np.cumsum(w[o]), 0.5 * w.sum())])
 
         pe, po = np.percentile(FE[strong], [10, 50, 90]), np.percentile(FO[strong], [10, 50, 90])
+        top = W >= np.percentile(W, 90)  # least cut by the segmentation threshold
         print(f"ring {r} (2theta {rings['tth'][r]:.3f}): {strong.sum()} spots (brighter half of {len(W)})\n"
               f"   omega: autocorr {autocorr_fwhm(ac_o, lag_o, B_O):.3f}; spots {po[0]:.3f} / {po[1]:.3f} / {po[2]:.3f}, "
-              f"weighted {wmed(FO[strong], W[strong]):.3f}\n"
+              f"weighted {wmed(FO[strong], W[strong]):.3f}, brightest 10% {np.median(FO[top]):.3f}\n"
               f"   eta:   autocorr {autocorr_fwhm(ac_e, lag_e, B_E):.3f}; spots {pe[0]:.3f} / {pe[1]:.3f} / {pe[2]:.3f}, "
-              f"weighted {wmed(FE[strong], W[strong]):.3f}")  # fmt: skip
+              f"weighted {wmed(FE[strong], W[strong]):.3f}, brightest 10% {np.median(FE[top]):.3f}")  # fmt: skip
