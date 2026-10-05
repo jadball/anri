@@ -41,28 +41,28 @@ Read this first. Below it is the design history (the first draft); where they di
 - **Beam size** is not measurable from edges along dty: inclined boundaries widen every edge.
 - **Small grains under 5 um^2:** 90% are in the pruned list, but only 40% survive into the final map, so the 1 um voxel fit loses half of them.
 - **Real data** (maintainer's runs):
-  - Tognan: chance completeness 0.98 at `--lit 1` and 2.5 deg. `--lit 10` and a 1 deg grid gave chance 0.46, and the deviance fell 3.4x.
-  - Chen: the old `--keep 3000` cap dropped small grains; keeping all 10,354 cut the deviance by 31%.
+  - Dataset A: chance completeness 0.98 at `--lit 1` and 2.5 deg. `--lit 10` and a 1 deg grid gave chance 0.46, and the deviance fell 3.4x.
+  - Dataset B: the old `--keep 3000` cap dropped small grains; keeping all 10,354 cut the deviance by 31%.
   - The likelihood pruning has not been run on real data yet: it is planned for the beamtime.
 
 ## Since this morning (2026-10-05)
 
 - **Real data:**
-  - Tognan with likelihood pruning: 21k orientations, final deviance 1.265e12 (completeness pruning: 1.360e12 with 27k), 3.5 min on the L40S.
-  - A hexagonal Mg alloy (P63/mmc, cubochoric grid at 1.5 deg) indexed first time. Fine deformation twins were missed (diagnose with `diagnose_twins.py`).
+  - Dataset A with likelihood pruning: 21k orientations, final deviance 1.265e12 (completeness pruning: 1.360e12 with 27k), 3.5 min on the L40S.
+  - An HCP dataset (P63/mmc, cubochoric grid at 1.5 deg) indexed first time. Fine deformation twins were missed (diagnose with `diagnose_twins.py`).
   - `--occupied 0.2` cuts holes into real samples (tuned on the uniform phantom); a rule from the data is wanted.
 - **Speed:**
-  - The histograms are read-bound: 94 s to read Tognan's 3.77G pixels on one core (HDF5 decompression under h5py's lock), against 95 s for the whole histogram step with `anri.io.prefetch`.
+  - The histograms are read-bound: 94 s to read dataset A's 3.77G pixels on one core (HDF5 decompression under h5py's lock), against 95 s for the whole histogram step with `anri.io.prefetch`.
   - Beyond that: decompress raw chunks in threads (`read_direct_chunk` + bitshuffle/LZ4).
   - `inherit_candidates` now uses a KD-tree: 2 min -> 4 s.
 - **Twin ghosts:** a twin shares reflections with its parent (a third for Sigma3). Where the grid fits the parent imperfectly, the twin orientation explains part of the shared spots, passes pruning (likelihood ratio > 25) and is fitted as a second population.
   - On the am316l phantom (one twinned grain in 38): the twin of 98% of grains was kept, and most second populations sat 60 deg from the first.
   - These are most of the "decoys" seen before. Local refinement cut voxels with 2+ populations from 57% to 23%: a well-fitted parent leaves nothing to steal.
 - **Parent/twin split per voxel** is poorly determined near boundaries on the phantom: pure parent voxels get ~30% twin, the correlation with the truth is 0.66 (fine stage 0.45). It shows as stripes one voxel wide where the main population flips.
-- **Ring artefacts** (concentric about the rotation axis) on the twins sample W2_z2 (Jerard_Gordon_twins), from per-row misfit. The CLI logs and saves `row_ratio` (measured / fitted intensity per dty row).
+- **Ring artefacts** (concentric about the rotation axis) on a helical-scan dataset, from per-row misfit. The CLI logs and saves `row_ratio` (measured / fitted intensity per dty row).
   - Phantom: smooth radial bias of +-7% from the 2-row model.
-  - W2_z2: row-to-row rms 0.19 (Mg: 0.018). The monitor (`--monitor`, now supported, with a master-file fallback) varies only +-6% there, so flux is not the cause.
-  - Cause: **W2_z2 is a helical scan**: dty moves continuously, 2 um per 360 deg turn (from the slope of the rows' readings; the encoder reading steps once per row, so its phase within a turn is unknown and degenerate with y0). The model must shift row r's beam by rate x (omega - omega_ref).
+  - Helical dataset: row-to-row rms 0.19 (HCP dataset: 0.018). The monitor (`--monitor`, now supported, with a master-file fallback) varies only +-6% there, so flux is not the cause.
+  - Cause: **it is a helical scan**: dty moves continuously, 2 um per 360 deg turn (from the slope of the rows' readings; the encoder reading steps once per row, so its phase within a turn is unknown and degenerate with y0). The model must shift row r's beam by rate x (omega - omega_ref).
   - The maintainer asked to do this on a machine where the data can be read and debugged. `diagnose_positions.py` shows a DataSet's dty and omega per frame. Its "outside their bin" line is wrong for rows in descending dty.
 - **Fine stage (prototype, not in anri.index):** a sparse fine histogram (CSR per (ring, eta, omega) cell over rows, int32 lookups), parallax by ray tracing from each voxel, and the beam profile over rows, with local grids around populations.
   - On the 25 um phantom: the local grid on the coarse 1 deg data already gave main population within 0.5 deg 33.6% -> 73.2%, median 0.60 -> 0.36 deg, and removed most decoys.
@@ -70,9 +70,9 @@ Read this first. Below it is the design history (the first draft); where they di
   - Speed: ~100 s per iteration on a laptop CPU for 2060 voxels x 250 candidates. A subset of voxels cannot be fitted alone (other voxels' spots share the rays).
   - Prototype code: `anri/sandbox/indexer/stage3/` (scratch quality, see its README).
 
-## Stage 3 on real data: Tognan, then Mg (2026-10-05, evening)
+## Stage 3 on real data (2026-10-05, evening)
 
-`stage3/run_stage3.py` on the Mg alloy (MgAl_3_nanox_3N, z0: 481 rows of 1.5 um, 3620 frames of 0.05 deg, zigzag, no CIF,
+`stage3/run_stage3.py` on an HCP dataset (481 rows of 1.5 um, 3620 frames of 0.05 deg, zigzag, no CIF,
 no gridstep). Its default fine bins (0.25 x 0.05 deg) made the map **worse than stage 2**: grain boundaries bled into the
 neighbours (along stage 2's voxels with fraction < 1), and the main fraction went to ~1 everywhere.
 `compare_stage3.py` (stage 2 vs 3 in numbers): isolated flips 0.96% -> 3.4-4.9%, 11% of voxels changed their main
@@ -96,37 +96,27 @@ population.
   - the beam: the scan that favoured wider beams (deviance falling up to 5 um FWHM) was run with the wrong y0 and the
     mismatched bins, so it is void. The maintainer's tomo map is sharp at 1.5 um. **Redo it** with the right y0 and
     `--bins 1.0 1.0 --pass2 0 0 --iter 5`, beams 1.0 / 1.5 / 2.5.
-- **Model gaps found:** stage 3 had no structure factors (`--cif` added; hcp rings differ in |F|^2 by up to 8x, so a Mg
+- **Model gaps found:** stage 3 had no structure factors (`--cif` added; hcp rings differ in |F|^2 by up to 8x, so a
   CIF should go to both stages), and modelled voxels as one row step (now stage 2's voxel size). Both are logged.
 - **Twins** are still almost absent: stage 3 only refines stage 2's units within +-1 deg. Stage 2 fits them but under
   `--min-frac`; `--unit-frac 0.03` makes units of populations down to 3% (stage 2 keeps up to 4 per voxel, above 2%).
   Untested. If not enough: seed twin orientations into stage 2 (new anri.index API: ask first).
-- **Peak widths:** `diagnose_peaks.py` (spot moments are inflated by merged spots and low |sin eta|; its
-  autocorrelation read about half the true width, cause unknown) was superseded by `peak_widths.py`: omega FWHM of each
-  clean 3D peak from ImageD11's peaks table, by ring and |sin eta| (checked on a simulation with known divergence: flat,
-  10-15% narrow from the threshold). On Mg (middle 40 rows):
-  - typical peaks (brighter half): 0.07-0.09 deg FWHM at |sin eta| > 0.75 (spans of 5-6 frames, as seen in the raw
-    data), only 0.11-0.16 deg near |sin eta| = 0. Fit FWHM^2 = c^2 + (s / |sin eta|)^2: a **flat floor c ~ 0.08 deg**
-    and a small spread s ~ 0.015 deg;
-  - brightest 10%: 0.086 -> 0.457 deg, close to 1 / |sin eta|: a real spread of ~0.07 deg (large grains, the deformed
-    grains at the surface);
-  - ring 3 (2theta 8.6, {10-12}) is the exception (0.09 -> 0.32 deg); the sample is a bit textured, which may explain it.
-- **Optics for Mg:** the small Al CRL box at 43 keV (102 lenses, f = 50.4 cm, effective aperture 118 um), sample at
-  its focal spot (0.3-0.4 um FWHM unspoiled), the beam then spoiled by overfocusing upstream with tfoh1 (beam size
-  after spoiling: ask). Convergence <= ~0.23 mrad (0.013 deg), so **the optics do not explain the 0.08 deg floor**.
-- **The floor is the sample, not the instrument:** `peak_widths.py` on an undeformed single-crystal Si cube (same
-  0.05 deg frames) puts nearly all peaks in **one frame** at |sin eta| > 0.25 (FWHM < ~0.03 deg), 0.06 deg near
-  |sin eta| = 0. So the stage, fly-scan timing and optics add < ~0.03 deg.
-  - An isotropic orientation spread widens omega exactly as 1 / |sin eta| (omega shift = delta . n / (z . n), n the
-    scattering plane's normal, z . n ~ |sin eta|). A width flat in eta needs rotations about the omega axis, i.e.
-    about the sample's vertical axis (it is fixed in the sample frame).
-  - So either the Mg grains' spread is mostly about the sample axis (processing? ask), or the flatness is partly a
-    selection effect: broad peaks at low |sin eta| overlap more and fail the "clean" filter (low-|sin eta| bins hold
-    9-13% of peaks where uniform eta gives 16%).
-- **Consequences:** no instrument floor to model beyond the frame width; Mg's widths are spreads per entry
-  (`sig_rot`, isotropic in the renderer: an anisotropic spread would be new API, ask). Peaks of ~0.08 deg put
-  `anri.refine`'s basin (a tenth of a peak width) at ~0.008 deg, so stage 3's grid (0.1-0.2 deg) must be followed by a
-  continuous stage (see "Proposed structure" below).
+- **Peak widths** (instrument and lens parameters: AGENTS.md). `peak_widths.py` measures the omega FWHM of each clean
+  3D peak in ImageD11's peaks table, by ring and |sin eta|, and checks whether the "clean" filter biases them.
+  (`diagnose_peaks.py` is superseded: its spot moments are inflated by merged spots.) Across real datasets so far:
+  - with the Al CRLs, an undeformed single crystal has cores within one 0.05 deg frame at every eta (both stations):
+    widths beyond that are the sample's;
+  - sample spreads range from below ~0.02 deg to ~0.1 deg FWHM, growing as 1 / |sin eta| (isotropic). Brighter peaks
+    (longer chords through larger grains) are often wider: a peak in one row sums the voxels along the ray, so the
+    measured spread includes orientation changes along the chord, and a voxel's own spread may be smaller;
+  - at |sin eta| < 0.25 broad peaks overlap and fail the "clean" filter, so medians there read low; the share of
+    peaks there is low anyway (g near the rotation axis never diffracts);
+  - widths under a frame are unresolved: a sub-frame peak split over two frames reads ~0.9 frame.
+- **Consequences:** the spot model is the frame width, the vertical convergence (`sig_kz`) and, where the sample needs
+  it, a spread per entry (`sig_rot`, isotropic, exists). Stage 3's bins must not be finer than its grid's spot error.
+  `anri.refine`'s basin is a tenth of a peak width, or a fraction of a frame for sub-frame peaks (omega is then fixed
+  only by how a peak splits between frames, and the detector position carries most of the orientation): stage 3's
+  grid must be followed by a continuous stage (see "Proposed structure" below).
 - **Speed (L40S, 116k units):** pass 1 (125 orientations) 22-29 s/iteration, pass 2 (729) 118-147 s/iteration. Coarser
   bins were slower, probably contention in the scatter-add (unchecked).
 
@@ -136,7 +126,7 @@ population.
 2. Global index (`anri.index`, exists): ~0.3 x the grid step; ghosts and decoys remain.
 3. **One local-grid pass** (stage 3 prototype): +-1.5 steps around each population, bins matched to the step (a grid
    cannot go finer: its spots are misplaced by ~a quarter step). Joint MLEM removes the ghosts; ~0.1-0.25 deg.
-   Untested on Mg: `--pass1 1.0 0.25 --pass2 0 0 --bins 0.25 0.25 --iter 10`.
+   Untested on the HCP dataset: `--pass1 1.0 0.25 --pass2 0 0 --bins 0.25 0.25 --iter 10`.
 4. **Continuous coarse-to-fine (new):** each entry's rotation (3) and log density, Gauss-Newton, joint over voxels,
    against the histograms with Gaussian spots of width w (`bin_fractions`), w shrinking (e.g. 0.25 deg -> the measured
    width) with the bins. Each level starts within a fraction of its own w. Drop entries whose density goes to 0, merge
@@ -148,22 +138,22 @@ Open: where stage 4 lives (`anri.index`, or a histogram mode of `anri.refine`): 
 ## Next steps, in order
 
 1. **Local refinement (stage 3)**, see the section above for its state on real data. Also the fix for twin ghosts and grid-limited spreads. For each voxel's populations, a local grid (e.g. +-1.5 deg at 0.25 deg) against finer data (omega at frame resolution, finer eta), fitted again by sparse MLEM: each voxel's candidates become its local grid, so `fit_occupancy`'s machinery mostly applies.
-   - Fixes: the decoys, precision (~0.1 deg needed for wide samples like Chen), and the grid-inflated spread.
+   - Fixes: the decoys, precision (~0.1 deg needed for wide samples like dataset B), and the grid-inflated spread.
    - Open: memory of the finer histogram on large maps; it probably needs blocks of rows.
 2. **Beam profile in the system matrix:** a voxel spread over the rows the beam reaches, not 2. Do it together with 1, as both change `system`.
 3. **Censoring** below the segmentation cut in both MLEMs (as `anri.refine` does): weak predictions are biased to zero now.
-4. **Validation on real data** (Tognan, Chen) against ImageD11's pbp and refined maps:
+4. **Validation on real data** (dataset A, dataset B) against ImageD11's pbp and refined maps:
    - Is `--min-lr 25` right under strain and distortion mismatch?
    - How many small grains does each method find?
 5. **Smaller items:**
-   - mask empty voxels from the coarse fit (~2x on half acquisitions such as Chen);
+   - mask empty voxels from the coarse fit (~2x on half acquisitions such as dataset B);
    - a better automatic grid rule (`--max-chance 0.5` picks 3 deg on sparse phantoms, where 2 deg is better);
    - a non-cubic phantom, end to end.
 
 ## Reproducing the test cases
 
 - **25 um phantom:** the tutorial `indexing.ipynb` renders and indexes it in ~3 min on a laptop CPU.
-- **Crowded, small-grain phantom:** `anri.phantom.polycrystal(n=203, step=0.5, radius=50, n_grains=300, cell_size=1.5, cell_spread_deg=0.3, twin_grains=3, seed=11)`, rendered as in the tutorial (Tognan geometry, 8 rings, dty +-55 um in 1 um steps, 1800 frames of 0.1 deg).
+- **Crowded, small-grain phantom:** `anri.phantom.polycrystal(n=203, step=0.5, radius=50, n_grains=300, cell_size=1.5, cell_spread_deg=0.3, twin_grains=3, seed=11)`, rendered as in the tutorial (dataset A geometry, 8 rings, dty +-55 um in 1 um steps, 1800 frames of 0.1 deg).
   - 31k entries, ~5 min to render on CPU.
   - Compare pruning per grain by checking whether a kept orientation lies within delta + 0.5 deg of each grain's mean, binned by grain area.
 
@@ -174,10 +164,10 @@ Status (2026-10-04 20:10). The text below is the first draft. Since then the mai
 - **Dropped:** the moment stage (stage 4).
 - **Core:** MLEM occupancy over a global, pruned orientation list (Jon Wright's idea); observables coarsened to the grid scale.
 
-Implemented in index.py, run_phantom.py and run_tognan.py:
+Implemented in index.py, run_phantom.py and a run script for dataset A:
 
 - **Phantom:** 99.3% of voxels within 1°.
-- **Tognan:** a map that matches ImageD11's well but with poor fidelity. Pruning is arbitrary on crowded data; (a memory note of the time, not in the repo).
+- **Dataset A:** a map that matches ImageD11's well but with poor fidelity. Pruning is arbitrary on crowded data; (a memory note of the time, not in the repo).
 
 Since then (2026-10-04, run_index.py):
 
@@ -185,7 +175,7 @@ Since then (2026-10-04, run_index.py):
 - **Test phantom:** `make_phantom.py` renders an AM-like 316L phantom (grains, 1.5 um cells, a twinned grain) as an ImageD11 dataset. On a crowded one (r = 25 um, 40 grains, 0.25 um voxels), at the same number of orientations, the weighted-mean orientation is within 1 deg for 82% of voxels (71% with the old fixed tolerances).
 - **Sparse occupancy:** each voxel keeps its --cand (64) best orientations by the first MLEM update from unit occupancy (two blocked passes over every voxel and orientation), then MLEM runs on [voxels, K] in blocks of voxels sized by --block-gb. Crowded phantom: 72-120 s against 438 s dense, same accuracy at K = 64 (K = 32 loses twins: 77% against 93% within 1 deg).
 - **Populations:** each voxel's occupied candidates are grouped greedily (seed = most occupied, members within 1.8 grid steps over the cubic symmetry) into up to 4 populations with fraction, mean orientation, rms spread (includes the grid spacing: an upper bound) and completeness; those under --min-frac (0.1) are not reported. Output: the TensorMap holds population 1's mean, and `_entries.npz` holds every population as anri map entries. Crowded phantom, 2 deg grid: population 1 within 1 deg for 91% (the top grid point: 55%), parent and twin both found where a voxel holds both. Of the second populations before the cut, a third are real mixtures in the voxel, a quarter are a neighbour's orientation within 1.5 um (no beam profile in the system matrix: blur is explained by neighbours), a third are decoys (median fraction 0.05).
-- **Coarse to fine (--coarse G):** the full candidate pass and MLEM on voxels G x larger (data rows summed in groups of G), then each voxel scores only the 2K orientations its 3 x 3 coarse neighbourhood occupied most. Crowded phantom at G = 4: the same accuracy as the direct run (population 1 within 1 deg: 90.6% against 90.8%; twins found). Chen (1043 x 1043 voxels, 7410 orientations): the direct candidate pass took 17 min.
+- **Coarse to fine (--coarse G):** the full candidate pass and MLEM on voxels G x larger (data rows summed in groups of G), then each voxel scores only the 2K orientations its 3 x 3 coarse neighbourhood occupied most. Crowded phantom at G = 4: the same accuracy as the direct run (population 1 within 1 deg: 90.6% against 90.8%; twins found). Dataset B (1043 x 1043 voxels, 7410 orientations): the direct candidate pass took 17 min.
 - **Beam size:** not measurable from edges along dty: inclined boundaries widen every edge (1.4 um beam read as ~2-2.4 um). Measure it at the beamline, or fit it in the refinement.
 
 Written 2026-10-04 after the refinement study (`anri/sandbox/math/NOTES.md`, `anri/sandbox/moments/`).
@@ -199,7 +189,7 @@ Find each voxel's orientation populations from the data and the forward model al
 
 Each voxel gets a few entries with fractions, located to within the basin of the local moment refinement, ~beam / r (~0.1° for real samples). The moment refinement then finishes the job: orientation to the instrument limit, plus strain and spread.
 
-**First real target: Tognan AM 316L (AP1_1, z0).**
+**First real target: dataset A (FCC).**
 
 - 201 rows (dty ±100 µm, 1 µm steps) × 3620 frames (0.05°, ω −90° to 91°).
 - ~31.7k voxels in the disk at 1 µm.
@@ -231,12 +221,12 @@ A useful structure: for a fixed orientation q and reflection h, the predicted (�
 ### Stages
 
 1. **Histogram the data once** into H[ring, η, ω, row], at a resolution matched to the orientation grid (coarse: η 0.5°, ω 0.25°).
-   - Tognan, first 4 rings: 4 × 720 × 724 × 201 ≈ 4.2e8 cells (1.7 GB float32).
+   - Dataset A, first 4 rings: 4 × 720 × 724 × 201 ≈ 4.2e8 cells (1.7 GB float32).
    - One streaming pass over the 3.77G pixels, in chunks on the GPU. The 8 GB read from disk dominates.
 2. **Coarse lifted reconstruction** on a fundamental-zone grid:
    - 2°: ~78k orientations for cubic; 1°: ~620k.
    - Low-order rings only (~50 reflections × 2 branches) at this stage.
-   - Each iteration = one back-projection and one forward projection. Tognan: 31.7k voxels × 78k orientations × ~100 reflections ≈ 2.5e11 lookups, ~1 min on the L40S.
+   - Each iteration = one back-projection and one forward projection. Dataset A: 31.7k voxels × 78k orientations × ~100 reflections ≈ 2.5e11 lookups, ~1 min on the L40S.
    - Keep the top K (~4) orientations per voxel with weight. Sparsity keeps A f cheap: forward-project only the kept (v, q).
 3. **Local refinement of each kept orientation:** the same lifted iteration on a local grid around it (±1° at 0.25°, then ±0.25° at 0.05°), with finer histograms (one frame in ω) and all rings. This replaces the independent grid search; merging is still handled jointly.
 4. **Hand over to the moment refinement** (the existing prototype): entries = (orientation, fraction) per voxel, then refine rotation, then strain, then spread.
@@ -245,14 +235,14 @@ Grain shapes come out as regions of voxels sharing an orientation; no tomo step 
 
 ### Cost and scale
 
-- **Tognan (31.7k voxels):** minutes per stage, a few GB of GPU memory. Fine.
-- **400 × 400 laptop case (~125k voxels):** 4× Tognan. Fine on CPU if slow; chunk over orientations.
+- **Dataset A (31.7k voxels):** minutes per stage, a few GB of GPU memory. Fine.
+- **400 × 400 laptop case (~125k voxels):** 4× dataset A. Fine on CPU if slow; chunk over orientations.
 - **3k × 3k (~7M voxels):** the full coarse product is ~2e14 lookups, too much. Use multi-resolution in space: run stage 2 on voxels 4–8× coarser, then only refine the surviving orientations per region at full resolution.
 
 ### Test plan
 
-1. **An AM-like phantom at the Tognan geometry,** first small (r = 25 µm, 1 µm voxels): columnar grains, solidification cells of 0.5–1 µm with ≲0.5° misorientation, a few degrees of drift along columns. Render it with Anri, then index from nothing. Score per voxel against the truth: fraction within 0.1°, and shapes.
-2. **Tognan:** compare with the ImageD11 pbp map and the refined TensorMap that are already in PROCESSED_DATA.
+1. **An AM-like phantom at the dataset A geometry,** first small (r = 25 µm, 1 µm voxels): columnar grains, solidification cells of 0.5–1 µm with ≲0.5° misorientation, a few degrees of drift along columns. Render it with Anri, then index from nothing. Score per voxel against the truth: fraction within 0.1°, and shapes.
+2. **Dataset A:** compare with the ImageD11 pbp map and the refined TensorMap that are already in PROCESSED_DATA.
 
 ### Code
 
@@ -267,7 +257,7 @@ No classes. Reuse the renderer's geometry functions (`hkl_to_k_omega`, `raytrace
 
 ### Open questions for the maintainer
 
-1. **Beam size and profile for Tognan:** 1 µm FWHM? Al CRL or Si lenses?
+1. **Beam size and profile for dataset A:** 1 µm FWHM? Al CRL or Si lenses?
 2. **Coarse grid:** is 2° fine enough to see AM solidification cells (≲0.5°) as one population at stage 2? If not, stage 3 has to split them.
 3. **K, populations per voxel:** 4 at the coarse stage, then pruned by fraction?
 4. **Rings for the coarse stage:** the first 4 FCC rings (111, 200, 220, 311)?
