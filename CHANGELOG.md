@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `python -m anri.index` logs, and saves in its npz, the measured / fitted intensity of each dty row (`row_ratio`, `row_data`, `row_model`). A row that is consistently off makes ring artefacts centred on the rotation axis: steps between rows point to the flux varying between the rows' scans, a smooth trend with radius to the model. `anri.index.fit_occupancy(..., return_model=True)` also returns the fitted histogram.
 - `anri.io.prefetch`: read ahead in a background thread, so the next chunk of sparse pixels is read and decompressed while the current one is binned. `python -m anri.index` uses it.
 - `anri.index.orientation_mlem`: one occupancy per orientation, fitted by MLEM to the histogram with its dty rows summed, and each orientation's likelihood ratio (how much the fit worsens without it). `python -m anri.index` now prunes this way by default (`--prune likelihood`): the grid orientations above chance completeness are fitted, and those with a likelihood ratio above `--min-lr` (25) are kept. Unlike completeness, this uses the intensities and explains crowded spots jointly. On a crowded phantom with many small grains, 4k orientations kept this way recall 99.6% of the grains (90% of those under 5 µm²), where completeness needs 19k for 98.8% (70%). `--prune completeness` keeps the old behaviour. With likelihood pruning, `--min-comp` raises the completeness needed (default: the chance level). That drops the decoys the global fit keeps to soak up what the grid cannot fit, but also small grains.
 - Structure factors in indexing: `anri.index.ring_table(..., structure)` gives each reflection its |F|² from an `anri.crystal.Structure` (e.g. a CIF), and the fits weight predictions by Lorentz × polarisation × |F|². `python -m anri.index --cif`.
@@ -43,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `anri.index.inherit_candidates` finds each voxel's coarse neighbours with a KD-tree: sorting every distance took ~2 minutes on a 419 × 419 map, more than the candidate pass that `--coarse` saves (now ~4 s).
 - `python -m anri.index` writes IPF (`ipf_x/y/z`) and Euler maps into its TensorMap again, and a ParaView `.xdmf` beside it, as the sandbox script did. Strain maps are left out: these UBIs are rotations of the nominal lattice, so the strain would be exactly zero.
 - `anri.crystal.Structure.make_hkls` now forgets the rings and intensities computed before, so calling it again (e.g. with a larger d* range) no longer returns stale intensities.
 - `anri.fwd.render_row` with `"sig_rot"` failed under newer JAX (shard_map's check that stacked arrays vary across the same devices): the rotation's cross-product matrix is now a sum over constant generators.

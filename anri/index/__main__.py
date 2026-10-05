@@ -224,8 +224,16 @@ def main() -> None:
     pos = np.asarray(anri.geom.recon_positions(NR, YSTEP), np.float32)
     scan = {"y0": Y0, "dty0": DTY0, "ystep": YSTEP, "n_rows": NK, "om0": OM0}
     dims = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O)
-    f, cand = ix.fit_occupancy(H, pred, rings["ring_j"], pos, scan, dims, args.cand, args.iter, args.coarse,
-                              args.block_gb * 1e9, log=log)  # fmt: skip
+    f, cand, model = ix.fit_occupancy(H, pred, rings["ring_j"], pos, scan, dims, args.cand, args.iter, args.coarse,
+                                     args.block_gb * 1e9, log=log, return_model=True)  # fmt: skip
+    # measured / fitted intensity per dty row: a row that is consistently off (e.g. flux varying between the rows'
+    # scans) makes ring artefacts centred on the rotation axis
+    d_row, m_row = np.asarray(H).reshape(-1, NK).sum(0), model.reshape(-1, NK).sum(0)
+    lit_rows = m_row > 0.05 * m_row.max()
+    row_ratio = np.where(lit_rows, d_row / np.maximum(m_row, 1e-30), np.nan)
+    dev = row_ratio[lit_rows] - 1
+    log(f"measured / fitted intensity per dty row ({lit_rows.sum()} rows with intensity): rms {np.sqrt(np.mean(dev**2)):.3f}, "
+        f"min {np.nanmin(row_ratio):.3f}, max {np.nanmax(row_ratio):.3f}; row-to-row rms {np.sqrt(np.nanmean(np.diff(row_ratio) ** 2)):.3f}")  # fmt: skip
 
     # ------------------------------------------------------------------------------------------------- 4. populations
     tot = f.sum(1)
@@ -246,7 +254,8 @@ def main() -> None:
     os.makedirs(args.outdir, exist_ok=True)
     tag = os.path.join(args.outdir, f"{dsname}_index")
     np.savez(f"{tag}.npz", f=f, cand=cand, U=U_kept, comp=comp[kept], frac=frac, U_pop=U_pop, spread=spread, n=n_pop,
-             comp_pop=comp_pop, occupied=occupied, present=present, pos=pos, grid_step=step, delta=delta)  # fmt: skip
+             comp_pop=comp_pop, occupied=occupied, present=present, pos=pos, grid_step=step, delta=delta,
+             row_ratio=row_ratio, row_data=d_row, row_model=m_row)  # fmt: skip
     v, q = np.nonzero(present)
     np.savez(f"{tag}_entries.npz", ubi=np.linalg.inv(U_pop[v, q] @ B), pos=pos[v], density=tot[v] * frac[v, q],
              sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q])  # fmt: skip

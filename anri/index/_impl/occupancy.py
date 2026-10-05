@@ -356,12 +356,15 @@ def inherit_candidates(
     jax.Array
         [Nv, k2] orientation indices
     """
-    pos, pc = np.asarray(pos), np.asarray(pos_c)[:, :2]
+    from scipy.spatial import KDTree
+
+    pos = np.asarray(pos)[:, :2]
+    tree = KDTree(np.asarray(pos_c)[:, :2])  # the 9 nearest by a tree: sorting every distance was minutes on big maps
+    f_c, cand_c = jnp.asarray(f_c), jnp.asarray(cand_c)
     out = []
     for s0 in range(0, len(pos), vb):
-        p = pos[s0 : s0 + vb, :2]
-        near9 = np.argsort(np.linalg.norm(p[:, None] - pc[None], axis=2), 1)[:, :9]
-        out.append(np.asarray(_inherit(jnp.asarray(near9), jnp.asarray(f_c), jnp.asarray(cand_c), k2)))
+        _, near9 = tree.query(pos[s0 : s0 + vb], k=9)
+        out.append(np.asarray(_inherit(jnp.asarray(near9, jnp.int32), f_c, cand_c, k2)))
     return jnp.asarray(np.concatenate(out))
 
 
@@ -415,7 +418,8 @@ def fit_occupancy(
     block_bytes: float = 1e9,
     qc: int = 16,
     log: Callable = print,
-) -> tuple[np.ndarray, np.ndarray]:
+    return_model: bool = False,
+) -> tuple:
     """Fit sparse occupancies: candidates per voxel, then MLEM.
 
     With ``coarse = G > 1`` the full candidate pass runs on voxels G times larger (the histogram's rows summed in
@@ -444,6 +448,8 @@ def fit_occupancy(
         Memory for one block of voxels' system entries
     qc
         Orientations per chunk in passes over every orientation
+    return_model
+        Also return the fitted histogram ``A f``, e.g. to compare with the data row by row
     log
         Progress messages
 
@@ -451,6 +457,8 @@ def fit_occupancy(
     -------
     f, cand: np.ndarray
         [Nv, k] occupancies and orientation indices
+    model: np.ndarray
+        [n_cells] the fitted histogram, if return_model
     """
     H, ring_j, pos = jnp.asarray(H), jnp.asarray(ring_j), np.asarray(pos, np.float32)
     nv = len(pos)
@@ -489,4 +497,7 @@ def fit_occupancy(
     t0 = time.perf_counter()
     f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log)
     log(f"MLEM {n_iter} iterations: {time.perf_counter() - t0:.1f} s")
+    if return_model:
+        mu = forward(f, cand, pred, ring_j, pos_p, scan, dims, H.shape[0], vb)
+        return np.asarray(f)[:nv], np.asarray(cand)[:nv], np.asarray(mu)
     return np.asarray(f)[:nv], np.asarray(cand)[:nv]

@@ -253,3 +253,23 @@ class TestOrientationFit(unittest.TestCase):
         self.assertEqual(set(np.argsort(lr)[-2:]), {17, 123})
         self.assertGreater(lr[[17, 123]].min(), 25.0)
         np.testing.assert_allclose(g[[17, 123]], [100.0, 25.0], rtol=0.1)
+
+
+class TestInherit(unittest.TestCase):
+    def test_neighbourhood_candidates(self):
+        """A fine voxel gets the orientations its 3 x 3 coarse neighbourhood occupied, most occupied first, once each."""
+        gc = np.arange(-2, 3) * 4.0
+        xx, yy = np.meshgrid(gc, gc, indexing="ij")
+        pos_c = np.stack([xx.ravel(), yy.ravel(), np.zeros(25)], 1)
+        f_c = np.zeros((25, 2), np.float32)
+        cand_c = np.zeros((25, 2), np.int32)
+        for c in range(25):
+            cand_c[c] = [c, 100]  # every coarse voxel holds its own orientation and a shared one
+            f_c[c] = [1.0 + c, 0.5]
+        fine = np.array([[0.0, 0.0, 0.0], [7.0, 7.0, 0.0]])  # the centre, and near coarse voxel (2, 2) -> index 18
+        cand = np.asarray(ix.inherit_candidates(fine, pos_c, f_c, cand_c, 10))
+        centre = {6, 7, 8, 11, 12, 13, 16, 17, 18}
+        self.assertEqual(set(cand[0][:9]), centre)  # the neighbours' own orientations come first
+        self.assertEqual(list(cand[0][:9]), sorted(centre, reverse=True))  # by occupancy
+        self.assertEqual(cand[0][9], 100)  # the shared one once
+        self.assertIn(24, cand[1])
