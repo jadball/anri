@@ -41,6 +41,8 @@ main3_f = np.full(nv, np.nan)
 main3_u = np.full((nv, 3, 3), np.nan)
 main3_f[v[order][first]] = f3[order][first]
 main3_u[v[order][first]] = U3[order][first]
+main3_p = np.full(nv, -1)
+main3_p[v[order][first]] = r3["population"][order][first]  # which stage-2 population stage 3 made main
 n_units3 = np.bincount(v, minlength=nv)
 
 
@@ -93,3 +95,19 @@ switched = d > args.boundary
 print(f"voxels whose main orientation changed by more than {args.boundary} deg (a different population became main): "
       f"{switched.sum()} ({switched.mean() * 100:.1f}%); of those on a stage-3 boundary "
       f"{np.mean(e3.ravel()[both][switched]) * 100:.0f}%")  # fmt: skip
+
+# Near-ties or decisive? For the switched voxels: the fractions stage 2 gave its main population and the one stage 3
+# chose, and the fraction stage 3 gives its main. Near 0.5 everywhere: the data barely decide (noise). Stage 3 sure
+# (near 1) of a population stage 2 gave little: a systematic difference between the two models.
+idx = np.nonzero(both)[0][switched]
+pq = [10, 25, 50, 75, 90]
+chosen2 = frac2[idx, np.maximum(main3_p[idx], 0)]
+for name, x in (("stage 2, its main", main2_f[idx]), ("stage 2, the one stage 3 chose", chosen2),
+                ("stage 3, its main", main3_f[idx])):  # fmt: skip
+    print(
+        f"switched voxels, fraction of {name}: 10/25/50/75/90th " + " ".join(f"{q:.2f}" for q in np.percentile(x, pq))
+    )
+print(
+    f"switched voxels where stage 3's main fraction is >= 0.9: {np.mean(main3_f[idx] >= 0.9) * 100:.0f}%; "
+    f"where stage 2 gave the chosen population < 0.2: {np.mean(chosen2 < 0.2) * 100:.0f}%"
+)
