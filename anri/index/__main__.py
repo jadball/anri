@@ -59,7 +59,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lit", type=float, default=1.0, help="lit threshold, x the median non-empty bin (default 1)")
     p.add_argument("--etacut", type=float, default=0.2, help="use reflections with |sin eta| above this (default 0.2)")
     p.add_argument("--tth-tol", type=float, help="2theta tolerance of the rings (deg; default: measured per ring)")
-    p.add_argument("--iter", type=int, default=10, help="MLEM iterations (default 10)")
+    p.add_argument(
+        "--iter",
+        type=int,
+        default=50,
+        help="MLEM iterations (default 50: thin features such as twins converge long after the deviance flattens)",
+    )
     p.add_argument("--cand", type=int, default=64, help="candidate orientations per voxel (default 64)")
     p.add_argument("--coarse", type=int, default=1, help="first fit voxels this many times larger, then give each voxel "
                    "the candidates of its coarse neighbourhood (default 1: off; 4 is ~16x cheaper on large maps)")  # fmt: skip
