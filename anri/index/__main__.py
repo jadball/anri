@@ -278,7 +278,7 @@ def main() -> None:
     tag = os.path.join(args.outdir, f"{dsname}_index")
     np.savez(f"{tag}.npz", f=f, cand=cand, U=U_kept, comp=comp[kept], frac=frac, U_pop=U_pop, spread=spread, n=n_pop,
              comp_pop=comp_pop, occupied=occupied, present=present, pos=pos, grid_step=step, delta=delta,
-             row_ratio=row_ratio, row_data=d_row, row_model=m_row)  # fmt: skip
+             row_ratio=row_ratio, row_data=d_row, row_model=m_row, y0=Y0)  # fmt: skip
     v, q = np.nonzero(present)
     np.savez(f"{tag}_entries.npz", ubi=np.linalg.inv(U_pop[v, q] @ B), pos=pos[v], density=tot[v] * frac[v, q],
              sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q])  # fmt: skip

@@ -31,6 +31,7 @@ p.add_argument("dataset")
 p.add_argument("--npz", required=True, help="the _index.npz of python -m anri.index for this dataset")
 p.add_argument("--beam", type=float, required=True, help="beam FWHM, dty units")
 p.add_argument("--phase")
+p.add_argument("--y0", type=float, help="rotation axis dty (default: the y0 stage 2 used, saved in --npz)")
 p.add_argument("--parfile")
 p.add_argument("--monitor")
 p.add_argument("--rings", type=int, default=6)
@@ -73,7 +74,12 @@ B = B64.astype(np.float32)
 ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(sg), B64)
 WL = geo["wavelength"]
 r = np.load(args.npz)
-Y0 = ds["y0"]
+if args.y0 is not None:
+    Y0 = args.y0
+elif "y0" in r:
+    Y0 = float(r["y0"])
+else:
+    raise SystemExit(f"{args.npz} has no y0 (made before stage 2 saved it): give the y0 stage 2 used with --y0")
 ybin, yedge, oedge = ds["ybincens"], ds["ybinedges"], ds["obinedges"]
 YSTEP, NK = float(np.median(np.diff(ybin))), len(ybin)
 OM0 = float(oedge[0])
@@ -83,7 +89,7 @@ rings = ix.ring_table(lpars, sg, WL, args.rings)
 B_E, B_O = args.bins
 N_E, N_O = round(360 / B_E), round(float(oedge[-1] - oedge[0]) / B_O)
 log(f"{dsname}: {NK} rows x {len(oedge) - 1} frames; fine bins {B_E} x {B_O} deg ({args.rings} rings x {N_E} x {N_O} cells "
-    f"x {NK} rows); beam FWHM {args.beam}")  # fmt: skip
+    f"x {NK} rows); beam FWHM {args.beam}; y0 {Y0:.6g}")  # fmt: skip
 
 with h5py.File(sparsefile, "r") as h:
     groups = list(h.keys())
