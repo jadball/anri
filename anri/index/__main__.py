@@ -251,7 +251,13 @@ def main() -> None:
                                      args.block_gb * 1e9, log=log, return_model=True)  # fmt: skip
     # measured / fitted intensity per dty row: a row that is consistently off (e.g. flux varying between the rows'
     # scans) makes ring artefacts centred on the rotation axis
-    d_row, m_row = np.asarray(H).reshape(-1, NK).sum(0), model.reshape(-1, NK).sum(0)
+    # Only eta bins the fit models: reflections at |sin eta| <= etacut are not predicted, so their data would bias
+    # every row's ratio up
+    n_e = N_E // R_E
+    eta_c = -180.0 + (np.arange(n_e) + 0.5) * B_E * R_E
+    use_e = np.abs(np.sin(np.radians(eta_c))) > args.etacut
+    d_row = np.asarray(H).reshape(args.rings, n_e, -1, NK).sum(2)[:, use_e].sum((0, 1))
+    m_row = np.asarray(model).reshape(args.rings, n_e, -1, NK).sum(2)[:, use_e].sum((0, 1))
     lit_rows = m_row > 0.05 * m_row.max()
     row_ratio = np.where(lit_rows, d_row / np.maximum(m_row, 1e-30), np.nan)
     dev = row_ratio[lit_rows] - 1

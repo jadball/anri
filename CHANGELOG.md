@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `python -m anri.index`: the measured / fitted intensity per dty row (`row_ratio`) now sums only the eta bins the fit models. It included the data at |sin eta| <= `--etacut`, which the fit does not predict, so every row read too high.
 - `anri.io.write_pars` writes `t_x`, `t_y`, `t_z` (0) and `omegasign` (1) when the geometry lacks them: ImageD11 needs them to compute peak geometry (`DataSet.update_colfile_pars` raised a KeyError on simulated datasets).
 - `anri.index.inherit_candidates` finds each voxel's coarse neighbours with a KD-tree: sorting every distance took ~2 minutes on a 419 × 419 map, more than the candidate pass that `--coarse` saves (now ~4 s).
 - `python -m anri.index` writes IPF (`ipf_x/y/z`) and Euler maps into its TensorMap again, and a ParaView `.xdmf` beside it, as the sandbox script did. Strain maps are left out: these UBIs are rotations of the nominal lattice, so the strain would be exactly zero.
