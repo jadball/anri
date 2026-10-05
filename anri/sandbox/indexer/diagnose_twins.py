@@ -16,6 +16,9 @@ the parent imperfectly, the twin orientation explains some of the shared spots a
 fitted, without being in the sample. On the am316l phantom (one twinned grain in 38), the twin of 98% of the grains
 was in the kept list, and most second populations were 60 deg from the first. Real twins sit in lamellae; ghosts
 spread over every grain.
+With --map: the twin share per voxel. On that phantom, voxels with true twin have a median share of 0.36, but the 37
+untwinned grains still 0.087 (above 0.1 in 45% of their voxels): ghosts make a haze over every grain, and real twins
+must stand out above it as lamellae.
 """
 
 import argparse
@@ -33,6 +36,8 @@ p.add_argument("--sg", type=int, required=True)
 p.add_argument("--angle", type=float, required=True)
 p.add_argument("--axis", type=float, nargs=3, required=True)
 p.add_argument("--voxels", type=int, default=20000, help="voxels sampled (default 20000)")
+p.add_argument("--map", help="also save a map of each voxel's twin share (occupancy on candidates at the twin angle from "
+               "its main orientation) to this png: real twins form lamellae, ghosts spread over whole grains")
 args = p.parse_args()
 
 r = np.load(args.npz)
@@ -81,3 +86,30 @@ mis = anri.crystal.disorientation(r["U_pop"][vox[two], 0].astype(float), r["U_po
 h, e = np.histogram(mis, bins=np.arange(0, 95, 5))
 print(f"3. populations: {two.sum()} voxels with a second population; misorientation of 1 vs 2 (5-deg bins from 0): "
       f"{h.tolist()}; within 3 deg of the twin angle: {np.sum(np.abs(mis - args.angle) < 3)}")  # fmt: skip
+
+if args.map:  # the twin share of every occupied voxel, by misorientation angle from its main orientation
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    nv = len(r["occupied"])
+    n = int(round(np.sqrt(nv)))
+    share_all = np.full(nv, np.nan)
+    U0 = r["U_pop"][:, 0].astype(float)
+    for s0 in range(0, len(occ), 2000):
+        vv = occ[s0 : s0 + 2000]
+        Uc = U_kept[cand[vv]]  # [b, K, 3, 3]
+        k = Uc.shape[1]
+        mis = anri.crystal.disorientation(np.repeat(U0[vv], k, 0), Uc.reshape(-1, 3, 3), ops).reshape(len(vv), k)
+        tw = np.abs(mis - args.angle) <= 1.5 * delta
+        share_all[vv] = (f[vv] * tw).sum(1) / np.maximum(f[vv].sum(1), 1e-30)
+    img = share_all.reshape(n, n)  # reconstruction order: first axis x, second -y
+    img = np.flip(img, 1).T  # map order (as TensorMap.recon_order_to_map_order): rows y, columns x
+    fig, ax = plt.subplots(figsize=(8, 7), layout="constrained")
+    im = ax.imshow(img, origin="lower", cmap="magma", vmin=0, vmax=0.3)
+    fig.colorbar(im, ax=ax, label=f"share at {args.angle} deg from the main orientation")
+    ax.set_title("twin share per voxel (grey: unoccupied)")
+    ax.set_facecolor("0.7")
+    fig.savefig(args.map, dpi=100)
+    print(f"-> {args.map}: twin share > 0.03 in {np.nanmean(share_all > 0.03) * 100:.1f}% of occupied voxels")
