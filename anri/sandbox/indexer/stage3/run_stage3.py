@@ -33,6 +33,7 @@ p.add_argument("--beam", type=float, required=True, help="beam FWHM, dty units")
 p.add_argument("--phase")
 p.add_argument("--y0", type=float, help="rotation axis dty (default: the y0 stage 2 used, saved in --npz)")
 p.add_argument("--parfile")
+p.add_argument("--cif", help="CIF of the phase, for structure factors (default: |F|^2 = 1); use the one stage 2 used")
 p.add_argument("--monitor")
 p.add_argument("--rings", type=int, default=6)
 p.add_argument("--bins", type=float, nargs=2, default=(0.25, 0.05), help="fine bins: eta and omega (deg)")
@@ -83,14 +84,22 @@ else:
     raise SystemExit(f"{args.npz} has no y0 (made before stage 2 saved it): give the y0 stage 2 used with --y0")
 ybin, yedge, oedge = ds["ybincens"], ds["ybinedges"], ds["obinedges"]
 YSTEP, NK = float(np.median(np.diff(ybin))), len(ybin)
+xs = np.unique(np.round(r["pos"][:, 0], 6))
+VOX = float(np.median(np.diff(xs)))  # stage 2's voxel (gridstep x the row step), not necessarily one row step
 OM0 = float(oedge[0])
-geom = anri.io.geom_from_pars(geo, Y0, WL * 2e-3 / 2.355, 1.5e-4, 1.5e-4, sig_beam=args.beam / 2.355, voxel_size=YSTEP)
+geom = anri.io.geom_from_pars(geo, Y0, WL * 2e-3 / 2.355, 1.5e-4, 1.5e-4, sig_beam=args.beam / 2.355, voxel_size=VOX)
 geom = {k: jnp.asarray(v, jnp.float32) if np.issubdtype(np.asarray(v).dtype, np.floating) else v for k, v in geom.items()}
-rings = ix.ring_table(lpars, sg, WL, args.rings)
+if args.cif:
+    import Dans_Diffraction
+
+    rings = ix.ring_table(lpars, sg, WL, args.rings, Dans_Diffraction.Crystal(args.cif))
+else:
+    rings = ix.ring_table(lpars, sg, WL, args.rings)
 B_E, B_O = args.bins
 N_E, N_O = round(360 / B_E), round(float(oedge[-1] - oedge[0]) / B_O)
 log(f"{dsname}: {NK} rows x {len(oedge) - 1} frames; fine bins {B_E} x {B_O} deg ({args.rings} rings x {N_E} x {N_O} cells "
-    f"x {NK} rows); beam FWHM {args.beam}; y0 {Y0:.6g}")  # fmt: skip
+    f"x {NK} rows); beam FWHM {args.beam}; y0 {Y0:.6g}; voxel {VOX:g} (row step {YSTEP:g}); "
+    f"|F|^2 {'from ' + args.cif if args.cif else '= 1'}")  # fmt: skip
 
 with h5py.File(sparsefile, "r") as h:
     groups = list(h.keys())
@@ -123,7 +132,7 @@ if args.unit_frac is not None:  # populations stage 2 found but did not report (
     log(f"--unit-frac {args.unit_frac}: {present.sum()} units (stage 2 reported {n_before})")
 v_unit, p_unit = np.nonzero(present)
 log(f"{present[:, 0].sum()} voxels, {len(v_unit)} (voxel, population) units")
-n_side = int(np.ceil((0.5 * YSTEP + 3 * args.beam / 2.355) / YSTEP))
+n_side = int(np.ceil((0.5 * VOX + 3 * args.beam / 2.355) / YSTEP))
 scan = {"y0": Y0, "dty0": float(ybin[0]), "ystep": YSTEP, "n_rows": NK, "om0": OM0, "B": jnp.asarray(B)}
 
 
