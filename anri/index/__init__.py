@@ -5,9 +5,9 @@ The steps, in order (``python -m anri.index`` runs them on an ImageD11 dataset):
 1. :func:`ring_table` and :func:`ring_profile`: the rings, and how wide they are in the data.
 2. :func:`histogram_pixels`: the sparse pixels binned once into ``H[ring, eta, omega, row]``, and a row-summed lit map
    (:func:`lit_table`).
-3. :func:`choose_grid` and :func:`prune`: an orientation grid over the fundamental zone
-   (:func:`anri.crystal.orientation_grid`), pruned by completeness with tolerances from the grid and the data
-   (:func:`match_tolerances`).
+3. :func:`choose_grid`, :func:`prune` and :func:`orientation_mlem`: an orientation grid over the fundamental zone
+   (:func:`anri.crystal.orientation_grid`), first filtered by completeness with tolerances from the grid and the data
+   (:func:`match_tolerances`), then kept by the likelihood ratio of a global, intensity-aware orientation fit.
 4. :func:`fit_occupancy`: sparse occupancy of the kept orientations per voxel by MLEM, every voxel fitted jointly.
 5. :func:`populations`: each voxel's occupancy grouped into orientation populations with fractions and spreads.
 """
@@ -35,6 +35,7 @@ from ._impl.occupancy import (
     pad_voxels,
     system,
 )
+from ._impl.orientations import orientation_mlem
 from ._impl.populations import populations
 from ._impl.predict import (
     GRID_STEPS,
@@ -67,6 +68,7 @@ __all__ = [
     "lorentz_polarisation",
     "match_tolerances",
     "mlem",
+    "orientation_mlem",
     "pad_voxels",
     "pixel_angles",
     "populations",

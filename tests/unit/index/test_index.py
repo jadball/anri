@@ -166,6 +166,7 @@ class TestEndToEnd(unittest.TestCase):
             parfile = anri.io.write_pars(os.path.join(tmp, "pars"), PARS, {"Fe": cell})
             dsfile = anri.io.write_dataset(sparse, tmp, "fe", "sim", y0=0.0, parfile=parfile)
             ds = anri.io.read_dataset(dsfile)
+            self.assertEqual(os.path.realpath(ds["sparsefile"]), os.path.realpath(sparse))
             _, phase, cell_read = anri.io.read_pars_json(ds["parfile"])
             self.assertEqual(phase, "Fe")
             self.assertEqual(cell_read["cell_lattice_[P,A,B,C,I,F,R]"], 229)
@@ -210,3 +211,44 @@ class TestEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStructureFactors(unittest.TestCase):
+    def test_f2_from_cif(self):
+        c, _, _ = iron()
+        cif = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cif", "Fe.cif")
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            rings = ix.ring_table(c, PARS["wavelength"], 3, anri.crystal.Structure.from_cif(cif))
+        F2 = rings["F2"]
+        self.assertAlmostEqual(float(F2.mean()), 1.0, places=5)
+        per_ring = [F2[rings["ring_j"][::2] == r].mean() for r in range(3)]
+        self.assertGreater(per_ring[0], per_ring[1])  # the form factor falls with 2theta
+        self.assertGreater(per_ring[1], per_ring[2])
+        self.assertTrue(np.all(F2 > 0))
+        np.testing.assert_allclose(ix.ring_table(c, PARS["wavelength"], 3)["F2"], 1.0)
+
+
+class TestOrientationFit(unittest.TestCase):
+    def test_finds_the_orientations_in_the_data(self):
+        """Data from two orientations among 200: those two have the largest likelihood ratios, and their occupancies."""
+        from anri.index._impl.orientations import _forward
+
+        c, B, _ = iron()
+        rings = ix.ring_table(c, PARS["wavelength"], 3)
+        geom = geometry()
+        U = rotations(200, 9)
+        bins = (1.0, 1.0, 360, 180, 0.0)
+        g_true = np.zeros(200, np.float32)
+        g_true[[17, 123]] = [100.0, 25.0]
+        F2 = jnp.ones(2 * len(rings["hkls"]), jnp.float32)
+        args = (jnp.asarray(B), jnp.asarray(rings["hkls"]), F2, jnp.asarray(rings["ring_j"]), geom, 0.2)
+        d = _forward(
+            jnp.asarray(g_true.reshape(-1, 8)), jnp.asarray(U.reshape(-1, 8, 3, 3)), *args, bins, 3 * 360 * 180
+        )
+        g, lr = ix.orientation_mlem(np.asarray(d), U, B, rings, geom, bins, 0.2, n_iter=50, qc=8, log=lambda m: None)
+        self.assertEqual(set(np.argsort(lr)[-2:]), {17, 123})
+        self.assertGreater(lr[[17, 123]].min(), 25.0)
+        np.testing.assert_allclose(g[[17, 123]], [100.0, 25.0], rtol=0.1)

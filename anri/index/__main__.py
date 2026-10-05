@@ -49,6 +49,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--min-comp", type=float, help="keep orientations with at least this completeness (default: halfway "
                    "between the grid's median, the chance level, and its maximum)")  # fmt: skip
+    p.add_argument("--prune", choices=("likelihood", "completeness"), default="likelihood",
+                   help="keep orientations by the likelihood ratio of a global orientation fit (default; intensity-aware), "
+                   "or by completeness alone")  # fmt: skip
+    p.add_argument("--min-lr", type=float, default=25.0, help="likelihood ratio needed to keep an orientation (default 25, "
+                   "about 5 sigma)")  # fmt: skip
+    p.add_argument("--cif", help="CIF of the phase, for structure factors (default: |F|^2 = 1)")
     p.add_argument("--lit", type=float, default=1.0, help="lit threshold, x the median non-empty bin (default 1)")
     p.add_argument("--etacut", type=float, default=0.2, help="use reflections with |sin eta| above this (default 0.2)")
     p.add_argument("--tth-tol", type=float, help="2theta tolerance of the rings (deg; default: measured per ring)")
@@ -96,6 +102,8 @@ def main() -> None:
     dsfile = os.path.join(dsdir, f"{dsname}_dataset.h5")
     sparsefile = os.path.join(dsdir, f"{dsname}_sparse.h5")
     ds = anri.io.read_dataset(dsfile)
+    if ds["sparsefile"] and os.path.exists(ds["sparsefile"]):  # where the DataSet says, else the standard place
+        sparsefile = ds["sparsefile"]
     if args.y0 is None and ds["y0"] is None:
         raise SystemExit(f"{dsfile} has no y0: give it with --y0")
     Y0 = ds["y0"] if args.y0 is None else args.y0
@@ -133,13 +141,14 @@ def main() -> None:
     )
     B = np.asarray(crystal.B, np.float32)
     ops = anri.crystal.laue_rotations(np.asarray(crystal.sym_ops), B)
-    rings = ix.ring_table(crystal, WL, args.rings)
+    structure = anri.crystal.Structure.from_cif(args.cif) if args.cif else None
+    rings = ix.ring_table(crystal, WL, args.rings, structure)
     _, PAD = anri.geom.sino_shift_and_pad(Y0, NK, DTY0, YSTEP)
     NR = NK + PAD  # recon grid NR x NR, centred on the rotation axis, as ImageD11 pads its reconstructions
     NV = NR * NR
     n_cells = args.rings * (N_E // R_E) * (N_O // R_O) * NK
 
-    log(f"dataset {dsfile}")
+    log(f"dataset {dsfile}; sparse pixels {sparsefile}")
     log(f"pars    {parfile}: phase {phase}, lattice {', '.join(f'{v:g}' for v in lpars)}, space group {sg} "
         f"({crystal.sgname}), {len(ops)} Laue-group rotations")  # fmt: skip
     log(f"geometry: wavelength {WL:.5f}, distance {geo['distance']:g}; y0 {Y0:.6g}; dty {DTY0:.6g} + {NK} x {YSTEP:.6g}"
@@ -194,7 +203,17 @@ def main() -> None:
     log(f"grid {step} deg{'' if args.grid is not None else ' (auto)'}: {len(U_grid)} orientations, up to {delta:.2f} deg "
         f"from the truth; completeness {time.perf_counter() - t1:.1f} s: median (chance) {info['chance']:.2f}, 99th "
         f"{np.percentile(comp, 99):.2f}, max {comp.max():.2f}; {info['n_above']} at >= {info['min_comp']:.2f}"
-        + (f", the top {args.keep} kept (--keep)" if info["capped"] else ", all kept"))  # fmt: skip
+        + ("" if args.prune == "likelihood" else f", the top {args.keep} kept (--keep)" if info["capped"] else ", all kept"))  # fmt: skip
+    if args.prune == "likelihood":  # everything above chance, judged by a global orientation fit to the row-summed data
+        t1 = time.perf_counter()
+        pre = np.flatnonzero(comp > info["chance"])
+        d = H.reshape(-1, NK).sum(1)
+        bins_o = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O, OM0)
+        _, lr = ix.orientation_mlem(d, U_grid[pre], B, rings, geom, bins_o, args.etacut, log=log)
+        above = np.flatnonzero(lr > args.min_lr)
+        kept = pre[above[np.argsort(lr[above])[::-1]][: args.keep]]
+        log(f"orientation fit of the {len(pre)} above chance ({time.perf_counter() - t1:.0f} s): {len(above)} with "
+            f"likelihood ratio > {args.min_lr:g}" + (f", the top {args.keep} kept (--keep)" if len(above) > args.keep else ", all kept"))  # fmt: skip
     U_kept = U_grid[kept]
 
     # ------------------------------------------------------------------------------------------------- 3. occupancy

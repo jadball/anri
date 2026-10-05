@@ -335,7 +335,7 @@ def predictions(U: ArrayLike, B: ArrayLike, rings: dict, geom: dict, etacut: flo
     Returns
     -------
     tuple
-        (eta, om, use, w), each [Nq padded, Nj]; w is Lorentz x polarisation (F^2 = 1)
+        (eta, om, use, w), each [Nq padded, Nj]; w is Lorentz x polarisation x ``rings["F2"]`` (1 if absent)
     """
     U = np.asarray(U, np.float32)
     nq = len(U)
@@ -344,4 +344,5 @@ def predictions(U: ArrayLike, B: ArrayLike, rings: dict, geom: dict, etacut: flo
     eta, om, ok = predict(Up, Bj, hkls, geom)
     lp = lorentz_polarisation(Up, Bj, hkls, geom)
     use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut) & (jnp.arange(Up.shape[0]) < nq)[:, None]
-    return eta, om, use, jnp.where(use, lp, 0.0)
+    F2 = jnp.asarray(np.repeat(rings.get("F2", np.ones(len(rings["hkls"]))), 2), jnp.float32)
+    return eta, om, use, jnp.where(use, lp * F2[None], 0.0)

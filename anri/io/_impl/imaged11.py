@@ -224,8 +224,9 @@ def read_dataset(dsfile: str) -> dict:
     Returns
     -------
     dict
-        "y0" (None if absent), "ybincens", "ybinedges", "obinedges", "dtymotor", "omegamotor", "parfile" (made
-        absolute: a relative path is relative to the DataSet's folder; "" if absent), and "dty" [scans, frames] and
+        "y0" (None if absent), "ybincens", "ybinedges", "obinedges", "dtymotor", "omegamotor", "parfile" and
+        "sparsefile" (made absolute: a relative path is relative to the DataSet's folder; "" if absent), and "dty"
+        [scans, frames] and
         "scans" (None if absent): each scan's dty, for sparse files without a dty column
     """
     with h5py.File(dsfile, "r") as h:
@@ -233,14 +234,18 @@ def read_dataset(dsfile: str) -> dict:
         out = {k: h[k][()] for k in ("ybincens", "ybinedges", "obinedges")}
         out["dty"] = h["dty"][()] if "dty" in h else None
         out["scans"] = [x.decode() if isinstance(x, bytes) else str(x) for x in h["scans"][()]] if "scans" in h else None
-    parfile = str(attrs.get("parfile", ""))
-    if parfile and not os.path.isabs(parfile):
-        parfile = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(dsfile)), parfile))
+    def absolute(key: str) -> str:
+        path = str(attrs.get(key, ""))
+        if path and not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(dsfile)), path))
+        return path
+
     out.update(
+        parfile=absolute("parfile"),
+        sparsefile=absolute("sparsefile"),
         y0=float(attrs["y0"]) if "y0" in attrs else None,
         dtymotor=str(attrs["dtymotor"]),
         omegamotor=str(attrs["omegamotor"]),
-        parfile=parfile,
     )
     return out
 
