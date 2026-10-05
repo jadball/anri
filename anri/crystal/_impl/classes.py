@@ -370,7 +370,11 @@ class Structure(Crystal):
         self._rings_table = None
         self._rings_dict = None
 
-    # TODO: Setter to clear self.rings_table if self.scatter_table is changed
+    def make_hkls(self, dsmax: float, wavelength: float, expand_to_p1: bool = True, tol: float = 0.001) -> None:
+        """Generate the reflections as :func:`Crystal.make_hkls` does, and forget the rings computed before."""
+        super().make_hkls(dsmax, wavelength, expand_to_p1, tol)
+        self._rings_table = None
+        self._rings_dict = None
 
     @property
     def rings_table(self) -> pd.DataFrame:
