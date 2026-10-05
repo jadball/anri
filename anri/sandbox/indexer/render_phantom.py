@@ -54,10 +54,13 @@ geom = anri.io.geom_from_pars(
 entries = anri.io.entries_from_tensormap(truth)
 entries["density"] = np.full(len(entries["pos"]), 30.0)
 rings8 = ix.ring_table(lpars, 225, wl, 8)
-omega, dty = anri.io.motor_grid((0.0, 180.0), 0.1, (y0 - 30.0, y0 + 30.0), step)
+# rows so that the indexer's grid (rows + its 2 padding voxels) is the phantom's own: n x n voxels, same centres
+n = truth.UBI.shape[1]
+half = 0.5 * (n - 3) * vox
+omega, dty = anri.io.motor_grid((0.0, 180.0), 0.1, (y0 - half, y0 + half), step)
 anri.io.simulate_sparse(sparse, entries, rings8["hkls"], np.ones(len(rings8["hkls"])), geom, omega, dty, (2048, 2048))
 cell = {"cell__a": a, "cell__b": a, "cell__c": a, "cell_alpha": 90.0, "cell_beta": 90.0, "cell_gamma": 90.0,
         "cell_lattice_[P,A,B,C,I,F,R]": 225}  # fmt: skip
 parfile = anri.io.write_pars(os.path.join(out, "pars"), pars, {"316L": cell})
 anri.io.write_dataset(sparse, out, "phantom", "am316l", y0=y0, parfile=parfile)
-print(f"-> {out}: {len(np.unique(dty))} rows of {step:g}, beam FWHM {beam:g}, phantom voxel {vox:g}")
+print(f"-> {out}: {len(np.unique(dty))} rows of {step:g}, beam FWHM {beam:g}; phantom {n} x {n} voxels of {vox:g}")
