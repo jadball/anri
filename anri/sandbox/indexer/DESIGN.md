@@ -113,13 +113,20 @@ population.
   - ring 3 (2theta 8.6, {10-12}) is the exception (0.09 -> 0.32 deg); the sample is a bit textured, which may explain it.
 - **Optics for Mg:** the small Al CRL box at 43 keV (102 lenses, f = 50.4 cm, effective aperture 118 um), sample at
   its focal spot (0.3-0.4 um FWHM unspoiled), the beam then spoiled by overfocusing upstream with tfoh1 (beam size
-  after spoiling: ask). Convergence <= ~0.23 mrad (0.013 deg), so **the optics do not explain the 0.08 deg floor**. A
-  width flat in eta acts as a rotation about the omega axis: suspects are the rotation stage or fly-scan timing (a
-  constant lag is ruled out: the zigzag offset is 0.004 deg). Test: `peak_widths.py` on Tognan (same floor ->
-  instrument) or on a standard.
-- **Consequences:** the floor goes in as a global `geom["sig_omega"]` (~0.035 deg sigma), not `sig_ky`; a spread per
-  entry (`sig_rot`) only for the bright/deformed grains. `anri.refine`'s basin (a tenth of a peak width) is then
-  ~0.008 deg, so stage 3's grid (0.1-0.2 deg) must be followed by a continuous stage (see "Proposed structure" below).
+  after spoiling: ask). Convergence <= ~0.23 mrad (0.013 deg), so **the optics do not explain the 0.08 deg floor**.
+- **The floor is the sample, not the instrument:** `peak_widths.py` on an undeformed single-crystal Si cube (same
+  0.05 deg frames) puts nearly all peaks in **one frame** at |sin eta| > 0.25 (FWHM < ~0.03 deg), 0.06 deg near
+  |sin eta| = 0. So the stage, fly-scan timing and optics add < ~0.03 deg.
+  - An isotropic orientation spread widens omega exactly as 1 / |sin eta| (omega shift = delta . n / (z . n), n the
+    scattering plane's normal, z . n ~ |sin eta|). A width flat in eta needs rotations about the omega axis, i.e.
+    about the sample's vertical axis (it is fixed in the sample frame).
+  - So either the Mg grains' spread is mostly about the sample axis (processing? ask), or the flatness is partly a
+    selection effect: broad peaks at low |sin eta| overlap more and fail the "clean" filter (low-|sin eta| bins hold
+    9-13% of peaks where uniform eta gives 16%).
+- **Consequences:** no instrument floor to model beyond the frame width; Mg's widths are spreads per entry
+  (`sig_rot`, isotropic in the renderer: an anisotropic spread would be new API, ask). Peaks of ~0.08 deg put
+  `anri.refine`'s basin (a tenth of a peak width) at ~0.008 deg, so stage 3's grid (0.1-0.2 deg) must be followed by a
+  continuous stage (see "Proposed structure" below).
 - **Speed (L40S, 116k units):** pass 1 (125 orientations) 22-29 s/iteration, pass 2 (729) 118-147 s/iteration. Coarser
   bins were slower, probably contention in the scatter-add (unchecked).
 
@@ -134,7 +141,7 @@ population.
    against the histograms with Gaussian spots of width w (`bin_fractions`), w shrinking (e.g. 0.25 deg -> the measured
    width) with the bins. Each level starts within a fraction of its own w. Drop entries whose density goes to 0, merge
    entries that converge together (mean + spread). Rotation only: the ring windows integrate over 2theta.
-5. `anri.refine` on pixels (exists): F and density, censoring, `sig_omega` for the floor.
+5. `anri.refine` on pixels (exists): F and density, censoring, a spread per entry where the peaks need it.
 
 Open: where stage 4 lives (`anri.index`, or a histogram mode of `anri.refine`): ask before adding API.
 
