@@ -739,7 +739,9 @@ def write_pars(folder: str, geometry: dict, phases: dict) -> str:
     folder
         Where to write them
     geometry
-        Detector and beam parameters, as in an ImageD11 ``.par`` file
+        Detector and beam parameters, as in an ImageD11 ``.par`` file. ImageD11 needs ``t_x``, ``t_y``, ``t_z`` and
+        ``omegasign`` to compute peak geometry (e.g. ``DataSet.update_colfile_pars``): those missing are written as
+        0, 0, 0 and 1 (the only ``omegasign`` anri supports).
     phases
         ``{phase_name: {"cell__a": ..., ..., "cell_lattice_[P,A,B,C,I,F,R]": ...}}``
 
@@ -751,6 +753,7 @@ def write_pars(folder: str, geometry: dict, phases: dict) -> str:
     import json
 
     os.makedirs(folder, exist_ok=True)
+    geometry = {"t_x": 0.0, "t_y": 0.0, "t_z": 0.0, "omegasign": 1.0, **geometry}
     write_par(os.path.join(folder, "geometry.par"), geometry)
     for name, cell in phases.items():
         write_par(os.path.join(folder, f"{name}.par"), cell)

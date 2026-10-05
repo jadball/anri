@@ -199,6 +199,9 @@ class TestSimulateSparse(unittest.TestCase):
             self.assertGreater(cf.nrows, 0)
             np.testing.assert_allclose(cf.sc, cf.s_raw)
             np.testing.assert_allclose(cf.fc, cf.f_raw)
+            ds.update_colfile_pars(cf, phase_name="Fe")  # needs t_x, t_y, t_z and omegasign, which write_pars adds
+            tth_110 = 2 * np.degrees(np.arcsin(pars["wavelength"] * np.sqrt(2) / (2 * a)))
+            self.assertLess(np.median(np.abs(cf.tth - tth_110)), 0.05)
 
 
 class TestGeomFromPars(unittest.TestCase):

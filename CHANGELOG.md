@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `anri.io.write_pars` writes `t_x`, `t_y`, `t_z` (0) and `omegasign` (1) when the geometry lacks them: ImageD11 needs them to compute peak geometry (`DataSet.update_colfile_pars` raised a KeyError on simulated datasets).
 - `anri.index.inherit_candidates` finds each voxel's coarse neighbours with a KD-tree: sorting every distance took ~2 minutes on a 419 × 419 map, more than the candidate pass that `--coarse` saves (now ~4 s).
 - `python -m anri.index` writes IPF (`ipf_x/y/z`) and Euler maps into its TensorMap again, and a ParaView `.xdmf` beside it, as the sandbox script did. Strain maps are left out: these UBIs are rotations of the nominal lattice, so the strain would be exactly zero.
 - `anri.fwd.render_row` with `"sig_rot"` failed under newer JAX (shard_map's check that stacked arrays vary across the same devices): the rotation's cross-product matrix is now a sum over constant generators.
