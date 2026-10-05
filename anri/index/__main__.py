@@ -47,8 +47,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--keep", type=int, default=100000, help="at most this many orientations for the occupancy fit (default 100000)"
     )
-    p.add_argument("--min-comp", type=float, help="keep orientations with at least this completeness (default: halfway "
-                   "between the grid's median, the chance level, and its maximum)")  # fmt: skip
+    p.add_argument("--min-comp", type=float, help="completeness needed: with --prune completeness, default halfway "
+                   "between the grid's median (the chance level) and its maximum; with --prune likelihood, default the "
+                   "chance level (raising it drops decoys, and small grains, which have lower completeness)")  # fmt: skip
     p.add_argument("--prune", choices=("likelihood", "completeness"), default="likelihood",
                    help="keep orientations by the likelihood ratio of a global orientation fit (default; intensity-aware), "
                    "or by completeness alone")  # fmt: skip
@@ -206,7 +207,7 @@ def main() -> None:
         + ("" if args.prune == "likelihood" else f", the top {args.keep} kept (--keep)" if info["capped"] else ", all kept"))  # fmt: skip
     if args.prune == "likelihood":  # everything above chance, judged by a global orientation fit to the row-summed data
         t1 = time.perf_counter()
-        pre = np.flatnonzero(comp > info["chance"])
+        pre = np.flatnonzero(comp > (info["chance"] if args.min_comp is None else args.min_comp))
         d = H.reshape(-1, NK).sum(1)
         bins_o = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O, OM0)
         _, lr = ix.orientation_mlem(d, U_grid[pre], B, rings, geom, bins_o, args.etacut, log=log)
