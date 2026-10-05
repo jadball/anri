@@ -101,11 +101,42 @@ population.
 - **Twins** are still almost absent: stage 3 only refines stage 2's units within +-1 deg. Stage 2 fits them but under
   `--min-frac`; `--unit-frac 0.03` makes units of populations down to 3% (stage 2 keeps up to 4 per voxel, above 2%).
   Untested. If not enough: seed twin orientations into stage 2 (new anri.index API: ask first).
-- **Peak widths:** `diagnose_peaks.py` measures them per ring from the data (autocorrelation and spot moments; within 2%
-  on simulated bright peaks, 10-20% narrow on faint ones, so trust its "brightest 10%"). Maintainer running it on Mg.
-  Stage 3 predicts point spots: once bins approach the peak width, it needs a width (per ring, or a spread per unit).
+- **Peak widths:** `diagnose_peaks.py` (spot moments are inflated by merged spots and low |sin eta|; its
+  autocorrelation read about half the true width, cause unknown) was superseded by `peak_widths.py`: omega FWHM of each
+  clean 3D peak from ImageD11's peaks table, by ring and |sin eta| (checked on a simulation with known divergence: flat,
+  10-15% narrow from the threshold). On Mg (middle 40 rows):
+  - typical peaks (brighter half): 0.07-0.09 deg FWHM at |sin eta| > 0.75 (spans of 5-6 frames, as seen in the raw
+    data), only 0.11-0.16 deg near |sin eta| = 0. Fit FWHM^2 = c^2 + (s / |sin eta|)^2: a **flat floor c ~ 0.08 deg**
+    and a small spread s ~ 0.015 deg;
+  - brightest 10%: 0.086 -> 0.457 deg, close to 1 / |sin eta|: a real spread of ~0.07 deg (large grains, the deformed
+    grains at the surface);
+  - ring 3 (2theta 8.6, {10-12}) is the exception (0.09 -> 0.32 deg); the sample is a bit textured, which may explain it.
+- **Optics for Mg:** the small Al CRL box at 43 keV (102 lenses, f = 50.4 cm, effective aperture 118 um), sample at
+  its focal spot (0.3-0.4 um FWHM unspoiled), the beam then spoiled by overfocusing upstream with tfoh1 (beam size
+  after spoiling: ask). Convergence <= ~0.23 mrad (0.013 deg), so **the optics do not explain the 0.08 deg floor**. A
+  width flat in eta acts as a rotation about the omega axis: suspects are the rotation stage or fly-scan timing (a
+  constant lag is ruled out: the zigzag offset is 0.004 deg). Test: `peak_widths.py` on Tognan (same floor ->
+  instrument) or on a standard.
+- **Consequences:** the floor goes in as a global `geom["sig_omega"]` (~0.035 deg sigma), not `sig_ky`; a spread per
+  entry (`sig_rot`) only for the bright/deformed grains. `anri.refine`'s basin (a tenth of a peak width) is then
+  ~0.008 deg, so stage 3's grid (0.1-0.2 deg) must be followed by a continuous stage (see "Proposed structure" below).
 - **Speed (L40S, 116k units):** pass 1 (125 orientations) 22-29 s/iteration, pass 2 (729) 118-147 s/iteration. Coarser
   bins were slower, probably contention in the scatter-add (unchecked).
+
+## Proposed structure after the initial index (2026-10-05, late; not yet agreed)
+
+1. Histograms (`anri.index`, exists).
+2. Global index (`anri.index`, exists): ~0.3 x the grid step; ghosts and decoys remain.
+3. **One local-grid pass** (stage 3 prototype): +-1.5 steps around each population, bins matched to the step (a grid
+   cannot go finer: its spots are misplaced by ~a quarter step). Joint MLEM removes the ghosts; ~0.1-0.25 deg.
+   Untested on Mg: `--pass1 1.0 0.25 --pass2 0 0 --bins 0.25 0.25 --iter 10`.
+4. **Continuous coarse-to-fine (new):** each entry's rotation (3) and log density, Gauss-Newton, joint over voxels,
+   against the histograms with Gaussian spots of width w (`bin_fractions`), w shrinking (e.g. 0.25 deg -> the measured
+   width) with the bins. Each level starts within a fraction of its own w. Drop entries whose density goes to 0, merge
+   entries that converge together (mean + spread). Rotation only: the ring windows integrate over 2theta.
+5. `anri.refine` on pixels (exists): F and density, censoring, `sig_omega` for the floor.
+
+Open: where stage 4 lives (`anri.index`, or a histogram mode of `anri.refine`): ask before adding API.
 
 ## Next steps, in order
 
