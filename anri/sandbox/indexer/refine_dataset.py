@@ -37,6 +37,13 @@ p.add_argument("--rings", type=int, default=6)
 p.add_argument("--monitor")
 p.add_argument("--rows", type=int, default=5, help="dty rows nearest the rotation axis (0: all)")
 p.add_argument("--sig", type=float, nargs="+", default=[0.3, 0.1, 0.03], help="spread per round (deg, sigma)")
+p.add_argument("--bin", type=int, nargs="+", default=[5, 2, 1], help="frames summed per round (one per --sig)")
+p.add_argument(
+    "--method",
+    choices=("entry", "cg"),
+    default="entry",
+    help="entry: refine_per_entry, one sweep per iteration (default); cg: refine, Gauss-Newton by CG",
+)
 p.add_argument("--iter", type=int, default=5, help="Levenberg-Marquardt iterations per round")
 p.add_argument("--beam", type=float, help="beam FWHM, dty units (default: the row step)")
 p.add_argument("--det-shape", type=int, nargs=2, default=(2162, 2068), help="detector (slow, fast) pixels")
@@ -93,7 +100,7 @@ pick = np.argsort(np.abs(dty_scan - y0))[: (args.rows or len(scans))]
 groups = [scans[i] for i in sorted(pick, key=lambda i: dty_scan[i])]
 mons = anri.io.read_monitor(ds["sparsefile"], groups, args.monitor, ds["masterfile"]) if args.monitor else {}
 mon_ref = float(np.mean(np.concatenate(list(mons.values())))) if args.monitor else 1.0
-rows, meas = [], []
+rows, meas, raw = [], [], []
 with h5py.File(ds["sparsefile"], "r") as h:
     for g in groups:
         gr = h[g]
@@ -110,7 +117,9 @@ with h5py.File(ds["sparsefile"], "r") as h:
             if ds["dtymotor"] in gr["measurement"]
             else ds["dty"][scans.index(g)]
         )
-        rows.append(anri.fwd.make_row(gr[f"measurement/{ds['omegamotor']}"][()], np.broadcast_to(dty_f, nnz.shape)))
+        om, dt = gr[f"measurement/{ds['omegamotor']}"][()], np.broadcast_to(dty_f, nnz.shape)
+        raw.append((om, dt, frame, pixel, value))
+        rows.append(anri.fwd.make_row(om, dt))
         meas.append(anri.refine.measured(frame, pixel, value, len(nnz)))
 log(f"{len(rows)} rows (dty - y0 {dty_scan[pick].min() - y0:+.2f} .. {dty_scan[pick].max() - y0:+.2f}), "
     f"{sum(m['value'].size for m in meas)} measured pixels")  # fmt: skip
@@ -139,11 +148,34 @@ def orientation(ubi: np.ndarray) -> np.ndarray:
 
 
 start = orientation(entries["ubi"][main])
-for sig in args.sig:
+
+
+def binned(k: int) -> tuple:
+    """Rows and measured pixels with k frames summed (k = 1: as read)."""
+    if k == 1:
+        return rows, meas
+    out_rows, out_meas = [], []
+    for om, dt, frame, pixel, value in raw:
+        om_b, dt_b, fr_b, px_b, val_b = anri.refine.bin_frames(om, dt, frame, pixel, value, k)
+        out_rows.append(anri.fwd.make_row(om_b, dt_b))
+        out_meas.append(anri.refine.measured(fr_b, px_b, val_b, len(om_b)))
+    return out_rows, out_meas
+
+
+if len(args.bin) != len(args.sig):
+    raise SystemExit("--bin needs one value per --sig")
+for sig, k in zip(args.sig, args.bin):
     e_in = {**entries, "sig_rot": np.full(len(voxel), np.radians(sig))}
-    out, hist = anri.refine.refine(e_in, hkls, F2, geom, rows, meas, det_shape, n_iter=args.iter, cut=args.cut,
-                                   max_frames=args.max_frames, window=tuple(args.window), fit_density=False, n_cg=args.n_cg,
-                                   log=lambda m: log("  " + m))  # fmt: skip
+    rows_k, meas_k = binned(k)
+    log(f"spread {sig} deg, frames summed in {k}s: {sum(m['value'].size for m in meas_k)} measured pixels")
+    if args.method == "entry":
+        out, hist = anri.refine.refine_per_entry(e_in, hkls, F2, geom, rows_k, meas_k, det_shape, n_iter=args.iter,
+                                                 cut=args.cut * k, max_frames=args.max_frames, window=tuple(args.window),
+                                                 log=lambda m: log("  " + m))  # fmt: skip
+    else:
+        out, hist = anri.refine.refine(e_in, hkls, F2, geom, rows_k, meas_k, det_shape, n_iter=args.iter,
+                                       cut=args.cut * k, max_frames=args.max_frames, window=tuple(args.window),
+                                       fit_density=False, n_cg=args.n_cg, log=lambda m: log("  " + m))  # fmt: skip
     moved = anri.crystal.disorientation(orientation(out["ubi"][main]), orientation(entries["ubi"][main]), ops)
     total = anri.crystal.disorientation(orientation(out["ubi"][main]), start, ops)
     entries["ubi"] = out["ubi"]

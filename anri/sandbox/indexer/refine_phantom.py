@@ -28,6 +28,13 @@ p.add_argument("dataset")
 p.add_argument("entries")
 p.add_argument("truth")
 p.add_argument("--sig", type=float, nargs="+", default=[0.3, 0.1, 0.03], help="spread per round (deg, sigma)")
+p.add_argument("--bin", type=int, nargs="+", default=[5, 2, 1], help="frames summed per round (one per --sig)")
+p.add_argument(
+    "--method",
+    choices=("entry", "cg"),
+    default="entry",
+    help="entry: refine_per_entry, one sweep per iteration (default); cg: refine, Gauss-Newton by CG",
+)
 p.add_argument("--iter", type=int, default=5)
 p.add_argument("--rows", type=int, default=0)
 p.add_argument("--max-frames", type=int, default=63)
@@ -69,7 +76,7 @@ hkls, F2 = np.asarray(rings["hkls"], float), np.ones(len(rings["hkls"]))
 det_shape = (2048, 2048)
 
 # measured pixels, one dty row per scan
-rows, meas = [], []
+rows, meas, raw = [], [], []
 with h5py.File(ds["sparsefile"], "r") as h:
     scans = sorted(h.keys(), key=float)
     if args.rows:
@@ -79,8 +86,10 @@ with h5py.File(ds["sparsefile"], "r") as h:
         nnz = h[g]["nnz"][()]
         frame = np.repeat(np.arange(len(nnz)), nnz)
         pixel = h[g]["row"][()].astype(np.int64) * det_shape[1] + h[g]["col"][()]
-        rows.append(anri.fwd.make_row(h[g]["measurement/rot_center"][()], h[g]["measurement/dty"][()]))
-        meas.append(anri.refine.measured(frame, pixel, h[g]["intensity"][()], len(nnz)))
+        om, dt, val = h[g]["measurement/rot_center"][()], h[g]["measurement/dty"][()], h[g]["intensity"][()]
+        raw.append((om, dt, frame, pixel, val))
+        rows.append(anri.fwd.make_row(om, dt))
+        meas.append(anri.refine.measured(frame, pixel, val, len(nnz)))
 log(f"{len(rows)} rows, {sum(m['value'].size for m in meas)} measured pixels")
 
 r = np.load(args.entries)
@@ -114,11 +123,34 @@ def accuracy(ubi: np.ndarray, label: str) -> None:
 
 
 accuracy(entries["ubi"], "indexer")
-for sig in args.sig:
+
+
+def binned(k: int) -> tuple:
+    """Rows and measured pixels with k frames summed (k = 1: as read)."""
+    if k == 1:
+        return rows, meas
+    out_rows, out_meas = [], []
+    for om, dt, frame, pixel, value in raw:
+        om_b, dt_b, fr_b, px_b, val_b = anri.refine.bin_frames(om, dt, frame, pixel, value, k)
+        out_rows.append(anri.fwd.make_row(om_b, dt_b))
+        out_meas.append(anri.refine.measured(fr_b, px_b, val_b, len(om_b)))
+    return out_rows, out_meas
+
+
+if len(args.bin) != len(args.sig):
+    raise SystemExit("--bin needs one value per --sig")
+for sig, k in zip(args.sig, args.bin):
     e_in = {**entries, "sig_rot": np.full(len(vox), np.radians(sig))}
-    out, hist = anri.refine.refine(e_in, hkls, F2, geom, rows, meas, det_shape, n_iter=args.iter, cut=1.0,
-                                   max_frames=args.max_frames, window=tuple(args.window), fit_density=False, n_cg=args.n_cg,
-                                   log=lambda m: log("  " + m))  # fmt: skip
+    rows_k, meas_k = binned(k)
+    log(f"spread {sig} deg, frames summed in {k}s: {sum(m['value'].size for m in meas_k)} measured pixels")
+    if args.method == "entry":
+        out, hist = anri.refine.refine_per_entry(e_in, hkls, F2, geom, rows_k, meas_k, det_shape, n_iter=args.iter,
+                                                 cut=1.0 * k, max_frames=args.max_frames, window=tuple(args.window),
+                                                 log=lambda m: log("  " + m))  # fmt: skip
+    else:
+        out, hist = anri.refine.refine(e_in, hkls, F2, geom, rows_k, meas_k, det_shape, n_iter=args.iter,
+                                       cut=1.0 * k, max_frames=args.max_frames, window=tuple(args.window),
+                                       fit_density=False, n_cg=args.n_cg, log=lambda m: log("  " + m))  # fmt: skip
     entries["ubi"] = out["ubi"]
     accuracy(entries["ubi"], f"after spread {sig} deg ({hist[-1]['time']:.0f} s, capture {hist[-1]['capture']:.2f})")
 np.savez(os.path.splitext(args.entries)[0] + "_refined.npz", **entries)

@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import inspect
 import time
+from functools import partial
 from typing import Callable
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from anri.fwd._impl.render import _omega_sigma, _select_margin, render_peaks, select_peaks
+from anri.fwd._impl.render import _omega_sigma, _select_margin, render_peaks, select_peaks, window_origins
 
 N_PARAMS = 10  # F - I (9, row-major) and log density
 
@@ -154,22 +155,34 @@ def _jit_window(f: Callable) -> Callable:
 
 
 def _make_fns(hkls: jax.Array, F2: jax.Array, geom: dict, pos: jax.Array, det_shape: tuple[int, int], cut: float,
-              n_search: int, sig_rot: jax.Array | None = None) -> dict:  # fmt: skip
+              n_search: int, sig_rot: jax.Array | None = None, log_density: jax.Array | None = None) -> dict:  # fmt: skip
     """Jitted per-class passes over a block of rows: forward, gradient and blocks, J p, J^T u.
 
     The model, residual and u live flattened over the block, [rows x padded pixels]; each batch of peaks carries
     its row ``ri`` in the block, whose frames and measured pixels are gathered inside the scan.
+
+    An entry's parameters ``th`` set its lattice as UBI = UBI0 F^T, by their number: 3, a small rotation
+    (F = I + [w]x, density fixed at ``log_density``); 9, F - I (density fixed); 10, F - I and the log density.
     """
     dtype = pos.dtype
     sig = jnp.zeros(pos.shape[0], dtype) if sig_rot is None else sig_rot  # gathered per peak; unused if None
+    logd = jnp.zeros(pos.shape[0], dtype) if log_density is None else log_density
 
-    def peak_values(th, ubi0_e, pos_e, sig_e, h, b, row, window):  # noqa: ANN001, ANN202
-        F = jnp.eye(3, dtype=dtype) + th[:9].reshape(3, 3)
-        one = {"ubi": (ubi0_e @ F.T)[None], "pos": pos_e[None], "density": jnp.exp(th[9])[None]}
+    def peak_values(th, ubi0_e, pos_e, sig_e, logd_e, h, b, org, row, window):  # noqa: ANN001, ANN202
+        if th.shape[0] == 3:
+            w0, w1, w2 = th
+            z = jnp.zeros((), dtype)
+            F = jnp.eye(3, dtype=dtype) + jnp.stack([jnp.stack([z, -w2, w1]), jnp.stack([w2, z, -w0]),
+                                                     jnp.stack([-w1, w0, z])])  # fmt: skip
+        else:
+            F = jnp.eye(3, dtype=dtype) + th[:9].reshape(3, 3)
+        density = jnp.exp(th[9]) if th.shape[0] == 10 else jnp.exp(logd_e)
+        one = {"ubi": (ubi0_e @ F.T)[None], "pos": pos_e[None], "density": density[None]}
         if sig_rot is not None:
             one["sig_rot"] = sig_e[None]
+        org1 = None if org is None else jax.tree.map(lambda a: a[None], org)
         fr, px, val, cap = render_peaks(
-            jnp.zeros(1, jnp.int32), h[None], b[None], one, hkls, F2, geom, row, window, det_shape
+            jnp.zeros(1, jnp.int32), h[None], b[None], one, hkls, F2, geom, row, window, det_shape, org1
         )
         return fr[0], px[0], val[0], cap[0]
 
@@ -192,14 +205,14 @@ def _make_fns(hkls: jax.Array, F2: jax.Array, geom: dict, pos: jax.Array, det_sh
         """One row of a block: its frames, measured pixels and frame starts."""
         return jax.tree.map(lambda a: a[ri], rows), pix[ri], fs[ri]
 
-    def cells(theta, ubi0, e, h, b, live, row, pix, fs, window):  # noqa: ANN001, ANN202
+    def cells(theta, ubi0, e, h, b, live, org, row, pix, fs, window):  # noqa: ANN001, ANN202
         def values(th_b):  # noqa: ANN001, ANN202
-            return jax.vmap(lambda t, u, p, sg, hh, bb: peak_values(t, u, p, sg, hh, bb, row, window)[2])(
-                th_b, ubi0[e], pos[e], sig[e], h, b
+            return jax.vmap(lambda t, u, p, sg, ld, hh, bb, o: peak_values(t, u, p, sg, ld, hh, bb, o, row, window)[2])(
+                th_b, ubi0[e], pos[e], sig[e], logd[e], h, b, org
             )
 
-        fr, px, val, cap = jax.vmap(lambda t, u, p, sg, hh, bb: peak_values(t, u, p, sg, hh, bb, row, window))(
-            theta[e], ubi0[e], pos[e], sig[e], h, b)  # fmt: skip
+        fr, px, val, cap = jax.vmap(lambda t, u, p, sg, ld, hh, bb, o: peak_values(t, u, p, sg, ld, hh, bb, o, row, window))(
+            theta[e], ubi0[e], pos[e], sig[e], logd[e], h, b, org)  # fmt: skip
         idx = jnp.where(live[:, None], match(fr, px, pix, fs), -1)
         return idx, val, jnp.where(live, cap, 1.0), values
 
@@ -208,35 +221,46 @@ def _make_fns(hkls: jax.Array, F2: jax.Array, geom: dict, pos: jax.Array, det_sh
         n_pad = pix.shape[1]
 
         def body(model, xs):  # noqa: ANN001, ANN202
-            e, h, b, live, ri = xs
-            idx, val, cap, _ = cells(theta, ubi0, e, h, b, live, *at(rows, pix, fs, ri), window)
+            e, h, b, live, ri, org = xs
+            idx, val, cap, _ = cells(theta, ubi0, e, h, b, live, org, *at(rows, pix, fs, ri), window)
             model = model.at[jnp.where(idx >= 0, ri * n_pad + idx, model.shape[0])].add(val, mode="drop")
             cens = jnp.sum(jnp.where((idx < 0) & live[:, None], jnp.maximum(val - cut, 0.0), 0.0) ** 2)
             return model, (cens, cap)
 
-        model, (cens, cap) = jax.lax.scan(body, model, (g["e"], g["h"], g["b"], g["live"], g["ri"]))
+        model, (cens, cap) = jax.lax.scan(body, model, (g["e"], g["h"], g["b"], g["live"], g["ri"], g.get("org")))
         return model, jnp.sum(cens), jnp.min(cap)
 
     @_jit_window
-    def grad_block(theta, ubi0, g, rows, pix, fs, r, grad, block, window):  # noqa: ANN001, ANN202
+    def grad_block(theta, ubi0, g, rows, pix, fs, r, total, grad, block, window):  # noqa: ANN001, ANN202
+        """Accumulate J^T r and the blocks J^T J.
+
+        With ``total`` (the whole model at each measured pixel), each pixel's term in an entry's block is weighted
+        by total / the entry's own value there (at most 1e3): the separable surrogate's curvature (De Pierro), so
+        entries sharing pixels can all step at once without overshooting together.
+        """
         n_pad = pix.shape[1]
 
         def body(carry, xs):  # noqa: ANN001, ANN202
             grad, block = carry
-            e, h, b, live, ri = xs
+            e, h, b, live, ri, org = xs
             row, pix_r, fs_r = at(rows, pix, fs, ri)
-            idx, val, _, _ = cells(theta, ubi0, e, h, b, live, row, pix_r, fs_r, window)
-            J = jax.vmap(jax.jacfwd(lambda t, u, p, sg, hh, bb: peak_values(t, u, p, sg, hh, bb, row, window)[2]))(
-                theta[e], ubi0[e], pos[e], sig[e], h, b
-            )  # fmt: skip  [B, W, 10]
+            idx, val, _, _ = cells(theta, ubi0, e, h, b, live, org, row, pix_r, fs_r, window)
+            J = jax.vmap(
+                jax.jacfwd(lambda t, u, p, sg, ld, hh, bb, o: peak_values(t, u, p, sg, ld, hh, bb, o, row, window)[2])
+            )(theta[e], ubi0[e], pos[e], sig[e], logd[e], h, b, org)  # [B, W, parameters]
             matched = idx >= 0
             res = jnp.where(matched, r[ri * n_pad + jnp.maximum(idx, 0)], jnp.maximum(val - cut, 0.0))
             J = jnp.where(((matched | (val > cut)) & live[:, None])[..., None], J, 0.0)
             grad = grad.at[e].add(jnp.einsum("bwk,bw->bk", J, res))
-            block = block.at[e].add(jnp.einsum("bwk,bwl->bkl", J, J))
+            if total is None:
+                block = block.at[e].add(jnp.einsum("bwk,bwl->bkl", J, J))
+            else:
+                tot = jnp.where(matched, total[ri * n_pad + jnp.maximum(idx, 0)], val)
+                wt = jnp.clip(tot / jnp.maximum(val, 1e-30), 1.0, 1e3)
+                block = block.at[e].add(jnp.einsum("bwk,bw,bwl->bkl", J, wt, J))
             return (grad, block), None
 
-        (grad, block), _ = jax.lax.scan(body, (grad, block), (g["e"], g["h"], g["b"], g["live"], g["ri"]))
+        (grad, block), _ = jax.lax.scan(body, (grad, block), (g["e"], g["h"], g["b"], g["live"], g["ri"], g.get("org")))
         return grad, block
 
     @_jit_window
@@ -244,12 +268,12 @@ def _make_fns(hkls: jax.Array, F2: jax.Array, geom: dict, pos: jax.Array, det_sh
         n_pad = pix.shape[1]
 
         def body(u, xs):  # noqa: ANN001, ANN202
-            e, h, b, live, ri = xs
-            idx, _, _, values = cells(theta, ubi0, e, h, b, live, *at(rows, pix, fs, ri), window)
+            e, h, b, live, ri, org = xs
+            idx, _, _, values = cells(theta, ubi0, e, h, b, live, org, *at(rows, pix, fs, ri), window)
             _, Jp = jax.jvp(values, (theta[e],), (p[e],))
             return u.at[jnp.where(idx >= 0, ri * n_pad + idx, u.shape[0])].add(Jp, mode="drop"), None
 
-        u, _ = jax.lax.scan(body, u, (g["e"], g["h"], g["b"], g["live"], g["ri"]))
+        u, _ = jax.lax.scan(body, u, (g["e"], g["h"], g["b"], g["live"], g["ri"], g.get("org")))
         return u
 
     @_jit_window
@@ -257,8 +281,8 @@ def _make_fns(hkls: jax.Array, F2: jax.Array, geom: dict, pos: jax.Array, det_sh
         n_pad = pix.shape[1]
 
         def body(out, xs):  # noqa: ANN001, ANN202
-            e, h, b, live, ri = xs
-            idx, _, _, values = cells(theta, ubi0, e, h, b, live, *at(rows, pix, fs, ri), window)
+            e, h, b, live, ri, org = xs
+            idx, _, _, values = cells(theta, ubi0, e, h, b, live, org, *at(rows, pix, fs, ri), window)
             val, lin = jax.linearize(values, theta[e])
             Jp = lin(p[e])
             matched = idx >= 0
@@ -266,7 +290,7 @@ def _make_fns(hkls: jax.Array, F2: jax.Array, geom: dict, pos: jax.Array, det_sh
             (grad,) = jax.linear_transpose(lin, theta[e])(jnp.where(live[:, None], c, 0.0))
             return out.at[e].add(grad), None
 
-        out, _ = jax.lax.scan(body, out, (g["e"], g["h"], g["b"], g["live"], g["ri"]))
+        out, _ = jax.lax.scan(body, out, (g["e"], g["h"], g["b"], g["live"], g["ri"], g.get("org")))
         return out
 
     return {"forward": forward, "grad_block": grad_block, "jp": jp, "jtu": jtu}
@@ -290,15 +314,18 @@ def _loss(fns: dict, blocks: list, theta: jax.Array, ubi0: jax.Array) -> float:
     return float(total)
 
 
-def _gradient(fns: dict, blocks: list, theta: jax.Array, ubi0: jax.Array) -> tuple:
-    """Loss, J^T r and the 10 x 10 blocks J^T J of each entry."""
-    grad, block = jnp.zeros_like(theta), jnp.zeros(theta.shape + (N_PARAMS,), theta.dtype)
+def _gradient(fns: dict, blocks: list, theta: jax.Array, ubi0: jax.Array, surrogate: bool = False) -> tuple:
+    """Loss, J^T r and the blocks J^T J of each entry (parameters x parameters), surrogate-weighted if asked."""
+    grad, block = jnp.zeros_like(theta), jnp.zeros(theta.shape + (theta.shape[1],), theta.dtype)
     total, cap = 0.0, 1.0
     for blk in blocks:
         r, cens, k = _residual(fns, blk, theta, ubi0)
         total, cap = total + jnp.sum(r**2) + cens, jnp.minimum(cap, k)
         for window, g in blk["groups"]:
-            grad, block = fns["grad_block"](theta, ubi0, g, blk["rows"], blk["pix"], blk["fs"], r, grad, block, window)
+            model = r + blk["val"] if surrogate else None  # the whole model at each measured pixel
+            grad, block = fns["grad_block"](
+                theta, ubi0, g, blk["rows"], blk["pix"], blk["fs"], r, model, grad, block, window
+            )
     return float(total), grad, block, float(cap)
 
 
@@ -452,4 +479,191 @@ def refine(
         "pos": np.asarray(entries["pos"]),
         "density": np.exp(np.asarray(theta[:, 9], np.float64)),
     }
+    return out, history
+
+
+def bin_frames(omega: np.ndarray, dty: np.ndarray, frame: np.ndarray, pixel: np.ndarray, value: np.ndarray,
+               k: int) -> tuple:  # fmt: skip
+    """Sum each run of k consecutive frames (in omega order) of one row into one wider frame.
+
+    For coarse refinement rounds: when the model's peaks are blurred by a spread much wider than a frame, binned
+    frames hold the same information for a fraction of the work. The renderer integrates over each frame's omega
+    range, so the model stays consistent with the binned data. Pass ``cut`` times k to the refiner (a pixel missing
+    from a bin was below the cut in each of its k frames).
+
+    Parameters
+    ----------
+    omega, dty
+        [n_frames] omega (degrees) and dty of each frame, in file order
+    frame, pixel, value
+        The row's measured pixels: frame index (file order), pixel index and counts
+    k
+        Frames per bin
+
+    Returns
+    -------
+    omega, dty: np.ndarray
+        [n_bins] mean omega and dty of each bin, for :func:`anri.fwd.make_row`
+    frame, pixel, value: np.ndarray
+        The binned pixels (each pixel once per bin, counts summed), for :func:`measured`
+    """
+    omega, dty = np.asarray(omega, float), np.asarray(dty, float)
+    order = np.argsort(omega, kind="stable")
+    group = np.empty(len(omega), np.int64)
+    group[order] = np.arange(len(omega)) // k
+    n_bins = int(group.max()) + 1
+    count = np.bincount(group, minlength=n_bins)
+    pixel = np.asarray(pixel, np.int64)
+    n_px = int(pixel.max()) + 1 if pixel.size else 1
+    key, inv = np.unique(group[np.asarray(frame)] * n_px + pixel, return_inverse=True)
+    summed = np.bincount(inv.ravel(), np.asarray(value, float), len(key)).astype(np.float32)
+    om_b, dty_b = np.bincount(group, omega, n_bins) / count, np.bincount(group, dty, n_bins) / count
+    return om_b, dty_b, key // n_px, key % n_px, summed
+
+
+def _rotate(ubi: jax.Array, w: jax.Array) -> jax.Array:
+    """UBI R(w)^T: each entry's lattice rotated by its rotation vector w (radians), exactly (Rodrigues)."""
+    t = jnp.linalg.norm(w, axis=1)[:, None, None]
+    z = jnp.zeros_like(w[:, 0])
+    K = jnp.stack([jnp.stack([z, -w[:, 2], w[:, 1]], -1), jnp.stack([w[:, 2], z, -w[:, 0]], -1),
+                   jnp.stack([-w[:, 1], w[:, 0], z], -1)], 1)  # fmt: skip
+    small = t < 1e-12
+    ts = jnp.where(small, 1.0, t)
+    R = (
+        jnp.eye(3, dtype=w.dtype)
+        + jnp.where(small, K, jnp.sin(ts) / ts * K)
+        + jnp.where(small, 0.5 * K @ K, (1.0 - jnp.cos(ts)) / ts**2 * K @ K)
+    )
+    return ubi @ jnp.swapaxes(R, -1, -2)
+
+
+def refine_per_entry(
+    entries: dict,
+    hkls: np.ndarray,
+    F2: np.ndarray,
+    geom: dict,
+    rows: list,
+    meas: list,
+    det_shape: tuple[int, int],
+    n_iter: int = 10,
+    rotation_only: bool = True,
+    window: tuple[int, int, int] = (3, 7, 7),
+    max_frames: int = 31,
+    cut: float = 1.0,
+    max_step: float = 1e-2,
+    batch: int = 16384,
+    block_pixels: int = 1 << 26,
+    log: Callable | None = print,
+) -> tuple[dict, list]:
+    """Refine each entry's lattice by its own Gauss-Newton steps against the shared residual, one sweep per iteration.
+
+    Each sweep renders every peak, so entries along the same beam path are still fitted jointly through the residual
+    at the measured pixels (with the segmentation cut as censoring, as in :func:`refine`), and accumulates for each
+    entry its gradient J^T r and its small curvature block J^T J, each pixel's term weighted by the whole model there
+    over the entry's own share (a separable surrogate: entries sharing pixels, e.g. a grain's voxels along a ray,
+    then cannot overshoot together). Each entry then takes its own damped step,
+    ``-(J^T J + lam diag(J^T J))^-1 J^T r``, at most ``max_step`` in any parameter. ``lam`` falls after a sweep that
+    lowered the loss; after one that did not, the step is undone and ``lam`` rises. Densities and spreads
+    (``"sig_rot"``) are held fixed: the indexer decides which population owns each voxel.
+
+    Compared with :func:`refine`: one pass over the data per iteration (no conjugate gradients, no trial passes),
+    and 3 derivatives per peak with ``rotation_only``, at the cost of ignoring the coupling between entries in the
+    step itself (it stays in the residual). Pair it with a shrinking spread, and frames binned to match
+    (:func:`bin_frames`), to bring a distant start in.
+
+    Parameters
+    ----------
+    entries
+        Starting map: "ubi" [N, 3, 3], "pos" [N, 3], "density" [N] and optionally "sig_rot" [N] (radians), for one
+        phase
+    hkls, F2, geom, rows, meas, det_shape, window, max_frames, cut, batch, block_pixels
+        As for :func:`refine`
+    n_iter
+        Sweeps
+    rotation_only
+        True: 3 parameters per entry, a rotation. False: 9, F - I (rotation and strain)
+    max_step
+        Largest change of any parameter in one step (radians for a rotation)
+    log
+        Called with a line of progress per sweep (None for silence)
+
+    Returns
+    -------
+    entries: dict
+        The refined map: "ubi", with "pos", "density" (and "sig_rot") as given
+    history: list
+        Per sweep: "loss", "time" (seconds), "capture" (smallest fraction of a peak inside its window), "lam" and
+        "accepted"
+    """
+    ubi = jnp.asarray(entries["ubi"])
+    dtype = ubi.dtype
+    pos = jnp.asarray(entries["pos"], dtype)
+    hkls_j, F2_j = jnp.asarray(hkls, dtype), jnp.asarray(F2, dtype)
+    geom = jax.tree.map(lambda x: jnp.asarray(x, dtype) if np.asarray(x).dtype.kind == "f" else jnp.asarray(x), geom)
+    rows = [{k: jnp.asarray(v, dtype) if np.asarray(v).dtype.kind == "f" else jnp.asarray(v) for k, v in r.items()}
+            for r in rows]  # fmt: skip
+    n_search = int(np.ceil(np.log2(max(int(np.diff(m["frame_start"]).max()) for m in meas) + 1))) + 1
+    sig_rot = None if "sig_rot" not in entries else jnp.asarray(entries["sig_rot"], dtype)
+    logd = jnp.log(jnp.asarray(entries["density"], dtype))
+    fns = _make_fns(hkls_j, F2_j, geom, pos, tuple(det_shape), float(cut), n_search, sig_rot, logd)
+    zero = jnp.zeros((ubi.shape[0], 3 if rotation_only else 9), dtype)
+    peaks = _select(ubi, pos, hkls_j, geom, rows, tuple(det_shape), window, max_frames, sig_rot)
+    rd = _prepare(peaks, rows, meas, window, max_frames, batch, block_pixels)
+
+    # Within a sweep each peak's window is fixed, so the losses a sweep compares are smooth in the parameters (a
+    # window that follows the peak jumps by whole cells as it moves, and with it the loss). Between sweeps the windows
+    # are re-centred on the peaks, so a peak that has moved stays inside its window.
+    @partial(jax.jit, static_argnames="win")
+    def origins(ubi_now: jax.Array, g: dict, block_rows: dict, win: tuple) -> tuple:
+        ents = {"ubi": ubi_now, "pos": pos, "density": jnp.exp(logd)}
+        if sig_rot is not None:
+            ents["sig_rot"] = sig_rot
+
+        def body(_: None, xs: tuple) -> tuple:
+            e, h, b, ri = xs
+            row = jax.tree.map(lambda a: a[ri], block_rows)
+            return None, window_origins(e, h, b, ents, hkls_j, F2_j, geom, row, win, tuple(det_shape))
+
+        return jax.lax.scan(body, None, (g["e"], g["h"], g["b"], g["ri"]))[1]
+
+    def centre(ubi_now: jax.Array) -> None:
+        for blk in rd:
+            for win, g in blk["groups"]:
+                g["org"] = origins(ubi_now, g, blk["rows"], win)
+
+    t0 = time.perf_counter()
+    centre(ubi)
+    loss, grad, block, cap = _gradient(fns, rd, zero, ubi, surrogate=True)
+    lam = 1e-3
+    history = [{"loss": loss, "time": time.perf_counter() - t0, "capture": cap, "lam": lam, "accepted": True}]
+    if log:
+        log(f"sweep 0: loss {loss:.5g}")
+    for it in range(1, n_iter + 1):
+        D = jnp.diagonal(block, axis1=1, axis2=2)
+        has = D.sum(1) > 0
+        D = D + 1e-12 + 1e-9 * jnp.max(D)
+        step = -jnp.linalg.solve(block + lam * jax.vmap(jnp.diag)(D), grad[..., None])[..., 0]
+        step = jnp.where(has[:, None], step, 0.0)
+        step = step / jnp.maximum(jnp.max(jnp.abs(step), axis=1) / max_step, 1.0)[:, None]
+        if rotation_only:
+            trial = _rotate(ubi, step)
+        else:
+            trial = ubi @ jnp.swapaxes(jnp.eye(3, dtype=dtype) + step.reshape(-1, 3, 3), -1, -2)
+        loss_t = _loss(fns, rd, zero, trial)  # with the windows the step was computed on
+        accepted = loss_t < loss
+        if accepted:
+            ubi, lam = trial, max(lam / 3.0, 1e-7)
+            if it < n_iter:  # re-centre the windows, and the loss, gradient and blocks on them
+                centre(ubi)
+                loss, grad, block, cap = _gradient(fns, rd, zero, ubi, surrogate=True)
+            else:
+                loss = loss_t
+        else:
+            lam = lam * 10.0
+        history.append({"loss": loss, "time": time.perf_counter() - t0, "capture": cap, "lam": lam,
+                        "accepted": bool(accepted)})  # fmt: skip
+        if log:
+            log(f"sweep {it}: loss {loss_t:.5g}{'' if accepted else ' (step undone)'}, lam {lam:.2g}, "
+                f"{history[-1]['time']:.1f} s")  # fmt: skip
+    out = {**{k: np.asarray(v) for k, v in entries.items()}, "ubi": np.asarray(ubi, np.float64)}
     return out, history

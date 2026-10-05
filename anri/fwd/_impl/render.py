@@ -366,6 +366,7 @@ def render_peaks(
     row: dict,
     window: tuple[int, int, int],
     det_shape: tuple[int, int],
+    origins: tuple | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Render a fixed-size batch of peaks into sparse contributions for one dty row.
 
@@ -390,6 +391,10 @@ def render_peaks(
         Static (n_frames, n_slow, n_fast) window size, each odd
     det_shape
         Static (n_slow, n_fast) detector shape
+    origins
+        Optional window origins, as from :func:`window_origins`: the first frame [B] (sorted-omega order) and each
+        frame's first slow and fast pixel [B, n_frames]. By default each peak's window is centred on it, so the
+        cells it covers jump as it moves; fixed origins keep the values smooth in the parameters (for a refiner)
 
     Returns
     -------
@@ -402,10 +407,52 @@ def render_peaks(
     captured: jax.Array
         [B] fraction of each peak's Gaussian that fell inside its window (before the dty weight)
     """
+    fr, px, val, cap, _ = _render_peaks(
+        entry, hkl_idx, branch, entries, hkls, F2, geom, row, window, det_shape, origins
+    )
+    return fr, px, val, cap
+
+
+def window_origins(
+    entry: jax.Array,
+    hkl_idx: jax.Array,
+    branch: jax.Array,
+    entries: dict,
+    hkls: jax.Array,
+    F2: jax.Array,
+    geom: dict,
+    row: dict,
+    window: tuple[int, int, int],
+    det_shape: tuple[int, int],
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Window origins :func:`render_peaks` chooses for these peaks: centred on each peak at the given parameters.
+
+    Returns
+    -------
+    tuple
+        First frame [B] (sorted-omega order), and each frame's first slow and fast pixel [B, n_frames]
+    """
+    return _render_peaks(entry, hkl_idx, branch, entries, hkls, F2, geom, row, window, det_shape, None)[4]
+
+
+def _render_peaks(
+    entry: jax.Array,
+    hkl_idx: jax.Array,
+    branch: jax.Array,
+    entries: dict,
+    hkls: jax.Array,
+    F2: jax.Array,
+    geom: dict,
+    row: dict,
+    window: tuple[int, int, int],
+    det_shape: tuple[int, int],
+    origins: tuple | None,
+) -> tuple:
+    """:func:`render_peaks`, also returning the window origins used."""
     wo, ws, wf = window
     ns, nf = det_shape
 
-    def one(e: jax.Array, h: jax.Array, br: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    def one(e: jax.Array, h: jax.Array, br: jax.Array, org: tuple | None) -> tuple:
         ubi, pos, hkl = entries["ubi"][e], entries["pos"][e], hkls[h]
         etasign = 1.0 - 2.0 * br
         dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
@@ -421,7 +468,10 @@ def render_peaks(
         mu_o = _wrap_omega(mu_o, 0.5 * (row["omega_min"] + row["omega_max"]))
 
         # Window origin: no gradient through which cells a peak touches
-        jo = jnp.searchsorted(row["omega_edges"], jax.lax.stop_gradient(mu_o)) - 1 - wo // 2
+        if org is None:
+            jo = jnp.searchsorted(row["omega_edges"], jax.lax.stop_gradient(mu_o)) - 1 - wo // 2
+        else:
+            jo = org[0]
         frames = jo + jnp.arange(wo)  # [wo] in sorted-omega order
         nfr = row["omega_sorted"].shape[0]
         fclip = jnp.clip(frames, 0, nfr - 1)
@@ -440,8 +490,11 @@ def render_peaks(
 
         # Each frame's pixel window is centred on the peak's mean position in that frame, so a peak that moves
         # across the detector with omega (broad in omega, e.g. near eta = 0) stays inside its window
-        i0 = jnp.round(jax.lax.stop_gradient(mu_s_o)).astype(int) - ws // 2  # [wo]
-        j0 = jnp.round(jax.lax.stop_gradient(mu_f + fo / oo * d_o)).astype(int) - wf // 2  # [wo]
+        if org is None:
+            i0 = jnp.round(jax.lax.stop_gradient(mu_s_o)).astype(int) - ws // 2  # [wo]
+            j0 = jnp.round(jax.lax.stop_gradient(mu_f + fo / oo * d_o)).astype(int) - wf // 2  # [wo]
+        else:
+            i0, j0 = org[1], org[2]
         rows = i0[:, None] + jnp.arange(ws)  # [wo, ws]
         cols = j0[:, None] + jnp.arange(wf)  # [wo, wf]
         p_s, m_s, v_s = truncated_moments(rows - 0.5, rows + 0.5, mu_s_o[:, None], sd_s_o[:, None])  # [wo, ws]
@@ -488,9 +541,9 @@ def render_peaks(
         frame_out = jnp.where(use, row["order"][fclip][:, None, None], -1)
         pixel = rows[:, :, None] * nf + cols[:, None, :]
         pixel_out = jnp.where(use, pixel, 0)
-        return frame_out.ravel(), pixel_out.ravel(), value.ravel(), captured
+        return frame_out.ravel(), pixel_out.ravel(), value.ravel(), captured, (jo, i0, j0)
 
-    return jax.vmap(one)(entry, hkl_idx, branch)
+    return jax.vmap(one, in_axes=(0, 0, 0, None if origins is None else 0))(entry, hkl_idx, branch, origins)
 
 
 @jax.jit
