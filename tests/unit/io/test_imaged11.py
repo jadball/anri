@@ -295,3 +295,22 @@ class TestGeomFromPars(unittest.TestCase):
                 np.testing.assert_allclose((ubi @ g).ravel(), hkl, atol=1e-6)
                 checked += 1
         self.assertGreater(checked, 3)
+
+
+class TestPrefetch(unittest.TestCase):
+    def test_order_errors_and_early_stop(self):
+        from anri.io import prefetch
+
+        self.assertEqual(list(prefetch(range(100), depth=3)), list(range(100)))
+
+        def broken():
+            yield 1
+            raise RuntimeError("disk on fire")
+
+        it = prefetch(broken())
+        self.assertEqual(next(it), 1)
+        with self.assertRaisesRegex(RuntimeError, "disk on fire"):
+            next(it)
+        for x in prefetch(iter(range(10**9))):  # stopping early must not hang
+            if x == 5:
+                break

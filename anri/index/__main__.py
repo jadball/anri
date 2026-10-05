@@ -168,9 +168,11 @@ def main() -> None:
         n_max = max(int(h[g]["nnz"][()].sum()) for g in groups)
     chunk = int(min(1 << 24, 1 << max(10, int(np.ceil(np.log2(max(n_max, 1)))))))
 
-    def stream(groups_: list) -> Iterator[tuple]:
-        return anri.io.stream_sparse(
-            sparsefile, yedge, ds["omegamotor"], ds["dtymotor"], chunk, groups_, G, ds["dty"], ds["scans"]
+    def stream(groups_: list) -> Iterator[tuple]:  # read the next chunk while this one is binned
+        return anri.io.prefetch(
+            anri.io.stream_sparse(
+                sparsefile, yedge, ds["omegamotor"], ds["dtymotor"], chunk, groups_, G, ds["dty"], ds["scans"]
+            )
         )
 
     t1 = time.perf_counter()
@@ -259,11 +261,17 @@ def main() -> None:
             "completeness": comp_pop[:, 0].reshape(NR, NR),
         }
         tmap = anri.io.tensormap_from_recon(maps, np.asarray(lpars), sg, phase, YSTEP)
+        try:
+            tmap.get_ipf_maps()  # ipf_x, ipf_y, ipf_z
+        except ImportError:
+            log("orix is not installed: no IPF maps")
+        _ = tmap.euler  # computed and kept in the maps. No strain: these UBIs are rotations of the nominal lattice.
         out = f"{tag}_tmap.h5"
         if os.path.exists(out):
             os.remove(out)
         tmap.to_h5(out)
-        log(f"-> {out}")
+        tmap.to_paraview(out)
+        log(f"-> {out} (and .xdmf for ParaView)")
     except ImportError:
         log("ImageD11 is not installed: no TensorMap written")
     log(f"-> {tag}.npz, {tag}_entries.npz")

@@ -10,7 +10,7 @@ ImageD11 itself is only imported by the functions that need it.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING
 
 import h5py
@@ -360,6 +360,61 @@ def stream_sparse(
                     k_f[fr],
                     gr["intensity"][s0 : s0 + m].astype(np.float32),
                 )
+
+
+def prefetch(chunks: Iterable, depth: int = 2) -> Iterator:
+    """Read ahead: produce the items of an iterable in a background thread, up to ``depth`` ahead of the consumer.
+
+    With :func:`stream_sparse`, the next chunk is read and decompressed while the current one is processed, so the
+    disk and the GPU (or CPU) work at the same time instead of in turn. An error in the reader is raised in the
+    consumer.
+
+    Parameters
+    ----------
+    chunks
+        Any iterable
+    depth
+        Items read ahead at most
+
+    Yields
+    ------
+    object
+        The items of chunks, in order
+    """
+    import queue
+    import threading
+
+    q: queue.Queue = queue.Queue(maxsize=depth)
+    done = object()
+    stop = threading.Event()
+
+    def reader() -> None:
+        try:
+            for item in chunks:
+                while not stop.is_set():
+                    try:
+                        q.put(item, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                if stop.is_set():
+                    return
+            q.put(done)
+        except BaseException as e:  # noqa: BLE001  (handed to the consumer)
+            q.put(e)
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    try:
+        while True:
+            item = q.get()
+            if item is done:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        stop.set()
 
 
 def tensormap_from_recon(
