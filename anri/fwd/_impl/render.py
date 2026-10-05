@@ -435,6 +435,133 @@ def window_origins(
     return _render_peaks(entry, hkl_idx, branch, entries, hkls, F2, geom, row, window, det_shape, None)[4]
 
 
+def _peak_shape(
+    ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, sig_rot: jax.Array | None, row: dict, geom: dict
+) -> tuple:
+    """Return a peak's centroid, covariance and whether it diffracts: the expensive, geometric part of rendering.
+
+    Returns
+    -------
+    mu: jax.Array
+        [3] (slow, fast, omega), omega before wrapping into the row's range
+    shape: tuple
+        (ss, ff, oo, sf, so, fo): variances and covariances, with the detector's point spread and floors added
+    valid: jax.Array
+        Whether the reflection diffracts
+    """
+    dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
+    centroid, valid = _centroid(ubi, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty_row, geom)
+    cov = _peak_cov(ubi, pos, hkl, etasign, dty_row, geom, sig_rot)
+    # detector point spread adds to the slow and fast variances (pixels^2)
+    psf2 = geom["sig_psf"] ** 2
+    om2 = geom.get("sig_omega", 0.0) ** 2  # optional extra omega spread (degrees), e.g. to smooth a refinement
+    shape = (cov[0] + psf2 + _VAR_FLOOR[0], cov[1] + psf2 + _VAR_FLOOR[1], cov[2] + om2 + _VAR_FLOOR[2],
+             cov[3], cov[4], cov[5])  # fmt: skip
+    return centroid, shape, valid
+
+
+def _window_cells(
+    mu: jax.Array, shape: tuple, org: tuple | None, row: dict, window: tuple[int, int, int], det_shape: tuple[int, int]
+) -> tuple:
+    """Integrate a peak's Gaussian over the (frame, slow, fast) cells of its window: the cheap part of rendering.
+
+    Parameters
+    ----------
+    mu, shape
+        Centroid and covariance, from :func:`_peak_shape`
+    org
+        Window origin (first frame, and each frame's first slow and fast pixel), or None: centred on the peak
+    row, window, det_shape
+        As for :func:`render_peaks`
+
+    Returns
+    -------
+    tuple
+        frac [wo, ws, wf] (fraction of the Gaussian in each cell), inside [wo, ws, wf] (cells on the detector and in
+        the row), fclip [wo] (sorted frame of each window frame, clipped), rows [wo, ws], cols [wo, wf], om_fr [wo]
+        (mean omega of the mass in each frame, unwrapped) and the origin (jo, i0, j0)
+    """
+    wo, ws, wf = window
+    ns, nf = det_shape
+    mu_s, mu_f, mu_o = mu
+    ss, ff, oo, sf, so, fo = shape
+    omega_peak = mu_o  # before wrapping
+    mu_o = _wrap_omega(mu_o, 0.5 * (row["omega_min"] + row["omega_max"]))
+
+    # Window origin: no gradient through which cells a peak touches
+    if org is None:
+        jo = jnp.searchsorted(row["omega_edges"], jax.lax.stop_gradient(mu_o)) - 1 - wo // 2
+    else:
+        jo = org[0]
+    frames = jo + jnp.arange(wo)  # [wo] in sorted-omega order
+    nfr = row["omega_sorted"].shape[0]
+    fclip = jnp.clip(frames, 0, nfr - 1)
+
+    # omega over each frame: mass, and the mean and variance of omega within the frame. Conditioning on the
+    # within-frame mean (not the frame centre) keeps peaks much narrower than a frame at their true position.
+    p_o, m_o, v_o = truncated_moments(
+        row["omega_edges"][fclip], row["omega_edges"][fclip + 1], mu_o, jnp.sqrt(oo)
+    )  # [wo]
+    d_o = m_o - mu_o
+
+    # slow | omega in the frame
+    slope = so / oo
+    mu_s_o = mu_s + slope * d_o  # [wo]
+    sd_s_o = jnp.sqrt(ss - so**2 / oo + slope**2 * v_o)  # [wo]
+
+    # Each frame's pixel window is centred on the peak's mean position in that frame, so a peak that moves
+    # across the detector with omega (broad in omega, e.g. near eta = 0) stays inside its window
+    if org is None:
+        i0 = jnp.round(jax.lax.stop_gradient(mu_s_o)).astype(int) - ws // 2  # [wo]
+        j0 = jnp.round(jax.lax.stop_gradient(mu_f + fo / oo * d_o)).astype(int) - wf // 2  # [wo]
+    else:
+        i0, j0 = org[1], org[2]
+    rows = i0[:, None] + jnp.arange(ws)  # [wo, ws]
+    cols = j0[:, None] + jnp.arange(wf)  # [wo, wf]
+    p_s, m_s, v_s = truncated_moments(rows - 0.5, rows + 0.5, mu_s_o[:, None], sd_s_o[:, None])  # [wo, ws]
+
+    # fast | slow in the row, omega in the frame. Within the frame, omega is taken as N(m_o, v_o) and slow | omega
+    # is Gaussian, so (slow, omega) are jointly Gaussian there: integrate omega out given slow, then average over
+    # the row. Holding omega at m_o instead ignores that the row tells us where omega is within the frame, which
+    # matters for peaks narrower in omega than a frame (most of them).
+    det = ss * oo - so**2
+    g_s = (sf * oo - fo * so) / det  # regression of fast on slow and omega
+    g_o = (fo * ss - sf * so) / det
+    var_f_so = ff - (g_s * sf + g_o * fo)  # variance of fast given slow and omega
+    k = slope * v_o / sd_s_o**2  # [wo] slope of E[omega | slow] within the frame
+    var_o_s = v_o * (1.0 - k * slope)  # [wo] variance of omega given slow within the frame
+    e_o = m_o[:, None] + k[:, None] * (m_s - mu_s_o[:, None])  # [wo, ws] E[omega | slow] at the row's mean slow
+    mu_f_so = mu_f + g_s * (m_s - mu_s) + g_o * (e_o - mu_o)  # [wo, ws]
+    dfds = g_s + g_o * k  # [wo] slope of E[fast | slow] within the frame
+    sd_f_so = jnp.sqrt(var_f_so + g_o**2 * var_o_s[:, None] + dfds[:, None] ** 2 * v_s)  # [wo, ws]
+    p_f = bin_fractions(
+        cols[:, None, :] - 0.5, cols[:, None, :] + 0.5, mu_f_so[..., None], sd_f_so[..., None]
+    )  # [wo, ws, wf]
+
+    frac = p_o[:, None, None] * p_s[:, :, None] * p_f  # [wo, ws, wf]
+    inside = (
+        (frames >= 0)[:, None, None] & (frames < nfr)[:, None, None]
+        & (rows >= 0)[:, :, None] & (rows < ns)[:, :, None]
+        & (cols >= 0)[:, None, :] & (cols < nf)[:, None, :]
+    )  # fmt: skip
+
+    return frac, inside, fclip, rows, cols, omega_peak + d_o, (jo, i0, j0)
+
+
+def _frame_weights(pos: jax.Array, om_fr: jax.Array, fclip: jax.Array, row: dict, geom: dict) -> jax.Array:
+    """Per frame of a window: the beam's profile over the voxel at that frame's dty, and transmission.
+
+    At the mean omega of the peak's mass within each frame: a peak spread in omega (e.g. by sig_rot) diffracts at
+    different omegas, where an off-axis voxel sits at a different place across the beam.
+    """
+    lab0 = jax.vmap(lambda o: sample_to_lab(pos, o, geom["wedge"], geom["chi"], geom["y0"], geom["y0"]))(om_fr)
+    lab = lab0 + jnp.array([0.0, 1.0, 0.0]) * (row["dty_sorted"][fclip] - geom["y0"])[:, None]  # [wo, 3]
+    w_beam = jax.vmap(beam_weight, in_axes=(0, 0, None))(lab, om_fr, geom)
+    per_frame = w_beam * row["transmission_sorted"][fclip]  # [wo]
+
+    return per_frame
+
+
 def _render_peaks(
     entry: jax.Array,
     hkl_idx: jax.Array,
@@ -449,91 +576,15 @@ def _render_peaks(
     origins: tuple | None,
 ) -> tuple:
     """:func:`render_peaks`, also returning the window origins used."""
-    wo, ws, wf = window
-    ns, nf = det_shape
+    nf = det_shape[1]
 
     def one(e: jax.Array, h: jax.Array, br: jax.Array, org: tuple | None) -> tuple:
         ubi, pos, hkl = entries["ubi"][e], entries["pos"][e], hkls[h]
         etasign = 1.0 - 2.0 * br
-        dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
-        centroid, valid = _centroid(ubi, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty_row, geom)
-        cov = _peak_cov(ubi, pos, hkl, etasign, dty_row, geom, entries["sig_rot"][e] if "sig_rot" in entries else None)
-        # detector point spread adds to the slow and fast variances (pixels^2)
-        psf2 = geom["sig_psf"] ** 2
-        om2 = geom.get("sig_omega", 0.0) ** 2  # optional extra omega spread (degrees), e.g. to smooth a refinement
-        ss, ff, oo = cov[0] + psf2 + _VAR_FLOOR[0], cov[1] + psf2 + _VAR_FLOOR[1], cov[2] + om2 + _VAR_FLOOR[2]
-        sf, so, fo = cov[3], cov[4], cov[5]
-        mu_s, mu_f, mu_o = centroid
-        omega_peak = mu_o  # before wrapping
-        mu_o = _wrap_omega(mu_o, 0.5 * (row["omega_min"] + row["omega_max"]))
-
-        # Window origin: no gradient through which cells a peak touches
-        if org is None:
-            jo = jnp.searchsorted(row["omega_edges"], jax.lax.stop_gradient(mu_o)) - 1 - wo // 2
-        else:
-            jo = org[0]
-        frames = jo + jnp.arange(wo)  # [wo] in sorted-omega order
-        nfr = row["omega_sorted"].shape[0]
-        fclip = jnp.clip(frames, 0, nfr - 1)
-
-        # omega over each frame: mass, and the mean and variance of omega within the frame. Conditioning on the
-        # within-frame mean (not the frame centre) keeps peaks much narrower than a frame at their true position.
-        p_o, m_o, v_o = truncated_moments(
-            row["omega_edges"][fclip], row["omega_edges"][fclip + 1], mu_o, jnp.sqrt(oo)
-        )  # [wo]
-        d_o = m_o - mu_o
-
-        # slow | omega in the frame
-        slope = so / oo
-        mu_s_o = mu_s + slope * d_o  # [wo]
-        sd_s_o = jnp.sqrt(ss - so**2 / oo + slope**2 * v_o)  # [wo]
-
-        # Each frame's pixel window is centred on the peak's mean position in that frame, so a peak that moves
-        # across the detector with omega (broad in omega, e.g. near eta = 0) stays inside its window
-        if org is None:
-            i0 = jnp.round(jax.lax.stop_gradient(mu_s_o)).astype(int) - ws // 2  # [wo]
-            j0 = jnp.round(jax.lax.stop_gradient(mu_f + fo / oo * d_o)).astype(int) - wf // 2  # [wo]
-        else:
-            i0, j0 = org[1], org[2]
-        rows = i0[:, None] + jnp.arange(ws)  # [wo, ws]
-        cols = j0[:, None] + jnp.arange(wf)  # [wo, wf]
-        p_s, m_s, v_s = truncated_moments(rows - 0.5, rows + 0.5, mu_s_o[:, None], sd_s_o[:, None])  # [wo, ws]
-
-        # fast | slow in the row, omega in the frame. Within the frame, omega is taken as N(m_o, v_o) and slow | omega
-        # is Gaussian, so (slow, omega) are jointly Gaussian there: integrate omega out given slow, then average over
-        # the row. Holding omega at m_o instead ignores that the row tells us where omega is within the frame, which
-        # matters for peaks narrower in omega than a frame (most of them).
-        det = ss * oo - so**2
-        g_s = (sf * oo - fo * so) / det  # regression of fast on slow and omega
-        g_o = (fo * ss - sf * so) / det
-        var_f_so = ff - (g_s * sf + g_o * fo)  # variance of fast given slow and omega
-        k = slope * v_o / sd_s_o**2  # [wo] slope of E[omega | slow] within the frame
-        var_o_s = v_o * (1.0 - k * slope)  # [wo] variance of omega given slow within the frame
-        e_o = m_o[:, None] + k[:, None] * (m_s - mu_s_o[:, None])  # [wo, ws] E[omega | slow] at the row's mean slow
-        mu_f_so = mu_f + g_s * (m_s - mu_s) + g_o * (e_o - mu_o)  # [wo, ws]
-        dfds = g_s + g_o * k  # [wo] slope of E[fast | slow] within the frame
-        sd_f_so = jnp.sqrt(var_f_so + g_o**2 * var_o_s[:, None] + dfds[:, None] ** 2 * v_s)  # [wo, ws]
-        p_f = bin_fractions(
-            cols[:, None, :] - 0.5, cols[:, None, :] + 0.5, mu_f_so[..., None], sd_f_so[..., None]
-        )  # [wo, ws, wf]
-
-        frac = p_o[:, None, None] * p_s[:, :, None] * p_f  # [wo, ws, wf]
-        inside = (
-            (frames >= 0)[:, None, None] & (frames < nfr)[:, None, None]
-            & (rows >= 0)[:, :, None] & (rows < ns)[:, :, None]
-            & (cols >= 0)[:, None, :] & (cols < nf)[:, None, :]
-        )  # fmt: skip
-        captured = jnp.sum(frac)
-
-        # per-frame factors: the beam's profile over the voxel at that frame's dty, and transmission
-        # at the mean omega of the peak's mass within each frame: a peak spread in omega (e.g. by sig_rot) diffracts
-        # at different omegas, where an off-axis voxel sits at a different place across the beam
-        om_fr = omega_peak + d_o  # [wo]
-        lab0 = jax.vmap(lambda o: sample_to_lab(pos, o, geom["wedge"], geom["chi"], geom["y0"], geom["y0"]))(om_fr)
-        lab = lab0 + jnp.array([0.0, 1.0, 0.0]) * (row["dty_sorted"][fclip] - geom["y0"])[:, None]  # [wo, 3]
-        w_beam = jax.vmap(beam_weight, in_axes=(0, 0, None))(lab, om_fr, geom)
-        per_frame = w_beam * row["transmission_sorted"][fclip]  # [wo]
-
+        sig = entries["sig_rot"][e] if "sig_rot" in entries else None
+        mu, shape, valid = _peak_shape(ubi, pos, hkl, etasign, sig, row, geom)
+        frac, inside, fclip, rows, cols, om_fr, origin = _window_cells(mu, shape, org, row, window, det_shape)
+        per_frame = _frame_weights(pos, om_fr, fclip, row, geom)
         amp = entries["density"][e] * F2[h] * _peak_factors(ubi, hkl, etasign, geom)
         value = amp * per_frame[:, None, None] * frac
         use = inside & valid
@@ -541,7 +592,7 @@ def _render_peaks(
         frame_out = jnp.where(use, row["order"][fclip][:, None, None], -1)
         pixel = rows[:, :, None] * nf + cols[:, None, :]
         pixel_out = jnp.where(use, pixel, 0)
-        return frame_out.ravel(), pixel_out.ravel(), value.ravel(), captured, (jo, i0, j0)
+        return frame_out.ravel(), pixel_out.ravel(), value.ravel(), jnp.sum(frac), origin
 
     return jax.vmap(one, in_axes=(0, 0, 0, None if origins is None else 0))(entry, hkl_idx, branch, origins)
 
