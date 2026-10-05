@@ -12,25 +12,34 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import numpy as np
+from Dans_Diffraction.classes_crystal import Crystal as DansCrystal
 from jax.typing import ArrayLike
 
-from anri.crystal import Crystal, Structure, allowed_hkls
+from anri.crystal import reflections, rings, structure_factors
 from anri.geom import beam_basis
 
 
-def ring_table(crystal: Crystal, wavelength: float, n_rings: int, structure: Structure | None = None) -> dict:
-    """List the allowed reflections of a crystal's first rings, with their structure factors.
+def ring_table(
+    lattice_parameters: ArrayLike,
+    space_group: int,
+    wavelength: float,
+    n_rings: int,
+    structure: DansCrystal | None = None,
+) -> dict:
+    """List the reflections of a crystal's first rings, with their structure factors.
 
-    Systematic absences are removed with :func:`anri.crystal.allowed_hkls`. Each reflection has two predictions,
-    one per omega solution, indexed ``j = 2 h + branch``. With a structure (atoms, e.g. from a CIF), each reflection
-    gets its ``|F|^2`` (with Debye-Waller and anomalous dispersion, see :attr:`anri.crystal.Structure.rings_table`),
-    scaled to a mean of 1; without one, ``|F|^2 = 1``. The crystal's own lattice sets the reflections and 2theta, so
-    a refined lattice can be used with a CIF's atoms.
+    Systematic absences are removed (:func:`anri.crystal.reflections`). Each reflection has two predictions, one per
+    omega solution, indexed ``j = 2 h + branch``. With a structure (``Dans_Diffraction.Crystal``, e.g. from a CIF),
+    each reflection gets its ``|F|^2`` (:func:`anri.crystal.structure_factors`), scaled to a mean of 1; without one,
+    ``|F|^2 = 1``. The lattice parameters given set the reflections and 2theta, so a refined lattice can be used with
+    a CIF's atoms.
 
     Parameters
     ----------
-    crystal
-        The phase, with its lattice and space group
+    lattice_parameters
+        [6] a, b, c (angstrom), alpha, beta, gamma (degrees)
+    space_group
+        Space-group number
     wavelength
         In angstrom
     n_rings
@@ -44,29 +53,24 @@ def ring_table(crystal: Crystal, wavelength: float, n_rings: int, structure: Str
         "hkls" [Nh, 3], "F2" [Nh], "ring_j" [2 Nh] (ring of each prediction), "tth" [n_rings] (degrees)
     """
     dsmax = 0.5
-    while True:  # enough d* range for the first n_rings allowed rings
-        crystal.make_hkls(dsmax, wavelength)
-        hkls = np.asarray(crystal.allhkls, float)
-        ok = allowed_hkls(hkls, crystal.sym_matrices)
-        tth = np.asarray(crystal.alltth)[ok]
-        ring_tth, ring = np.unique(np.round(tth, 4), return_inverse=True)
-        if len(ring_tth) > n_rings or dsmax > 5:
+    while True:  # enough d* range for the first n_rings rings
+        refl = reflections(lattice_parameters, space_group, wavelength, dsmax)
+        ring, ring_ds = rings(refl["ds"])
+        if len(ring_ds) > n_rings or dsmax >= 2 / wavelength:
             break
         dsmax *= 1.5
     sel = ring < n_rings
-    hkls = hkls[ok][sel]
+    hkls = refl["hkl"][sel]
     F2 = np.ones(len(hkls))
     if structure is not None:
-        structure.make_hkls(dsmax, wavelength)
-        st = structure.rings_table  # |F|^2 of every reflection with intensity
-        lookup = {(h, k, l): v for h, k, l, v in zip(st["h"], st["k"], st["l"], st["intensity"])}
-        F2 = np.array([lookup.get(tuple(int(x) for x in np.rint(h)), 0.0) for h in hkls])
+        F2 = structure_factors(structure, hkls, wavelength)
         F2 = F2 / max(F2.mean(), 1e-30)
+    ring_tth = np.degrees(2 * np.arcsin(ring_ds[:n_rings] * wavelength / 2))
     return {
         "hkls": hkls.astype(np.float32),
         "F2": F2.astype(np.float32),
         "ring_j": np.repeat(ring[sel], 2).astype(np.int32),
-        "tth": ring_tth[:n_rings].astype(np.float32),
+        "tth": ring_tth.astype(np.float32),
     }
 
 

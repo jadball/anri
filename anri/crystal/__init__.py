@@ -1,6 +1,5 @@
 """Crystallography-related utilities and functions."""
 
-from ._impl.classes import Crystal, Grain, Structure, Symmetry, UnitCell
 from ._impl.orientation import (
     cubic_grid_misorientation,
     cubochoric_quaternions,
@@ -13,6 +12,16 @@ from ._impl.orientation import (
     quat_to_mat,
     rod_to_mat,
     to_fundamental_zone,
+)
+from ._impl.structure import (
+    B_matrix,
+    float64,
+    lattice_parameters,
+    reflections,
+    rings,
+    space_group,
+    structure_factors,
+    symmetry_matrices,
 )
 from ._impl.utils import (
     B_to_rmt,
@@ -28,17 +37,15 @@ from ._impl.utils import (
 )
 
 __all__ = [
+    "B_matrix",
     "B_to_rmt",
-    "Crystal",
-    "Grain",
-    "Structure",
-    "Symmetry",
     "UBI_to_mt",
-    "UnitCell",
     "allowed_hkls",
     "cubic_grid_misorientation",
     "cubochoric_quaternions",
     "disorientation",
+    "float64",
+    "lattice_parameters",
     "laue_rotations",
     "lpars_rlpars_to_B",
     "lpars_to_B",
@@ -51,7 +58,12 @@ __all__ = [
     "orientation_grid",
     "quat_mul",
     "quat_to_mat",
+    "reflections",
+    "rings",
     "rmt_to_mt",
     "rod_to_mat",
+    "space_group",
+    "structure_factors",
+    "symmetry_matrices",
     "to_fundamental_zone",
 ]

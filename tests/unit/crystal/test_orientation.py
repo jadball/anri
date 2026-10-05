@@ -3,9 +3,7 @@ import unittest
 import numpy as np
 
 from anri.crystal import (
-    Crystal,
-    Symmetry,
-    UnitCell,
+    B_matrix,
     cubochoric_quaternions,
     disorientation,
     laue_rotations,
@@ -15,13 +13,13 @@ from anri.crystal import (
     quat_mul,
     quat_to_mat,
     rod_to_mat,
+    symmetry_matrices,
     to_fundamental_zone,
 )
 
 
 def ops_of(lpars, sg):
-    c = Crystal(UnitCell.from_lpars(lpars), Symmetry.from_number(sg))
-    return laue_rotations(np.asarray(c.sym_ops), np.asarray(c.B))
+    return laue_rotations(symmetry_matrices(sg), B_matrix(lpars))
 
 
 def random_rotations(n, seed=0):
@@ -69,8 +67,7 @@ class TestLaueRotations(unittest.TestCase):
 
     def test_equivalent_orientations_give_the_same_reflections(self):
         lpars, sg, _ = CASES["6/mmm"]
-        c = Crystal(UnitCell.from_lpars(lpars), Symmetry.from_number(sg))
-        B, S = np.asarray(c.B, float), ops_of(lpars, sg)
+        B, S = B_matrix(lpars), ops_of(lpars, sg)
         U = random_rotations(1, 3)[0]
         h = np.array([[1, 0, 0], [1, 0, 1], [1, 1, 2], [2, -1, 3]], float)
         g = U @ B @ h.T  # scattering vectors of U

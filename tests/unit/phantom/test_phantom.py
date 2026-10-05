@@ -7,10 +7,9 @@ import anri.phantom
 
 
 def cubic_ops():
-    c = anri.crystal.Crystal(
-        anri.crystal.UnitCell.from_lpars([3.6] * 3 + [90.0] * 3), anri.crystal.Symmetry.from_number(225)
+    return anri.crystal.laue_rotations(
+        anri.crystal.symmetry_matrices(225), anri.crystal.B_matrix([3.6] * 3 + [90.0] * 3)
     )
-    return anri.crystal.laue_rotations(np.asarray(c.sym_ops), np.asarray(c.B))
 
 
 class TestRotations(unittest.TestCase):

@@ -117,7 +117,7 @@ def main() -> None:
             root = os.path.dirname(root)
         parfile = os.path.join(os.path.dirname(root), "pars", "pars.json")
     geo, phase, cell = anri.io.read_pars_json(parfile, args.phase)
-    lpars = [cell[k] for k in ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")]
+    lpars = np.array([cell[k] for k in ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")])
     sg = cell["cell_lattice_[P,A,B,C,I,F,R]"]
     if not isinstance(sg, float):
         raise SystemExit(
@@ -139,21 +139,24 @@ def main() -> None:
         for k, v in geom.items()
     }
 
-    crystal = anri.crystal.Crystal(
-        anri.crystal.UnitCell.from_lpars(jnp.asarray(lpars)), anri.crystal.Symmetry.from_number(sg)
-    )
-    B = np.asarray(crystal.B, np.float32)
-    ops = anri.crystal.laue_rotations(np.asarray(crystal.sym_ops), B)
-    structure = anri.crystal.Structure.from_cif(args.cif) if args.cif else None
-    rings = ix.ring_table(crystal, WL, args.rings, structure)
+    B64 = anri.crystal.B_matrix(lpars)
+    B = B64.astype(np.float32)
+    ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(sg), B64)
+    if args.cif:
+        import Dans_Diffraction
+
+        structure = Dans_Diffraction.Crystal(args.cif)
+    else:
+        structure = None
+    rings = ix.ring_table(lpars, sg, WL, args.rings, structure)
     _, PAD = anri.geom.sino_shift_and_pad(Y0, NK, DTY0, YSTEP)
     NR = NK + PAD  # recon grid NR x NR, centred on the rotation axis, as ImageD11 pads its reconstructions
     NV = NR * NR
     n_cells = args.rings * (N_E // R_E) * (N_O // R_O) * NK
 
     log(f"dataset {dsfile}; sparse pixels {sparsefile}")
-    log(f"pars    {parfile}: phase {phase}, lattice {', '.join(f'{v:g}' for v in lpars)}, space group {sg} "
-        f"({crystal.sgname}), {len(ops)} Laue-group rotations")  # fmt: skip
+    log(f"pars    {parfile}: phase {phase}, lattice {', '.join(f'{v:g}' for v in lpars)}, space group {sg}, "
+        f"{len(ops)} Laue-group rotations")  # fmt: skip
     log(f"geometry: wavelength {WL:.5f}, distance {geo['distance']:g}; y0 {Y0:.6g}; dty {DTY0:.6g} + {NK} x {YSTEP:.6g}"
         f"{'' if G == 1 else f' (rows summed in groups of {G})'}; omega {OM0:.4g} .. {oedge[-1]:.4g} in "
         f"{len(oedge) - 1} frames of {OSTEP:.4g}")  # fmt: skip

@@ -322,7 +322,7 @@ def allowed_hkls(hkls: ArrayLike, sym_matrices: ArrayLike, tol: float = 1e-6) ->
         [N, 3] reflections
     sym_matrices
         [M, 4, 4] space-group operations ``(R, t)`` on fractional coordinates, e.g.
-        :attr:`anri.crystal.Symmetry.sym_matrices`
+        :func:`anri.crystal.symmetry_matrices`
     tol
         Tolerance for integers
 

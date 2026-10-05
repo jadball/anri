@@ -451,11 +451,14 @@ class TestLargeBatch(unittest.TestCase):
         tmap = TensorMap.from_h5(os.path.join(data, "phantoms", "quartz_flyxdm", "quartz_flyxdm_tmap.h5"))
         entries = {k: jnp.asarray(v[:300]) for k, v in entries_from_tensormap(tmap).items()}
         wl = 0.2845704100778472
-        struc = anri.crystal.Structure.from_cif(os.path.join(data, "cif", "SiO2.cif"))
-        struc.make_hkls(dsmax=1.0, wavelength=wl)
-        table = struc.rings_table
-        hkls = jnp.asarray(np.stack([table["h"], table["k"], table["l"]], 1), dtype=float)
-        F2 = jnp.asarray(table["intensity"], dtype=float)
+        import Dans_Diffraction
+
+        xtl = Dans_Diffraction.Crystal(os.path.join(data, "cif", "SiO2.cif"))
+        refl = anri.crystal.reflections(anri.crystal.lattice_parameters(xtl), anri.crystal.space_group(xtl), wl, 1.0)
+        F2 = anri.crystal.structure_factors(xtl, refl["hkl"], wl)
+        strong = F2 > 0.01  # as the old rings_table kept them
+        hkls = jnp.asarray(refl["hkl"][strong], dtype=float)
+        F2 = jnp.asarray(F2[strong], dtype=float)
         pars = {
             "y_center": 1049.9, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1116.5, "z_size": 75.0, "tilt_z": 0.0,
             "tilt_x": 0.0, "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1, "wavelength": wl,

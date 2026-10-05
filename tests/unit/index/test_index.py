@@ -26,10 +26,9 @@ def geometry(sig_beam=0.5):
 
 
 def iron():
-    c = anri.crystal.Crystal(
-        anri.crystal.UnitCell.from_lpars([A_FE] * 3 + [90.0] * 3), anri.crystal.Symmetry.from_number(229)
-    )
-    return c, np.asarray(c.B, np.float32), anri.crystal.laue_rotations(np.asarray(c.sym_ops), np.asarray(c.B))
+    lpars = np.array([A_FE] * 3 + [90.0] * 3)
+    B = anri.crystal.B_matrix(lpars)
+    return (lpars, 229), B.astype(np.float32), anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(229), B)
 
 
 def rotations(n, seed):
@@ -40,7 +39,7 @@ def rotations(n, seed):
 class TestRings(unittest.TestCase):
     def test_bcc_rings(self):
         c, _, _ = iron()
-        rings = ix.ring_table(c, PARS["wavelength"], 3)
+        rings = ix.ring_table(*c, PARS["wavelength"], 3)
         h = rings["hkls"]
         self.assertTrue(np.all(np.sum(h, 1) % 2 == 0))  # I-centred: h + k + l even
         self.assertEqual(sorted(np.bincount(rings["ring_j"]) // 2), [6, 12, 24])  # {200}, {110}, {211}
@@ -60,7 +59,7 @@ class TestTolerances(unittest.TestCase):
     def test_first_order_bound(self):
         """A rotation by delta moves each reflection by at most the tolerances (|sin eta| > 0.3)."""
         c, B, _ = iron()
-        rings = ix.ring_table(c, PARS["wavelength"], 3)
+        rings = ix.ring_table(*c, PARS["wavelength"], 3)
         geom = geometry()
         U0 = rotations(200, 0)
         axis = np.random.default_rng(1).normal(size=(200, 3))
@@ -102,7 +101,7 @@ class TestOccupancy(unittest.TestCase):
     def test_adjoint(self):
         """<A f, r> = <f, A^T r>."""
         c, B, _ = iron()
-        rings = ix.ring_table(c, PARS["wavelength"], 2)
+        rings = ix.ring_table(*c, PARS["wavelength"], 2)
         geom = geometry()
         pred = ix.predictions(rotations(16, 2), B, rings, geom, 0.2)
         rng = np.random.default_rng(3)
@@ -148,7 +147,7 @@ class TestEndToEnd(unittest.TestCase):
         """Simulate two grains to ImageD11 files, then index them from scratch."""
         c, B, ops = iron()
         wl = PARS["wavelength"]
-        rings = ix.ring_table(c, wl, 3)
+        rings = ix.ring_table(*c, wl, 3)
         U_true = rotations(2, 7)
         i, j = np.mgrid[0:6, 0:6]
         pos = np.stack([i.ravel() - 2.5, j.ravel() - 2.5, np.zeros(36)], 1)
@@ -222,14 +221,14 @@ class TestStructureFactors(unittest.TestCase):
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            rings = ix.ring_table(c, PARS["wavelength"], 3, anri.crystal.Structure.from_cif(cif))
+            rings = ix.ring_table(*c, PARS["wavelength"], 3, __import__("Dans_Diffraction").Crystal(cif))
         F2 = rings["F2"]
         self.assertAlmostEqual(float(F2.mean()), 1.0, places=5)
         per_ring = [F2[rings["ring_j"][::2] == r].mean() for r in range(3)]
         self.assertGreater(per_ring[0], per_ring[1])  # the form factor falls with 2theta
         self.assertGreater(per_ring[1], per_ring[2])
         self.assertTrue(np.all(F2 > 0))
-        np.testing.assert_allclose(ix.ring_table(c, PARS["wavelength"], 3)["F2"], 1.0)
+        np.testing.assert_allclose(ix.ring_table(*c, PARS["wavelength"], 3)["F2"], 1.0)
 
 
 class TestOrientationFit(unittest.TestCase):
@@ -238,7 +237,7 @@ class TestOrientationFit(unittest.TestCase):
         from anri.index._impl.orientations import _forward
 
         c, B, _ = iron()
-        rings = ix.ring_table(c, PARS["wavelength"], 3)
+        rings = ix.ring_table(*c, PARS["wavelength"], 3)
         geom = geometry()
         U = rotations(200, 9)
         bins = (1.0, 1.0, 360, 180, 0.0)

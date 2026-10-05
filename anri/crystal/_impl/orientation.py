@@ -179,7 +179,8 @@ def laue_rotations(sym_ops: ArrayLike, B: ArrayLike) -> np.ndarray:
     Parameters
     ----------
     sym_ops
-        [M, 3, 3] space-group operations on fractional coordinates, e.g. :attr:`anri.crystal.Symmetry.sym_ops`
+        [M, 4, 4] (or [M, 3, 3]) space-group operations on fractional coordinates, e.g. from
+        :func:`anri.crystal.symmetry_matrices`
     B
         [3, 3] reciprocal-space B matrix
 
@@ -188,7 +189,7 @@ def laue_rotations(sym_ops: ArrayLike, B: ArrayLike) -> np.ndarray:
     np.ndarray
         [n, 3, 3] rotations, the identity first
     """
-    R = np.asarray(sym_ops, float)
+    R = np.asarray(sym_ops, float)[:, :3, :3]
     R = R * np.sign(np.linalg.det(R))[:, None, None]  # improper operations times inversion
     B = np.asarray(B, float)
     S = B @ np.swapaxes(R, 1, 2) @ np.linalg.inv(B)  # reflections transform as h -> R^T h
