@@ -178,8 +178,9 @@ class TestEndToEnd(unittest.TestCase):
             rings["hw"] = hw
             nk = len(ds["ybincens"])
             om0 = float(ds["obinedges"][0])
-            H_lit = ix.histogram_pixels(stream(), geom, rings["tth"], 0.1, om0, (0.5, 0.5, 720, 360), 1, 1 << 16)
-            H = ix.histogram_pixels(stream(), geom, rings["tth"], 0.1, om0, (1.0, 1.0, 360, 180), nk, 1 << 16)
+            H_lit, H = ix.histogram_pixels(
+                stream(), geom, rings["tth"], 0.1, om0, [((0.5, 0.5, 720, 360), 1), ((1.0, 1.0, 360, 180), nk)], 1 << 16
+            )
         Hs = H_lit.reshape(3, 720, 360)
         lit = {
             "table": ix.lit_table(Hs > 0),

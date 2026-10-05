@@ -233,7 +233,10 @@ def read_dataset(dsfile: str) -> dict:
         attrs = dict(h.attrs)
         out = {k: h[k][()] for k in ("ybincens", "ybinedges", "obinedges")}
         out["dty"] = h["dty"][()] if "dty" in h else None
-        out["scans"] = [x.decode() if isinstance(x, bytes) else str(x) for x in h["scans"][()]] if "scans" in h else None
+        out["scans"] = (
+            [x.decode() if isinstance(x, bytes) else str(x) for x in h["scans"][()]] if "scans" in h else None
+        )
+
     def absolute(key: str) -> str:
         path = str(attrs.get(key, ""))
         if path and not os.path.isabs(path):
@@ -345,11 +348,11 @@ def stream_sparse(
                 raise KeyError(msg)
             k_f = np.searchsorted(ybinedges, dty_f) - 1
             k_f = np.where((k_f >= 0) & (k_f < n_rows), k_f // gridstep, -1).astype(np.int32)
-            ends = np.cumsum(nnz)
-            n = int(ends[-1]) if len(ends) else 0
+            frame = np.repeat(np.arange(len(nnz), dtype=np.int32), nnz)  # each pixel's frame
+            n = len(frame)
             for s0 in range(0, n, chunk):
                 m = min(chunk, n - s0)
-                fr = np.searchsorted(ends, np.arange(s0, s0 + m), side="right")
+                fr = frame[s0 : s0 + m]
                 yield (
                     gr["row"][s0 : s0 + m].astype(np.float32),
                     gr["col"][s0 : s0 + m].astype(np.float32),

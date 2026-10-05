@@ -230,11 +230,13 @@ def histogram_pixels(
     ring_tth: ArrayLike,
     tth_tol: ArrayLike,
     om0: float,
-    bins: tuple[float, float, int, int],
-    n_rows: int,
+    histograms: list,
     chunk: int,
-) -> jax.Array:
-    """Stream pixels into a histogram, a chunk at a time.
+) -> list:
+    """Stream pixels into one or more histograms in a single pass over the data.
+
+    Each chunk's pixel angles are computed once and added to every histogram, so the data are read once however
+    many histograms (e.g. a fine row-summed lit map and a coarse per-row one) are wanted.
 
     Parameters
     ----------
@@ -247,33 +249,37 @@ def histogram_pixels(
         See :func:`histogram`
     om0
         First omega bin edge
-    bins
-        (b_e, b_o, n_e, n_o): eta and omega bin widths (degrees) and counts
-    n_rows
-        Rows in the histogram (1 sums them all)
+    histograms
+        One ``((b_e, b_o, n_e, n_o), n_rows)`` per histogram: eta and omega bin widths (degrees) and counts, and the
+        number of rows (1 sums them all)
     chunk
         Pixels per call (chunks are padded to it, so one compile)
 
     Returns
     -------
-    jax.Array
-        [n_rings * n_e * n_o * n_rows] histogram
+    list
+        One flat histogram [n_rings * n_e * n_o * n_rows] per entry of ``histograms``
     """
-    b_e, b_o, n_e, n_o = bins
     ring_tth = jnp.asarray(ring_tth, jnp.float32)
     tth_tol = jnp.asarray(tth_tol, jnp.float32)
     n_ring = ring_tth.shape[0]
-    H = jnp.zeros(n_ring * n_e * n_o * n_rows, jnp.float32)
+    out = [jnp.zeros(n_ring * b[2] * b[3] * n, jnp.float32) for b, n in histograms]
+    zeros = jnp.zeros(chunk, jnp.int32)
     for slow, fast, omega, row, value in chunks:
         m = len(value)
 
-        def pad(a: ArrayLike, dt: type = np.float32, m: int = m) -> jax.Array:
-            return jnp.asarray(np.pad(np.asarray(a, dt), (0, chunk - m)))
+        def pad(a: ArrayLike, dt: type = np.float32, fill: float = 0, m: int = m) -> jax.Array:
+            # a fresh array per chunk: a reused buffer can be overwritten while JAX still copies it (asynchronously)
+            b = np.full(chunk, fill, dt)
+            b[:m] = a
+            return jnp.asarray(b)
 
         x = pixel_angles(pad(slow), pad(fast), pad(omega), geom)
-        rows = jnp.where(jnp.arange(chunk) < m, pad(row if n_rows > 1 else np.zeros(m), np.int32), -1)
-        H = H + histogram(x, pad(value), rows, ring_tth, tth_tol, om0, b_e, b_o, n_ring, n_e, n_o, n_rows)
-    return H
+        v, rows = pad(value), pad(row, np.int32, -1)
+        for i, ((b_e, b_o, n_e, n_o), n_rows) in enumerate(histograms):
+            r = rows if n_rows > 1 else jnp.where(rows >= 0, zeros, -1)
+            out[i] = out[i] + histogram(x, v, r, ring_tth, tth_tol, om0, b_e, b_o, n_ring, n_e, n_o, n_rows)
+    return out
 
 
 def ring_profile(chunks: Iterable, geom: dict, ring_tth: ArrayLike, chunk: int, step: float = 0.002) -> tuple:

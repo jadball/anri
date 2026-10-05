@@ -182,10 +182,10 @@ def main() -> None:
         "deg: " + "; ".join(f"{o:+.3f} / {w:.3f} / {t:.3f}" for o, w, t in zip(ring_off, ring_hw, tth_tol)))  # fmt: skip
 
     t1 = time.perf_counter()
-    H_lit = ix.histogram_pixels(stream(groups), geom, rings["tth"], tth_tol, OM0, (B_E, B_O, N_E, N_O), 1, chunk)
-    H = ix.histogram_pixels(
-        stream(groups), geom, rings["tth"], tth_tol, OM0, (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O), NK, chunk
-    )
+    H_lit, H = ix.histogram_pixels(  # one pass: the lit map (rows summed, fine bins), and the fit data (per row)
+        stream(groups), geom, rings["tth"], tth_tol, OM0,
+        [((B_E, B_O, N_E, N_O), 1), ((B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O), NK)], chunk,
+    )  # fmt: skip
     log(
         f"histograms: {time.perf_counter() - t1:.0f} s; {H.size / 1e6:.0f}M bins, {float(jnp.mean(H > 0)) * 100:.1f}% non-empty"
     )
