@@ -1,5 +1,9 @@
 # Stage 3 prototype (local refinement)
 
+**To run on a dataset:** `run_stage3.py`, on the `_index.npz` of `python -m anri.index` (see its docstring). Tested
+end to end on the am316l phantom (1 MLEM iteration per pass: spread 0.82 -> 0.45 deg, voxels with 2+ populations
+57% -> 32%); not yet for accuracy at full iterations, nor on real data.
+
 Scratch code from 2026-10-05, kept so it is not lost; see `../DESIGN.md` ("Since this morning").
 
 - `stage3_setup.py <out>`: render the am316l phantom (as the indexing tutorial), run stages 1-2, save `stage2.npz` and `H.npy`.
