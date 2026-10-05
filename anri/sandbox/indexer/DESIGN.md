@@ -106,12 +106,25 @@ population.
   (`diagnose_peaks.py` is superseded: its spot moments are inflated by merged spots.) Across real datasets so far:
   - with the Al CRLs, an undeformed single crystal has cores within one 0.05 deg frame at every eta (both stations):
     widths beyond that are the sample's;
-  - sample spreads range from below ~0.02 deg to ~0.1 deg FWHM, growing as 1 / |sin eta| (isotropic). Brighter peaks
+  - in the undeformed to lightly deformed samples measured so far, omega spreads range from below ~0.02 deg to
+    ~0.1 deg FWHM, growing as 1 / |sin eta| (isotropic). Heavily deformed samples will be far wider (see below). Brighter peaks
     (longer chords through larger grains) are often wider: a peak in one row sums the voxels along the ray, so the
     measured spread includes orientation changes along the chord, and a voxel's own spread may be smaller;
   - at |sin eta| < 0.25 broad peaks overlap and fail the "clean" filter, so medians there read low; the share of
     peaks there is low anyway (g near the rotation axis never diffracts);
   - widths under a frame are unresolved: a sub-frame peak split over two frames reads ~0.9 frame.
+- **Heavy deformation (e.g. 50% rolled or compressed) is a different regime**, not measured yet:
+  - dislocation cells of ~0.5-2 um, 1-3 deg apart across their walls, and deformation bands and microbands
+    (geometrically necessary boundaries) 5-15 deg and more apart: an original grain fragments over 10-20+ deg;
+  - each cell is nearly perfect (a sharp sub-peak), plus a diffuse cloud from the dislocations in the walls;
+  - lattice rotations follow the active slip systems (single slip rotates about n x b), so a spread is anisotropic
+    and tied to the crystal axes, not isotropic;
+  - heterogeneous elastic strain (type II/III, ~1e-3) widens 2theta;
+  - a 1 um voxel holds several cells: a few populations 1-3 deg apart, each sharp. Along a ray, hundreds of cells
+    merge into streaks and arcs degrees long in omega and eta, so spots overlap within a ring.
+  Consequences: the stage 2 grid sees cells within ~2 steps as one population (mean + spread); an isotropic `sig_rot`
+  fits these spreads poorly; the measured ring widths must cover the strain; peak tables and the "clean" filter
+  (`peak_widths.py`) break down, so widths must come from the histograms. Needs a test phantom and real data.
 - **Consequences:** the spot model is the frame width, the vertical convergence (`sig_kz`) and, where the sample needs
   it, a spread per entry (`sig_rot`, isotropic, exists). Stage 3's bins must not be finer than its grid's spot error.
   `anri.refine`'s basin is a tenth of a peak width, or a fraction of a frame for sub-frame peaks (omega is then fixed

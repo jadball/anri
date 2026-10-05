@@ -55,9 +55,13 @@ Consequences:
   - horizontal beam convergence (about z): the same width at every η (the renderer's `sig_ky`);
   - vertical convergence (about y): δ |cot η|, zero at 3 o'clock;
   - an isotropic orientation spread: σ / |sin η|;
-  - rotation about the beam (x): nothing;
+  - rotation about the beam (x): nothing in omega; it moves the peak in η by the same angle;
   - a tilt of the rotation axis about y acts like vertical convergence (|cot η|): a steady wobble shifts peaks, a vibration faster than a peak's frames widens them;
   - energy bandwidth: (Δλ/λ) tan θ / |sin η|, the only term that grows with 2θ.
+
+  A peak's width is three-dimensional. Omega sees only two of the three rotation components; η sees the third (and
+  part of the others); 2θ sees strain, Δ2θ = 2 ε tan θ (plus the energy bandwidth). An orientation spread is
+  measured from omega and η together, a strain spread from 2θ.
 
   So near η = 0 and 180° (12 and 6 o'clock) every term but the horizontal one is magnified (×6-7 for |sin η| ~ 0.15). Peaks there measure the vertical convergence and the sample spread; peaks near 3 and 9 o'clock measure the horizontal convergence plus the spread. An undeformed single crystal (e.g. a Si cube) separates instrument from sample.
 - **Which optics, energy and overfocus a dataset used** is not in the data files: ask the maintainer. The beam size across dty depends on it.
