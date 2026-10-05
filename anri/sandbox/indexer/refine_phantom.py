@@ -33,6 +33,7 @@ p.add_argument("--rows", type=int, default=0)
 p.add_argument("--max-frames", type=int, default=63)
 p.add_argument("--window", type=int, nargs=3, default=(3, 11, 11))
 p.add_argument("--beam", type=float, help="beam FWHM as rendered (default: the voxel)")
+p.add_argument("--n-cg", type=int, default=15, help="conjugate gradient steps per iteration (default 15)")
 p.add_argument("--n-cpu", type=int, default=8)
 args = p.parse_args()
 
@@ -116,7 +117,7 @@ accuracy(entries["ubi"], "indexer")
 for sig in args.sig:
     e_in = {**entries, "sig_rot": np.full(len(vox), np.radians(sig))}
     out, hist = anri.refine.refine(e_in, hkls, F2, geom, rows, meas, det_shape, n_iter=args.iter, cut=1.0,
-                                   max_frames=args.max_frames, window=tuple(args.window), fit_density=False,
+                                   max_frames=args.max_frames, window=tuple(args.window), fit_density=False, n_cg=args.n_cg,
                                    log=lambda m: log("  " + m))  # fmt: skip
     entries["ubi"] = out["ubi"]
     accuracy(entries["ubi"], f"after spread {sig} deg ({hist[-1]['time']:.0f} s, capture {hist[-1]['capture']:.2f})")

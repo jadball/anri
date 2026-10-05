@@ -90,20 +90,22 @@ def _prepare(peaks: list, rows: list, meas: list, window: tuple[int, int, int], 
              block_pixels: int) -> list:  # fmt: skip
     """Device arrays in blocks of rows: rows stacked, measured pixels padded, peaks batched per window class.
 
-    Each batch of peaks carries its row in the block.
-    One jitted pass per class then runs over every batch of every row in a block: a few large calls per pass
+    Each batch of peaks carries its row in the block. One jitted pass per class then runs over every batch of every row in a block: a few large calls per pass
     instead of one per row and batch, which left the GPU waiting on Python. A block holds rows with the same number
-    of frames, and as many as fit ``block_pixels`` measured pixels (padded); the batch size is fixed per class and
-    the number of batches padded to a power of two, so there are few compiled shapes.
+    of frames, and as many as fit ``block_pixels`` measured pixels (padded). Each row's peaks go in batches no bigger
+    than it needs (a power of two), batches of a size together, their count rounded up to 1, 2, 3, 4, 6, 8, ...:
+    little padding to compute, and few compiled shapes.
     """
     classes = _classes(window, max_frames)
     use = [i for i, (e, _, _, _) in enumerate(peaks) if e.size]
     n_pad = 1 << int(np.ceil(np.log2(max([meas[i]["value"].size for i in use] + [1]))))
     per_block = max(1, block_pixels // n_pad)
-    sizes = []  # bigger windows, smaller batches; small problems, small batches
-    for c, wo in enumerate(classes):
-        n_max = max([int(np.sum(peaks[i][3] == c)) for i in use] + [1])
-        sizes.append(min(max(1024, batch * window[0] // wo), max(256, 1 << int(np.ceil(np.log2(n_max))))))
+
+    def bucket(n: int) -> int:
+        """Return the smallest of 1, 2, 3, 4, 6, 8, 12, ... at least n: at most a third wasted, few shapes."""
+        p2 = 1 << int(np.ceil(np.log2(max(n, 1))))
+        return 3 * p2 // 4 if p2 >= 4 and 3 * p2 // 4 >= n else p2
+
     by_frames: dict = {}
     for i in use:
         by_frames.setdefault(int(np.asarray(rows[i]["omega_sorted"]).shape[0]), []).append(i)
@@ -119,25 +121,27 @@ def _prepare(peaks: list, rows: list, meas: list, window: tuple[int, int, int], 
                 val[j, : meas[i]["value"].size] = meas[i]["value"]
             groups = []
             for c, wo in enumerate(classes):
-                size, parts = sizes[c], []
+                parts: dict = {}  # batch size -> each row's batches of that size
                 for j, i in enumerate(blk):
                     e, h, b, k = peaks[i]
                     sel = k == c
                     n = int(sel.sum())
                     if n == 0:
                         continue
+                    # bigger windows, smaller batches; a row's batches no bigger than it needs (a power of two)
+                    size = min(max(1024, batch * window[0] // wo), max(256, 1 << int(np.ceil(np.log2(n)))))
                     nb = -(-n // size)
                     pad = nb * size - n
-                    parts.append([np.pad(x[sel], (0, pad)).reshape(nb, size) for x in (e, h, b)]
-                                 + [(np.arange(nb * size) < n).reshape(nb, size), np.full(nb, j, np.int32)])  # fmt: skip
-                if not parts:
-                    continue
-                arr = [np.concatenate([q[t] for q in parts]) for t in range(5)]
-                nb = arr[0].shape[0]
-                extra = (1 << int(np.ceil(np.log2(nb)))) - nb  # dead batches: few compiled shapes
-                arr = [np.concatenate([x, np.zeros((extra,) + x.shape[1:], x.dtype)]) for x in arr]
-                g = dict(zip(("e", "h", "b", "live", "ri"), (jnp.asarray(x) for x in arr)))
-                groups.append(((wo, window[1], window[2]), g))
+                    parts.setdefault(size, []).append(
+                        [np.pad(x[sel], (0, pad)).reshape(nb, size) for x in (e, h, b)]
+                        + [(np.arange(nb * size) < n).reshape(nb, size), np.full(nb, j, np.int32)]
+                    )
+                for size in sorted(parts):
+                    arr = [np.concatenate([q[t] for q in parts[size]]) for t in range(5)]
+                    extra = bucket(arr[0].shape[0]) - arr[0].shape[0]  # dead batches
+                    arr = [np.concatenate([x, np.zeros((extra,) + x.shape[1:], x.dtype)]) for x in arr]
+                    g = dict(zip(("e", "h", "b", "live", "ri"), (jnp.asarray(x) for x in arr)))
+                    groups.append(((wo, window[1], window[2]), g))
             stacked = {k: jnp.stack([jnp.asarray(rows[i][k]) for i in blk]) for k in rows[blk[0]]}
             out.append({"groups": groups, "rows": stacked, "pix": jnp.asarray(pix), "val": jnp.asarray(val.ravel()),
                         "fs": jnp.stack([jnp.asarray(meas[i]["frame_start"]) for i in blk])})  # fmt: skip

@@ -43,6 +43,7 @@ p.add_argument("--det-shape", type=int, nargs=2, default=(2162, 2068), help="det
 p.add_argument("--cut", type=float, default=1.0, help="segmentation threshold of the sparse pixels")
 p.add_argument("--max-frames", type=int, default=31)
 p.add_argument("--window", type=int, nargs=3, default=(3, 7, 7))
+p.add_argument("--n-cg", type=int, default=15, help="conjugate gradient steps per iteration (default 15)")
 p.add_argument("--n-cpu", type=int, default=4)
 args = p.parse_args()
 
@@ -141,7 +142,7 @@ start = orientation(entries["ubi"][main])
 for sig in args.sig:
     e_in = {**entries, "sig_rot": np.full(len(voxel), np.radians(sig))}
     out, hist = anri.refine.refine(e_in, hkls, F2, geom, rows, meas, det_shape, n_iter=args.iter, cut=args.cut,
-                                   max_frames=args.max_frames, window=tuple(args.window), fit_density=False,
+                                   max_frames=args.max_frames, window=tuple(args.window), fit_density=False, n_cg=args.n_cg,
                                    log=lambda m: log("  " + m))  # fmt: skip
     moved = anri.crystal.disorientation(orientation(out["ubi"][main]), orientation(entries["ubi"][main]), ops)
     total = anri.crystal.disorientation(orientation(out["ubi"][main]), start, ops)
