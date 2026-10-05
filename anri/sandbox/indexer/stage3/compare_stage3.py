@@ -111,3 +111,10 @@ print(
     f"switched voxels where stage 3's main fraction is >= 0.9: {np.mean(main3_f[idx] >= 0.9) * 100:.0f}%; "
     f"where stage 2 gave the chosen population < 0.2: {np.mean(chosen2 < 0.2) * 100:.0f}%"
 )
+
+# What kind of switch: between neighbouring grains (any angle), or between a parent and its twin (a fixed angle, e.g.
+# 60 deg for Sigma3 in FCC, ~86 deg for {10-12} in HCP)? A peak in this histogram is a twin relation.
+dsw = d[switched]
+hist, edges = np.histogram(dsw, bins=np.arange(0, 100, 5))
+print("switched voxels, angle between the stage-2 and stage-3 main orientations (deg): " + ", ".join(
+    f"{edges[i]:.0f}-{edges[i + 1]:.0f}: {hist[i]}" for i in range(len(hist)) if hist[i]))  # fmt: skip
