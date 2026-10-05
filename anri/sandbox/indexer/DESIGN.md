@@ -1,4 +1,4 @@
-# Indexer: current state and next steps (2026-10-05, afternoon)
+# Indexer: current state and next steps (2026-10-05, evening)
 
 Read this first. Below it is the design history (the first draft); where they differ, this section is current.
 
@@ -70,9 +70,46 @@ Read this first. Below it is the design history (the first draft); where they di
   - Speed: ~100 s per iteration on a laptop CPU for 2060 voxels x 250 candidates. A subset of voxels cannot be fitted alone (other voxels' spots share the rays).
   - Prototype code: `anri/sandbox/indexer/stage3/` (scratch quality, see its README).
 
+## Stage 3 on real data: Tognan, then Mg (2026-10-05, evening)
+
+`stage3/run_stage3.py` on the Mg alloy (MgAl_3_nanox_3N, z0: 481 rows of 1.5 um, 3620 frames of 0.05 deg, zigzag, no CIF,
+no gridstep). Its default fine bins (0.25 x 0.05 deg) made the map **worse than stage 2**: grain boundaries bled into the
+neighbours (along stage 2's voxels with fraction < 1), and the main fraction went to ~1 everywhere.
+`compare_stage3.py` (stage 2 vs 3 in numbers): isolated flips 0.96% -> 3.4-4.9%, 11% of voxels changed their main
+population.
+
+- **Cause: the orientation grid is ~10x coarser than the bins.** A true orientation sits up to half a step from its
+  nearest grid node, which misplaces its spots by, in omega, median 0.14 deg (90th 0.32) for a 0.5 deg grid and 0.07
+  (0.17) for 0.25 deg; in eta about 0.8 x that. With 0.05 deg omega bins the grid cannot put a spot in the right bin,
+  so MLEM mixes nodes and borrows intensity from other units (the neighbour's minor populations at boundaries).
+  - **Rule: bins no finer than the spot error of the grid step** (roughly bins >= the grid step).
+  - `--bins 1.0 1.0` (pass 1 only, 0.5 deg grid): grain shapes decent, boundaries and twins slightly better than
+    stage 2. Pass 2 (0.25 deg grid) at 1 deg bins gained 1% deviance for 813 s and looked the same: skip it there
+    (`--pass2 0 0`).
+  - Untested: one pass at 0.25 deg with bins to match, `--pass1 1.0 0.25 --pass2 0 0 --bins 0.25 0.25 --iter 10`.
+  - Bins as fine as frames need continuous orientations per unit (a refiner like `anri.refine`), not a grid.
+- **Ruled out or minor:**
+  - y0: stage 3 took the DataSet's y0 while stage 2 had `--y0`. Fixed (stage 2 saves y0 in its npz; stage 3 reads it,
+    `--y0` overrides), but the fine-bin map stayed bad.
+  - zigzag omega offset: real but 0.004 deg (8% of a frame), negligible (`diagnose_zigzag.py`).
+  - over-iteration: 5 -> 20 iterations raised flips 3.4 -> 4.7%; the deviance was flat after ~10.
+  - the beam: the scan that favoured wider beams (deviance falling up to 5 um FWHM) was run with the wrong y0 and the
+    mismatched bins, so it is void. The maintainer's tomo map is sharp at 1.5 um. **Redo it** with the right y0 and
+    `--bins 1.0 1.0 --pass2 0 0 --iter 5`, beams 1.0 / 1.5 / 2.5.
+- **Model gaps found:** stage 3 had no structure factors (`--cif` added; hcp rings differ in |F|^2 by up to 8x, so a Mg
+  CIF should go to both stages), and modelled voxels as one row step (now stage 2's voxel size). Both are logged.
+- **Twins** are still almost absent: stage 3 only refines stage 2's units within +-1 deg. Stage 2 fits them but under
+  `--min-frac`; `--unit-frac 0.03` makes units of populations down to 3% (stage 2 keeps up to 4 per voxel, above 2%).
+  Untested. If not enough: seed twin orientations into stage 2 (new anri.index API: ask first).
+- **Peak widths:** `diagnose_peaks.py` measures them per ring from the data (autocorrelation and spot moments; within 2%
+  on simulated bright peaks, 10-20% narrow on faint ones, so trust its "brightest 10%"). Maintainer running it on Mg.
+  Stage 3 predicts point spots: once bins approach the peak width, it needs a width (per ring, or a spread per unit).
+- **Speed (L40S, 116k units):** pass 1 (125 orientations) 22-29 s/iteration, pass 2 (729) 118-147 s/iteration. Coarser
+  bins were slower, probably contention in the scatter-add (unchecked).
+
 ## Next steps, in order
 
-1. **Local refinement (stage 3).** Also the fix for twin ghosts and grid-limited spreads. For each voxel's populations, a local grid (e.g. +-1.5 deg at 0.25 deg) against finer data (omega at frame resolution, finer eta), fitted again by sparse MLEM: each voxel's candidates become its local grid, so `fit_occupancy`'s machinery mostly applies.
+1. **Local refinement (stage 3)**, see the section above for its state on real data. Also the fix for twin ghosts and grid-limited spreads. For each voxel's populations, a local grid (e.g. +-1.5 deg at 0.25 deg) against finer data (omega at frame resolution, finer eta), fitted again by sparse MLEM: each voxel's candidates become its local grid, so `fit_occupancy`'s machinery mostly applies.
    - Fixes: the decoys, precision (~0.1 deg needed for wide samples like Chen), and the grid-inflated spread.
    - Open: memory of the finer histogram on large maps; it probably needs blocks of rows.
 2. **Beam profile in the system matrix:** a voxel spread over the rows the beam reaches, not 2. Do it together with 1, as both change `system`.
