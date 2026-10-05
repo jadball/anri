@@ -31,6 +31,27 @@ Consequences for models:
 - **Report what the data cannot resolve:** populations closer than the instrument resolution cannot be separated, so report a mean and a spread rather than inventing structure.
 - **Test on realistic phantoms:** with orientation spread along the rays (cell structures, twins, AM-like hierarchies), not uniform grains or linear gradients on a voxel grid. A uniform orientation per voxel turns a gradient into an unphysical ladder of sub-peaks.
 
+### The instrument: ESRF ID11 focusing optics
+
+Most data come from scanning 3DXRD at ID11. The beam is focused by one of these, or both together:
+
+- **Si planar nanolenses:** two 1D lenses (one horizontal, one vertical). f ~ 10 cm, physical aperture 50 µm, effective aperture ~38 µm at 40-55 keV (Snigirev et al., Proc. SPIE 6705, 670506, 2007).
+- **Al CRL boxes:** two 2D boxes, 96 m from a source of 60 µm (h) × 20 µm (v); lenses of R = 30 µm, 10 µm between apexes.
+
+  | Energy | Lenses | f | Effective aperture |
+  |---|---|---|---|
+  | 43 keV | 102 | 50.4 cm | 118 µm |
+  | 56 keV | 173 | 50.5 cm | 115 µm |
+  | 70 keV | 275 (both boxes) | 49.6 cm | 105 µm |
+
+- **Overfocusing:** a transfocator ~60 m from the source is sometimes set to overfocus, sending a divergent beam into the lenses. This enlarges the beam at the sample, by an amount chosen per experiment.
+
+Consequences:
+
+- **Convergence at the sample** is at most about effective aperture / f: ~0.2 mrad (0.012°) for the Al CRLs, ~0.4-0.5 mrad for the Si lenses, whatever comes in upstream.
+- **Horizontal convergence acts as a spread in omega** of the same size at every eta (the renderer's `sig_ky`). An isotropic orientation spread instead widens omega as ~1 / |sin eta|.
+- **Which optics, energy and overfocus a dataset used** is not in the data files: ask the maintainer. The beam size across dty depends on it.
+
 ## Use JAX
 
 Anri code should use JAX wherever possible: `jit`, `vmap`, `lax.map`/`scan`, sharding.
