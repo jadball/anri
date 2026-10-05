@@ -32,6 +32,7 @@ p.add_argument("--iter", type=int, default=5)
 p.add_argument("--rows", type=int, default=0)
 p.add_argument("--max-frames", type=int, default=63)
 p.add_argument("--window", type=int, nargs=3, default=(3, 11, 11))
+p.add_argument("--beam", type=float, help="beam FWHM as rendered (default: the voxel)")
 p.add_argument("--n-cpu", type=int, default=8)
 args = p.parse_args()
 
@@ -56,8 +57,11 @@ lpars = np.array([a, a, a, 90.0, 90.0, 90.0])
 B = anri.crystal.B_matrix(lpars)
 ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(225), B)
 wl = geo["wavelength"]
-# the rendering's instrument (as the phantom was simulated), with 1 um voxels for the entries
-geom = anri.io.geom_from_pars(geo, ds["y0"], wl * 2e-4 / 2.355, 5e-5, 5e-5, sig_beam=1.4 / 2.355, voxel_size=1.0,
+# the rendering's instrument (as render_phantom.py), with the indexer's voxels
+r_idx = np.load(args.entries.replace("_entries.npz", ".npz"))
+vsize = float(np.median(np.diff(np.unique(np.round(r_idx["pos"][:, 0], 6)))))
+beam = args.beam or vsize
+geom = anri.io.geom_from_pars(geo, ds["y0"], wl * 2e-4 / 2.355, 5e-5, 5e-5, sig_beam=beam / 2.355, voxel_size=vsize,
                               sig_psf=0.5)  # fmt: skip
 rings = ix.ring_table(lpars, 225, wl, 8)
 hkls, F2 = np.asarray(rings["hkls"], float), np.ones(len(rings["hkls"]))
@@ -94,7 +98,7 @@ log(f"intensity scale from row {i}: {scale:.3f} (1 if the densities match the ph
 truth = TensorMap.from_h5(args.truth)
 te = anri.io.entries_from_tensormap(truth)
 t_U = np.linalg.inv(te["ubi"]) @ np.linalg.inv(B)
-inside = KDTree(te["pos"][:, :2]).query_ball_point(entries["pos"][:, :2], 0.5, p=np.inf)
+inside = KDTree(te["pos"][:, :2]).query_ball_point(entries["pos"][:, :2], 0.5 * vsize, p=np.inf)
 main = np.flatnonzero((popn == 0) & np.array([len(x) > 0 for x in inside]))
 
 
