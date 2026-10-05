@@ -1,6 +1,73 @@
-> **Moved (2026-10-05):** the indexer is now `anri.index` (and `python -m anri.index`), the phantom `anri.phantom`, orientations and grids `anri.crystal`. This file is the design history.
+# Indexer: current state and next steps (2026-10-05)
 
-# A forward-model indexer for scanning 3DXRD (draft for review)
+Read this first. Below it is the design history (the first draft); where they differ, this section is current.
+
+## Where things are
+
+- **Code:** `anri.index` (data, predict, orientations, occupancy, populations), `anri.crystal` (Laue groups, fundamental zones, orientation grids), `anri.phantom` (polycrystals with cells and twins), ImageD11 readers in `anri.io`.
+- **Command line:** `python -m anri.index <analysisroot> <sample> <dataset>` on any ImageD11 dataset. `--check` prints paths, sizes and memory without running.
+- **Tutorials (stored runs):** `docs/source/tutorials/phantom.ipynb` and `indexing.ipynb`. Test phantom: `tests/data/phantoms/am316l`.
+- **Tests:** `tests/unit/index`, `tests/unit/crystal/test_orientation.py`, `tests/unit/phantom` (an end-to-end two-grain index takes ~13 s).
+
+## The pipeline and its defaults
+
+1. **Rings:** the first `--rings` (6) allowed rings; |F|^2 from `--cif` (default 1). Each ring's 2theta window is measured from 9 sample rows.
+2. **Histograms**, built once:
+   - the lit map: 0.5 deg eta x 0.25 deg omega, rows summed; lit above `--lit` x the median non-empty bin;
+   - the fit data: 1 deg x 1 deg per dty row.
+3. **Grid:** Rodrigues for cubic, cubochoric reduced to the fundamental zone (plus a half-step shell) for other symmetries. Step: `--grid`, or the coarsest of 3, 2.5, 2, 1.5, 1 deg with chance completeness <= `--max-chance` (0.5).
+4. **Pruning:**
+   - completeness (tolerances per prediction from the grid's worst case, ring widths, |sin eta|), as a cheap filter: everything above chance;
+   - then `orientation_mlem`: one occupancy per orientation fitted to the row-summed data, kept if its likelihood ratio > `--min-lr` (25);
+   - `--prune completeness` gives the old behaviour.
+5. **Occupancy:** each voxel's `--cand` (64) candidates by the first MLEM update, then sparse MLEM, in voxel blocks of `--block-gb`. `--coarse G` takes the candidates from a fit G x coarser (~G^2 cheaper on large maps).
+6. **Populations:** grouped within 1.8 grid steps, up to 4 per voxel, reported above `--min-frac` (0.1). Voxels count as occupied above `--occupied` (0.2) x the 99th percentile of the occupancy.
+
+## What was learned (with numbers)
+
+- **Tolerances** follow from first order: `delta / cos(theta) (1 + tan(theta) |cot eta|)` in eta and `delta / (cos(theta) |sin eta|)` in omega, checked numerically. Fixed tolerances were too tight for a 2.5 deg grid.
+- **Grids:** for cubic, Rodrigues needs about half the orientations of cubochoric for the same worst case. Cubochoric matches orix point for point. Without the shell, the -3 group had gaps up to 1.86 x step.
+- **Sparse occupancy:**
+  - K = 32 lost twins (77% against 93% within 1 deg); K = 64 matches the dense fit.
+  - `--coarse 4` gave the same accuracy as the direct run on the phantom.
+- **Pruning by likelihood ratio** (crowded phantom, r = 50 um, 249 grains, 2 deg grid):
+  - 4059 orientations recall 99.6% of grains (90% of those under 5 um^2), where completeness needs 19,222 for 98.8% (70%);
+  - the voxel fit with the likelihood list took < 10 min on CPU; with the completeness list it did not finish within 30 min.
+  - The cost: the global fit also keeps **decoys** that soak up intensity the grid cannot fit (the truth lies between grid points). They have low completeness but high likelihood ratio. On the sparse 25 um phantom, accuracy drops from 88% to 85% within 1 deg, and more voxels get a second population.
+  - Gating by completeness removes the decoys, but also small grains (90% -> 30-70% recall under 5 um^2). So the gate is optional (`--min-comp`), and the real fix is item 1 below.
+- **Second populations** before the 0.1 cut: a third are real (two orientations in one voxel), a quarter are a neighbour's orientation within 1.5 um, a third are decoys (median fraction 0.05).
+  - The neighbour leak is a model gap: the system matrix spreads a voxel over 2 rows, with no beam profile (the phantom's beam is 1.4 um FWHM on 1 um voxels).
+- **Precision:** the main population's mean is ~0.25-0.3 x the grid step from the truth. The spread includes the grid spacing, so it is too large as `sig_rot` for `anri.refine`.
+- **Beam size** is not measurable from edges along dty: inclined boundaries widen every edge.
+- **Small grains under 5 um^2:** 90% are in the pruned list, but only 40% survive into the final map, so the 1 um voxel fit loses half of them.
+- **Real data** (maintainer's runs):
+  - Tognan: chance completeness 0.98 at `--lit 1` and 2.5 deg. `--lit 10` and a 1 deg grid gave chance 0.46, and the deviance fell 3.4x.
+  - Chen: the old `--keep 3000` cap dropped small grains; keeping all 10,354 cut the deviance by 31%.
+  - The likelihood pruning has not been run on real data yet: it is planned for the beamtime.
+
+## Next steps, in order
+
+1. **Local refinement (stage 3).** For each voxel's populations, a local grid (e.g. +-1.5 deg at 0.25 deg) against finer data (omega at frame resolution, finer eta), fitted again by sparse MLEM: each voxel's candidates become its local grid, so `fit_occupancy`'s machinery mostly applies.
+   - Fixes: the decoys, precision (~0.1 deg needed for wide samples like Chen), and the grid-inflated spread.
+   - Open: memory of the finer histogram on large maps; it probably needs blocks of rows.
+2. **Beam profile in the system matrix:** a voxel spread over the rows the beam reaches, not 2. Do it together with 1, as both change `system`.
+3. **Censoring** below the segmentation cut in both MLEMs (as `anri.refine` does): weak predictions are biased to zero now.
+4. **Validation on real data** (Tognan, Chen) against ImageD11's pbp and refined maps:
+   - Is `--min-lr 25` right under strain and distortion mismatch?
+   - How many small grains does each method find?
+5. **Smaller items:**
+   - mask empty voxels from the coarse fit (~2x on half acquisitions such as Chen);
+   - a better automatic grid rule (`--max-chance 0.5` picks 3 deg on sparse phantoms, where 2 deg is better);
+   - a non-cubic phantom, end to end.
+
+## Reproducing the test cases
+
+- **25 um phantom:** the tutorial `indexing.ipynb` renders and indexes it in ~3 min on a laptop CPU.
+- **Crowded, small-grain phantom:** `anri.phantom.polycrystal(n=203, step=0.5, radius=50, n_grains=300, cell_size=1.5, cell_spread_deg=0.3, twin_grains=3, seed=11)`, rendered as in the tutorial (Tognan geometry, 8 rings, dty +-55 um in 1 um steps, 1800 frames of 0.1 deg).
+  - 31k entries, ~5 min to render on CPU.
+  - Compare pruning per grain by checking whether a kept orientation lies within delta + 0.5 deg of each grain's mean, binned by grain area.
+
+## History: the first draft and its status notes (2026-10-04)
 
 Status (2026-10-04 20:10). The text below is the first draft. Since then the maintainer decided:
 
@@ -10,7 +77,7 @@ Status (2026-10-04 20:10). The text below is the first draft. Since then the mai
 Implemented in index.py, run_phantom.py and run_tognan.py:
 
 - **Phantom:** 99.3% of voxels within 1°.
-- **Tognan:** a map that matches ImageD11's well but with poor fidelity. Pruning is arbitrary on crowded data; see the memory note "indexer" for the issues and next steps.
+- **Tognan:** a map that matches ImageD11's well but with poor fidelity. Pruning is arbitrary on crowded data; (a memory note of the time, not in the repo).
 
 Since then (2026-10-04, run_index.py):
 
@@ -23,7 +90,7 @@ Since then (2026-10-04, run_index.py):
 
 Written 2026-10-04 after the refinement study (`anri/sandbox/math/NOTES.md`, `anri/sandbox/moments/`).
 
-## Goal
+### Goal
 
 Find each voxel's orientation populations from the data and the forward model alone:
 
@@ -39,13 +106,13 @@ Each voxel gets a few entries with fractions, located to within the basin of the
 - 3.77G sparse pixels (18.7M per row).
 - FCC, a = 3.597 Å, λ = 0.284 Å.
 
-## What the study established (the constraints)
+### What the study established (the constraints)
 
 1. **The data are rich.** Per dislocation cell: ~5e-4° in orientation, ~1e-5 in strain at 100 counts per sub-peak. Pixels hold about the same information as the moments of separated sub-peaks.
 2. **ω is both the Bragg angle and the projection angle.** A voxel that is Δω off lights rows r·Δω away. Every row-wise local method therefore has a basin of ~beam / r.
 3. **Scoring voxels independently** (ImageD11 pbp, the local grid search) is biased by other voxels on the same rays. That's merging; in the test, the score preferred a wrong rotation in 73% of failures.
 
-## Principle
+### Principle
 
 The data are linear in the sample's density over position and orientation, f(v, q) (voxel v, orientation q):
 
@@ -61,7 +128,7 @@ The data are linear in the sample's density over position and orientation, f(v, 
 
 A useful structure: for a fixed orientation q and reflection h, the predicted (η, ω) does not depend on the voxel (parallax aside). So Aᵀd for one q is a sum over reflections of one-angle back-projections of a 1D row profile (the data at (η_qh, ω_qh) as a function of dty) along angle ω_qh. That is an ordinary tomographic back-projection, one per orientation.
 
-## Stages
+### Stages
 
 1. **Histogram the data once** into H[ring, η, ω, row], at a resolution matched to the orientation grid (coarse: η 0.5°, ω 0.25°).
    - Tognan, first 4 rings: 4 × 720 × 724 × 201 ≈ 4.2e8 cells (1.7 GB float32).
@@ -76,18 +143,18 @@ A useful structure: for a fixed orientation q and reflection h, the predicted (�
 
 Grain shapes come out as regions of voxels sharing an orientation; no tomo step is needed.
 
-## Cost and scale
+### Cost and scale
 
 - **Tognan (31.7k voxels):** minutes per stage, a few GB of GPU memory. Fine.
 - **400 × 400 laptop case (~125k voxels):** 4× Tognan. Fine on CPU if slow; chunk over orientations.
 - **3k × 3k (~7M voxels):** the full coarse product is ~2e14 lookups, too much. Use multi-resolution in space: run stage 2 on voxels 4–8× coarser, then only refine the surviving orientations per region at full resolution.
 
-## Test plan
+### Test plan
 
 1. **An AM-like phantom at the Tognan geometry,** first small (r = 25 µm, 1 µm voxels): columnar grains, solidification cells of 0.5–1 µm with ≲0.5° misorientation, a few degrees of drift along columns. Render it with Anri, then index from nothing. Score per voxel against the truth: fraction within 0.1°, and shapes.
 2. **Tognan:** compare with the ImageD11 pbp map and the refined TensorMap that are already in PROCESSED_DATA.
 
-## Code
+### Code
 
 Plain functions in a new `anri/index` module:
 
@@ -98,7 +165,7 @@ Plain functions in a new `anri/index` module:
 
 No classes. Reuse the renderer's geometry functions (`hkl_to_k_omega`, `raytrace_to_det`, `sample_to_lab`, `beam_weight`).
 
-## Open questions for the maintainer
+### Open questions for the maintainer
 
 1. **Beam size and profile for Tognan:** 1 µm FWHM? Al CRL or Si lenses?
 2. **Coarse grid:** is 2° fine enough to see AM solidification cells (≲0.5°) as one population at stage 2? If not, stage 3 has to split them.
