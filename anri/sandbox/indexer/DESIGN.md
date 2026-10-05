@@ -1,4 +1,4 @@
-# Indexer: current state and next steps (2026-10-05)
+# Indexer: current state and next steps (2026-10-05, afternoon)
 
 Read this first. Below it is the design history (the first draft); where they differ, this section is current.
 
@@ -45,9 +45,34 @@ Read this first. Below it is the design history (the first draft); where they di
   - Chen: the old `--keep 3000` cap dropped small grains; keeping all 10,354 cut the deviance by 31%.
   - The likelihood pruning has not been run on real data yet: it is planned for the beamtime.
 
+## Since this morning (2026-10-05)
+
+- **Real data:**
+  - Tognan with likelihood pruning: 21k orientations, final deviance 1.265e12 (completeness pruning: 1.360e12 with 27k), 3.5 min on the L40S.
+  - A hexagonal Mg alloy (P63/mmc, cubochoric grid at 1.5 deg) indexed first time. Fine deformation twins were missed (diagnose with `diagnose_twins.py`).
+  - `--occupied 0.2` cuts holes into real samples (tuned on the uniform phantom); a rule from the data is wanted.
+- **Speed:**
+  - The histograms are read-bound: 94 s to read Tognan's 3.77G pixels on one core (HDF5 decompression under h5py's lock), against 95 s for the whole histogram step with `anri.io.prefetch`.
+  - Beyond that: decompress raw chunks in threads (`read_direct_chunk` + bitshuffle/LZ4).
+  - `inherit_candidates` now uses a KD-tree: 2 min -> 4 s.
+- **Twin ghosts:** a twin shares reflections with its parent (a third for Sigma3). Where the grid fits the parent imperfectly, the twin orientation explains part of the shared spots, passes pruning (likelihood ratio > 25) and is fitted as a second population.
+  - On the am316l phantom (one twinned grain in 38): the twin of 98% of grains was kept, and most second populations sat 60 deg from the first.
+  - These are most of the "decoys" seen before. Local refinement cut voxels with 2+ populations from 57% to 23%: a well-fitted parent leaves nothing to steal.
+- **Parent/twin split per voxel** is poorly determined near boundaries on the phantom: pure parent voxels get ~30% twin, the correlation with the truth is 0.66 (fine stage 0.45). It shows as stripes one voxel wide where the main population flips.
+- **Ring artefacts** (concentric about the rotation axis) on the twins sample W2_z2 (Jerard_Gordon_twins), from per-row misfit. The CLI logs and saves `row_ratio` (measured / fitted intensity per dty row).
+  - Phantom: smooth radial bias of +-7% from the 2-row model.
+  - W2_z2: row-to-row rms 0.19 (Mg: 0.018). The monitor (`--monitor`, now supported, with a master-file fallback) varies only +-6% there, so flux is not the cause.
+  - Cause: **W2_z2 is a helical scan**: dty moves continuously, 2 um per 360 deg turn (from the slope of the rows' readings; the encoder reading steps once per row, so its phase within a turn is unknown and degenerate with y0). The model must shift row r's beam by rate x (omega - omega_ref).
+  - The maintainer asked to do this on a machine where the data can be read and debugged. `diagnose_positions.py` shows a DataSet's dty and omega per frame. Its "outside their bin" line is wrong for rows in descending dty.
+- **Fine stage (prototype, not in anri.index):** a sparse fine histogram (CSR per (ring, eta, omega) cell over rows, int32 lookups), parallax by ray tracing from each voxel, and the beam profile over rows, with local grids around populations.
+  - On the 25 um phantom: the local grid on the coarse 1 deg data already gave main population within 0.5 deg 33.6% -> 73.2%, median 0.60 -> 0.36 deg, and removed most decoys.
+  - The fine data did not improve further: 0.25 deg median against each voxel's mean truth. That phantom's truth varies inside a 1 um voxel (0.5 um cells), so it may be the test's limit. **Next: a phantom on the indexing grid with cells larger than a voxel.**
+  - Speed: ~100 s per iteration on a laptop CPU for 2060 voxels x 250 candidates. A subset of voxels cannot be fitted alone (other voxels' spots share the rays).
+  - Prototype code: `fine.py`, `fine_exp.py`, `local_exp.py` in the session scratchpad. Not in the repo: rebuild from this description.
+
 ## Next steps, in order
 
-1. **Local refinement (stage 3).** For each voxel's populations, a local grid (e.g. +-1.5 deg at 0.25 deg) against finer data (omega at frame resolution, finer eta), fitted again by sparse MLEM: each voxel's candidates become its local grid, so `fit_occupancy`'s machinery mostly applies.
+1. **Local refinement (stage 3).** Also the fix for twin ghosts and grid-limited spreads. For each voxel's populations, a local grid (e.g. +-1.5 deg at 0.25 deg) against finer data (omega at frame resolution, finer eta), fitted again by sparse MLEM: each voxel's candidates become its local grid, so `fit_occupancy`'s machinery mostly applies.
    - Fixes: the decoys, precision (~0.1 deg needed for wide samples like Chen), and the grid-inflated spread.
    - Open: memory of the finer histogram on large maps; it probably needs blocks of rows.
 2. **Beam profile in the system matrix:** a voxel spread over the rows the beam reaches, not 2. Do it together with 1, as both change `system`.
