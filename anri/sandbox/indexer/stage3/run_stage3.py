@@ -145,7 +145,7 @@ def local_pass(U_centre, f_centre, half, step, label):  # noqa: ANN001, ANN201
     f = np.asarray(f).reshape(-1, K)[:n]
     log(f"{label}: {time.perf_counter() - t0:.0f} s")
     cand = np.arange(n * K).reshape(n, K)
-    _, U_m, spread, _ = ix.populations(f, cand, U_c.reshape(-1, 3, 3), ops, 4 * half, p=1, eps=0.0)
+    _, U_m, spread, _ = ix.populations(f, cand, U_c.reshape(-1, 3, 3), ops, max(4 * half, 1.0), p=1, eps=0.0)
     tot = f.sum(1)
     empty = tot <= 0  # the fit emptied the unit: no mean to take, so keep its input orientation
     log(f"{label}: {empty.sum()} of {n} units emptied by the fit")
