@@ -44,12 +44,22 @@ Most data come from scanning 3DXRD at ID11. The beam is focused by one of these,
   | 56 keV | 173 | 50.5 cm | 115 µm |
   | 70 keV | 275 (both boxes) | 49.6 cm | 105 µm |
 
+- **Stations:** NSCOPE and TDXRD. TDXRD has a bigger rotation stage with ~1 µm radial runout, comparable to the voxel size: the sample moves across the beam by up to ~1 µm, periodically in omega. That shifts voxels between dty rows (a position error); it does not widen peaks in omega, which only rotations do.
+- **Measured resolution** (`anri/sandbox/indexer/stage3/peak_widths.py` on undeformed Si crystals, Al CRLs, 0.05° frames, both stations): peak cores are narrower than one frame at every η, ~0.05° near η = 0 (~0.15 mrad vertical convergence). Bright peaks also have weak tails over 5-9 frames, most likely thermal diffuse scattering (they are not fitted as extra populations). So measured omega widths beyond this are the sample's.
 - **Overfocusing:** a transfocator ~60 m from the source is sometimes set to overfocus, sending a divergent beam into the lenses. This enlarges the beam at the sample, by an amount chosen per experiment.
 
 Consequences:
 
 - **Convergence at the sample** is at most about effective aperture / f: ~0.2 mrad (0.012°) for the Al CRLs, ~0.4-0.5 mrad for the Si lenses, whatever comes in upstream.
-- **Horizontal convergence acts as a spread in omega** of the same size at every eta (the renderer's `sig_ky`). An isotropic orientation spread instead widens omega as ~1 / |sin eta|.
+- **What widens a peak in omega**, to first order: any small rotation δ (of the crystal, or of the incoming beam) shifts omega by δ · n / (z · n), with n = (0, -cos η, sin η) the normal of the scattering plane (η from vertical, so |sin η| = 1 at 3 and 9 o'clock). Independent of 2θ:
+  - horizontal beam convergence (about z): the same width at every η (the renderer's `sig_ky`);
+  - vertical convergence (about y): δ |cot η|, zero at 3 o'clock;
+  - an isotropic orientation spread: σ / |sin η|;
+  - rotation about the beam (x): nothing;
+  - a tilt of the rotation axis about y acts like vertical convergence (|cot η|): a steady wobble shifts peaks, a vibration faster than a peak's frames widens them;
+  - energy bandwidth: (Δλ/λ) tan θ / |sin η|, the only term that grows with 2θ.
+
+  So near η = 0 and 180° (12 and 6 o'clock) every term but the horizontal one is magnified (×6-7 for |sin η| ~ 0.15). Peaks there measure the vertical convergence and the sample spread; peaks near 3 and 9 o'clock measure the horizontal convergence plus the spread. An undeformed single crystal (e.g. a Si cube) separates instrument from sample.
 - **Which optics, energy and overfocus a dataset used** is not in the data files: ask the maintainer. The beam size across dty depends on it.
 
 ## Use JAX
