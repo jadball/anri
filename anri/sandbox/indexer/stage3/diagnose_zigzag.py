@@ -112,6 +112,10 @@ for k, lag in zip(ks, lags):
 even, odd = lags[ks % 2 == 0], lags[ks % 2 == 1]
 print(f"from even rows: mean {even.mean():+.4f} (sd {even.std():.4f}); from odd rows: mean {odd.mean():+.4f} "
       f"(sd {odd.std():.4f}); omega step {B_O}")  # fmt: skip
-print(f"=> forward/backward offset about {abs(even.mean() - odd.mean()) / 2:.4f} deg"
-      if np.sign(even.mean()) != np.sign(odd.mean()) and min(abs(even.mean()), abs(odd.mean())) > 0.25 * B_O
-      else "=> no alternating offset between the rows")  # fmt: skip
+d = (odd.mean() - even.mean()) / 2  # half the swing between the two kinds of pair
+alternating = np.sign(even.mean()) != np.sign(odd.mean()) and abs(d) > 3 * max(even.std(), odd.std()) / np.sqrt(len(lags) / 2)
+if not alternating:
+    print("=> no alternating offset between the rows")
+else:
+    print(f"=> forward and backward rows are offset by about {abs(d):.4f} deg ({abs(d) / B_O * 100:.0f}% of an omega bin): "
+          + ("negligible for these bins" if abs(d) < 0.25 * B_O else "large enough to blur peaks across rows: correct it"))
