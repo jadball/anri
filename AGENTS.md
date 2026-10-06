@@ -18,7 +18,7 @@ Anri targets everything from perfect crystals to heavily deformed metals. At the
 
 - **Annealed grains and single crystals:** orientation constant to below the instrument resolution, with sharp boundaries.
 - **Annealing twins** (Σ3 in 316L, Cu, Ni): sharp planar boundaries (60° about ⟨111⟩), and constant domains from ~100 nm to tens of µm.
-- **Deformed FCC/BCC metals:** lattice curvature is carried by dislocations, which pattern into cells and walls. Orientation is piecewise nearly constant: cells of 0.5-2 µm, walls with 0.1-10° misorientation, accumulating like a random walk. Peaks are sharp sub-spots plus a diffuse cloud (Jakobsen et al., Science 2006), not smooth streaks.
+- **Deformed FCC/BCC metals:** lattice curvature is carried by dislocations, which pattern into cells and walls. Orientation is piecewise nearly constant: cells of 0.5-2 µm, walls with 0.1-10° misorientation, accumulating like a random walk. Their peaks are smeared, curved arcs, often with a single local maximum (see below); separate sharp sub-spots (Jakobsen et al., Science 2006) appear only where a few cells dominate the illuminated volume.
 - **Additively manufactured metals** (e.g. L-PBF 316L): melt pools, then columnar grains, then solidification cells of 0.3-1 µm with dislocation walls and ≲0.5° misorientations, plus degrees of drift along a column and large cell-scale residual stresses.
 - **Lath martensite, bainite, Ti α laths:** a few discrete variants per voxel, related by an orientation relationship, each with 1-2° spread; sometimes two phases.
 - **Deformation and nano-twins:** lamellae much thinner than a voxel, so a voxel holds two orientations with a volume fraction.
@@ -30,6 +30,24 @@ Consequences for models:
 - **No coupling between voxels:** no smoothness, interpolation, total variation or basis-function priors on orientation or strain. They suppress exactly the local variation Anri exists to measure, as ImageD11's path averaging does.
 - **Report what the data cannot resolve:** populations closer than the instrument resolution cannot be separated, so report a mean and a spread rather than inventing structure.
 - **Test on realistic phantoms:** with orientation spread along the rays (cell structures, twins, AM-like hierarchies), not uniform grains or linear gradients on a voxel grid. A uniform orientation per voxel turns a gradient into an unphysical ladder of sub-peaks.
+
+### What a peak is, and what it measures
+
+Sub-grain orientation shifts are the main thing Anri's refinement is after. They show in the data like this:
+
+- **A peak is a histogram along the ray, not one voxel's spot.** At one (dty, ω), the detector sums every orientation the beam lights along the ray, each voxel's populations weighted by density, projected into that reflection.
+- **Orientation moves intensity along the ring; strain moves it across.** A rotation keeps |g|, so orientation variation spreads a peak along the Debye-Scherrer ring: an arc curved in η, also spread over frames in ω. Strain moves intensity in 2θ (Δ2θ = 2 ε tan θ).
+- **So sub-grain variation gives smeared, banana-shaped peaks, often with a single local maximum.** Many cells with small, accumulating misorientations along a ray blur together. Separated sub-spots are the exception, not the rule.
+- **Each reflection sees only part of a rotation.** A rotation about g is invisible to that reflection. A dominant rotation axis (bending, a geometrically necessary boundary) gives long, thin bananas along axis × g, different for each reflection, and almost none where g is parallel to the axis.
+- **No single image says which voxel made which part of a banana.** Only consistency across rows (dty) and across reflections at other ω places it. Refinement is a tomography of these per-ray orientation histograms.
+
+Consequences for methods:
+
+- **The shape of a peak carries the information,** not its maximum: a centroid keeps one number per banana, the pixels keep its profile. That is why Anri fits at pixel level.
+- **Don't assume separated sub-spots, and don't mode-seek** on a peak's maximum: with one maximum, the answer is wherever the arc's intensity sits, voxel by voxel.
+- **Measure misfit in rotation space,** not in Cartesian g or detector pixels over large arcs: arcs are curved. For one voxel and reflection, a pixel is consistent with a line of rotations (all those taking h to that pixel's direction).
+- **Spreads are anisotropic:** use a full 3 × 3 covariance in rotation, not one width.
+- **Phantoms must render real bananas:** check that a test phantom's peaks are single-maximum arcs before using it to judge a method. Path averaging (each voxel taking its rays' average) is the failure to test for: shifts shrunk towards the grain mean.
 
 ### The instrument: ESRF ID11 focusing optics
 
