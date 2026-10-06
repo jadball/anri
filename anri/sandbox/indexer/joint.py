@@ -38,6 +38,8 @@ p.add_argument("--match-px", type=float, default=3.0, help="largest distance fro
 p.add_argument("--max-blobs", type=int, default=32)
 p.add_argument("--sig-omega", type=float, default=0.0, help="extra omega spread of each predicted peak (deg): a soft "
                "split between frames where the instrument's peak is far narrower than a frame")
+p.add_argument("--eta-cut", type=float, default=0.0, help="drop spots with |sin eta| below this (their omega moves as "
+               "1 / |sin eta| with orientation, so their frames and rows are the least certain)")
 p.add_argument("--save-terms", action="store_true", help="also save the fit's terms (for diagnostics)")
 p.add_argument("--n-cpu", type=int, default=12)
 args = p.parse_args()
@@ -71,7 +73,8 @@ dty_s, edges = jnp.asarray(d["dty_sorted"]), jnp.asarray(d["edges"])
 
 
 def predict(u: jax.Array, x: jax.Array, hkl: jax.Array, etasign: jax.Array) -> tuple:
-    mu, _, ok, _ = spot(u, x, hkl, etasign, d)
+    mu, _, ok, sin_eta = spot(u, x, hkl, etasign, d)
+    ok = ok & (sin_eta >= args.eta_cut)
     om = mu[2]
     yc = centre_dty(x, om, geom)
     sig_om = jnp.sqrt(_peak_cov(u, x, hkl, etasign, yc, geom)[2] + args.sig_omega**2 + 1e-8)
