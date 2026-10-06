@@ -39,6 +39,16 @@ Sub-grain orientation shifts are the main thing Anri's refinement is after. They
 - **Orientation moves intensity along the ring; strain moves it across.** A rotation keeps |g|, so orientation variation spreads a peak along the Debye-Scherrer ring: an arc curved in η, also spread over frames in ω. Strain moves intensity in 2θ (Δ2θ = 2 ε tan θ).
 - **So sub-grain variation gives smeared, banana-shaped peaks, often with a single local maximum.** Many cells with small, accumulating misorientations along a ray blur together. Separated sub-spots are the exception, not the rule.
 - **Each reflection sees only part of a rotation.** A rotation about g is invisible to that reflection. A dominant rotation axis (bending, a geometrically necessary boundary) gives long, thin bananas along axis × g, different for each reflection, and almost none where g is parallel to the axis.
+- **How a rotation maps onto the detector** (beam along x, rotation axis z, η from vertical; checked numerically): a small lattice rotation δ = (δx, δy, δz) moves a peak by
+
+      Δω = −δz − δy cot η        Δη = δx − δy tan θ / sin η        Δ2θ = 0
+
+  - about the rotation axis (z): the peak moves only in ω, not on the detector;
+  - about the beam (x): it moves only in η, by the same angle, along the ring;
+  - about y: both, magnified near η = 0 and 180° (12 and 6 o'clock), where ω and η couple into a tilted banana.
+
+  So an isotropic spread σ gives σ / |sin η| in ω and σ √(1 + tan²θ / sin²η) in η: the size and shape of a banana depend on η, and peaks near the rotation axis (small |sin η|) are smeared most (why the indexer has `--etacut`). An anisotropic spread gives bananas whose length and direction differ from reflection to reflection.
+- **Spreads range from instrument-limited (< 0.01°) to ~10°.** Methods must work across that whole range: at large spreads, use exact rotations, not small-angle approximations.
 - **No single image says which voxel made which part of a banana.** Only consistency across rows (dty) and across reflections at other ω places it. Refinement is a tomography of these per-ray orientation histograms.
 
 Consequences for methods:
@@ -65,6 +75,10 @@ Most data come from scanning 3DXRD at ID11. The beam is focused by one of these,
 - **Stations:** NSCOPE and TDXRD. TDXRD has a bigger rotation stage with ~1 µm radial runout, comparable to the voxel size: the sample moves across the beam by up to ~1 µm, periodically in omega. That shifts voxels between dty rows (a position error); it does not widen peaks in omega, which only rotations do.
 - **Measured resolution** (`anri/sandbox/indexer/peak_widths.py` on undeformed Si crystals, Al CRLs, 0.05° frames, both stations): peak cores are narrower than one frame at every η, ~0.05° near η = 0 (~0.15 mrad vertical convergence). Bright peaks also have weak tails over 5-9 frames, most likely thermal diffuse scattering (they are not fitted as extra populations). So measured omega widths beyond this are the sample's.
 - **Overfocusing:** a transfocator ~60 m from the source is sometimes set to overfocus, sending a divergent beam into the lenses. This enlarges the beam at the sample, by an amount chosen per experiment.
+- **Beam profile:** Gaussian across dty, its width measured per experiment. The dty step is usually set to the beam FWHM, sometimes a little over- or undersampled (the indexer assumes FWHM = dty step).
+- **Frames integrate through motion, always.** Omega rotates continuously, so every frame integrates over its whole omega step. In some scans dty also moves slowly during the rotation, so a frame integrates through dty too; each frame has its own dty reading (the indexer bins frames by it). A model must integrate each frame over its omega range, and over its dty range where dty moves: never treat a frame as one omega or one dty.
+- **Intensities:** normalised frame by frame to a monitor counter when the indexer's `--monitor` is given (as ImageD11's `DataSet.set_monitor`). Ignore extinction; absorption along the incoming and diffracted paths can matter.
+- **The sparse data are thresholded:** segmentation keeps only pixels above a cut, so the faint parts of a peak (the ends of a banana, its tails) can be missing. Treat pixels below the cut as censored, not as zero, and don't fit only the bright core.
 
 Consequences:
 
