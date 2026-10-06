@@ -30,6 +30,8 @@ p.add_argument("sample")
 p.add_argument("dataset")
 p.add_argument("match")
 p.add_argument("--iter", type=int, default=200)
+p.add_argument("--free", action="store_true", help="each hypothesis' occupancy free (the old way): densities trade "
+               "along rays and the map is noisy. Default: each voxel's total held at the indexer's density x one scale")
 p.add_argument("--beam", type=float, help="beam FWHM (default: the dty step)")
 p.add_argument("--voxel", type=float, help="voxel size (default: the dty step)")
 p.add_argument("--match-px", type=float, default=3.0, help="largest distance from a prediction to its 2D peak (px)")
@@ -119,30 +121,53 @@ I = np.concatenate([d["blob_i"], [0.0]]).astype(np.float32)  # the last: "nothin
 Aj, Bj, Jj = jnp.asarray(A), jnp.asarray(B), jnp.asarray(Jx)
 sens = jax.ops.segment_sum(Aj, Jj, n_hyp)
 k_per = np.bincount(vv, minlength=n_vox)[vv]
-x0 = np.full(n_hyp, 1.0, np.float32) / k_per
-lam0 = np.bincount(B, A * x0[Jx], minlength=n_blob + 1)[:n_blob]
+# voxels: entries at the same place; each voxel's total density is the indexer's (sum over its populations)
+_, vox_e = np.unique(np.round(r["pos"][:, :2] / (0.25 * d["ystep"])).astype(np.int64), axis=0, return_inverse=True)
+vox_e = vox_e.ravel()
+n_v = int(vox_e.max()) + 1
+dens_e = r["density"].astype(np.float64)
+d_v = np.bincount(vox_e, dens_e, minlength=n_v)
+vh = vox_e[vv]  # each hypothesis' voxel
+pi0 = (dens_e[vv] / np.maximum(d_v[vh], 1e-30) / k_per).astype(np.float32)  # fractions within the voxel
+base = (d_v[vh]).astype(np.float32)
+lam0 = np.bincount(B, A * (base * pi0)[Jx], minlength=n_blob + 1)[:n_blob]
 claimed = lam0 > 0
-x0 *= I[:n_blob][claimed].sum() / lam0[claimed].sum()  # one global scale
+s0 = np.float32(I[:n_blob][claimed].sum() / lam0[claimed].sum())  # one global scale
 
 
 @jax.jit
-def mlem(x: jax.Array, Aj: jax.Array, Bj: jax.Array, Jj: jax.Array, sens: jax.Array, Ij: jax.Array) -> tuple:
-    """Run --iter MLEM updates; the arrays are arguments, not constants baked into the compiled loop."""
+def mlem(pi: jax.Array, s: jax.Array, base: jax.Array, vh: jax.Array, Aj: jax.Array, Bj: jax.Array, Jj: jax.Array,
+         sens: jax.Array, Ij: jax.Array) -> tuple:  # fmt: skip
+    """Run --iter EM updates; the arrays are arguments, not constants baked into the compiled loop.
+
+    Occupancy x = s * base * pi. Free: pi takes the plain MLEM update. Fixed (default): the mixture-weight update,
+    pi * g / sens renormalised to sum to 1 within each voxel (the hypotheses of a voxel predict nearly the same
+    total, so this is the EM step for its fractions), and s its own EM update.
+    """
 
     def step(i: int, carry: tuple) -> tuple:
-        x, hist = carry
+        pi, s, hist = carry
+        x = s * base * pi
         lam = jax.ops.segment_sum(Aj * x[Jj], Bj, n_blob + 1)
         ratio = jnp.where((lam > 0) & (jnp.arange(n_blob + 1) < n_blob), Ij / jnp.maximum(lam, 1e-30), 0.0)
         ll = jnp.sum(jnp.where(lam[:-1] > 0, Ij[:-1] * jnp.log(jnp.maximum(lam[:-1], 1e-30)), 0.0)) - jnp.sum(sens * x)
-        x = x * jax.ops.segment_sum(Aj * ratio[Bj], Jj, n_hyp) / jnp.maximum(sens, 1e-30)
-        return x, hist.at[i].set(ll)
+        g = jax.ops.segment_sum(Aj * ratio[Bj], Jj, n_hyp)
+        if args.free:
+            pi = pi * g / jnp.maximum(sens, 1e-30)
+        else:
+            s = s * jnp.sum(x * g) / jnp.maximum(jnp.sum(x * sens), 1e-30)
+            pi = pi * g / jnp.maximum(sens, 1e-30)
+            pi = pi / jnp.maximum(jax.ops.segment_sum(pi, vh, n_v)[vh], 1e-30)
+        return pi, s, hist.at[i].set(ll)
 
-    return jax.lax.fori_loop(0, args.iter, step, (x, jnp.zeros(args.iter)))
+    return jax.lax.fori_loop(0, args.iter, step, (pi, s, jnp.zeros(args.iter)))
 
 
 t = time.perf_counter()
-x, ll = mlem(jnp.asarray(x0), Aj, Bj, Jj, sens, jnp.asarray(I))
-x, ll = np.asarray(x), np.asarray(ll)
+pi, s_fit, ll = mlem(jnp.asarray(pi0), jnp.float32(s0), jnp.asarray(base), jnp.asarray(vh), Aj, Bj, Jj, sens,
+                     jnp.asarray(I))  # fmt: skip
+x, ll = np.asarray(s_fit * jnp.asarray(base) * pi), np.asarray(ll)
+log(f"  {'free occupancies' if args.free else 'voxel totals held'}; global scale {float(s_fit):.4g} (start {s0:.4g})")
 log(f"MLEM: {args.iter} iterations, {time.perf_counter() - t:.1f} s; log-likelihood at 1, 10, 50, last: "
     f"{ll[0]:.6g} {ll[min(9, len(ll) - 1)]:.6g} {ll[min(49, len(ll) - 1)]:.6g} {ll[-1]:.6g}")  # fmt: skip
 
