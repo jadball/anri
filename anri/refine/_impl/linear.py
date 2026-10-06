@@ -53,44 +53,56 @@ def _rotation(w: jax.Array) -> jax.Array:
     return jnp.eye(3, dtype=w.dtype) + a * K + b * K @ K
 
 
-@partial(jax.jit, static_argnames=("window", "det_shape"))
-def _linearise_row(ubi, pos, sig, dens, hkls, F2, geom, row, e, h, b, window, det_shape):  # noqa: ANN001, ANN202
-    """Linearise every instance of one row.
+@partial(jax.jit, static_argnames=("window", "det_shape", "n_search"))
+def _linearise_chunk(ubi, pos, sig, dens, hkls, F2, geom, rows, pix_all, fs, e, h, b, ri, window, det_shape, n_search):  # noqa: ANN001, ANN202
+    """Linearise a fixed-size chunk of instances, each in its own row of the stacked ``rows``.
 
     Per instance: mu0, J, the covariance, the window (edges, pixel origins, frames inside the row), the amplitude
-    times the frame weights, and each window cell's (frame in file order, pixel).
+    times the frame weights, the row's omega range, and for each window cell the index of its measured pixel in
+    ``pix_all`` (or -1), by a binary search within the frame (``fs``: each row's frame starts in ``pix_all``).
     """
     wo = window[0]
-    nfr = row["omega_sorted"].shape[0]
+    nfr = rows["omega_sorted"].shape[1]
+    last = pix_all.shape[0] - 1
 
-    def one(e, h, b):  # noqa: ANN001, ANN202
+    def one(e, h, b, ri):  # noqa: ANN001, ANN202
+        row = jax.tree.map(lambda a: a[ri], rows)
         etasign = 1.0 - 2.0 * b
         sg = None if sig is None else sig[e]
 
         def centroid(w):  # noqa: ANN001, ANN202
-            return _peak_shape(
-                ubi[e] @ (jnp.eye(3, dtype=ubi.dtype) + _skew(w)).T, pos[e], hkls[h], etasign, sg, row, geom
-            )[0]
+            u = ubi[e] @ (jnp.eye(3, dtype=ubi.dtype) + _skew(w)).T
+            return _peak_shape(u, pos[e], hkls[h], etasign, sg, row, geom)[0]
 
         w0 = jnp.zeros(3, ubi.dtype)
         mu0, J = centroid(w0), jax.jacfwd(centroid)(w0)
         _, shape, valid = _peak_shape(ubi[e], pos[e], hkls[h], etasign, sg, row, geom)
-        _, inside, fclip, rows, cols, om_fr, (jo, i0, j0) = _window_cells(mu0, shape, None, row, window, det_shape)
-        wfr = (
-            dens[e]
-            * F2[h]
-            * _peak_factors(ubi[e], hkls[h], etasign, geom)
-            * _frame_weights(pos[e], om_fr, fclip, row, geom)
-        )
+        _, inside, fclip, rows_, cols, om_fr, (jo, i0, j0) = _window_cells(mu0, shape, None, row, window, det_shape)
+        amp = dens[e] * F2[h] * _peak_factors(ubi[e], hkls[h], etasign, geom)
+        wfr = amp * _frame_weights(pos[e], om_fr, fclip, row, geom)
         frames = jo + jnp.arange(wo)
         fin = (frames >= 0) & (frames < nfr) & valid
         edges = row["omega_edges"][jnp.clip(jo + jnp.arange(wo + 1), 0, nfr)]
-        frame_file = row["order"][fclip]
-        pixel = rows[:, :, None] * det_shape[1] + cols[:, None, :]
-        use = inside & fin[:, None, None]
-        return mu0, J, jnp.stack(shape), edges, i0, j0, fin, wfr, jnp.where(use, frame_file[:, None, None], -1), pixel
+        # each cell's measured pixel: binary search among the frame's pixels (sorted)
+        pixel = rows_[:, :, None] * det_shape[1] + cols[:, None, :]  # [wo, ws, wf]
+        f = row["order"][fclip]  # file-order frame of each window frame
+        lo, hi = fs[ri, f], fs[ri, f + 1]  # [wo]
+        lo, hi = jnp.broadcast_to(lo[:, None, None], pixel.shape), jnp.broadcast_to(hi[:, None, None], pixel.shape)
+        end = hi
 
-    return jax.vmap(one)(e, h, b)
+        def step(_: int, lh: tuple) -> tuple:
+            lo, hi = lh
+            mid = (lo + hi) // 2
+            right = pix_all[jnp.minimum(mid, last)] < pixel
+            return jnp.where(right & (lo < hi), mid + 1, lo), jnp.where(right | (lo >= hi), hi, mid)
+
+        lo, _ = jax.lax.fori_loop(0, n_search, step, (lo, hi))
+        ok = inside & fin[:, None, None] & (lo < end) & (pix_all[jnp.minimum(lo, last)] == pixel)
+        idx = jnp.where(ok, lo, -1)
+        om = jnp.stack([row["omega_min"], row["omega_max"]])
+        return mu0, J, jnp.stack(shape), edges, i0, j0, fin, wfr, om, idx
+
+    return jax.vmap(one)(e, h, b, ri)
 
 
 def _values(mu, shape, edges, i0, j0, fin, wfr, om_range, window, det_shape):  # noqa: ANN001, ANN202
@@ -102,7 +114,8 @@ def _values(mu, shape, edges, i0, j0, fin, wfr, om_range, window, det_shape):  #
 
 
 def linearise(entries: dict, hkls: np.ndarray, F2: np.ndarray, geom: dict, rows: list, meas: list,
-              det_shape: tuple[int, int], window: tuple[int, int, int], chunk: int = 1 << 15) -> dict:  # fmt: skip
+              det_shape: tuple[int, int], window: tuple[int, int, int], chunk: int = 1 << 15,
+              log: Callable | None = None) -> dict:  # fmt: skip
     """Tables of every peak instance (a reflection of an entry in one dty row) at the entries' current orientations.
 
     Parameters
@@ -134,83 +147,80 @@ def linearise(entries: dict, hkls: np.ndarray, F2: np.ndarray, geom: dict, rows:
     geom = jax.tree.map(
         lambda x: jnp.asarray(x, jnp.float32) if np.asarray(x).dtype.kind == "f" else jnp.asarray(x), geom
     )
+    t_start = time.perf_counter()
+    rows_f = [{k: np.asarray(v, np.float32) if np.asarray(v).dtype.kind == "f" else np.asarray(v) for k, v in r.items()}
+              for r in rows]  # fmt: skip
+    if len({r["omega_sorted"].shape[0] for r in rows_f}) > 1:
+        raise ValueError("linearise: every row needs the same number of frames")
+    # 1. every instance (entry, hkl, branch, row): one fixed-shape selection per row
     sel = jax.jit(select_peaks, static_argnames="det_shape")
-    n_search = int(np.ceil(np.log2(max(int(np.diff(m["frame_start"]).max()) for m in meas) + 1))) + 1
-    names = ("e", "mu0", "J", "shape", "edges", "i0", "j0", "fin", "wfr", "om")
-    tabs: dict = {k: [] for k in names}
-    m_inst, m_cell, m_pix, data = [], [], [], []
-    n_inst, pix_off = 0, 0
-    for r, m in zip(rows, meas):
-        row = {
-            k: jnp.asarray(v, jnp.float32) if np.asarray(v).dtype.kind == "f" else jnp.asarray(v) for k, v in r.items()
-        }
+    parts = []
+    for i, r in enumerate(rows_f):
+        row = {k: jnp.asarray(v) for k, v in r.items()}
         margin = _select_margin(window, row, geom, jnp.float32)
-        e, h, b = (
-            x.astype(np.int32)
-            for x in np.nonzero(np.asarray(sel(ubi, pos, hkls_j, geom, row, margin, det_shape=det_shape)))
-        )
-        # a row with no measured pixels gets a placeholder that never matches (pixels are >= 0)
-        px_meas = jnp.asarray(m["pixel"] if m["pixel"].size else np.full(1, -1, np.int32))
-        fs = jnp.asarray(m["frame_start"])
-        data.append(m["value"])
-        om = jnp.asarray([float(row["omega_min"]), float(row["omega_max"])], jnp.float32)
-        for s0 in range(0, len(e), chunk):  # rows can hold many instances: linearise in batches
-            n = min(chunk, len(e) - s0)
-            pad = (1 << int(np.ceil(np.log2(max(n, 1))))) - n
-            ehb = [jnp.asarray(np.pad(x[s0 : s0 + n], (0, pad))) for x in (e, h, b)]
-            out = _linearise_row(ubi, pos, sig, dens, hkls_j, F2_j, geom, row, *ehb, window, det_shape)
-            mu0, J, shape, edges, i0, j0, fin, wfr, frame_file, pixel = (x[:n] for x in out)
-            for k, v in zip(names, (ehb[0][:n], mu0, J, shape, edges, i0, j0, fin, wfr, jnp.tile(om, (n, 1)))):
-                tabs[k].append(v)
-            # each window cell's measured pixel (or -1), by a binary search within its frame, on the device;
-            # only the hits come back
-            idx = _match(frame_file.reshape(n, -1), pixel.reshape(n, -1), px_meas, fs, n_search)
-            ii, cc = jnp.nonzero(idx >= 0)
-            m_inst.append((ii + n_inst).astype(jnp.int32))
-            m_cell.append(cc.astype(jnp.int32))
-            m_pix.append((idx[ii, cc] + pix_off).astype(jnp.int32))
-            n_inst += n
-        pix_off += int(m["value"].size)
+        e, h, b = np.nonzero(np.asarray(sel(ubi, pos, hkls_j, geom, row, margin, det_shape=det_shape)))
+        parts.append(np.stack([e, h, b, np.full(e.size, i)]).astype(np.int32))
+    inst = np.concatenate(parts, axis=1)
+    n_inst = inst.shape[1]
+    t_sel = time.perf_counter() - t_start
+    # 2. rows stacked; all measured pixels in one array, each row's frame starts offset into it (+ a sentinel that
+    # matches nothing)
+    rows_st = {k: jnp.asarray(np.stack([r[k] for r in rows_f])) for k in rows_f[0]}
+    offsets = np.concatenate([[0], np.cumsum([m["pixel"].size for m in meas])])
+    fs = jnp.asarray(np.stack([m["frame_start"] + o for m, o in zip(meas, offsets[:-1])]).astype(np.int32))
+    pix_all = jnp.asarray(np.concatenate([m["pixel"] for m in meas] + [np.full(1, -1, np.int32)]).astype(np.int32))
+    n_search = int(np.ceil(np.log2(max(int(np.diff(m["frame_start"]).max()) for m in meas) + 1))) + 1
+    n_pix = int(offsets[-1])
+    # 3. linearise in fixed-size chunks (one compile); the hits come out on the host (np.nonzero never compiles)
+    lin = 1 << 13
+    n_all = -(-n_inst // lin) * lin
+    inst = np.pad(inst, ((0, 0), (0, n_all - n_inst)))
+    names = ("mu0", "J", "shape", "edges", "i0", "j0", "fin", "wfr", "om")
+    tabs: dict = {k: [] for k in names}
+    m_inst, m_cell, m_pix = [], [], []
+    for s0 in range(0, n_all, lin):
+        e, h, b, ri = (jnp.asarray(x) for x in inst[:, s0 : s0 + lin])
+        out = _linearise_chunk(ubi, pos, sig, dens, hkls_j, F2_j, geom, rows_st, pix_all, fs, e, h, b, ri, window,
+                               det_shape, n_search)  # fmt: skip
+        for k, v in zip(names, out[:-1]):
+            tabs[k].append(v)
+        idx = np.asarray(out[-1]).reshape(lin, -1)
+        ii, cc = np.nonzero(idx[: max(0, min(lin, n_inst - s0))] >= 0)
+        m_inst.append(ii + s0)
+        m_cell.append(cc)
+        m_pix.append(idx[ii, cc])
+        if log and (s0 // lin) % 100 == 99:
+            log(f"    linearise: {s0 + lin} of {n_inst} instances, {time.perf_counter() - t_start:.1f} s")
+    # 4. tables in the sweeps' chunks (instances past n_inst are dead)
     n_chunks = -(-n_inst // chunk)
-    pad = n_chunks * chunk - n_inst
     out = {}
     for k in names:
         v = jnp.concatenate(tabs[k])
-        v = jnp.concatenate([v, jnp.repeat(v[:1], pad, 0)])
+        need = n_chunks * chunk
+        v = v[:need] if v.shape[0] >= need else jnp.concatenate([v, jnp.repeat(v[:1], need - v.shape[0], 0)])
         out[k] = v.reshape((n_chunks, chunk) + v.shape[1:])
-    out["live"] = (jnp.arange(n_chunks * chunk) < n_inst).reshape(n_chunks, chunk)
+    out["e"] = jnp.asarray(np.pad(inst[0, :n_inst], (0, n_chunks * chunk - n_inst)).reshape(n_chunks, chunk))
+    out["live"] = jnp.asarray((np.arange(n_chunks * chunk) < n_inst).reshape(n_chunks, chunk))
     # matched cells per chunk, padded to the longest: padding points past the last cell (dropped by scatters) and at
     # the sentinel pixel
-    m_inst, m_cell, m_pix = jnp.concatenate(m_inst), jnp.concatenate(m_cell), jnp.concatenate(m_pix)
+    m_inst, m_cell, m_pix = np.concatenate(m_inst), np.concatenate(m_cell), np.concatenate(m_pix)
     owner = m_inst // chunk
-    counts = jnp.bincount(owner, length=n_chunks)
-    n_m = max(int(counts.max()) if n_chunks else 1, 1)
-    start = jnp.concatenate([jnp.zeros(1, counts.dtype), jnp.cumsum(counts)[:-1]])
-    at = (owner, jnp.arange(m_inst.shape[0]) - start[owner])
-    out["m_inst"] = jnp.zeros((n_chunks, n_m), jnp.int32).at[at].set(m_inst - owner * chunk)
-    out["m_cell"] = jnp.full((n_chunks, n_m), window[0] * window[1] * window[2], jnp.int32).at[at].set(m_cell)
-    out["m_pix"] = jnp.full((n_chunks, n_m), pix_off, jnp.int32).at[at].set(m_pix)
-    out["data"] = jnp.asarray(np.concatenate(data + [np.zeros(1, np.float32)]))
-    out.update({"n_inst": n_inst, "n_pix": pix_off, "n_entries": int(ubi.shape[0])})
+    counts = np.bincount(owner, minlength=n_chunks)
+    # padded to a power of two: the length barely changes when the windows are re-centred, and a new length would
+    # recompile the sweeps
+    n_m = 1 << int(np.ceil(np.log2(max(int(counts.max()) if counts.size else 1, 1))))
+    pos_in = np.arange(m_inst.size) - np.concatenate([[0], np.cumsum(counts)[:-1]])[owner]
+    M_inst = np.zeros((n_chunks, n_m), np.int32)
+    M_cell = np.full((n_chunks, n_m), window[0] * window[1] * window[2], np.int32)
+    M_pix = np.full((n_chunks, n_m), n_pix, np.int32)
+    M_inst[owner, pos_in], M_cell[owner, pos_in], M_pix[owner, pos_in] = m_inst - owner * chunk, m_cell, m_pix
+    out.update({"m_inst": jnp.asarray(M_inst), "m_cell": jnp.asarray(M_cell), "m_pix": jnp.asarray(M_pix)})
+    out["data"] = jnp.asarray(np.concatenate([m["value"] for m in meas] + [np.zeros(1, np.float32)]))
+    out.update({"n_inst": n_inst, "n_pix": n_pix, "n_entries": int(ubi.shape[0])})
+    if log:
+        log(f"    linearise: {n_inst} instances (selection {t_sel:.1f} s), {m_inst.size} matched cells, "
+            f"{time.perf_counter() - t_start:.1f} s")  # fmt: skip
     return out
-
-
-@partial(jax.jit, static_argnames="n_search")
-def _match(frame: jax.Array, pixel: jax.Array, pix_meas: jax.Array, fs: jax.Array, n_search: int) -> jax.Array:
-    """Index of each (frame, pixel) among a row's measured pixels (sorted by frame, then pixel), or -1."""
-    f = jnp.clip(frame, 0, fs.shape[0] - 2)
-    lo, hi = fs[f], fs[f + 1]
-    last = max(pix_meas.shape[0] - 1, 0)
-
-    def step(_: int, lh: tuple) -> tuple:
-        lo, hi = lh
-        mid = (lo + hi) // 2
-        right = pix_meas[jnp.minimum(mid, last)] < pixel
-        return jnp.where(right & (lo < hi), mid + 1, lo), jnp.where(right | (lo >= hi), hi, mid)
-
-    lo, _ = jax.lax.fori_loop(0, n_search, step, (lo, hi))
-    ok = (frame >= 0) & (lo < fs[f + 1]) & (pix_meas[jnp.minimum(lo, last)] == pixel)
-    return jnp.where(ok, lo, -1)
 
 
 def _chunk_values(c: dict, theta: jax.Array, window: tuple, det_shape: tuple) -> jax.Array:
@@ -223,11 +233,14 @@ def _chunk_values(c: dict, theta: jax.Array, window: tuple, det_shape: tuple) ->
 
 
 @partial(jax.jit, static_argnames=("window", "det_shape"))
-def _model_chunk(c: dict, theta: jax.Array, model: jax.Array, cut: float, window: tuple, det_shape: tuple) -> tuple:
-    """Add one chunk's model at the measured pixels, and return its censored loss.
+def _model_chunk(arrs: dict, i: int, theta: jax.Array, model: jax.Array, cut: float, window: tuple,
+                 det_shape: tuple) -> tuple:  # fmt: skip
+    """Add chunk i's model at the measured pixels, and return its censored loss.
 
-    The censored loss counts the cells that land on no measured pixel: above the cut, the model is penalised.
+    The censored loss counts the cells that land on no measured pixel: above the cut, the model is penalised. The
+    chunk is sliced here, inside jit, with i traced: one compile for every chunk.
     """
+    c = jax.tree.map(lambda a: a[i], arrs)
     v = _chunk_values(c, theta, window, det_shape)
     vm = v[c["m_inst"], c["m_cell"]]
     model = model.at[c["m_pix"]].add(vm)
@@ -237,9 +250,10 @@ def _model_chunk(c: dict, theta: jax.Array, model: jax.Array, cut: float, window
 
 
 @partial(jax.jit, static_argnames=("window", "det_shape"))
-def _grad_chunk(c: dict, theta: jax.Array, r: jax.Array, model: jax.Array, g: jax.Array, H: jax.Array, cut: float,
-                window: tuple, det_shape: tuple) -> tuple:  # fmt: skip
-    """Add one chunk's gradient and surrogate curvature, per entry, with respect to the rotations theta."""
+def _grad_chunk(arrs: dict, i: int, theta: jax.Array, r: jax.Array, model: jax.Array, g: jax.Array, H: jax.Array,
+                cut: float, window: tuple, det_shape: tuple) -> tuple:  # fmt: skip
+    """Add chunk i's gradient and surrogate curvature, per entry, with respect to the rotations theta."""
+    c = jax.tree.map(lambda a: a[i], arrs)
     mu = c["mu0"] + jnp.einsum("bij,bj->bi", c["J"], theta[c["e"]])
 
     def vals(m, shape, edges, i0, j0, fin, wfr, om):  # noqa: ANN001, ANN202
@@ -266,16 +280,18 @@ def _grad_chunk(c: dict, theta: jax.Array, r: jax.Array, model: jax.Array, g: ja
     return g, H
 
 
-def _chunks(tab: dict, i: int) -> dict:
+def _arrays(tab: dict) -> dict:
+    """Return the tables a sweep reads, each stacked by chunk: [n_chunks, ...]."""
     keys = ("e", "mu0", "J", "shape", "edges", "i0", "j0", "fin", "wfr", "om", "live", "m_inst", "m_cell", "m_pix")
-    return {k: tab[k][i] for k in keys}
+    return {k: tab[k] for k in keys}
 
 
 def _loss_model(tab: dict, theta: jax.Array, cut: float, window: tuple, det_shape: tuple) -> tuple:
     model = jnp.zeros(tab["n_pix"] + 1, jnp.float32)
     cens = 0.0
+    arrs = _arrays(tab)
     for i in range(tab["e"].shape[0]):
-        model, c = _model_chunk(_chunks(tab, i), theta, model, cut, window, det_shape)
+        model, c = _model_chunk(arrs, i, theta, model, cut, window, det_shape)
         cens = cens + c
     model = model.at[-1].set(0.0)
     r = model - tab["data"]
@@ -337,7 +353,7 @@ def refine_orientations(
 
     def lin(u: np.ndarray) -> dict:
         t = time.perf_counter()
-        tab = linearise({**entries, "ubi": u}, hkls, F2, geom, rows, meas, det_shape, window, chunk)
+        tab = linearise({**entries, "ubi": u}, hkls, F2, geom, rows, meas, det_shape, window, chunk, log=log)
         if log:
             log(f"  linearised: {tab['n_inst']} instances, {int((tab['m_pix'] < tab['n_pix']).sum())} matched cells, "
                 f"{time.perf_counter() - t:.1f} s")  # fmt: skip
@@ -346,8 +362,9 @@ def refine_orientations(
     def gradient(tab: dict, theta: jax.Array) -> tuple:
         loss, r, model = _loss_model(tab, theta, cut, window, det_shape)
         g, H = jnp.zeros((n, 3), jnp.float32), jnp.zeros((n, 3, 3), jnp.float32)
+        arrs = _arrays(tab)
         for i in range(tab["e"].shape[0]):
-            g, H = _grad_chunk(_chunks(tab, i), theta, r, model, g, H, cut, window, det_shape)
+            g, H = _grad_chunk(arrs, i, theta, r, model, g, H, cut, window, det_shape)
         return loss, g, H
 
     tab = lin(ubi)
@@ -361,7 +378,7 @@ def refine_orientations(
         D = jnp.diagonal(H, axis1=1, axis2=2)
         has = D.sum(1) > 0
         # damping at least 1e-3 of the median entry's curvature: entries with little data take no wild steps
-        D = jnp.maximum(D, 1e-3 * jnp.median(jnp.where(has[:, None], D, jnp.nan)[has]) + 1e-30)
+        D = jnp.maximum(D, 1e-3 * jnp.nanmedian(jnp.where(has[:, None], D, jnp.nan)) + 1e-30)  # fixed shape
         step = -jnp.linalg.solve(H + lam * jax.vmap(jnp.diag)(D), g[..., None])[..., 0]
         step = jnp.where(has[:, None], step, 0.0)
         step = step / jnp.maximum(jnp.linalg.norm(step, axis=1) / max_step, 1.0)[:, None]

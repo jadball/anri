@@ -76,6 +76,27 @@ Anri code should use JAX wherever possible: `jit`, `vmap`, `lax.map`/`scan`, sha
 Don't give up on JAX and wrap work in Python multiprocessing or threading instead.
 Keep functions differentiable where it is reasonable to do so.
 
+## Reason through code before running it
+
+The maintainer often runs code on a GPU machine you cannot reach. A broken or slow run costs their time, so **reason
+through the code first**: read every line on the hot path and predict what it costs. Don't write, run and patch in a
+loop. When you hand code over, say what you checked and what you could not.
+
+JAX is slow in two ways, and both leave the GPU idle:
+
+- **Recompiling.** Every new array shape, or new static argument, compiles again (single-threaded, seconds to minutes
+  for a big function). On a path that runs many times, every shape must be fixed: pad to fixed sizes or buckets,
+  never slice to a data-dependent length (`x[:n]`, boolean masks, `nonzero`) outside `jit`, and never slice with a
+  Python integer outside `jit` in a loop (each value is a new static slice); pass the index into the jitted function.
+  Lengths that change between calls (e.g. after re-linearising) must be bucketed.
+- **Waiting on the host.** Many small calls from a Python loop, or a transfer back to the host (`float()`,
+  `np.asarray`, `.item()`) in the loop, serialise the GPU. Do each pass as a few large jitted calls, and bring back
+  one number, or one compact array per large block.
+
+Before handing code over: count, from the code, the compiles and host syncs per pass and per run, and check them on
+a small case (`JAX_LOG_COMPILES=1` lists every compile). Check the property the maintainer asked for with the code's
+own output (e.g. the grid size printed by `--check`).
+
 ## Scale
 
 Anri must scale from a laptop to a cluster.
