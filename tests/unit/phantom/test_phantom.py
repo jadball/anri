@@ -67,5 +67,43 @@ class TestPolycrystal(unittest.TestCase):
         self.assertTrue(0.05 < np.median(spread) < 2.0)
 
 
+class TestDeformation(unittest.TestCase):
+    """Dislocation walls (misorientation accumulating with distance) and bent grains."""
+
+    def test_walls_random_walk(self):
+        same = np.zeros(2)
+        for seed in range(6):  # a small disk holds few walls: average over several draws
+            ph = anri.phantom.polycrystal(81, 0.25, 10.0, 1, cell_spread_deg=0.0, twin_grains=0, wall_spacing=1.0,
+                                          seed=seed)  # fmt: skip
+            U, ins = ph["U"], ph["inside"]
+            for i, k in enumerate((2, 8)):  # 0.5 and 2 apart: walls 1.0 apart on average, so Poisson exp(-d)
+                m = ins[:, :-k] & ins[:, k:]
+                same[i] += np.all(np.abs(U[:, :-k][m] - U[:, k:][m]) < 1e-12, axis=(1, 2)).mean() / 6
+        self.assertAlmostEqual(same[0], np.exp(-0.5), delta=0.04)
+        self.assertAlmostEqual(same[1], np.exp(-2.0), delta=0.04)
+
+    def test_defaults_unchanged(self):
+        a = anri.phantom.polycrystal(41, 0.5, 10.0, 6, seed=3)
+        b = anri.phantom.polycrystal(41, 0.5, 10.0, 6, wall_spacing=None, bend_grains=0, seed=3)
+        np.testing.assert_array_equal(a["U"], b["U"])
+
+    def test_bend(self):
+        ph = anri.phantom.polycrystal(81, 0.25, 10.0, 1, cell_spread_deg=0.0, twin_grains=0, bend_grains=1,
+                                      bend_deg=2.0, seed=4)  # fmt: skip
+        U = ph["U"][ph["inside"]]
+        angle = np.degrees(
+            np.arccos(np.clip((np.trace(U @ np.swapaxes(U[:1], 1, 2), axis1=1, axis2=2) - 1) / 2, -1, 1))
+        )
+        self.assertGreater(angle.max(), 1.0)  # turns by up to ~2 deg per radius over the disk
+        self.assertLess(angle.max(), 5.0)
+
+    def test_tensormap(self):
+        ph = anri.phantom.polycrystal(41, 0.5, 10.0, 6, cell_spread_deg=0.0, twin_grains=0, wall_spacing=2.0, seed=3)
+        tm = anri.phantom.tensormap(ph, [3.6] * 3 + [90.0] * 3, 225, "fcc", 0.5)
+        self.assertEqual(tm.shape, (1, 41, 41))
+        mis = tm.misorientation[0][tm.phase_ids[0] == 0]
+        self.assertTrue(np.all(np.isfinite(mis)) and 0.0 < np.median(mis) < 2.0)
+
+
 if __name__ == "__main__":
     unittest.main()
