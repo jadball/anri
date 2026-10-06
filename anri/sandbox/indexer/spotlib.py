@@ -6,6 +6,7 @@ own omega; rotations are small sample-frame rotation vectors w, UBI -> UBI (I + 
 
 from __future__ import annotations
 
+import argparse
 import os
 
 import h5py
@@ -21,32 +22,67 @@ from anri.fwd._impl.render import _beam_offsets, _scattering_origin, _wrap_omega
 from anri.geom import raytrace_to_det, sample_to_lab
 
 
+def add_args(p: argparse.ArgumentParser) -> None:
+    """The dataset and phase arguments shared by match_spots.py and joint.py."""
+    p.add_argument("analysisroot")
+    p.add_argument("sample")
+    p.add_argument("dataset")
+    p.add_argument("--parfile", help="pars.json (default: the DataSet's)")
+    p.add_argument("--phase", help="phase name in pars.json (default: the only one)")
+    p.add_argument("--cif", help="CIF of the phase, for structure factors (default: |F|^2 = 1)")
+    p.add_argument("--rings", type=int, default=8, help="rings used")
+    p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the DataSet's)")
+    p.add_argument("--det-shape", type=int, nargs=2, default=(2048, 2048), help="detector (slow, fast) pixels")
+    p.add_argument("--beam", type=float, help="beam FWHM (default: the dty step)")
+    p.add_argument("--voxel", type=float, help="voxel size (default: the dty step)")
+
+
+def load_args(args: argparse.Namespace) -> dict:
+    return load(args.analysisroot, args.sample, args.dataset, beam=args.beam, voxel=args.voxel, n_rings=args.rings,
+                parfile=args.parfile, phase=args.phase, cif=args.cif, y0=args.y0, det_shape=tuple(args.det_shape))  # fmt: skip
+
+
 def load(analysisroot: str, sample: str, dataset: str, beam: float | None = None, voxel: float | None = None,
-         n_rings: int = 8) -> dict:  # fmt: skip
-    """Rows, geometry and ImageD11's 2D peaks (sorted by (row, file frame), with each cell's start in "cstart")."""
+         n_rings: int = 8, parfile: str | None = None, phase: str | None = None, cif: str | None = None,
+         y0: float | None = None, det_shape: tuple = (2048, 2048)) -> dict:  # fmt: skip
+    """Rows, geometry, the phase's reflections and ImageD11's 2D peaks (sorted by (row, file frame), each cell's start
+    in "cstart")."""
     dsname = f"{sample}_{dataset}"
     dsfile = os.path.join(analysisroot, sample, dsname, f"{dsname}_dataset.h5")
     ds = load_ds(dsfile)
     dsd = anri.io.read_dataset(dsfile)
-    geo, _, cell = anri.io.read_pars_json(dsd["parfile"])
-    a = cell["cell__a"]
-    lpars = np.array([a, a, a, 90.0, 90.0, 90.0])
+    geo, phase, cell = anri.io.read_pars_json(parfile or dsd["parfile"], phase)
+    lpars = np.array([cell[k] for k in ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")])
+    sg = cell["cell_lattice_[P,A,B,C,I,F,R]"]
+    if not isinstance(sg, (float, int)):
+        raise SystemExit(f"{phase}: cell_lattice_[P,A,B,C,I,F,R] = {sg} is a centring letter; a space-group number is needed")
+    sg = int(sg)
+    structure = None
+    if cif:
+        import Dans_Diffraction
+
+        structure = Dans_Diffraction.Crystal(cif)
     wl = geo["wavelength"]
+    rings = ix.ring_table(lpars, sg, wl, n_rings, structure)
+    y0 = dsd["y0"] if y0 is None else y0
+    if y0 is None:
+        raise SystemExit(f"{dsfile} has no y0: give it with --y0")
     n_rows, n_frames = ds.omega.shape
     row_dty = ds.dty.mean(axis=1)
     ystep = float(np.median(np.abs(np.diff(np.sort(row_dty)))))
     beam = beam or ystep
     voxel = voxel or ystep
-    geom = anri.io.geom_from_pars(geo, dsd["y0"], wl * 2e-4 / 2.355, 5e-5, 5e-5, sig_beam=beam / 2.355,
+    geom = anri.io.geom_from_pars(geo, y0, wl * 2e-4 / 2.355, 5e-5, 5e-5, sig_beam=beam / 2.355,
                                   voxel_size=voxel, sig_psf=0.5)  # fmt: skip
     geom = jax.tree.map(
         lambda x: jnp.asarray(x, jnp.float32) if np.asarray(x).dtype.kind == "f" else jnp.asarray(x), geom
     )
-    om_sorted = np.sort(ds.omega, axis=1)
-    if np.abs(om_sorted - om_sorted[0]).max() > 1e-3:
-        raise ValueError("every row needs the same omegas (sorted)")
-    om_sorted = om_sorted[0].astype(np.float32)
+    om_all = np.sort(ds.omega, axis=1)
+    om_sorted = np.median(om_all, axis=0).astype(np.float32)  # one omega grid for all rows
     ostep = float(np.median(np.diff(om_sorted)))
+    om_dev = float(np.abs(om_all - om_sorted).max())
+    if om_dev > 0.25 * ostep:
+        raise SystemExit(f"rows' omegas differ from their median by up to {om_dev:.4g} deg (> a quarter frame)")
     edges = np.concatenate([[om_sorted[0] - ostep / 2], 0.5 * (om_sorted[1:] + om_sorted[:-1]),
                             [om_sorted[-1] + ostep / 2]]).astype(np.float32)  # fmt: skip
     rsort = np.argsort(row_dty).astype(np.int32)
@@ -57,7 +93,8 @@ def load(analysisroot: str, sample: str, dataset: str, beam: float | None = None
     o = np.argsort(cellid, kind="stable")
     blobs = np.stack([sr_i / s_i, sc_i / s_i, ds.omega[row_of, frm]]).T[o].astype(np.float32)
     return {
-        "geom": geom, "lpars": lpars, "hkls": np.asarray(ix.ring_table(lpars, 225, wl, n_rings)["hkls"], np.float32),
+        "geom": geom, "lpars": lpars, "sg": sg, "phase": phase, "hkls": np.asarray(rings["hkls"], np.float32),
+        "F2": np.asarray(rings["F2"], np.float32), "det_shape": tuple(det_shape), "om_dev": om_dev,
         "n_rows": n_rows, "n_frames": n_frames, "om_sorted": om_sorted, "edges": edges, "ostep": ostep,
         "order": np.argsort(ds.omega, axis=1, kind="stable").astype(np.int32),  # sorted index -> file frame, per row
         "rsort": rsort, "dty_sorted": row_dty[rsort].astype(np.float32), "ystep": ystep,
@@ -100,5 +137,6 @@ def spot(ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: jax.Array, d: 
     dty_c = centre_dty(pos, mu[2], geom)
     dty = d["dty_sorted"]
     ok = valid & (mu[2] > edges[0]) & (mu[2] < edges[-1]) & (dty_c > dty[0] - 1.0) & (dty_c < dty[-1] + 1.0)
-    ok = ok & (mu[0] > -5) & (mu[0] < 2053) & (mu[1] > -5) & (mu[1] < 2053)
+    ns, nf = d["det_shape"]
+    ok = ok & (mu[0] > -5) & (mu[0] < ns + 4) & (mu[1] > -5) & (mu[1] < nf + 4)
     return mu, J, ok, sin_eta

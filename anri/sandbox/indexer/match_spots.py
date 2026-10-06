@@ -31,10 +31,10 @@ def log(msg: str) -> None:
     print(f"[{time.perf_counter() - T0:7.1f} s] {msg}", flush=True)
 
 
+import spotlib  # noqa: E402  (defines functions only: JAX starts after anri.utils.setup)
+
 p = argparse.ArgumentParser()
-p.add_argument("analysisroot")
-p.add_argument("sample")
-p.add_argument("dataset")
+spotlib.add_args(p)
 p.add_argument("--entries")
 p.add_argument("--truth")
 p.add_argument("--perturb", type=float, default=0.0, help="random rotation of each entry (deg), with --truth")
@@ -49,7 +49,12 @@ p.add_argument("--step", type=float, help="vote grid step (deg, default tol / 10
 p.add_argument("--n-hyp", type=int, default=4, help="hypotheses kept per voxel")
 p.add_argument("--n-cpu", type=int, default=12)
 p.add_argument("--seed", type=int, default=0)
+p.add_argument("--check", action="store_true", help="print the sizes and memory estimates, and stop")
 args = p.parse_args()
+if args.entries and args.y0 is None:  # the indexer's y0, if it saved one
+    idx_npz = args.entries.replace("_entries.npz", ".npz")
+    if os.path.exists(idx_npz) and "y0" in np.load(idx_npz):
+        args.y0 = float(np.load(idx_npz)["y0"])
 
 import anri.utils
 
@@ -59,9 +64,9 @@ import jax.numpy as jnp
 from scipy.spatial.transform import Rotation
 
 import anri.io
-from spotlib import centre_dty, load, spot
+from spotlib import centre_dty, spot
 
-d = load(args.analysisroot, args.sample, args.dataset)
+d = spotlib.load_args(args)
 n_rows, n_frames, hkls = d["n_rows"], d["n_frames"], d["hkls"]
 cs = np.diff(d["cstart"])
 M = args.max_blobs
@@ -83,7 +88,7 @@ if args.entries:  # e.g. the indexer's: every population; with --truth, scored a
 
         te = anri.io.entries_from_tensormap(TensorMap.from_h5(args.truth))
         B = anri.crystal.B_matrix(d["lpars"])
-        ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(225), B)
+        ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(d["sg"]), B)
         dist, it = cKDTree(te["pos"][:, :2]).query(pos[:, :2])
         has = dist < 0.5 * d["ystep"]
         U_s = np.linalg.inv(ubi) @ np.linalg.inv(B)
@@ -116,6 +121,23 @@ if ubi_true is not None:  # the correction back: ubi_true = ubi R(d)^T, R(d) the
           flush=True)  # fmt: skip
 n_ent, n_hkl = len(ubi), len(hkls)
 log(f"{n_ent} entries x {n_hkl} hkls x 2 branches; perturbed by {args.perturb} deg; tolerance {args.tol} deg")
+if args.check:  # sizes, and memory from the array shapes (spots in the scan: about half of entries x hkls x 2)
+    GB = 1e9
+    n_sp_est = n_ent * n_hkl
+    K_ = 2 * int(np.ceil(args.max_omega / d["ostep"])) + 1
+    G_ = 2 * int(np.ceil(args.tol / (args.step or args.tol / 10))) + 1
+    print(f"  phase {d['phase']}: space group {d['sg']}, lattice {np.round(d['lpars'], 4)}, {n_hkl} hkls in "
+          f"{args.rings} rings; |F|^2 {'from ' + args.cif if args.cif else '= 1'}; y0 {float(d['geom']['y0']):.5g}; "
+          f"rows' omega spread {d['om_dev']:.3g} deg")  # fmt: skip
+    print(f"  2D peaks per (row, frame): mean {cs.mean():.1f}, 99th {np.percentile(cs, 99):.0f}, max {cs.max()} "
+          f"(--max-blobs {M}: {np.mean(cs > M):.2%} of cells have more, their extra peaks are not tested)")  # fmt: skip
+    print(f"  spots in the scan: ~{n_sp_est:.3g}; matching window {K_} frames x 2 rows x {M} peaks = "
+          f"{K_ * 2 * M} tests per spot, {n_sp_est * K_ * 2 * M:.3g} in all")  # fmt: skip
+    print(f"  host memory: spot geometry ~{n_sp_est * 60 / GB:.2f} GB, candidate table ~{n_sp_est * args.max_cand * 13 / GB:.2f} GB "
+          f"(also on the device for the vote); 2D peaks {d['blobs'].nbytes / GB:.2f} GB")  # fmt: skip
+    print(f"  device per call: matching ~{8192 * K_ * 2 * M * 3 * 4 * 6 / GB:.1f} GB, vote ~"
+          f"{256 * 2 * n_hkl * args.max_cand * G_ * 3 * 4 * 3 / GB:.1f} GB (upper bound)")  # fmt: skip
+    raise SystemExit(0)
 
 # --- spot geometry: one compile, a few big calls -----------------------------------------------------------------
 spots_chunk = jax.jit(jax.vmap(lambda u, x, h, s: spot(u, x, h, s, d)))
@@ -290,5 +312,5 @@ R = Rotation.from_rotvec(d_hyp.reshape(-1, 3)).as_matrix().reshape(n_ent, NH, 3,
 ubi_hyp = np.einsum("nij,nklj->nkil", ubi, R)  # UBI R^T
 out = args.out or os.path.join(args.analysisroot, f"match_{args.perturb}.npz")
 err = np.degrees(np.linalg.norm(d_hyp - d_true[:, None], axis=2))
-np.savez(out, ubi_hyp=ubi_hyp, valid=valid, err=err, main=main, n_in=n_in, votes=votes, n_sp=n_sp_v, pos=pos, density=dens)
+np.savez(out, y0=float(d["geom"]["y0"]), ubi_hyp=ubi_hyp, valid=valid, err=err, main=main, n_in=n_in, votes=votes, n_sp=n_sp_v, pos=pos, density=dens)
 log(f"-> {out}")

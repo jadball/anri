@@ -24,16 +24,14 @@ def log(msg: str) -> None:
     print(f"[{time.perf_counter() - T0:7.1f} s] {msg}", flush=True)
 
 
+import spotlib  # noqa: E402  (defines functions only: JAX starts after anri.utils.setup)
+
 p = argparse.ArgumentParser()
-p.add_argument("analysisroot")
-p.add_argument("sample")
-p.add_argument("dataset")
+spotlib.add_args(p)
 p.add_argument("match")
 p.add_argument("--iter", type=int, default=200)
 p.add_argument("--free", action="store_true", help="each hypothesis' occupancy free (the old way): densities trade "
                "along rays and the map is noisy. Default: each voxel's total held at the indexer's density x one scale")
-p.add_argument("--beam", type=float, help="beam FWHM (default: the dty step)")
-p.add_argument("--voxel", type=float, help="voxel size (default: the dty step)")
 p.add_argument("--match-px", type=float, default=3.0, help="largest distance from a prediction to its 2D peak (px)")
 p.add_argument("--max-blobs", type=int, default=32)
 p.add_argument("--sig-omega", type=float, default=0.0, help="extra omega spread of each predicted peak (deg): a soft "
@@ -43,6 +41,8 @@ p.add_argument("--eta-cut", type=float, default=0.0, help="drop spots with |sin 
 p.add_argument("--save-terms", action="store_true", help="also save the fit's terms (for diagnostics)")
 p.add_argument("--n-cpu", type=int, default=12)
 args = p.parse_args()
+if args.y0 is None and "y0" in np.load(args.match):  # as match_spots.py used
+    args.y0 = float(np.load(args.match)["y0"])
 
 import anri.utils
 
@@ -52,9 +52,9 @@ import jax.numpy as jnp
 
 from anri.fwd._impl.render import _peak_cov, _peak_factors, beam_weight, bin_fractions
 from anri.geom import sample_to_lab
-from spotlib import centre_dty, load, spot
+from spotlib import centre_dty, spot
 
-d = load(args.analysisroot, args.sample, args.dataset, beam=args.beam, voxel=args.voxel)
+d = spotlib.load_args(args)
 geom, hkls, n_rows, n_frames = d["geom"], d["hkls"], d["n_rows"], d["n_frames"]
 n_blob = d["blobs"].shape[0]
 r = np.load(args.match)
@@ -72,13 +72,13 @@ cstart, order, rsort = jnp.asarray(d["cstart"]), jnp.asarray(d["order"]), jnp.as
 dty_s, edges = jnp.asarray(d["dty_sorted"]), jnp.asarray(d["edges"])
 
 
-def predict(u: jax.Array, x: jax.Array, hkl: jax.Array, etasign: jax.Array) -> tuple:
+def predict(u: jax.Array, x: jax.Array, hkl: jax.Array, f2: jax.Array, etasign: jax.Array) -> tuple:
     mu, _, ok, sin_eta = spot(u, x, hkl, etasign, d)
     ok = ok & (sin_eta >= args.eta_cut)
     om = mu[2]
     yc = centre_dty(x, om, geom)
     sig_om = jnp.sqrt(_peak_cov(u, x, hkl, etasign, yc, geom)[2] + args.sig_omega**2 + 1e-8)
-    lp = _peak_factors(u, hkl, etasign, geom)
+    lp = f2 * _peak_factors(u, hkl, etasign, geom)  # |F|^2 x Lorentz-polarisation
     f0 = jnp.searchsorted(edges, om) - 1
     s = jnp.clip(f0 + jnp.arange(-1, 2), 0, n_frames - 1)  # sorted frames
     pf = bin_fractions(edges[s], edges[s + 1], om, sig_om) * (f0 + jnp.arange(-1, 2) == s)  # [3]
@@ -109,7 +109,8 @@ t = time.perf_counter()
 for s0 in range(0, n_all, BIG):
     sl = slice(s0, s0 + BIG)
     a, blob = pred(jnp.asarray(ubi[jp[sl]], jnp.float32), jnp.asarray(pos[jp[sl]], jnp.float32),
-                   jnp.asarray(hkls[hp[sl]]), jnp.asarray(1.0 - 2.0 * bp[sl], jnp.float32))  # fmt: skip
+                   jnp.asarray(hkls[hp[sl]]), jnp.asarray(d["F2"][hp[sl]]),
+                   jnp.asarray(1.0 - 2.0 * bp[sl], jnp.float32))  # fmt: skip
     a, blob = np.array(a), np.asarray(blob)
     a[max(0, jh.size - s0) :] = 0.0  # padding
     nz = np.nonzero(a > 1e-4 * a.max())
