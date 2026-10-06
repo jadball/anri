@@ -36,6 +36,9 @@ p.add_argument("--beam", type=float, help="beam FWHM (default: the dty step)")
 p.add_argument("--voxel", type=float, help="voxel size (default: the dty step)")
 p.add_argument("--match-px", type=float, default=3.0, help="largest distance from a prediction to its 2D peak (px)")
 p.add_argument("--max-blobs", type=int, default=32)
+p.add_argument("--sig-omega", type=float, default=0.0, help="extra omega spread of each predicted peak (deg): a soft "
+               "split between frames where the instrument's peak is far narrower than a frame")
+p.add_argument("--save-terms", action="store_true", help="also save the fit's terms (for diagnostics)")
 p.add_argument("--n-cpu", type=int, default=12)
 args = p.parse_args()
 
@@ -71,7 +74,7 @@ def predict(u: jax.Array, x: jax.Array, hkl: jax.Array, etasign: jax.Array) -> t
     mu, _, ok, _ = spot(u, x, hkl, etasign, d)
     om = mu[2]
     yc = centre_dty(x, om, geom)
-    sig_om = jnp.sqrt(_peak_cov(u, x, hkl, etasign, yc, geom)[2] + 1e-8)
+    sig_om = jnp.sqrt(_peak_cov(u, x, hkl, etasign, yc, geom)[2] + args.sig_omega**2 + 1e-8)
     lp = _peak_factors(u, hkl, etasign, geom)
     f0 = jnp.searchsorted(edges, om) - 1
     s = jnp.clip(f0 + jnp.arange(-1, 2), 0, n_frames - 1)  # sorted frames
@@ -171,6 +174,12 @@ log(f"  {'free occupancies' if args.free else 'voxel totals held'}; global scale
 log(f"MLEM: {args.iter} iterations, {time.perf_counter() - t:.1f} s; log-likelihood at 1, 10, 50, last: "
     f"{ll[0]:.6g} {ll[min(9, len(ll) - 1)]:.6g} {ll[min(49, len(ll) - 1)]:.6g} {ll[-1]:.6g}")  # fmt: skip
 
+lam = np.bincount(B, A * x[Jx], minlength=n_blob + 1)[:n_blob]
+k_ = lam > 0
+r_ = d["blob_i"][k_] / lam[k_]
+q_ = np.percentile(np.repeat(r_, np.clip((d["blob_i"][k_] / np.median(d["blob_i"][k_])).astype(int), 1, 50)), [10, 50, 90])
+log(f"  measured / predicted per 2D peak (intensity-weighted) 10/50/90: {np.round(q_, 3)}")
+
 # --- each voxel's choice: the hypothesis with the largest occupancy ----------------------------------------------
 X = np.zeros(valid.shape)
 X[vv, kk] = x
@@ -203,3 +212,6 @@ print(f"  share of the chosen hypothesis: median {np.median(share):.2f}, 10th {n
 np.savez(args.match.replace(".npz", "_joint.npz"), x=X, best=best, share=share, err=e_best,
          ubi=r["ubi_hyp"][np.arange(n_vox), best], pos=r["pos"], density=r["density"],
          population=np.where(r["main"], 0, 1) if "main" in r else np.zeros(n_vox, int))
+if args.save_terms:
+    np.savez(args.match.replace(".npz", "_terms.npz"), A=A, B=B, J=Jx, I=I, vv=vv, kk=kk, vh=vh, base=base,
+             pi=np.asarray(pi), s=float(s_fit), sens=np.asarray(sens), blobs=d["blobs"], blob_cell=d["blob_cell"])
