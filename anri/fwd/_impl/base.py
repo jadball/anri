@@ -150,10 +150,9 @@ def hkl_to_k_omega_both(
     asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample_norm)
     omegas = jnp.stack([omega_from_core(asin_term, phi, 1.0), omega_from_core(asin_term, phi, -1.0)])
 
-    k_outs = jnp.stack([
-        q_lab_to_k_out(sample_to_lab(q_sample, omegas[i], wedge, chi, 0.0, 0.0), k_in_lab_norm)
-        for i in range(2)
-    ])
+    k_outs = jnp.stack(
+        [q_lab_to_k_out(sample_to_lab(q_sample, omegas[i], wedge, chi, 0.0, 0.0), k_in_lab_norm) for i in range(2)]
+    )
 
     return k_in_lab, k_outs, omegas, valid
 
@@ -185,7 +184,9 @@ def get_cov_in(sig_origin: jax.Array, sig_wavelength: float, sig_ky: float, sig_
     $\matr{\Sigma}^{\text{in}} = \begin{bmatrix} \sigma_x^2 & 0 & 0 & 0 & 0 & 0 \\ 0 & \sigma_y^2 & 0 & 0 & 0 & 0\\0 & 0 & \sigma_z^2 & 0 & 0 & 0\\ 0 & 0 & 0 &\sigma_\lambda^2 & 0 & 0\\ 0 & 0 & 0 & 0 & \sigma_{k_y}^2 & 0 \\ 0 & 0 & 0& 0& 0 & \sigma_{k_z}^2\end{bmatrix} $
 
     """
-    cov_in = jnp.diag(jnp.array([sig_origin[0]**2, sig_origin[1]**2, sig_origin[2]**2, sig_wavelength**2, sig_ky**2, sig_kz**2]))
+    cov_in = jnp.diag(
+        jnp.array([sig_origin[0] ** 2, sig_origin[1] ** 2, sig_origin[2] ** 2, sig_wavelength**2, sig_ky**2, sig_kz**2])
+    )
 
     return cov_in
 
@@ -373,8 +374,7 @@ def make_propagator(
             if out_elems is None:
                 outer = col[..., :, None] * col[..., None, :]
             else:
-                outer = jnp.stack([col[..., i] * col[..., j]
-                                   for i, j in out_elems], axis=-1)
+                outer = jnp.stack([col[..., i] * col[..., j] for i, j in out_elems], axis=-1)
             acc = outer if acc is None else acc + outer
 
         if acc is None:
