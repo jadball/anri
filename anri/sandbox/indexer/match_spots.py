@@ -225,7 +225,8 @@ def vote(sp: jax.Array) -> tuple:
     bi = jnp.round(pts / step).astype(jnp.int32) + G // 2
     inn = jnp.all((bi >= 0) & (bi < G), -1) & ok[:, :, None]
     flat = jnp.where(inn, (bi[..., 0] * G + bi[..., 1]) * G + bi[..., 2], G**3)
-    hist = jnp.zeros(G**3 + 1).at[flat.ravel()].add(1.0)[:-1]
+    # empty slots point past the end and are dropped: an in-bounds dummy bin would take millions of atomic adds
+    hist = jnp.zeros(G**3).at[flat.ravel()].add(1.0, mode="drop")
     grid = jnp.stack(jnp.unravel_index(jnp.arange(G**3), (G, G, G)), 1)
 
     def fit(delta: jax.Array, thr: float, first: bool) -> tuple:
@@ -258,7 +259,7 @@ def vote(sp: jax.Array) -> tuple:
 
 vote_chunk = jax.jit(jax.vmap(vote))
 t = time.perf_counter()
-VC = 64
+VC = 256
 n_vp = -(-n_ent // VC) * VC
 tab = np.concatenate([table, np.full((n_vp - n_ent, S_max), n_sp, np.int32)])
 outs = [vote_chunk(jnp.asarray(tab[v0 : v0 + VC])) for v0 in range(0, n_vp, VC)]
