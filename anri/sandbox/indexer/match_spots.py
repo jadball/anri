@@ -43,7 +43,8 @@ p.add_argument("--out", help="output npz (default <analysisroot>/match_<perturb>
 p.add_argument("--tol", type=float, default=0.6, help="largest rotation a match may need (deg)")
 p.add_argument("--max-omega", type=float, default=2.0, help="omega window each side of a prediction (deg)")
 p.add_argument("--sig", type=float, nargs=3, default=(0.5, 0.5, 0.05), help="sigma of sc, fc (px), omega (deg)")
-p.add_argument("--max-blobs", type=int, default=32, help="2D peaks tested per (row, frame) cell")
+p.add_argument("--max-blobs", type=int, default=32, help="2D peaks tested per (row, frame) cell, from the start of the "
+               "band of slow pixels a candidate can lie in")
 p.add_argument("--max-cand", type=int, default=64, help="candidates kept per spot for the vote")
 p.add_argument("--step", type=float, help="vote grid step (deg, default tol / 10)")
 p.add_argument("--n-hyp", type=int, default=4, help="hypotheses kept per voxel")
@@ -64,14 +65,14 @@ import jax.numpy as jnp
 from scipy.spatial.transform import Rotation
 
 import anri.io
-from spotlib import centre_dty, spot
+from spotlib import band_start, centre_dty, spot
 
 d = spotlib.load_args(args)
 n_rows, n_frames, hkls = d["n_rows"], d["n_frames"], d["hkls"]
 cs = np.diff(d["cstart"])
 M = args.max_blobs
 log(f"{n_rows} rows, {n_frames} frames of {d['ostep']:g} deg; {d['blobs'].shape[0]} 2D peaks, per (row, frame) "
-    f"mean {cs.mean():.2f}, max {cs.max()} ({np.sum(cs > M)} cells over {M})")  # fmt: skip
+    f"mean {cs.mean():.2f}, max {cs.max()}")  # fmt: skip
 
 # --- entries -----------------------------------------------------------------------------------------------------
 rng = np.random.default_rng(args.seed)
@@ -132,7 +133,8 @@ if args.check:  # sizes, and memory from the array shapes (spots in the scan: ab
     print(f"  detector {d['det_shape']}; dty step {d['ystep']:.4g} (beam FWHM and voxel {args.beam or d['ystep']:.4g}, "
           f"{args.voxel or d['ystep']:.4g}); 2D peaks {d['pksfile']}")  # fmt: skip
     print(f"  2D peaks per (row, frame): mean {cs.mean():.1f}, 99th {np.percentile(cs, 99):.0f}, max {cs.max()} "
-          f"(--max-blobs {M}: {np.mean(cs > M):.2%} of cells have more, their extra peaks are not tested)")  # fmt: skip
+          f"(each spot tests up to --max-blobs {M} from the start of its band of slow pixels; overflow is reported "
+          f"after matching)")  # fmt: skip
     print(f"  spots in the scan: ~{n_sp_est:.3g}; matching window {K_} frames x 2 rows x {M} peaks = "
           f"{K_ * 2 * M} tests per spot, {n_sp_est * K_ * 2 * M:.3g} in all")  # fmt: skip
     print(f"  host memory: spot geometry ~{n_sp_est * 60 / GB:.2f} GB, candidate table ~{n_sp_est * args.max_cand * 13 / GB:.2f} GB "
@@ -160,13 +162,15 @@ K = 2 * int(np.ceil(args.max_omega / d["ostep"])) + 1
 CM = args.max_cand
 tol = np.radians(args.tol)
 W = jnp.asarray(1.0 / np.asarray(args.sig, np.float32))
-blobs = jnp.asarray(d["blobs"])
-cstart_j, order_j, rsort_j = jnp.asarray(d["cstart"]), jnp.asarray(d["order"]), jnp.asarray(d["rsort"])
-dty_j, om_j, edges_j = jnp.asarray(d["dty_sorted"]), jnp.asarray(d["om_sorted"]), jnp.asarray(d["edges"])
+# tables passed to the jitted matcher as arguments: closed over, the peaks (~0.4 GB on real data) would be compiled in
+tb = {k: jnp.asarray(d[k]) for k in ("blobs", "cstart", "order", "rsort", "dty_sorted", "om_sorted", "edges")}
+NS, NB = d["n_search"], d["blobs"].shape[0]
 
 
-def match(mu: jax.Array, J: jax.Array, pos: jax.Array, dtrue: jax.Array) -> tuple:
-    """Candidates of one spot: counts (all, right) and the scaled offsets z of the best CM by |delta|."""
+def match(mu: jax.Array, J: jax.Array, pos: jax.Array, dtrue: jax.Array, tb: dict) -> tuple:
+    """Candidates of one spot: counts (all, right), the scaled offsets z of the best CM by |delta|, and whether any
+    cell's band held more than M peaks."""
+    blobs, dty_j, om_j, edges_j = tb["blobs"], tb["dty_sorted"], tb["om_sorted"], tb["edges"]
     A = W[:, None] * J
     U, S, Vt = jnp.linalg.svd(A)
     Sinv = jnp.where(S > 1e-3 * S[0], 1.0 / S, 0.0)
@@ -177,32 +181,38 @@ def match(mu: jax.Array, J: jax.Array, pos: jax.Array, dtrue: jax.Array) -> tupl
     s = jnp.clip(s, 0, n_frames - 1)
     y = jax.vmap(lambda o: centre_dty(pos, o, d["geom"]))(om_j[s])  # the voxel's sinusoid: its dty at each frame
     r_hi = jnp.clip(jnp.searchsorted(dty_j, y), 1, n_rows - 1)
-    row = rsort_j[jnp.stack([r_hi - 1, r_hi], 1)]  # [K, 2] the rows bracketing it
-    c = row * n_frames + order_j[row, s[:, None]]
-    lo, hi = cstart_j[c], cstart_j[c + 1]
-    idx = lo[..., None] + jnp.arange(M)  # [K, 2, M]
-    live = (idx < hi[..., None]) & fin[:, None, None]
-    z = W * (blobs[jnp.minimum(idx, blobs.shape[0] - 1)] - mu)
+    row = tb["rsort"][jnp.stack([r_hi - 1, r_hi], 1)]  # [K, 2] the rows bracketing it
+    c = row * n_frames + tb["order"][row, s[:, None]]
+    lo, hi = tb["cstart"][c], tb["cstart"][c + 1]
+    # a candidate lies within R slow pixels of the prediction: R = |d sc / d rotation| tol + 3 sigma
+    R = jnp.linalg.norm(J[0]) * tol + 3.0 * args.sig[0] + 1.0
+    start = band_start(blobs[:, 0], lo, hi, mu[0] - R, NS)  # [K, 2]
+    idx = start[..., None] + jnp.arange(M)  # [K, 2, M]
+    bl = blobs[jnp.minimum(idx, NB - 1)]
+    live = (idx < hi[..., None]) & fin[:, None, None] & (bl[..., 0] <= mu[0] + R)
+    over = jnp.any((start + M < hi) & (blobs[jnp.minimum(start + M, NB - 1), 0] <= mu[0] + R) & fin[:, None])
+    z = W * (bl - mu)
     dl = z @ P.T  # implied rotation
     cand = live & (jnp.abs(z @ n) < 3.0) & (jnp.linalg.norm(dl, axis=-1) < tol)
     right = cand & (jnp.linalg.norm(z - A @ dtrue, axis=-1) < 3.0)
     sv, si = jax.lax.top_k(jnp.where(cand, -jnp.linalg.norm(dl, axis=-1), -jnp.inf).ravel(), CM)
-    return cand.sum(), right.sum(), z.reshape(-1, 3)[si], jnp.isfinite(sv)
+    return cand.sum(), right.sum(), z.reshape(-1, 3)[si], jnp.isfinite(sv), over
 
 
-match_chunk = jax.jit(jax.vmap(match))
+match_chunk = jax.jit(jax.vmap(match, in_axes=(0, 0, 0, 0, None)))
 t = time.perf_counter()
 MC = 1 << 13
 n_pad = -(-n_sp // MC) * MC
 sel = np.pad(keep, (0, n_pad - n_sp))
 mu_k, J_k, e_k = mu[sel], J[sel].astype(np.float32), e[sel]
 outs = [match_chunk(*(jnp.asarray(x[s:s + MC]) for x in (mu_k, J_k, pos[e_k].astype(np.float32),
-                                                         d_true[e_k].astype(np.float32))))
+                                                         d_true[e_k].astype(np.float32))), tb)
         for s in range(0, n_pad, MC)]  # fmt: skip
-cand, right, zc, cv = (np.concatenate([np.asarray(o[i]) for o in outs])[:n_sp] for i in range(4))
+cand, right, zc, cv, over = (np.concatenate([np.asarray(o[i]) for o in outs])[:n_sp] for i in range(5))
 wrong = cand - right
 se = sin_eta[keep]
-log(f"matching: {time.perf_counter() - t:.1f} s, window {K} frames x 2 rows x {M} peaks")
+log(f"matching: {time.perf_counter() - t:.1f} s, window {K} frames x 2 rows x {M} peaks; spots with a cell whose band "
+    f"held more than {M} peaks (the rest untested): {np.mean(over):.2%}")  # fmt: skip
 
 
 def report(m: np.ndarray, label: str) -> None:

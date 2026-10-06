@@ -97,8 +97,9 @@ def load(analysisroot: str, sample: str, dataset: str, beam: float | None = None
         s1, s_i, sr_i, sc_i, frm = h["pks2d"]["pk_props"][:]
     row_of, frm = frm // n_frames, frm % n_frames  # the id is row * n_frames + frame
     cellid = row_of.astype(np.int64) * n_frames + frm
-    o = np.argsort(cellid, kind="stable")
+    o = np.lexsort((sr_i / s_i, cellid))  # by cell, then slow pixel: a band of slow pixels is a contiguous run
     blobs = np.stack([sr_i / s_i, sc_i / s_i, ds.omega[row_of, frm]]).T[o].astype(np.float32)
+    per_cell = np.bincount(cellid, minlength=n_rows * n_frames)
     return {
         "geom": geom, "lpars": lpars, "sg": sg, "phase": phase, "hkls": np.asarray(rings["hkls"], np.float32),
         "F2": np.asarray(rings["F2"], np.float32), "det_shape": tuple(det_shape), "om_dev": om_dev, "pksfile": ds.pksfile, "sparsefile": ds.sparsefile,
@@ -107,7 +108,22 @@ def load(analysisroot: str, sample: str, dataset: str, beam: float | None = None
         "rsort": rsort, "dty_sorted": row_dty[rsort].astype(np.float32), "ystep": ystep,
         "blobs": blobs, "blob_i": s_i[o].astype(np.float32), "blob_cell": cellid[o],
         "cstart": np.searchsorted(cellid[o], np.arange(n_rows * n_frames + 1)).astype(np.int32),
+        "n_search": int(np.ceil(np.log2(per_cell.max() + 1))) + 1,  # binary-search steps within a cell
     }  # fmt: skip
+
+
+def band_start(slow: jax.Array, lo: jax.Array, hi: jax.Array, x: jax.Array, n_search: int) -> jax.Array:
+    """First index in [lo, hi) whose slow pixel is >= x (peaks sorted by slow pixel within a cell); any shapes."""
+    last = slow.shape[0] - 1
+
+    def step(_: int, lh: tuple) -> tuple:
+        lo, hi = lh
+        mid = (lo + hi) // 2
+        right = slow[jnp.minimum(mid, last)] < x
+        go = lo < hi
+        return jnp.where(go & right, mid + 1, lo), jnp.where(go & ~right, mid, hi)
+
+    return jax.lax.fori_loop(0, n_search, step, (lo, jnp.broadcast_to(hi, lo.shape)))[0]
 
 
 def skew(w: jax.Array) -> jax.Array:

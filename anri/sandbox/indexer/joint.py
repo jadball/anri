@@ -52,7 +52,7 @@ import jax.numpy as jnp
 
 from anri.fwd._impl.render import _peak_cov, _peak_factors, beam_weight, bin_fractions
 from anri.geom import sample_to_lab
-from spotlib import centre_dty, spot
+from spotlib import band_start, centre_dty, spot
 
 d = spotlib.load_args(args)
 geom, hkls, n_rows, n_frames = d["geom"], d["hkls"], d["n_rows"], d["n_frames"]
@@ -67,12 +67,14 @@ log(f"{n_vox} voxels, {n_hyp} hypotheses ({n_hyp / n_vox:.2f} per voxel), {n_blo
 
 # --- each (hypothesis, spot): its intensity in each of 3 rows x 3 frames, and the 2D peak it lands on --------------
 M = args.max_blobs
-blobs = jnp.asarray(d["blobs"])
-cstart, order, rsort = jnp.asarray(d["cstart"]), jnp.asarray(d["order"]), jnp.asarray(d["rsort"])
-dty_s, edges = jnp.asarray(d["dty_sorted"]), jnp.asarray(d["edges"])
+# tables passed to the jitted function as arguments: closed over, the peaks would be compiled in as constants
+tb = {k: jnp.asarray(d[k]) for k in ("blobs", "cstart", "order", "rsort", "dty_sorted", "edges")}
+NS = d["n_search"]
 
 
-def predict(u: jax.Array, x: jax.Array, hkl: jax.Array, f2: jax.Array, etasign: jax.Array) -> tuple:
+def predict(u: jax.Array, x: jax.Array, hkl: jax.Array, f2: jax.Array, etasign: jax.Array, tb: dict) -> tuple:
+    blobs, cstart, order, rsort, dty_s, edges = (tb[k] for k in ("blobs", "cstart", "order", "rsort", "dty_sorted",
+                                                                 "edges"))  # fmt: skip
     mu, _, ok, sin_eta = spot(u, x, hkl, etasign, d)
     ok = ok & (sin_eta >= args.eta_cut)
     om = mu[2]
@@ -89,7 +91,8 @@ def predict(u: jax.Array, x: jax.Array, hkl: jax.Array, f2: jax.Array, etasign: 
     row = rsort[rn]
     c = row[:, None] * n_frames + order[row[:, None], s[None, :]]  # [3 rows, 3 frames]
     lo, hi = cstart[c], cstart[c + 1]
-    idx = lo[..., None] + jnp.arange(M)
+    start = band_start(blobs[:, 0], lo, hi, mu[0] - args.match_px, NS)  # the cell's peaks within match_px in slow
+    idx = start[..., None] + jnp.arange(M)
     bl = blobs[jnp.minimum(idx, n_blob - 1)]
     dist = jnp.where(idx < hi[..., None], jnp.hypot(bl[..., 0] - mu[0], bl[..., 1] - mu[1]), jnp.inf)
     k = jnp.argmin(dist, axis=-1)
@@ -99,7 +102,7 @@ def predict(u: jax.Array, x: jax.Array, hkl: jax.Array, f2: jax.Array, etasign: 
     return a.ravel(), blob.ravel()
 
 
-pred = jax.jit(jax.vmap(predict))
+pred = jax.jit(jax.vmap(predict, in_axes=(0, 0, 0, 0, 0, None)))
 jh, hh, bb = (x.ravel().astype(np.int32) for x in np.meshgrid(np.arange(n_hyp), np.arange(n_hkl), [0, 1], indexing="ij"))
 BIG = 1 << 15
 n_all = -(-jh.size // BIG) * BIG
@@ -110,7 +113,7 @@ for s0 in range(0, n_all, BIG):
     sl = slice(s0, s0 + BIG)
     a, blob = pred(jnp.asarray(ubi[jp[sl]], jnp.float32), jnp.asarray(pos[jp[sl]], jnp.float32),
                    jnp.asarray(hkls[hp[sl]]), jnp.asarray(d["F2"][hp[sl]]),
-                   jnp.asarray(1.0 - 2.0 * bp[sl], jnp.float32))  # fmt: skip
+                   jnp.asarray(1.0 - 2.0 * bp[sl], jnp.float32), tb)  # fmt: skip
     a, blob = np.array(a), np.asarray(blob)
     a[max(0, jh.size - s0) :] = 0.0  # padding
     nz = np.nonzero(a > 1e-4 * a.max())
