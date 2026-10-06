@@ -47,6 +47,39 @@ n_changed = int(changed.sum())
 if args.owner == "indexer":
     win = np.full(n_vox, -1)
     win[vox[ent["population"] == 0]] = np.flatnonzero(ent["population"] == 0)
+B = anri.crystal.B_matrix(np.asarray(uc.lattice_parameters, float))
+ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(int(uc.symmetry)), B)
+
+
+def rot(ubi: np.ndarray) -> np.ndarray:
+    """Nearest rotation to UBI^-1 B^-1: UBIs stored in float32 are off orthogonal by ~1e-7, which near zero
+    misorientation reads as ~0.02 deg."""
+    u, _, vt = np.linalg.svd(np.linalg.inv(ubi.astype(np.float64)) @ np.linalg.inv(B))
+    return u @ vt
+
+
+def kam(ubi: np.ndarray, ok: np.ndarray, cut: float = 5.0) -> np.ndarray:
+    """Mean misorientation (deg) to the 4 neighbouring voxels within `cut` (the same grain), on the NR x NR grid."""
+    U = np.full((n_vox, 3, 3), np.nan)
+    U[ok] = rot(ubi[ok])
+    U = U.reshape(NR, NR, 3, 3)
+    okg = ok.reshape(NR, NR)
+    tot, cnt = np.zeros((NR, NR)), np.zeros((NR, NR))
+    for a, b in (((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
+                 ((slice(None), slice(None, -1)), (slice(None), slice(1, None)))):  # fmt: skip
+        both = okg[a] & okg[b]
+        m = np.full(both.shape, np.inf)
+        m[both] = anri.crystal.disorientation(U[a][both], U[b][both], ops)
+        near = m < cut
+        for sl in (a, b):
+            tot[sl] += np.where(near, m, 0.0)
+            cnt[sl] += near
+    return np.where(cnt > 0, tot / np.maximum(cnt, 1), np.nan).ravel()
+
+
+main = np.full((n_vox, 3, 3), np.nan)  # the indexer's main population per voxel
+m0 = ent["population"] == 0
+main[vox[m0]] = ent["ubi"][m0]
 occ = idx["occupied"] & (win >= 0)
 w = np.where(occ, win, 0)
 ubi = np.where(occ[:, None, None], jt["ubi"][w], np.nan)
@@ -61,22 +94,22 @@ maps = {
     "n_populations": np.where(occ, n_pop, 0).reshape(NR, NR),
     "owner_changed": np.where(occ, changed, 0).astype(np.int32).reshape(NR, NR),
 }
+# how far refinement moved each voxel from the indexer, and the local misorientation (KAM) of both maps
+ok_m = occ & np.isfinite(main).all(axis=(1, 2))
+moved = np.full(n_vox, np.nan)
+moved[ok_m] = anri.crystal.disorientation(rot(ubi[ok_m]), rot(main[ok_m]), ops)
+k_ref, k_idx = kam(ubi, occ), kam(main, ok_m)
+maps["moved_deg"], maps["kam_deg"], maps["kam_index_deg"] = (x.reshape(NR, NR) for x in (moved, k_ref, k_idx))
+print(f"  moved from the indexer: median {np.nanmedian(moved):.3f} deg, 90th {np.nanpercentile(moved, 90):.3f}; KAM "
+      f"(4 neighbours < 5 deg) median: indexer {np.nanmedian(k_idx):.3f}, refined {np.nanmedian(k_ref):.3f} deg")  # fmt: skip
 print(f"{occ.sum()} voxels, owner from the {args.owner}; the joint fit's largest population is not the indexer's main "
       f"one in {n_changed} voxels")  # fmt: skip
 if args.truth:  # misorientation to the truth voxel at the same place
     from scipy.spatial import cKDTree
 
     te = anri.io.entries_from_tensormap(TensorMap.from_h5(args.truth))
-    B = anri.crystal.B_matrix(np.asarray(uc.lattice_parameters, float))
-    ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(int(uc.symmetry)), B)
     dist, it = cKDTree(te["pos"][:, :2]).query(idx["pos"][:, :2])
     has = occ & (dist < 0.5 * itm.steps[1])
-    def rot(ubi: np.ndarray) -> np.ndarray:
-        """Nearest rotation to UBI^-1 B^-1: UBIs stored in float32 are off orthogonal by ~1e-7, which near zero
-        misorientation reads as ~0.02 deg."""
-        u, _, vt = np.linalg.svd(np.linalg.inv(ubi.astype(np.float64)) @ np.linalg.inv(B))
-        return u @ vt
-
     U_t = rot(te["ubi"][it])
 
     def mis(u: np.ndarray) -> np.ndarray:
@@ -85,9 +118,6 @@ if args.truth:  # misorientation to the truth voxel at the same place
         return e
 
     e_ref = mis(ubi)
-    main = np.full((n_vox, 3, 3), np.nan)
-    m0 = ent["population"] == 0
-    main[vox[m0]] = ent["ubi"][m0]
     e_idx = mis(np.where(np.isfinite(main), main, np.eye(3)))
     maps["error_deg"] = e_ref.reshape(NR, NR)
     maps["error_index_deg"] = e_idx.reshape(NR, NR)
