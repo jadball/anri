@@ -32,19 +32,19 @@ def add_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--cif", help="CIF of the phase, for structure factors (default: |F|^2 = 1)")
     p.add_argument("--rings", type=int, default=8, help="rings used")
     p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the DataSet's)")
-    p.add_argument("--det-shape", type=int, nargs=2, default=(2048, 2048), help="detector (slow, fast) pixels")
+    p.add_argument("--det-shape", type=int, nargs=2, help="detector (slow, fast) pixels (default: the sparse file's)")
     p.add_argument("--beam", type=float, help="beam FWHM (default: the dty step)")
     p.add_argument("--voxel", type=float, help="voxel size (default: the dty step)")
 
 
 def load_args(args: argparse.Namespace) -> dict:
     return load(args.analysisroot, args.sample, args.dataset, beam=args.beam, voxel=args.voxel, n_rings=args.rings,
-                parfile=args.parfile, phase=args.phase, cif=args.cif, y0=args.y0, det_shape=tuple(args.det_shape))  # fmt: skip
+                parfile=args.parfile, phase=args.phase, cif=args.cif, y0=args.y0, det_shape=args.det_shape)  # fmt: skip
 
 
 def load(analysisroot: str, sample: str, dataset: str, beam: float | None = None, voxel: float | None = None,
          n_rings: int = 8, parfile: str | None = None, phase: str | None = None, cif: str | None = None,
-         y0: float | None = None, det_shape: tuple = (2048, 2048)) -> dict:  # fmt: skip
+         y0: float | None = None, det_shape: tuple | None = None) -> dict:  # fmt: skip
     """Rows, geometry, the phase's reflections and ImageD11's 2D peaks (sorted by (row, file frame), each cell's start
     in "cstart")."""
     dsname = f"{sample}_{dataset}"
@@ -86,6 +86,13 @@ def load(analysisroot: str, sample: str, dataset: str, beam: float | None = None
     edges = np.concatenate([[om_sorted[0] - ostep / 2], 0.5 * (om_sorted[1:] + om_sorted[:-1]),
                             [om_sorted[-1] + ostep / 2]]).astype(np.float32)  # fmt: skip
     rsort = np.argsort(row_dty).astype(np.int32)
+    if not os.path.exists(ds.pksfile):
+        raise SystemExit(f"no 2D peak table at {ds.pksfile}: make it with\n  python -c \"import "
+                         f"ImageD11.sinograms.properties as p; p.main('{dsfile}', options={{'nproc': 8}})\"")  # fmt: skip
+    if det_shape is None:  # ImageD11 writes the frame shape on each scan of the sparse file
+        with h5py.File(ds.sparsefile, "r") as h:
+            a_ = h[next(iter(h))].attrs
+            det_shape = (int(a_["shape0"]), int(a_["shape1"]))
     with h5py.File(ds.pksfile, "r") as h:
         s1, s_i, sr_i, sc_i, frm = h["pks2d"]["pk_props"][:]
     row_of, frm = frm // n_frames, frm % n_frames  # the id is row * n_frames + frame
@@ -94,7 +101,7 @@ def load(analysisroot: str, sample: str, dataset: str, beam: float | None = None
     blobs = np.stack([sr_i / s_i, sc_i / s_i, ds.omega[row_of, frm]]).T[o].astype(np.float32)
     return {
         "geom": geom, "lpars": lpars, "sg": sg, "phase": phase, "hkls": np.asarray(rings["hkls"], np.float32),
-        "F2": np.asarray(rings["F2"], np.float32), "det_shape": tuple(det_shape), "om_dev": om_dev,
+        "F2": np.asarray(rings["F2"], np.float32), "det_shape": tuple(det_shape), "om_dev": om_dev, "pksfile": ds.pksfile, "sparsefile": ds.sparsefile,
         "n_rows": n_rows, "n_frames": n_frames, "om_sorted": om_sorted, "edges": edges, "ostep": ostep,
         "order": np.argsort(ds.omega, axis=1, kind="stable").astype(np.int32),  # sorted index -> file frame, per row
         "rsort": rsort, "dty_sorted": row_dty[rsort].astype(np.float32), "ystep": ystep,

@@ -129,6 +129,8 @@ if args.check:  # sizes, and memory from the array shapes (spots in the scan: ab
     print(f"  phase {d['phase']}: space group {d['sg']}, lattice {np.round(d['lpars'], 4)}, {n_hkl} hkls in "
           f"{args.rings} rings; |F|^2 {'from ' + args.cif if args.cif else '= 1'}; y0 {float(d['geom']['y0']):.5g}; "
           f"rows' omega spread {d['om_dev']:.3g} deg")  # fmt: skip
+    print(f"  detector {d['det_shape']}; dty step {d['ystep']:.4g} (beam FWHM and voxel {args.beam or d['ystep']:.4g}, "
+          f"{args.voxel or d['ystep']:.4g}); 2D peaks {d['pksfile']}")  # fmt: skip
     print(f"  2D peaks per (row, frame): mean {cs.mean():.1f}, 99th {np.percentile(cs, 99):.0f}, max {cs.max()} "
           f"(--max-blobs {M}: {np.mean(cs > M):.2%} of cells have more, their extra peaks are not tested)")  # fmt: skip
     print(f"  spots in the scan: ~{n_sp_est:.3g}; matching window {K_} frames x 2 rows x {M} peaks = "
