@@ -337,14 +337,15 @@ def refine_orientations(
     tab = lin(ubi)
     theta = jnp.zeros((n, 3), jnp.float32)
     loss, g, H = gradient(tab, theta)
-    lam, since = 1e-3, 0
+    lam, since = 1.0, 0  # the surrogate steps of many entries at once want damping of order 1
     history = [{"loss": loss, "time": time.perf_counter() - t0, "lam": lam, "accepted": True, "linearised": True}]
     if log:
         log(f"  sweep 0: loss {loss:.5g}")
     for it in range(1, n_sweeps + 1):
         D = jnp.diagonal(H, axis1=1, axis2=2)
         has = D.sum(1) > 0
-        D = D + 1e-12 + 1e-9 * jnp.max(D)
+        # damping at least 1e-3 of the median entry's curvature: entries with little data take no wild steps
+        D = jnp.maximum(D, 1e-3 * jnp.median(jnp.where(has[:, None], D, jnp.nan)[has]) + 1e-30)
         step = -jnp.linalg.solve(H + lam * jax.vmap(jnp.diag)(D), g[..., None])[..., 0]
         step = jnp.where(has[:, None], step, 0.0)
         step = step / jnp.maximum(jnp.linalg.norm(step, axis=1) / max_step, 1.0)[:, None]
