@@ -165,11 +165,12 @@ def binned(k: int) -> tuple:
     return out_rows, out_meas
 
 
-if len(args.bin) != len(args.sig):
+bins = [1] * len(args.sig) if args.method == "linear" else args.bin  # linear: frames as measured
+if len(bins) != len(args.sig):
     raise SystemExit("--bin needs one value per --sig")
-for sig, k in zip(args.sig, args.bin):
+for sig, k in zip(args.sig, bins):
     e_in = {**entries, "sig_rot": np.full(len(voxel), np.radians(sig))}
-    rows_k, meas_k = binned(1 if args.method == "linear" else k)
+    rows_k, meas_k = binned(k)
     log(f"spread {sig} deg, frames summed in {k}s: {sum(m['value'].size for m in meas_k)} measured pixels")
     if args.method == "linear":  # frames as measured; the window wide enough for the spread
         ostep = float(np.median(np.diff(np.asarray(rows[0]["omega_edges"]))))
@@ -190,7 +191,7 @@ for sig, k in zip(args.sig, args.bin):
     total = anri.crystal.disorientation(orientation(out["ubi"][main]), start, ops)
     entries["ubi"] = out["ubi"]
     log(f"spread {sig} deg: loss {hist[0]['loss']:.5g} -> {hist[-1]['loss']:.5g} ({hist[-1]['time']:.0f} s, capture "
-        f"{hist[-1]['capture']:.2f}); main populations moved this round: median {np.median(moved):.3f} deg, 90th "
+        f"{hist[-1].get('capture', float('nan')):.2f}); main populations moved this round: median {np.median(moved):.3f} deg, 90th "
         f"{np.percentile(moved, 90):.3f}; from the indexer: median {np.median(total):.3f}, 90th {np.percentile(total, 90):.3f}")  # fmt: skip
 
 tag = args.entries.replace("_index_entries.npz", "")

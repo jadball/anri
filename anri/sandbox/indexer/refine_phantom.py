@@ -140,11 +140,12 @@ def binned(k: int) -> tuple:
     return out_rows, out_meas
 
 
-if len(args.bin) != len(args.sig):
+bins = [1] * len(args.sig) if args.method == "linear" else args.bin  # linear: frames as measured
+if len(bins) != len(args.sig):
     raise SystemExit("--bin needs one value per --sig")
-for sig, k in zip(args.sig, args.bin):
+for sig, k in zip(args.sig, bins):
     e_in = {**entries, "sig_rot": np.full(len(vox), np.radians(sig))}
-    rows_k, meas_k = binned(1 if args.method == "linear" else k)
+    rows_k, meas_k = binned(k)
     log(f"spread {sig} deg, frames summed in {k}s: {sum(m['value'].size for m in meas_k)} measured pixels")
     if args.method == "linear":  # frames as measured; the window wide enough for the spread
         ostep = float(np.median(np.diff(np.asarray(rows[0]["omega_edges"]))))
@@ -162,5 +163,8 @@ for sig, k in zip(args.sig, args.bin):
                                        cut=1.0 * k, max_frames=args.max_frames, window=tuple(args.window),
                                        fit_density=False, n_cg=args.n_cg, log=lambda m: log("  " + m))  # fmt: skip
     entries["ubi"] = out["ubi"]
-    accuracy(entries["ubi"], f"after spread {sig} deg ({hist[-1]['time']:.0f} s, capture {hist[-1]['capture']:.2f})")
+    accuracy(
+        entries["ubi"],
+        f"after spread {sig} deg ({hist[-1]['time']:.0f} s, capture {hist[-1].get('capture', float('nan')):.2f})",
+    )
 np.savez(os.path.splitext(args.entries)[0] + "_refined.npz", **entries)
