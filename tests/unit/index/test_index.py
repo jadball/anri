@@ -209,6 +209,33 @@ class TestEndToEnd(unittest.TestCase):
             self.assertGreater(np.median(frac[sel, 0]), 0.5)
 
 
+class TestParamsToml(unittest.TestCase):
+    def test_round_trip(self):
+        import importlib
+        import sys
+
+        tomllib = importlib.import_module("tomllib" if sys.version_info >= (3, 11) else "tomli")  # tomli: the backport
+
+        from anri.index.__main__ import write_toml
+
+        tables = {"run": {"command": 'python -m anri.index a "b c"', "flag": True},
+                  "options": {"grid": 1.0, "cand": 64, "y0": None, "path": "C:\\data\\x"},
+                  "resolved": {"lattice": np.array([2.87, 2.87, 2.87]), "sg": np.int64(229), "tol": [0.07, np.float32(0.5)]}}  # fmt: skip
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "p.toml")
+            write_toml(path, tables)
+            with open(path, "rb") as fh:
+                back = tomllib.load(fh)
+        self.assertEqual(back["run"]["command"], tables["run"]["command"])
+        self.assertIs(back["run"]["flag"], True)
+        self.assertEqual(back["options"]["cand"], 64)
+        self.assertEqual(back["options"]["path"], "C:\\data\\x")
+        self.assertNotIn("y0", back["options"])  # TOML has no null
+        self.assertEqual(back["resolved"]["lattice"], [2.87, 2.87, 2.87])
+        self.assertEqual(back["resolved"]["sg"], 229)
+        self.assertEqual(back["resolved"]["tol"], [0.07, 0.5])
+
+
 if __name__ == "__main__":
     unittest.main()
 

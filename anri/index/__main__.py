@@ -8,7 +8,8 @@ parfile, else ``pars/pars.json`` beside ``PROCESSED_DATA``, or ``--parfile``. Th
 are in the units of the DataSet's dty and the geometry file, which must agree. No spatial distortion correction yet;
 F^2 = 1.
 
-Writes ``<tag>.npz`` (occupancies and populations), ``<tag>_entries.npz`` (every population as anri map entries, for
+Writes ``<tag>_params.toml`` (the command line, every option that was set, and the values resolved from the data:
+paths, phase, y0, grid step, ring tolerances), ``<tag>.npz`` (occupancies and populations), ``<tag>_entries.npz`` (every population as anri map entries, for
 the renderer and :mod:`anri.refine`) and, if ImageD11 is installed, ``<tag>_tmap.h5`` (a TensorMap of the main
 population, with maps of the number of populations, their fraction, spread and completeness).
 """
@@ -16,7 +17,11 @@ population, with maps of the number of populations, their fraction, spread and c
 from __future__ import annotations
 
 import argparse
+import datetime
 import os
+import shlex
+import subprocess
+import sys
 import time
 from collections.abc import Iterator
 
@@ -26,6 +31,39 @@ T0 = time.perf_counter()
 def log(msg: str) -> None:
     """Print a timestamped progress message."""
     print(f"[{time.perf_counter() - T0:7.1f} s] {msg}", flush=True)
+
+
+def _plain(v: object) -> object:
+    """NumPy scalars and arrays as Python values, recursively (tomli_w writes only Python types)."""
+    tolist = getattr(v, "tolist", None)
+    if callable(tolist):
+        return tolist()
+    if isinstance(v, (list, tuple)):
+        return [_plain(x) for x in v]
+    return v
+
+
+def _git_commit() -> dict:
+    """Return the git commit of the running anri code and whether it has uncommitted changes ({} outside git)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        commit = subprocess.run(["git", "-C", here, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10,
+                                check=False)  # fmt: skip
+        status = subprocess.run(["git", "-C", here, "status", "--porcelain", "--untracked-files=no"],
+                                capture_output=True, text=True, timeout=10, check=False)  # fmt: skip
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if commit.returncode != 0:
+        return {}
+    return {"git_commit": commit.stdout.strip(), "git_dirty": bool(status.stdout.strip())}
+
+
+def write_toml(path: str, tables: dict) -> None:
+    """Write ``{table: {key: value}}`` as TOML. TOML has no null: keys whose value is None are left out."""
+    import tomli_w
+
+    with open(path, "wb") as fh:
+        tomli_w.dump({t: {k: _plain(v) for k, v in kv.items() if v is not None} for t, kv in tables.items()}, fh)
 
 
 def parse_args() -> argparse.Namespace:
@@ -229,6 +267,22 @@ def main() -> None:
            "etacut": args.etacut}  # fmt: skip
     step = args.grid if args.grid is not None else ix.choose_grid(ops, B, rings, geom, lit, args.max_chance, log=log)
     U_grid, delta = anri.crystal.orientation_grid(step, ops)
+    # every parameter of this run, written before the long steps so that an interrupted run leaves it too
+    os.makedirs(args.outdir, exist_ok=True)
+    params = os.path.join(args.outdir, f"{dsname}_index_params.toml")
+    run_info = {
+        "run": {"command": "python -m anri.index " + shlex.join(sys.argv[1:]), "anri_version": anri.VERSION,
+                **_git_commit(), "cwd": os.getcwd(),
+                "date": datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec="seconds")},
+        "options": vars(args),
+        "resolved": {"dataset": dsfile, "sparsefile": sparsefile, "parfile": parfile, "phase": phase,
+                     "lattice": list(lpars), "space_group": sg, "wavelength": WL, "y0": Y0, "voxel_size": YSTEP,
+                     "voxels": NR, "omega_step": OSTEP, "grid_step": step, "grid_auto": args.grid is None,
+                     "grid_worst_case_deg": delta, "rings_tth_deg": list(rings["tth"]), "tth_tol_deg": list(tth_tol),
+                     "n_hkls": len(rings["hkls"])},
+    }  # fmt: skip
+    write_toml(params, run_info)
+    log(f"-> {params}")
     t1 = time.perf_counter()
     kept, comp, info = ix.prune(U_grid, delta, B, rings, geom, lit, args.min_comp, args.keep)
     log(f"grid {step} deg{'' if args.grid is not None else ' (auto)'}: {len(U_grid)} orientations, up to {delta:.2f} deg "
@@ -318,6 +372,17 @@ def main() -> None:
     except ImportError:
         log("ImageD11 is not installed: no TensorMap written")
     log(f"-> {tag}.npz, {tag}_entries.npz")
+    # the same parameters again, with what was only known at the end (e.g. --min-comp's default: the chance level)
+    # likelihood pruning fits everything above the chance level (or --min-comp); completeness pruning uses its own cut
+    min_comp_used = (
+        info["min_comp"]
+        if args.prune == "completeness"
+        else (info["chance"] if args.min_comp is None else args.min_comp)
+    )
+    run_info["results"] = {"chance_completeness": info["chance"], "min_comp_used": min_comp_used,
+                           "orientations_kept": len(U_kept), "voxels_occupied": int(occupied.sum()),
+                           "seconds": time.perf_counter() - T0}  # fmt: skip
+    write_toml(params, run_info)
 
 
 if __name__ == "__main__":
