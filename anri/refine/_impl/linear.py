@@ -135,8 +135,9 @@ def linearise(entries: dict, hkls: np.ndarray, F2: np.ndarray, geom: dict, rows:
         lambda x: jnp.asarray(x, jnp.float32) if np.asarray(x).dtype.kind == "f" else jnp.asarray(x), geom
     )
     sel = jax.jit(select_peaks, static_argnames="det_shape")
-    n_px = det_shape[0] * det_shape[1]
-    tabs: dict = {k: [] for k in ("e", "mu0", "J", "shape", "edges", "i0", "j0", "fin", "wfr", "om")}
+    n_search = int(np.ceil(np.log2(max(int(np.diff(m["frame_start"]).max()) for m in meas) + 1))) + 1
+    names = ("e", "mu0", "J", "shape", "edges", "i0", "j0", "fin", "wfr", "om")
+    tabs: dict = {k: [] for k in names}
     m_inst, m_cell, m_pix, data = [], [], [], []
     n_inst, pix_off = 0, 0
     for r, m in zip(rows, meas):
@@ -148,53 +149,68 @@ def linearise(entries: dict, hkls: np.ndarray, F2: np.ndarray, geom: dict, rows:
             x.astype(np.int32)
             for x in np.nonzero(np.asarray(sel(ubi, pos, hkls_j, geom, row, margin, det_shape=det_shape)))
         )
-        frame_meas = np.repeat(np.arange(len(m["frame_start"]) - 1), np.diff(m["frame_start"]))
-        key_meas = frame_meas.astype(np.int64) * n_px + m["pixel"]  # sorted: measured() orders by (frame, pixel)
+        # a row with no measured pixels gets a placeholder that never matches (pixels are >= 0)
+        px_meas = jnp.asarray(m["pixel"] if m["pixel"].size else np.full(1, -1, np.int32))
+        fs = jnp.asarray(m["frame_start"])
         data.append(m["value"])
+        om = jnp.asarray([float(row["omega_min"]), float(row["omega_max"])], jnp.float32)
         for s0 in range(0, len(e), chunk):  # rows can hold many instances: linearise in batches
             n = min(chunk, len(e) - s0)
             pad = (1 << int(np.ceil(np.log2(max(n, 1))))) - n
             ehb = [jnp.asarray(np.pad(x[s0 : s0 + n], (0, pad))) for x in (e, h, b)]
-            out = [np.asarray(x)[:n] for x in _linearise_row(ubi, pos, sig, dens, hkls_j, F2_j, geom, row, *ehb,
-                                                             window, det_shape)]  # fmt: skip
-            mu0, J, shape, edges, i0, j0, fin, wfr, frame_file, pixel = out
-            for k, v in zip(("e", "mu0", "J", "shape", "edges", "i0", "j0", "fin", "wfr"),
-                            (e[s0 : s0 + n], mu0, J, shape, edges, i0, j0, fin, wfr)):  # fmt: skip
+            out = _linearise_row(ubi, pos, sig, dens, hkls_j, F2_j, geom, row, *ehb, window, det_shape)
+            mu0, J, shape, edges, i0, j0, fin, wfr, frame_file, pixel = (x[:n] for x in out)
+            for k, v in zip(names, (ehb[0][:n], mu0, J, shape, edges, i0, j0, fin, wfr, jnp.tile(om, (n, 1)))):
                 tabs[k].append(v)
-            tabs["om"].append(np.tile([float(row["omega_min"]), float(row["omega_max"])], (n, 1)))
-            key = frame_file.reshape(n, -1).astype(np.int64) * n_px + pixel.reshape(n, -1)
-            ok = frame_file.reshape(n, -1) >= 0
-            idx = np.clip(np.searchsorted(key_meas, key), 0, max(len(key_meas) - 1, 0))
-            hit = ok & (len(key_meas) > 0) & (key_meas[idx] == key) if len(key_meas) else np.zeros_like(ok)
-            ii, cc = np.nonzero(hit)
-            m_inst.append(ii + n_inst)
-            m_cell.append(cc)
-            m_pix.append(idx[ii, cc] + pix_off)
+            # each window cell's measured pixel (or -1), by a binary search within its frame, on the device;
+            # only the hits come back
+            idx = _match(frame_file.reshape(n, -1), pixel.reshape(n, -1), px_meas, fs, n_search)
+            ii, cc = jnp.nonzero(idx >= 0)
+            m_inst.append((ii + n_inst).astype(jnp.int32))
+            m_cell.append(cc.astype(jnp.int32))
+            m_pix.append((idx[ii, cc] + pix_off).astype(jnp.int32))
             n_inst += n
-        pix_off += len(key_meas)
-    tab = {k: np.concatenate(v) for k, v in tabs.items()}
+        pix_off += int(m["value"].size)
     n_chunks = -(-n_inst // chunk)
     pad = n_chunks * chunk - n_inst
-    tab = {k: np.concatenate([v, np.repeat(v[:1], pad, 0)]) for k, v in tab.items()}
-    tab["live"] = np.arange(n_chunks * chunk) < n_inst
-    # matched cells per chunk, padded to the longest (padding points at the sentinel pixel)
-    m_inst, m_cell, m_pix = np.concatenate(m_inst), np.concatenate(m_cell), np.concatenate(m_pix)
+    out = {}
+    for k in names:
+        v = jnp.concatenate(tabs[k])
+        v = jnp.concatenate([v, jnp.repeat(v[:1], pad, 0)])
+        out[k] = v.reshape((n_chunks, chunk) + v.shape[1:])
+    out["live"] = (jnp.arange(n_chunks * chunk) < n_inst).reshape(n_chunks, chunk)
+    # matched cells per chunk, padded to the longest: padding points past the last cell (dropped by scatters) and at
+    # the sentinel pixel
+    m_inst, m_cell, m_pix = jnp.concatenate(m_inst), jnp.concatenate(m_cell), jnp.concatenate(m_pix)
     owner = m_inst // chunk
-    counts = np.bincount(owner, minlength=n_chunks)
-    n_m = max(int(counts.max()) if counts.size else 1, 1)
-    start = np.concatenate([[0], np.cumsum(counts)])
-    M = {"m_inst": np.zeros((n_chunks, n_m), np.int32),
-         "m_cell": np.full((n_chunks, n_m), window[0] * window[1] * window[2], np.int32)}  # past the last: dropped  # fmt: skip
-    M["m_pix"] = np.full((n_chunks, n_m), pix_off, np.int32)
-    for c in range(n_chunks):
-        sl = slice(start[c], start[c + 1])
-        k = start[c + 1] - start[c]
-        M["m_inst"][c, :k], M["m_cell"][c, :k], M["m_pix"][c, :k] = m_inst[sl] - c * chunk, m_cell[sl], m_pix[sl]
-    out = {k: jnp.asarray(v.reshape((n_chunks, chunk) + v.shape[1:])) for k, v in tab.items()}
-    out.update({k: jnp.asarray(v) for k, v in M.items()})
+    counts = jnp.bincount(owner, length=n_chunks)
+    n_m = max(int(counts.max()) if n_chunks else 1, 1)
+    start = jnp.concatenate([jnp.zeros(1, counts.dtype), jnp.cumsum(counts)[:-1]])
+    at = (owner, jnp.arange(m_inst.shape[0]) - start[owner])
+    out["m_inst"] = jnp.zeros((n_chunks, n_m), jnp.int32).at[at].set(m_inst - owner * chunk)
+    out["m_cell"] = jnp.full((n_chunks, n_m), window[0] * window[1] * window[2], jnp.int32).at[at].set(m_cell)
+    out["m_pix"] = jnp.full((n_chunks, n_m), pix_off, jnp.int32).at[at].set(m_pix)
     out["data"] = jnp.asarray(np.concatenate(data + [np.zeros(1, np.float32)]))
     out.update({"n_inst": n_inst, "n_pix": pix_off, "n_entries": int(ubi.shape[0])})
     return out
+
+
+@partial(jax.jit, static_argnames="n_search")
+def _match(frame: jax.Array, pixel: jax.Array, pix_meas: jax.Array, fs: jax.Array, n_search: int) -> jax.Array:
+    """Index of each (frame, pixel) among a row's measured pixels (sorted by frame, then pixel), or -1."""
+    f = jnp.clip(frame, 0, fs.shape[0] - 2)
+    lo, hi = fs[f], fs[f + 1]
+    last = max(pix_meas.shape[0] - 1, 0)
+
+    def step(_: int, lh: tuple) -> tuple:
+        lo, hi = lh
+        mid = (lo + hi) // 2
+        right = pix_meas[jnp.minimum(mid, last)] < pixel
+        return jnp.where(right & (lo < hi), mid + 1, lo), jnp.where(right | (lo >= hi), hi, mid)
+
+    lo, _ = jax.lax.fori_loop(0, n_search, step, (lo, hi))
+    ok = (frame >= 0) & (lo < fs[f + 1]) & (pix_meas[jnp.minimum(lo, last)] == pixel)
+    return jnp.where(ok, lo, -1)
 
 
 def _chunk_values(c: dict, theta: jax.Array, window: tuple, det_shape: tuple) -> jax.Array:
