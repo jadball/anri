@@ -200,18 +200,22 @@ def acc(e: np.ndarray, label: str) -> None:
           f"{np.mean(e < 0.05):.1%}, 0.1 {np.mean(e < 0.1):.1%}, 0.25 {np.mean(e < 0.25):.1%}", flush=True)  # fmt: skip
 
 
-acc(e_vote[score], "vote's best")
-acc(e_best[score], "joint (largest x)")
-acc(oracle[score], "best hypothesis (bound)")
+if np.any(score):  # with a truth (match_spots.py --truth)
+    acc(e_vote[score], "vote's best")
+    acc(e_best[score], "joint (largest x)")
+    acc(oracle[score], "best hypothesis (bound)")
 tot = X.sum(1)
 if "main" in r and np.any(~r["main"]):  # the indexer's other populations: do they keep their share?
     print(f"  occupancy of the indexer's other populations relative to the main one in their voxel: median "
           f"{np.median(tot[~r['main']] / np.maximum(np.median(tot[r['main']]), 1e-30)):.2f} (main populations: "
           f"{np.median(tot[r['main']]) / np.median(tot[r['main']]):.2f})", flush=True)  # fmt: skip
-print(f"  share of the chosen hypothesis: median {np.median(share):.2f}, 10th {np.percentile(share, 10):.2f}; "
-      f"changed from the vote: {np.mean(best[score] != 0):.1%} (fixed "
-      f"{np.mean((e_vote[score] > 0.05) & (e_best[score] < 0.05)):.1%}, broken "
-      f"{np.mean((e_vote[score] < 0.05) & (e_best[score] > 0.05)):.1%})", flush=True)  # fmt: skip
+main_ = r["main"] if "main" in r else np.ones(n_vox, bool)
+line = (f"  share of the chosen hypothesis: median {np.median(share):.2f}, 10th {np.percentile(share, 10):.2f}; "
+        f"changed from the vote: {np.mean(best[main_] != 0):.1%}")
+if np.any(score):
+    line += (f" (fixed {np.mean((e_vote[score] > 0.05) & (e_best[score] < 0.05)):.1%}, broken "
+             f"{np.mean((e_vote[score] < 0.05) & (e_best[score] > 0.05)):.1%})")
+print(line, flush=True)
 # the chosen hypothesis as map entries (usable as match_spots.py --entries / --start)
 np.savez(args.match.replace(".npz", "_joint.npz"), x=X, best=best, share=share, err=e_best,
          ubi=r["ubi_hyp"][np.arange(n_vox), best], pos=r["pos"], density=r["density"],

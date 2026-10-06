@@ -299,18 +299,24 @@ valid = n_in > 0
 for k in range(1, NH):
     for j in range(k):
         valid[:, k] &= np.degrees(np.linalg.norm(d_hyp[:, k] - d_hyp[:, j], axis=1)) > 0.03
-err = np.degrees(np.linalg.norm(d_hyp - d_true[:, None], axis=2))  # [n_ent, NH]
-score = main & np.isfinite(err[:, 0])  # main populations with a truth
-err, valid_s = err[score], valid[score]
-e0 = err[:, 0]
-print(f"  vote's best: median error {np.median(e0):.4f} deg; within 0.01 {np.mean(e0 < 0.01):.1%}, 0.02 "
-      f"{np.mean(e0 < 0.02):.1%}, 0.05 {np.mean(e0 < 0.05):.1%}, 0.1 {np.mean(e0 < 0.1):.1%}", flush=True)  # fmt: skip
-any_ok = np.any((err < 0.05) & valid_s, axis=1)
-print(f"  hypotheses per entry: mean {valid.sum(1).mean():.2f}; truth (within 0.05) among them: {np.mean(any_ok):.1%}; "
-      f"for the voxels the vote gets wrong: {np.mean(any_ok[e0 > 0.05]):.1%}", flush=True)  # fmt: skip
+if ubi_true is not None:
+    err = np.degrees(np.linalg.norm(d_hyp - d_true[:, None], axis=2))  # [n_ent, NH]
+    score = main & np.isfinite(err[:, 0])  # main populations with a truth
+    err, valid_s = err[score], valid[score]
+    e0 = err[:, 0]
+    print(f"  vote's best: median error {np.median(e0):.4f} deg; within 0.01 {np.mean(e0 < 0.01):.1%}, 0.02 "
+          f"{np.mean(e0 < 0.02):.1%}, 0.05 {np.mean(e0 < 0.05):.1%}, 0.1 {np.mean(e0 < 0.1):.1%}", flush=True)  # fmt: skip
+    any_ok = np.any((err < 0.05) & valid_s, axis=1)
+    print(f"  hypotheses per entry: mean {valid.sum(1).mean():.2f}; truth (within 0.05) among them: {np.mean(any_ok):.1%}; "
+          f"for the voxels the vote gets wrong: {np.mean(any_ok[e0 > 0.05]):.1%}", flush=True)  # fmt: skip
+else:  # no truth: how far each voxel's chosen hypothesis moved from the start
+    mv = np.degrees(np.linalg.norm(d_hyp[:, 0], axis=1))[main]
+    print(f"  vote's best moved the start by: median {np.median(mv):.3f} deg, 90th {np.percentile(mv, 90):.3f}; "
+          f"hypotheses per entry: mean {valid.sum(1).mean():.2f}; inliers of the best: median "
+          f"{np.median(n_in[:, 0] / np.maximum(n_sp_v, 1)):.1%} of spots with a candidate", flush=True)  # fmt: skip
 R = Rotation.from_rotvec(d_hyp.reshape(-1, 3)).as_matrix().reshape(n_ent, NH, 3, 3)
 ubi_hyp = np.einsum("nij,nklj->nkil", ubi, R)  # UBI R^T
 out = args.out or os.path.join(args.analysisroot, f"match_{args.perturb}.npz")
-err = np.degrees(np.linalg.norm(d_hyp - d_true[:, None], axis=2))
+err = np.degrees(np.linalg.norm(d_hyp - d_true[:, None], axis=2)) if ubi_true is not None else np.full(valid.shape, np.nan)
 np.savez(out, y0=float(d["geom"]["y0"]), ubi_hyp=ubi_hyp, valid=valid, err=err, main=main, n_in=n_in, votes=votes, n_sp=n_sp_v, pos=pos, density=dens)
 log(f"-> {out}")
