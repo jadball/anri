@@ -213,7 +213,8 @@ zc_all = jnp.asarray(np.concatenate([zc, np.zeros((1, CM, 3), np.float32)]))
 cv_all = jnp.asarray(np.concatenate([cv, np.zeros((1, CM), bool)]))
 
 
-def vote(sp: jax.Array) -> tuple:
+def vote(sp: jax.Array, J_all: jax.Array, zc_all: jax.Array, cv_all: jax.Array) -> tuple:
+    """One voxel's hypotheses. The tables are arguments: closed over, ~1 GB would be compiled in as constants."""
     J, z, ok = J_all[sp], zc_all[sp], cv_all[sp]  # [S, 3, 3], [S, CM, 3], [S, CM]
     A = W[None, :, None] * J
     U, S, Vt = jnp.linalg.svd(A)
@@ -257,12 +258,15 @@ def vote(sp: jax.Array) -> tuple:
     return jnp.stack(deltas), jnp.stack(n_ins), jnp.stack(votes), jnp.sum(ok.any(1))
 
 
-vote_chunk = jax.jit(jax.vmap(vote))
+vote_chunk = jax.jit(jax.vmap(vote, in_axes=(0, None, None, None)))
 t = time.perf_counter()
 VC = 256
 n_vp = -(-n_ent // VC) * VC
 tab = np.concatenate([table, np.full((n_vp - n_ent, S_max), n_sp, np.int32)])
-outs = [vote_chunk(jnp.asarray(tab[v0 : v0 + VC])) for v0 in range(0, n_vp, VC)]
+outs = [vote_chunk(jnp.asarray(tab[:VC]), J_all, zc_all, cv_all)]
+jax.block_until_ready(outs)
+log(f"vote: first call (compile + run) {time.perf_counter() - t:.1f} s")
+outs += [vote_chunk(jnp.asarray(tab[v0 : v0 + VC]), J_all, zc_all, cv_all) for v0 in range(VC, n_vp, VC)]
 d_hyp, n_in, votes, n_sp_v = (np.concatenate([np.asarray(o[i]) for o in outs])[:n_ent] for i in range(4))
 log(f"vote: {time.perf_counter() - t:.1f} s, grid {G}^3 of {np.degrees(step):.3f} deg, {S_max} spots per voxel at most")
 print(f"  entries with a non-finite hypothesis: {np.mean(~np.isfinite(d_hyp).all(axis=(1, 2))):.2%}; "
