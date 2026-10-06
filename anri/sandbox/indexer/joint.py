@@ -30,6 +30,9 @@ p = argparse.ArgumentParser()
 spotlib.add_args(p)
 p.add_argument("match")
 p.add_argument("--iter", type=int, default=200)
+p.add_argument("--hold", choices=("voxel", "entry"), default="voxel", help="voxel: each voxel's total density held, "
+               "its populations may trade (they re-decide who owns boundary voxels); entry: each entry's density held, "
+               "only the choice among its own hypotheses is fitted")
 p.add_argument("--free", action="store_true", help="each hypothesis' occupancy free (the old way): densities trade "
                "along rays and the map is noisy. Default: each voxel's total held at the indexer's density x one scale")
 p.add_argument("--match-px", type=float, default=3.0, help="largest distance from a prediction to its 2D peak (px)")
@@ -134,6 +137,8 @@ k_per = np.bincount(vv, minlength=n_vox)[vv]
 # voxels: entries at the same place; each voxel's total density is the indexer's (sum over its populations)
 _, vox_e = np.unique(np.round(r["pos"][:, :2] / (0.25 * d["ystep"])).astype(np.int64), axis=0, return_inverse=True)
 vox_e = vox_e.ravel()
+if args.hold == "entry":  # each entry is its own group: populations cannot trade
+    vox_e = np.arange(n_vox)
 n_v = int(vox_e.max()) + 1
 dens_e = r["density"].astype(np.float64)
 d_v = np.bincount(vox_e, dens_e, minlength=n_v)
@@ -177,7 +182,7 @@ t = time.perf_counter()
 pi, s_fit, ll = mlem(jnp.asarray(pi0), jnp.float32(s0), jnp.asarray(base), jnp.asarray(vh), Aj, Bj, Jj, sens,
                      jnp.asarray(I))  # fmt: skip
 x, ll = np.asarray(s_fit * jnp.asarray(base) * pi), np.asarray(ll)
-log(f"  {'free occupancies' if args.free else 'voxel totals held'}; global scale {float(s_fit):.4g} (start {s0:.4g})")
+log(f"  {'free occupancies' if args.free else args.hold + ' totals held'}; global scale {float(s_fit):.4g} (start {s0:.4g})")
 log(f"MLEM: {args.iter} iterations, {time.perf_counter() - t:.1f} s; log-likelihood at 1, 10, 50, last: "
     f"{ll[0]:.6g} {ll[min(9, len(ll) - 1)]:.6g} {ll[min(49, len(ll) - 1)]:.6g} {ll[-1]:.6g}")  # fmt: skip
 

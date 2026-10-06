@@ -20,6 +20,8 @@ p.add_argument("entries")
 p.add_argument("joint")
 p.add_argument("--truth")
 p.add_argument("--out")
+p.add_argument("--owner", choices=("indexer", "joint"), default="indexer", help="indexer: each voxel shows the "
+               "indexer's main population (refined); joint: the population with the largest occupancy after joint.py")
 args = p.parse_args()
 
 from ImageD11.sinograms.tensor_map import TensorMap
@@ -40,6 +42,11 @@ tot_v = np.bincount(vox, tot_e, minlength=n_vox)
 win = np.full(n_vox, -1)
 order = np.lexsort((tot_e, vox))  # by voxel, then occupancy: the last of each voxel wins
 win[vox[order]] = order
+changed = (win >= 0) & (ent["population"][np.maximum(win, 0)] != 0)  # the fit prefers another population
+n_changed = int(changed.sum())
+if args.owner == "indexer":
+    win = np.full(n_vox, -1)
+    win[vox[ent["population"] == 0]] = np.flatnonzero(ent["population"] == 0)
 occ = idx["occupied"] & (win >= 0)
 w = np.where(occ, win, 0)
 ubi = np.where(occ[:, None, None], jt["ubi"][w], np.nan)
@@ -52,9 +59,10 @@ maps = {
     "fraction": frac.reshape(NR, NR),
     "share": np.where(occ, jt["share"][w], np.nan).reshape(NR, NR),
     "n_populations": np.where(occ, n_pop, 0).reshape(NR, NR),
+    "owner_changed": np.where(occ, changed, 0).astype(np.int32).reshape(NR, NR),
 }
-print(f"{occ.sum()} voxels; the winner is the indexer's main population in "
-      f"{np.mean(ent['population'][w[occ]] == 0):.1%}")  # fmt: skip
+print(f"{occ.sum()} voxels, owner from the {args.owner}; the joint fit's largest population is not the indexer's main "
+      f"one in {n_changed} voxels")  # fmt: skip
 if args.truth:  # misorientation to the truth voxel at the same place
     from scipy.spatial import cKDTree
 
