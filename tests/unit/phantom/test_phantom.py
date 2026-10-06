@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 import anri.crystal
+import anri.io
 import anri.phantom
 
 
@@ -68,24 +69,32 @@ class TestPolycrystal(unittest.TestCase):
 
 
 class TestDeformation(unittest.TestCase):
-    """Dislocation walls (misorientation accumulating with distance) and bent grains."""
+    """Cells accumulating like a random walk, intrinsic spread and bent grains."""
 
-    def test_walls_random_walk(self):
-        same = np.zeros(2)
-        for seed in range(6):  # a small disk holds few walls: average over several draws
-            ph = anri.phantom.polycrystal(81, 0.25, 10.0, 1, cell_spread_deg=0.0, twin_grains=0, wall_spacing=1.0,
-                                          seed=seed)  # fmt: skip
-            U, ins = ph["U"], ph["inside"]
-            for i, k in enumerate((2, 8)):  # 0.5 and 2 apart: walls 1.0 apart on average, so Poisson exp(-d)
-                m = ins[:, :-k] & ins[:, k:]
-                same[i] += np.all(np.abs(U[:, :-k][m] - U[:, k:][m]) < 1e-12, axis=(1, 2)).mean() / 6
-        self.assertAlmostEqual(same[0], np.exp(-0.5), delta=0.04)
-        self.assertAlmostEqual(same[1], np.exp(-2.0), delta=0.04)
+    def test_brownian_field(self):
+        xy = np.stack(np.meshgrid(np.arange(64.0), [0.0, 16.0, 32.0, 48.0]), -1).reshape(-1, 2)
+        d = []
+        for seed in range(4):
+            f = anri.phantom.brownian_field(xy, 1.0, 2.0, 0.1, np.random.default_rng(seed)).reshape(4, 64, 3)
+            d.append([np.mean((f[:, k:] - f[:, :-k]) ** 2) for k in (2, 8)])
+        rms = np.sqrt(np.mean(d, 0))
+        self.assertAlmostEqual(rms[0], 0.1, delta=0.02)  # 0.1 deg per component at the scale
+        self.assertAlmostEqual(rms[1] / rms[0], 2.0, delta=0.4)  # 4x the distance, 2x the rms: a random walk
 
     def test_defaults_unchanged(self):
         a = anri.phantom.polycrystal(41, 0.5, 10.0, 6, seed=3)
-        b = anri.phantom.polycrystal(41, 0.5, 10.0, 6, wall_spacing=None, bend_grains=0, seed=3)
+        b = anri.phantom.polycrystal(41, 0.5, 10.0, 6, cell_walk_deg=0.0, cell_sig_deg=0.0, bend_grains=0, seed=3)
         np.testing.assert_array_equal(a["U"], b["U"])
+        self.assertNotIn("sig_rot", a)
+
+    def test_walk_keeps_cells(self):
+        ph = anri.phantom.polycrystal(41, 0.5, 10.0, 2, cell_spread_deg=0.0, twin_grains=0, cell_walk_deg=0.2,
+                                      cell_sig_deg=0.05, seed=1)  # fmt: skip
+        U, cell, ins, grain = ph["U"].reshape(-1, 3, 3), ph["cell"].ravel(), ph["inside"].ravel(), ph["grain"].ravel()
+        for c in np.unique(cell[ins])[:20]:  # constant inside each cell (cells cross grain boundaries: one grain)
+            m = (cell == c) & ins & (grain == grain[(cell == c) & ins][0])
+            np.testing.assert_allclose(U[m], np.broadcast_to(U[m][0], U[m].shape), atol=1e-12)
+        np.testing.assert_allclose(ph["sig_rot"][ph["inside"]], np.radians(0.05))
 
     def test_bend(self):
         ph = anri.phantom.polycrystal(81, 0.25, 10.0, 1, cell_spread_deg=0.0, twin_grains=0, bend_grains=1,
@@ -98,11 +107,14 @@ class TestDeformation(unittest.TestCase):
         self.assertLess(angle.max(), 5.0)
 
     def test_tensormap(self):
-        ph = anri.phantom.polycrystal(41, 0.5, 10.0, 6, cell_spread_deg=0.0, twin_grains=0, wall_spacing=2.0, seed=3)
+        ph = anri.phantom.polycrystal(41, 0.5, 10.0, 6, cell_spread_deg=0.1, twin_grains=0, cell_walk_deg=0.1,
+                                      cell_sig_deg=0.05, seed=3)  # fmt: skip
         tm = anri.phantom.tensormap(ph, [3.6] * 3 + [90.0] * 3, 225, "fcc", 0.5)
         self.assertEqual(tm.shape, (1, 41, 41))
         mis = tm.misorientation[0][tm.phase_ids[0] == 0]
         self.assertTrue(np.all(np.isfinite(mis)) and 0.0 < np.median(mis) < 2.0)
+        e = anri.io.entries_from_tensormap(tm)
+        np.testing.assert_allclose(e["sig_rot"], np.radians(0.05))
 
 
 if __name__ == "__main__":

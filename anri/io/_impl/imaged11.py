@@ -525,7 +525,8 @@ def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0)
 
     Uses ImageD11's own map -> reconstruction -> sample conventions, so a simulation from this map lines
     up with what ImageD11 reconstructs. Density comes from an optional "density" map (e.g. for pores),
-    and is 1 where the map has none.
+    and is 1 where the map has none. An optional "sig_rot" map (radians) gives each entry an intrinsic orientation
+    spread, see :func:`anri.fwd.render_row`.
 
     Parameters
     ----------
@@ -539,7 +540,7 @@ def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0)
     Returns
     -------
     entries: dict
-        "ubi" [N, 3, 3], "pos" [N, 3] and "density" [N]
+        "ubi" [N, 3, 3], "pos" [N, 3] and "density" [N]; "sig_rot" [N] if the map has it
     """
     from ImageD11.sinograms.geometry import recon_to_sample
     from ImageD11.sinograms.tensor_map import TensorMap
@@ -557,11 +558,14 @@ def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0)
         density = TensorMap.map_order_to_recon_order(tmap["density"], z_layer)[ri, rj].astype(float)
     else:
         density = np.ones(ri.size)
-    return {
+    out = {
         "ubi": ubi[ri, rj],
         "pos": np.stack([sx, sy, np.zeros_like(sx)], 1).astype(float),
         "density": density,
     }
+    if "sig_rot" in tmap.maps:
+        out["sig_rot"] = TensorMap.map_order_to_recon_order(tmap["sig_rot"], z_layer)[ri, rj].astype(float)
+    return out
 
 
 def motor_grid(omega_range: tuple[float, float], ostep: float, dty_range: tuple[float, float], ystep: float) -> tuple:

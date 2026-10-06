@@ -13,8 +13,9 @@ twinned grain, on 0.5 um voxels. By default it is scanned on its own grid (dty s
 that wide), so the indexer's voxels are the phantom's and every comparison with the truth is voxel to voxel.
 1800 frames of 0.1 deg by default (--ostep).
 
-Other phantoms (e.g. tests/data/phantoms/def316l, 0.25 um voxels) are scanned with --step (e.g. 0.5): the rows cover
-the phantom's disk.
+Other phantoms: --tmap (e.g. tests/data/phantoms/def316l, the deformed one, with --ostep 0.05). A phantom finer than
+the scan is scanned with --step: the rows cover the phantom's disk. A "sig_rot" map in the TensorMap gives each voxel
+an intrinsic orientation spread.
 """
 
 import argparse

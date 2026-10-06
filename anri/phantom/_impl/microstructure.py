@@ -2,8 +2,9 @@
 
 The phantom follows the microstructures Anri targets (see ``AGENTS.md``): grains, each split into cells that are
 misoriented a little from the grain (dislocation cells, solidification cells), and annealing twins as lamellae with
-sharp boundaries. Optionally, dislocation walls whose small rotations accumulate like a random walk, and grains
-bent about one axis, so peaks smear into single-maximum arcs (bananas) as in deformed metals. Orientations are
+sharp boundaries. Optionally, as in deformed metals: cell orientations that accumulate from cell to cell like a
+random walk, an intrinsic orientation spread inside each cell, and grains bent about one axis, so that peaks smear
+into arcs (bananas). Orientations are
 piecewise constant on a fine grid, so a phantom voxel smaller than the scan step puts several orientations in one scan
 voxel.
 
@@ -111,6 +112,45 @@ def voronoi(xy: ArrayLike, seeds: ArrayLike) -> np.ndarray:
     return out
 
 
+def brownian_field(xy: ArrayLike, step: float, scale: float, rms_deg: float, rng: np.random.Generator) -> np.ndarray:
+    """Sample a 2D Brownian random field of rotation vectors: increments grow like a random walk with distance.
+
+    Each of the 3 components is an independent Gaussian field whose increments have variance proportional to distance
+    (spectrum ~ 1 / k^3), made by FFT on a grid of spacing ``step`` (twice the points' extent, so it does not wrap) and
+    scaled so that points ``scale`` apart differ by ``rms_deg`` rms per component.
+
+    Parameters
+    ----------
+    xy
+        [N, 2] points
+    step
+        Grid spacing
+    scale
+        Distance at which the rms difference is ``rms_deg``
+    rms_deg
+        Rms difference per component at ``scale``, degrees
+    rng
+        Random generator
+
+    Returns
+    -------
+    np.ndarray
+        [N, 3] rotation vectors at the points (nearest grid node), degrees
+    """
+    xy = np.asarray(xy, float)
+    lo = xy.min(0)
+    m = int(2 * np.ceil(np.ptp(xy, 0).max() / step + 2))
+    k = np.hypot(*np.meshgrid(np.fft.fftfreq(m, step), np.fft.fftfreq(m, step), indexing="ij"))
+    amp = np.where(k > 0, k, np.inf) ** -1.5
+    noise = rng.normal(size=(3, m, m)) + 1j * rng.normal(size=(3, m, m))
+    f = np.real(np.fft.ifft2(noise * amp, axes=(1, 2)))  # [3, m, m]
+    lag = max(1, round(scale / step))
+    d2 = np.mean((f[:, lag:, :] - f[:, :-lag, :]) ** 2)  # mean square increment at the scale, per component
+    f *= rms_deg / np.sqrt(d2)
+    i, j = np.round((xy - lo) / step).astype(int).T
+    return f[:, i, j].T
+
+
 def polycrystal(
     n: int,
     step: float,
@@ -123,8 +163,8 @@ def polycrystal(
     twin_angle_deg: float = 60.0,
     twin_period: float = 5.0,
     twin_thickness: float = 2.0,
-    wall_spacing: float | None = None,
-    wall_spread_deg: float = 0.1,
+    cell_walk_deg: float = 0.0,
+    cell_sig_deg: float = 0.0,
     bend_grains: int = 0,
     bend_deg: float = 1.0,
     seed: int = 0,
@@ -137,18 +177,21 @@ def polycrystal(
     ``twin_axis`` (60 degrees about <111> is the Sigma3 twin of FCC metals), in lamellae ``twin_thickness`` thick
     every ``twin_period`` with the twin plane normal to that axis.
 
-    Two options make orientation vary along the rays, as in deformed metals (both off by default):
+    Three options make orientation vary along the rays, as in deformed metals (all off by default):
 
-    - **Dislocation walls** (``wall_spacing``): straight walls in random directions across the disk, on average
-      ``wall_spacing`` apart along any line. Each turns everything on one side by a small random rotation (sample frame,
-      each rotation-vector component normal with standard deviation ``wall_spread_deg``). The misorientation between
-      two points then accumulates like a random walk: its variance grows with the number of walls between them, i.e.
-      with their distance, and orientation is constant between walls. They apply inside grains and twins alike.
+    - **Accumulating cells** (``cell_walk_deg``): on top of its own random rotation, each cell is turned by a random
+      field sampled at the cell's seed, whose increments grow like a random walk with distance (a 2D Brownian field,
+      each rotation-vector component independent). Two cells ``cell_size`` apart differ by ``cell_walk_deg`` rms per
+      component, cells ``d`` apart by ``cell_walk_deg * sqrt(d / cell_size)``. Cells stay constant inside, with sharp
+      boundaries.
+    - **Intrinsic spread** (``cell_sig_deg``): the standard deviation of each component of a small rotation spread
+      inside every voxel (dislocations within a cell, and what the beam height averages), returned as a "sig_rot" map
+      in radians, as the renderer takes it (:func:`anri.fwd.render_row`).
     - **Bent grains** (``bend_grains``): that many grains (the largest after the twinned ones) turn steadily about one
       random axis along one random in-plane direction, by ``bend_deg`` per ``radius`` of distance, about the grain's
       centre: lattice curvature with one dominant axis.
 
-    The walls and bends draw from their own random stream, so a phantom without them is the same as before they existed.
+    These draw from their own random stream, so a phantom without them is the same as before they existed.
 
     Parameters
     ----------
@@ -170,10 +213,11 @@ def polycrystal(
         The twin rotation, about a crystal direction
     twin_period, twin_thickness
         Lamella spacing and thickness
-    wall_spacing
-        Mean distance between dislocation walls along a line (same units as step); None (default) for no walls
-    wall_spread_deg
-        Standard deviation of each component of a wall's rotation, degrees
+    cell_walk_deg
+        Rms difference per rotation-vector component between cells ``cell_size`` apart, from the accumulating field,
+        degrees
+    cell_sig_deg
+        Intrinsic spread inside each voxel, degrees (standard deviation per rotation-vector component)
     bend_grains
         How many grains are bent
     bend_deg
@@ -185,7 +229,8 @@ def polycrystal(
     -------
     dict
         Maps in reconstruction order: "U" [n, n, 3, 3] (crystal to sample; NaN outside), "grain" and "cell" [n, n]
-        (-1 outside), "twin" and "inside" [n, n] bool; and "pos" [n * n, 3], the voxel positions
+        (-1 outside), "twin" and "inside" [n, n] bool; "pos" [n * n, 3], the voxel positions; and with
+        ``cell_sig_deg``, "sig_rot" [n, n] (radians, NaN outside)
     """
     rng = np.random.default_rng(seed)
     pos = np.asarray(recon_positions(n, step), float)
@@ -194,7 +239,8 @@ def polycrystal(
     grain = voronoi(xy, rng.uniform(-radius, radius, (n_grains, 2)))
     U_g = random_rotations(n_grains, rng)
     n_cells = max(1, int(np.pi * radius**2 / cell_size**2))
-    cell = voronoi(xy, rng.uniform(-radius, radius, (n_cells, 2)))
+    cell_seeds = rng.uniform(-radius, radius, (n_cells, 2))
+    cell = voronoi(xy, cell_seeds)
     U = small_rotations(n_cells, cell_spread_deg, rng)[cell] @ U_g[grain]
     twin = np.zeros(len(xy), bool)
     axis_c = np.asarray(twin_axis, float) / np.linalg.norm(twin_axis)
@@ -205,22 +251,11 @@ def polycrystal(
         t = (grain == g) & (np.mod(d, twin_period) < twin_thickness)
         U[t] = axis_angle(normal, twin_angle_deg) @ U[t]
         twin |= t
-    rng2 = np.random.default_rng([seed, 1])  # walls and bends: their own stream, so the rest is unchanged
-    if wall_spacing is not None:
-        # Lines p = x cos(t) + y sin(t), offsets uniform over [-r, r]: a segment of length d crosses on average
-        # d * n / (pi * r) of them, so n = pi * r / wall_spacing puts walls wall_spacing apart along any line.
-        r = np.sqrt(2.0) * max(radius, np.abs(xy).max())  # cover the whole grid, not only the disk
-        n_walls = max(1, round(float(np.pi * r / wall_spacing)))
-        t = rng2.uniform(0.0, np.pi, n_walls)
-        p = rng2.uniform(-r, r, n_walls)
-        v = np.radians(rng2.normal(scale=wall_spread_deg, size=(n_walls, 3)))  # rotation vectors, radians
-        rv = np.zeros((len(xy), 3))
-        for w0 in range(0, n_walls, 256):  # each voxel sums the rotations of the walls it is beyond
-            w = slice(w0, w0 + 256)
-            side = (xy[:, :1] * np.cos(t[w]) + xy[:, 1:] * np.sin(t[w])) > p[w]
-            rv += side.astype(float) @ v[w]
-        angle = np.linalg.norm(rv, axis=1)
-        U = axis_angle(rv + (angle == 0)[:, None], np.degrees(angle)) @ U
+    rng2 = np.random.default_rng([seed, 1])  # their own stream, so the rest is unchanged
+    if cell_walk_deg > 0:
+        walk = brownian_field(cell_seeds, step, cell_size, cell_walk_deg, rng2)  # [n_cells, 3] degrees
+        angle = np.linalg.norm(walk, axis=1)
+        U = axis_angle(walk + (angle == 0)[:, None], angle)[cell] @ U
     if bend_grains > 0:
         order = [g for g in largest if g not in set(largest[:twin_grains].tolist())]
         for g in order[:bend_grains]:
@@ -230,7 +265,9 @@ def polycrystal(
             d = (xy[m] - xy[m & inside].mean(0)) @ np.array([np.cos(phi), np.sin(phi)])
             U[m] = axis_angle(np.broadcast_to(axis, (m.sum(), 3)), bend_deg * d / radius) @ U[m]
     U[~inside] = np.nan
+    out_sig = {"sig_rot": np.where(inside, np.radians(cell_sig_deg), np.nan).reshape(n, n)} if cell_sig_deg > 0 else {}
     return {
+        **out_sig,
         "U": U.reshape(n, n, 3, 3),
         "grain": np.where(inside, grain, -1).reshape(n, n),
         "cell": np.where(inside, cell, -1).reshape(n, n),
@@ -261,7 +298,8 @@ def tensormap(ph: dict, lattice_parameters: ArrayLike, spacegroup: int, phase_na
     TensorMap
         ``ImageD11.sinograms.tensor_map.TensorMap`` of shape (1, n, n) with "UBI", "phase_ids" (0 inside, -1 outside),
         "labels" (grain), "cell", "twin" (int8) and "misorientation": each voxel's disorientation in degrees from its
-        grain's mean orientation (taken over the grain's non-twin voxels)
+        grain's mean orientation (taken over the grain's non-twin voxels); and "sig_rot" (radians) if the phantom has
+        an intrinsic spread
     """
     from anri.crystal import B_matrix, disorientation, laue_rotations, symmetry_matrices
     from anri.io import tensormap_from_recon
@@ -286,4 +324,6 @@ def tensormap(ph: dict, lattice_parameters: ArrayLike, spacegroup: int, phase_na
         "twin": ph["twin"].astype(np.int8),
         "misorientation": mis.reshape(shape),
     }
+    if "sig_rot" in ph:
+        maps["sig_rot"] = ph["sig_rot"]
     return tensormap_from_recon(maps, lattice_parameters, spacegroup, phase_name, step)
