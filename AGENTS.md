@@ -45,7 +45,7 @@ Most data come from scanning 3DXRD at ID11. The beam is focused by one of these,
   | 70 keV | 275 (both boxes) | 49.6 cm | 105 µm |
 
 - **Stations:** NSCOPE and TDXRD. TDXRD has a bigger rotation stage with ~1 µm radial runout, comparable to the voxel size: the sample moves across the beam by up to ~1 µm, periodically in omega. That shifts voxels between dty rows (a position error); it does not widen peaks in omega, which only rotations do.
-- **Measured resolution** (`anri/sandbox/indexer/stage3/peak_widths.py` on undeformed Si crystals, Al CRLs, 0.05° frames, both stations): peak cores are narrower than one frame at every η, ~0.05° near η = 0 (~0.15 mrad vertical convergence). Bright peaks also have weak tails over 5-9 frames, most likely thermal diffuse scattering (they are not fitted as extra populations). So measured omega widths beyond this are the sample's.
+- **Measured resolution** (`anri/sandbox/indexer/peak_widths.py` on undeformed Si crystals, Al CRLs, 0.05° frames, both stations): peak cores are narrower than one frame at every η, ~0.05° near η = 0 (~0.15 mrad vertical convergence). Bright peaks also have weak tails over 5-9 frames, most likely thermal diffuse scattering (they are not fitted as extra populations). So measured omega widths beyond this are the sample's.
 - **Overfocusing:** a transfocator ~60 m from the source is sometimes set to overfocus, sending a divergent beam into the lenses. This enlarges the beam at the sample, by an amount chosen per experiment.
 
 Consequences:

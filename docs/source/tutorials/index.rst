@@ -66,15 +66,6 @@ There's a very basic demonstration of how to perform a forward model with Anri, 
     renderer
     dct
 
-Refinement
-==========
-
-The renderer is differentiable, so a map can be refined against measured sparse pixels directly.
-
-.. nbgallery::
-
-    refine
-
 Indexing
 ========
 

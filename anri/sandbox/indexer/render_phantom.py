@@ -1,12 +1,11 @@
-"""Render the am316l test phantom as an ImageD11 dataset, for the indexer and refinement tests.
+"""Render the am316l test phantom as an ImageD11 dataset, for the indexer's tests.
 
     python render_phantom.py <out> [--step S] [--beam FWHM]
 
 Writes <out>/sparse.h5, <out>/pars and <out>/phantom/phantom_am316l/ (the DataSet). Then, for example:
 
     python -m anri.index <out> phantom am316l --grid 1 --outdir <out>/index
-    python refine_phantom.py <out> phantom am316l <out>/index/phantom_am316l_index_entries.npz \\
-        <repo>/tests/data/phantoms/am316l/am316l_tmap.h5 --rows 0
+    python compare_truth.py <repo>/tests/data/phantoms/am316l/am316l_tmap.h5 <out>/index/phantom_am316l_index.npz
 
 The phantom (tests/data/phantoms/am316l): grains with ~1.5 um cells misoriented by a few tenths of a degree, and a
 twinned grain, on 0.5 um voxels. By default it is scanned on its own grid (dty steps of one phantom voxel, a beam

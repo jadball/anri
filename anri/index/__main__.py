@@ -10,7 +10,7 @@ F^2 = 1.
 
 Writes ``<tag>_params.toml`` (the command line, every option that was set, and the values resolved from the data:
 paths, phase, y0, grid step, ring tolerances), ``<tag>.npz`` (occupancies and populations), ``<tag>_entries.npz`` (every population as anri map entries, for
-the renderer and :mod:`anri.refine`) and, if ImageD11 is installed, ``<tag>_tmap.h5`` (a TensorMap of the main
+the renderer) and, if ImageD11 is installed, ``<tag>_tmap.h5`` (a TensorMap of the main
 population, with maps of the number of populations, their fraction, spread and completeness).
 """
 

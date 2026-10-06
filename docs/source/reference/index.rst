@@ -19,5 +19,4 @@ API reference
     index
     io
     phantom
-    refine
     utils

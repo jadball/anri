@@ -23,7 +23,7 @@ from anri.geom import recon_to_step, step_to_sample
 
 p = argparse.ArgumentParser()
 p.add_argument("reference", help="ImageD11 TensorMap (e.g. pbp or refined), the reference")
-p.add_argument("anri", nargs="+", help="Anri TensorMaps (python -m anri.index, run_stage3.py)")
+p.add_argument("anri", nargs="+", help="Anri TensorMaps (python -m anri.index)")
 p.add_argument("--phase-id", type=int, default=0, help="phase in the reference map (default 0)")
 p.add_argument("--png", default="compare_imaged11.png")
 p.add_argument("--boundary", type=float, default=2.0, help="misorientation (deg) that makes a boundary (default 2)")

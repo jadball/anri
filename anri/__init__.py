@@ -3,4 +3,4 @@
 # from . import crystal, diffract, fwd, geom
 from .version import VERSION, VERSION_SHORT
 
-__all__ = ["VERSION", "VERSION_SHORT", "crystal", "diffract", "fwd", "geom", "index", "io", "phantom", "refine", "utils"]
+__all__ = ["VERSION", "VERSION_SHORT", "crystal", "diffract", "fwd", "geom", "index", "io", "phantom", "utils"]
