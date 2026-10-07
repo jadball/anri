@@ -225,8 +225,8 @@ def read_dataset(dsfile: str) -> dict:
     -------
     dict
         "y0" (None if absent), "ybincens", "ybinedges", "obinedges", "dtymotor", "omegamotor", "parfile",
-        "sparsefile" and "masterfile" (made absolute: a relative path is relative to the DataSet's folder; "" if
-        absent); "dty" and "omega" [scans, frames] (None if absent): each frame's motor positions as ImageD11 has binned
+        "sparsefile", "masterfile" and the detector distortion files "e2dxfile", "e2dyfile", "detectorh5" and
+        "splinefile" (made absolute: a relative path is relative to the DataSet's folder; "" if absent), "detector"; "dty" and "omega" [scans, frames] (None if absent): each frame's motor positions as ImageD11 has binned
         them, the sinogram's rows; and "scans" (None if absent): each row's sparse group, or slice of one
         ("1.1::[0:1440]")
     """
@@ -241,6 +241,8 @@ def read_dataset(dsfile: str) -> dict:
 
     def absolute(key: str) -> str:
         path = str(attrs.get(key, ""))
+        if path == "None":  # ImageD11 may save an unset path as "None"
+            return ""
         if path and not os.path.isabs(path):
             path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(dsfile)), path))
         return path
@@ -249,6 +251,11 @@ def read_dataset(dsfile: str) -> dict:
         parfile=absolute("parfile"),
         sparsefile=absolute("sparsefile"),
         masterfile=absolute("masterfile"),
+        e2dxfile=absolute("e2dxfile"),
+        e2dyfile=absolute("e2dyfile"),
+        detectorh5=absolute("detectorh5"),
+        splinefile=absolute("splinefile"),
+        detector=str(attrs.get("detector", "")),
         y0=float(attrs["y0"]) if "y0" in attrs else None,
         dtymotor=str(attrs["dtymotor"]),
         omegamotor=str(attrs["omegamotor"]),
@@ -342,6 +349,54 @@ def read_monitor(sparsefile: str, groups: list, name: str, masterfile: str | Non
     return out
 
 
+# the detectors ImageD11 knows in a pyFAI detector file, by the start of the DataSet's "detector"
+_PYFAI_DETECTORS = {"pilatus": "Pilatus_CdTe_2M", "p3": "Pilatus_CdTe_2M", "eiger": "Eiger2_CdTe_4M"}
+
+
+def read_spatial(ds: dict) -> tuple[np.ndarray, np.ndarray] | None:
+    """Read a DataSet's detector distortion maps, as ImageD11 corrects its peaks with them.
+
+    ImageD11's order: a pyFAI detector file ("detectorh5": dx, dy from the mean of each pixel's corners, as
+    ``ImageD11.blobcorrector.get_e2dx_from_h5``), else EDF maps ("e2dxfile", "e2dyfile", read with fabio). A pixel at
+    (row, col) is at (row + dy[row, col], col + dx[row, col]), in pixels: dx along the fast axis, dy along the slow.
+    Spline files are not supported.
+
+    Parameters
+    ----------
+    ds
+        From :func:`read_dataset`
+
+    Returns
+    -------
+    tuple or None
+        (dx, dy) [n_slow, n_fast] float32, or None if the DataSet names no correction
+    """
+    if ds.get("detectorh5"):
+        det = str(ds.get("detector", "")).lower()
+        key = next((v for k, v in _PYFAI_DETECTORS.items() if k in det), None)
+        if key is None:
+            msg = f"{ds['detectorh5']}: unknown detector {ds.get('detector')!r} (known: {list(_PYFAI_DETECTORS)})"
+            raise ValueError(msg)
+        with h5py.File(ds["detectorh5"], "r") as h:
+            ps = h[f"entry_0000/pyFAI/{key}/pixel_size"][()]
+            d = h[f"entry_0000/pyFAI/{key}/pixel_corners"][()]  # [n_slow, n_fast, 4 corners, (z, y, x)]
+        s, f = np.mgrid[0 : d.shape[0], 0 : d.shape[1]]
+        dy = d[:, :, :, 1].mean(2) / np.mean(ps) - s
+        dx = d[:, :, :, 2].mean(2) / np.mean(ps) - f
+        return dx.astype(np.float32), dy.astype(np.float32)
+    if ds.get("e2dxfile") and ds.get("e2dyfile"):
+        import fabio
+
+        return (
+            np.asarray(fabio.open(ds["e2dxfile"]).data, np.float32),
+            np.asarray(fabio.open(ds["e2dyfile"]).data, np.float32),
+        )
+    if ds.get("splinefile"):
+        msg = f"{ds['splinefile']}: spline distortion files are not supported; make e2dx/e2dy maps from it"
+        raise ValueError(msg)
+    return None
+
+
 def _scan_slices(scans: list) -> dict:
     """``{group: [(scan index, first frame, last frame + 1 or None), ...]}`` from DataSet scan names.
 
@@ -392,6 +447,7 @@ def stream_sparse(
     monitor_ref: float | None = None,
     masterfile: str | None = None,
     dataset_omega: np.ndarray | None = None,
+    spatial: tuple | None = None,
 ) -> Iterator[tuple]:
     """Read sparse pixels a chunk at a time, with each frame's dty row.
 
@@ -429,6 +485,9 @@ def stream_sparse(
         Where to find the monitor if the sparse file lacks it, see :func:`read_monitor`
     dataset_omega
         [scans, frames] omega from the DataSet, as ``dataset_dty``
+    spatial
+        (dx, dy) [n_slow, n_fast] detector distortion maps (:func:`read_spatial`): each pixel is yielded at
+        (row + dy[row, col], col + dx[row, col]), as ImageD11 corrects its peaks. None: the raw pixel positions
 
     Yields
     ------
@@ -464,9 +523,12 @@ def stream_sparse(
             for s0 in range(0, n, chunk):
                 m = min(chunk, n - s0)
                 fr = frame[s0 : s0 + m]
+                slow, fast = gr["row"][s0 : s0 + m], gr["col"][s0 : s0 + m]
+                if spatial is not None:  # where the pixel really is: its distortion-corrected position
+                    slow, fast = slow + spatial[1][slow, fast], fast + spatial[0][slow, fast]
                 yield (
-                    gr["row"][s0 : s0 + m].astype(np.float32),
-                    gr["col"][s0 : s0 + m].astype(np.float32),
+                    slow.astype(np.float32),
+                    fast.astype(np.float32),
                     om_f[fr],
                     k_f[fr],
                     gr["intensity"][s0 : s0 + m].astype(np.float32) * scale[fr],

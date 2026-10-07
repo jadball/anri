@@ -75,6 +75,62 @@ class TestDataset(unittest.TestCase):
                 self.assertEqual(f.attrs["y0"], 0.25)
 
 
+class TestSpatial(unittest.TestCase):
+    def test_edf_maps_move_the_pixels(self):
+        """A DataSet's e2dx/e2dy maps (read_dataset -> read_spatial) move each pixel as ImageD11 moves its peaks."""
+        from fabio.edfimage import EdfImage
+
+        from anri.io import read_dataset, read_spatial, stream_sparse
+
+        det_shape = (20, 30)
+        dx = np.fromfunction(lambda s, f: 0.01 * f, det_shape, dtype=np.float32)  # along fast
+        dy = np.fromfunction(lambda s, f: -0.02 * s, det_shape, dtype=np.float32)  # along slow
+        omega, dty = motor_grid((0.0, 2.0), 0.5, (0.0, 0.0), 1.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = os.path.join(tmp, "e2dx.edf"), os.path.join(tmp, "e2dy.edf")
+            for path, m in zip(paths, (dx, dy)):
+                EdfImage(data=m).write(path)
+            sparse = os.path.join(tmp, "s_sparse.h5")
+            pixel = np.array([0, 31, 2 * 30 + 7, 19 * 30 + 29])
+            with h5py.File(sparse, "w") as h:
+                write_scan(h, "1.1", np.arange(4), pixel, np.full(4, 5.0), omega[0], dty[0], det_shape, cut=0)
+            ds = read_dataset(write_dataset(sparse, tmp, "s", "d", y0=0.0, e2dxfile=paths[0], e2dyfile=paths[1]))
+            self.assertEqual((ds["e2dxfile"], ds["e2dyfile"], ds["detectorh5"]), (*paths, ""))
+            spatial = read_spatial(ds)
+            np.testing.assert_allclose(spatial[0], dx)
+            np.testing.assert_allclose(spatial[1], dy)
+            slow, fast, _, _, _ = next(stream_sparse(sparse, [-0.5, 0.5], "rot_center", "dty", 100, spatial=spatial))
+            s0, f0 = pixel // 30, pixel % 30
+            np.testing.assert_allclose(slow, s0 + dy[s0, f0], rtol=1e-6)
+            np.testing.assert_allclose(fast, f0 + dx[s0, f0], rtol=1e-6)
+            self.assertIsNone(read_spatial({"e2dxfile": "", "e2dyfile": "", "detectorh5": "", "splinefile": ""}))
+            with self.assertRaises(ValueError):
+                read_spatial({"splinefile": "x.spline"})
+
+    def test_detector_h5_as_imaged11(self):
+        """dx, dy from a pyFAI detector file, as ImageD11's get_e2dx_from_h5."""
+        from ImageD11.blobcorrector import get_e2dx_from_h5
+
+        from anri.io import read_spatial
+
+        rng = np.random.default_rng(0)
+        n_s, n_f, ps = 6, 5, 75e-6
+        s, f = np.mgrid[0:n_s, 0:n_f]
+        corners = np.zeros((n_s, n_f, 4, 3))
+        for c, (a, b) in enumerate(((0, 0), (0, 1), (1, 1), (1, 0))):
+            corners[:, :, c, 1] = (s + a) * ps + rng.normal(0, 0.1 * ps, (n_s, n_f))
+            corners[:, :, c, 2] = (f + b) * ps + rng.normal(0, 0.1 * ps, (n_s, n_f))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "det.h5")
+            with h5py.File(path, "w") as h:
+                h["entry_0000/pyFAI/Eiger2_CdTe_4M/pixel_size"] = np.array([ps, ps])
+                h["entry_0000/pyFAI/Eiger2_CdTe_4M/pixel_corners"] = corners
+            dx, dy = read_spatial({"detectorh5": path, "detector": "eiger"})
+            ex, ey = get_e2dx_from_h5(path, detector="eiger")
+        np.testing.assert_allclose(dx, ex, atol=1e-5)
+        np.testing.assert_allclose(dy, ey, atol=1e-5)
+
+
 class TestEntriesFromTensorMap(unittest.TestCase):
     def test_quartz(self):
         from ImageD11.sinograms.geometry import recon_to_sample

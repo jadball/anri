@@ -5,7 +5,8 @@
 Paths follow ImageD11's layout: ``{analysisroot}/{sample}/{sample}_{dataset}/{sample}_{dataset}_dataset.h5`` and
 ``_sparse.h5``. The geometry and the phase (lattice and space-group number) come from ``pars.json``: the DataSet's
 parfile, else ``pars/pars.json`` beside ``PROCESSED_DATA``, or ``--parfile``. The scan comes from the DataSet. Lengths
-are in the units of the DataSet's dty and the geometry file, which must agree. No spatial distortion correction yet;
+are in the units of the DataSet's dty and the geometry file, which must agree. Pixels are corrected for detector
+distortion as ImageD11 corrects its peaks, with the DataSet's e2dx/e2dy or detector file (anri.io.read_spatial);
 F^2 = 1.
 
 Writes ``<tag>_params.toml`` (the command line, every option that was set, and the values resolved from the data:
@@ -290,6 +291,9 @@ def main() -> None:
         n_max = max(int(h[g]["nnz"][()].sum()) for g in groups)
     chunk = int(min(1 << 24, 1 << max(10, int(np.ceil(np.log2(max(n_max, 1)))))))
 
+    spatial = anri.io.read_spatial(ds)  # the DataSet's detector distortion maps, if it names any
+    spatial_src = ds["detectorh5"] or (f"{ds['e2dxfile']}, {ds['e2dyfile']}" if spatial is not None else "")
+    log(f"spatial correction: {spatial_src or 'none (the DataSet names no e2dx/e2dy or detector file)'}")
     monitor_ref = None
     if args.monitor:  # one reference for every scan, as ImageD11 (the mean)
         mon = np.concatenate(list(anri.io.read_monitor(sparsefile, groups, args.monitor, ds["masterfile"]).values()))
@@ -313,6 +317,7 @@ def main() -> None:
                 monitor_ref,
                 ds["masterfile"],
                 ds["omega"],
+                spatial,
             )
         )
 
@@ -354,7 +359,7 @@ def main() -> None:
                      "lattice": list(lpars), "space_group": sg, "wavelength": WL, "y0": Y0, "voxel_size": YSTEP,
                      "voxels": NR, "omega_step": OSTEP, "grid_step": step, "grid_auto": args.grid is None,
                      "grid_worst_case_deg": delta, "rings_tth_deg": list(rings["tth"]), "tth_tol_deg": list(tth_tol),
-                     "n_hkls": len(rings["hkls"])},
+                     "n_hkls": len(rings["hkls"]), "spatial_correction": spatial_src},
     }  # fmt: skip
     write_toml(params, run_info)
     log(f"-> {params}")

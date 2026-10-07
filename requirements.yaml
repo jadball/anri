@@ -6,6 +6,7 @@ dependencies:
   - pip: Dans-Diffraction
   - pip: polars
   - pip: h5py
+  - pip: fabio  # detector distortion maps (e2dx/e2dy EDF files) for anri.io.read_spatial
   - pip: psutil  # free host memory, for anri.fwd.guess_batch_size
   - pip: tomli-w  # python -m anri.index writes its parameters as TOML
   - pip: jax
