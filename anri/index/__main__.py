@@ -24,6 +24,10 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
 
 T0 = time.perf_counter()
 
@@ -64,6 +68,76 @@ def write_toml(path: str, tables: dict) -> None:
 
     with open(path, "wb") as fh:
         tomli_w.dump({t: {k: _plain(v) for k, v in kv.items() if v is not None} for t, kv in tables.items()}, fh)
+
+
+def save_results(
+    tag: str,
+    results: dict,
+    B: ArrayLike,
+    lattice_parameters: ArrayLike,
+    space_group: int,
+    phase: str,
+    voxel_size: float,
+) -> None:
+    """Write the results of an indexing run: ``<tag>.npz``, ``<tag>_entries.npz`` and ``<tag>_tmap.h5``.
+
+    ``<tag>.npz`` holds ``results`` as given. ``<tag>_entries.npz`` holds every population present as anri map
+    entries (for the renderer). With ImageD11 installed, ``<tag>_tmap.h5`` (and ``.xdmf`` for ParaView) is a TensorMap
+    of the main population, with maps of the number of populations, their fraction, spread and completeness.
+
+    Parameters
+    ----------
+    tag
+        Path and name of the outputs, without extension (e.g. ``<outdir>/<sample>_<dataset>_index``)
+    results
+        Arrays to save, at least "f" [Nv, K] (occupancies), "frac", "U_pop", "spread", "comp_pop" [Nv, P]
+        (populations), "present" [Nv, P], "occupied" [Nv] and "pos" [Nv, 3], for Nv voxels on a square grid
+    B
+        [3, 3] B matrix
+    lattice_parameters, space_group, phase
+        The phase, for the TensorMap
+    voxel_size
+        Voxel size, for the TensorMap
+    """
+    import numpy as np
+
+    import anri.io
+
+    os.makedirs(os.path.dirname(os.path.abspath(tag)), exist_ok=True)
+    np.savez(f"{tag}.npz", **results)
+    f, frac, U_pop, spread = results["f"], results["frac"], results["U_pop"], results["spread"]
+    comp_pop, present, occupied, pos = results["comp_pop"], results["present"], results["occupied"], results["pos"]
+    tot = f.sum(1)
+    n_side = round(np.sqrt(len(f)))
+    v, q = np.nonzero(present)
+    np.savez(f"{tag}_entries.npz", ubi=np.linalg.inv(U_pop[v, q] @ B), pos=pos[v], density=tot[v] * frac[v, q],
+             sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q])  # fmt: skip
+    try:
+        maps = {
+            "UBI": np.where(occupied[:, None, None], np.linalg.inv(U_pop[:, 0] @ B), np.nan),
+            "phase_ids": np.where(occupied, 0, -1),
+            "occupancy": tot,
+            "n_populations": present.sum(1),
+            "fraction": frac[:, 0],
+            "spread": spread[:, 0],
+            "completeness": comp_pop[:, 0],
+        }
+        maps = {k: m.reshape(n_side, n_side, *m.shape[1:]) for k, m in maps.items()}  # reconstruction order
+        tmap = anri.io.tensormap_from_recon(maps, np.asarray(lattice_parameters), space_group, phase, voxel_size)
+        try:
+            tmap.get_ipf_maps()  # ipf_x, ipf_y, ipf_z
+        except ImportError:
+            log("orix is not installed: no IPF maps")
+        _ = tmap.euler  # computed and kept in the maps. No strain: these UBIs are rotations of the nominal lattice.
+        out = f"{tag}_tmap.h5"
+        if os.path.exists(out):
+            os.remove(out)
+        tmap.to_h5(out)
+        tmap.to_paraview(out)
+        log(f"-> {out} (and .xdmf for ParaView)")
+    except ImportError:
+        log("ImageD11 is not installed: no TensorMap written")
+    log(f"-> {tag}.npz, {tag}_entries.npz")
 
 
 def parse_args() -> argparse.Namespace:
@@ -339,39 +413,12 @@ def main() -> None:
         f"(includes the grid); completeness median {np.median(comp_pop[present]):.2f}")  # fmt: skip
 
     # ------------------------------------------------------------------------------------------------- outputs
-    os.makedirs(args.outdir, exist_ok=True)
     tag = os.path.join(args.outdir, f"{dsname}_index")
-    np.savez(f"{tag}.npz", f=f, cand=cand, U=U_kept, comp=comp[kept], frac=frac, U_pop=U_pop, spread=spread, n=n_pop,
-             comp_pop=comp_pop, occupied=occupied, present=present, pos=pos, grid_step=step, delta=delta,
-             row_ratio=row_ratio, row_data=d_row, row_model=m_row, y0=Y0)  # fmt: skip
-    v, q = np.nonzero(present)
-    np.savez(f"{tag}_entries.npz", ubi=np.linalg.inv(U_pop[v, q] @ B), pos=pos[v], density=tot[v] * frac[v, q],
-             sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q])  # fmt: skip
-    try:
-        maps = {
-            "UBI": np.where(occupied[:, None, None], np.linalg.inv(U_pop[:, 0] @ B), np.nan).reshape(NR, NR, 3, 3),
-            "phase_ids": np.where(occupied, 0, -1).reshape(NR, NR),
-            "occupancy": tot.reshape(NR, NR),
-            "n_populations": n_occ.reshape(NR, NR),
-            "fraction": frac[:, 0].reshape(NR, NR),
-            "spread": spread[:, 0].reshape(NR, NR),
-            "completeness": comp_pop[:, 0].reshape(NR, NR),
-        }
-        tmap = anri.io.tensormap_from_recon(maps, np.asarray(lpars), sg, phase, YSTEP)
-        try:
-            tmap.get_ipf_maps()  # ipf_x, ipf_y, ipf_z
-        except ImportError:
-            log("orix is not installed: no IPF maps")
-        _ = tmap.euler  # computed and kept in the maps. No strain: these UBIs are rotations of the nominal lattice.
-        out = f"{tag}_tmap.h5"
-        if os.path.exists(out):
-            os.remove(out)
-        tmap.to_h5(out)
-        tmap.to_paraview(out)
-        log(f"-> {out} (and .xdmf for ParaView)")
-    except ImportError:
-        log("ImageD11 is not installed: no TensorMap written")
-    log(f"-> {tag}.npz, {tag}_entries.npz")
+    results = {"f": f, "cand": cand, "U": U_kept, "comp": comp[kept], "frac": frac, "U_pop": U_pop, "spread": spread,
+               "n": n_pop, "comp_pop": comp_pop, "occupied": occupied, "present": present, "pos": pos,
+               "grid_step": step, "delta": delta, "row_ratio": row_ratio, "row_data": d_row, "row_model": m_row,
+               "y0": Y0}  # fmt: skip
+    save_results(tag, results, B, lpars, sg, phase, YSTEP)
     # the same parameters again, with what was only known at the end (e.g. --min-comp's default: the chance level)
     # likelihood pruning fits everything above the chance level (or --min-comp); completeness pruning uses its own cut
     min_comp_used = (
