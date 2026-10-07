@@ -182,8 +182,6 @@ def parse_args() -> argparse.Namespace:
                    "the candidates of its coarse neighbourhood (default 1: off; 4 is ~16x cheaper on large maps)")  # fmt: skip
     p.add_argument("--monitor", help="normalise intensities by this counter in each scan's measurement, frame by frame, "
                    "as ImageD11's DataSet.set_monitor does (e.g. fpico6; default: no normalisation)")  # fmt: skip
-    p.add_argument("--dty-mean", action="store_true", help="put every frame of a scan in the row of the scan's mean "
-                   "dty: for fly scans where dty drifts during the rotation, whose frames otherwise alias between rows")  # fmt: skip
     p.add_argument("--occupied", type=float, default=0.2, help="voxels count as occupied (in the TensorMap and entries) "
                    "above this x the 99th percentile of the total occupancy (default 0.2; the raw occupancy is always saved)")  # fmt: skip
     p.add_argument("--min-frac", type=float, default=0.1, help="report populations holding at least this fraction of a "
@@ -314,7 +312,7 @@ def main() -> None:
                 args.monitor,
                 monitor_ref,
                 ds["masterfile"],
-                args.dty_mean,
+                ds["omega"],
             )
         )
 

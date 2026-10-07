@@ -343,21 +343,26 @@ class TestStreamMonitor(unittest.TestCase):
             _, _, _, _, val = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100, monitor="fpico6")))
             np.testing.assert_allclose(val[:3], 10.0 * mon.mean() / mon[:3])  # default reference: the mean
 
-    def test_dty_mean(self):
-        """A fly scan's dty drifts across a row edge: by default each frame goes to its own row, with dty_mean all go
-        to the row of the scan's mean dty."""
+    def test_positions_from_the_dataset(self):
+        """A fly scan in one sparse group, which the DataSet slices into rotations ("1.1::[0:3]"): omega and dty come
+        from the DataSet (here dty constant per rotation, as ImageD11 can make it), not from the group's drifting
+        readings; frames the DataSet does not cover are dropped."""
         from anri.io import stream_sparse
 
-        omega, dty = np.arange(4) + 0.5, np.array([-0.2, 0.1, 0.3, 0.6])  # mean 0.2
+        omega, dty = np.arange(7) + 0.5, np.array([-0.2, 0.1, 0.3, 0.6, 0.7, 0.9, 0.95])  # drifting readings
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "s.h5")
             with h5py.File(path, "w") as h:
-                write_scan(h, "1.1", np.arange(4), np.arange(4), np.full(4, 5.0), omega, dty, (20, 30), cut=0)
+                write_scan(h, "1.1", np.arange(7), np.arange(7), np.full(7, 5.0), omega, dty, (20, 30), cut=0)
             edges = np.array([-1.0, 0.0, 1.0])
             row = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100)))[3]
-            np.testing.assert_array_equal(row, [0, 1, 1, 1])
-            row = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100, dty_mean=True)))[3]
-            np.testing.assert_array_equal(row, [1, 1, 1, 1])
+            np.testing.assert_array_equal(row, [0, 1, 1, 1, 1, 1, 1])  # the readings
+            scans = ["1.1::[0:3]", "1.1::[3:6]"]  # frame 6 is not in the DataSet
+            ds_dty, ds_omega = np.array([[-0.5] * 3, [0.5] * 3]), omega[:6].reshape(2, 3) + 100.0
+            _, _, om, row, _ = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100, dataset_dty=ds_dty,
+                                                       scans=scans, dataset_omega=ds_omega)))  # fmt: skip
+            np.testing.assert_array_equal(row, [0, 0, 0, 1, 1, 1, -1])
+            np.testing.assert_allclose(om[:6], ds_omega.ravel())
 
     def test_monitor_from_the_master_file(self):
         """A counter the sparse file lacks is read from the master file's scan of the same name, cut to the frames."""

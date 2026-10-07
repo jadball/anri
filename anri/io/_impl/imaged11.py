@@ -225,14 +225,16 @@ def read_dataset(dsfile: str) -> dict:
     -------
     dict
         "y0" (None if absent), "ybincens", "ybinedges", "obinedges", "dtymotor", "omegamotor", "parfile",
-        "sparsefile" and "masterfile" (made absolute: a relative path is relative to the DataSet's folder; "" if absent), and "dty"
-        [scans, frames] and
-        "scans" (None if absent): each scan's dty, for sparse files without a dty column
+        "sparsefile" and "masterfile" (made absolute: a relative path is relative to the DataSet's folder; "" if
+        absent); "dty" and "omega" [scans, frames] (None if absent): each frame's motor positions as ImageD11 has binned
+        them, the sinogram's rows; and "scans" (None if absent): each row's sparse group, or slice of one
+        ("1.1::[0:1440]")
     """
     with h5py.File(dsfile, "r") as h:
         attrs = dict(h.attrs)
         out = {k: h[k][()] for k in ("ybincens", "ybinedges", "obinedges")}
         out["dty"] = h["dty"][()] if "dty" in h else None
+        out["omega"] = h["omega"][()] if "omega" in h else None
         out["scans"] = (
             [x.decode() if isinstance(x, bytes) else str(x) for x in h["scans"][()]] if "scans" in h else None
         )
@@ -340,6 +342,42 @@ def read_monitor(sparsefile: str, groups: list, name: str, masterfile: str | Non
     return out
 
 
+def _scan_slices(scans: list) -> dict:
+    """``{group: [(scan index, first frame, last frame + 1 or None), ...]}`` from DataSet scan names.
+
+    A name is a sparse group ("1.1": all its frames) or a slice of one ("1.1::[0:1440]").
+    """
+    out: dict = {}
+    for i, sc in enumerate(scans):
+        name, _, rest = str(sc).partition("::[")
+        a, b = (int(x) for x in rest.rstrip("]").split(":")) if rest else (0, None)
+        out.setdefault(name, []).append((i, a, b))
+    return out
+
+
+def _frame_positions(
+    gr: h5py.Group, name: str, motor: str, values: np.ndarray | list | None, slices: dict, path: str
+) -> np.ndarray:
+    """[n_frames] positions of one motor for sparse group gr: the DataSet's, where it covers the frame, else the group's.
+
+    ``values`` holds the DataSet's positions [scans, frames] (e.g. its ``dty`` or ``omega``) and ``slices`` which of
+    its scans hold which frames of which group (:func:`_scan_slices`). Frames of a group the DataSet slices but does not
+    cover get NaN.
+    """
+    n = len(gr["nnz"])
+    if name in slices and values is not None:
+        out = np.full(n, np.nan)
+        for i, a, b in slices[name]:
+            b = n if b is None else min(b, n)
+            v = np.asarray(values[i], float)[: b - a]
+            out[a : a + len(v)] = v
+        return out
+    if motor in gr["measurement"]:
+        return np.broadcast_to(np.asarray(gr[f"measurement/{motor}"][()], float), (n,)).copy()
+    msg = f"{path}:{name} has no {motor}, and the DataSet has no positions for it; pass the DataSet's and its scans"
+    raise KeyError(msg)
+
+
 def stream_sparse(
     sparsefile: str,
     ybinedges: ArrayLike,
@@ -353,12 +391,15 @@ def stream_sparse(
     monitor: str | None = None,
     monitor_ref: float | None = None,
     masterfile: str | None = None,
-    dty_mean: bool = False,
+    dataset_omega: np.ndarray | None = None,
 ) -> Iterator[tuple]:
     """Read sparse pixels a chunk at a time, with each frame's dty row.
 
-    A frame's row is the bin of ``ybinedges`` holding its dty reading, divided by ``gridstep`` (rows summed in
-    groups); frames outside the bins get row -1. With a monitor, intensities are normalised to the flux as
+    A frame's omega and dty are the DataSet's, where the DataSet has the frame (``dataset_omega``, ``dataset_dty``:
+    ImageD11 has binned the scan into rotations by then, e.g. replacing the dty of a fly scan by its mean over each
+    rotation), else the sparse group's own readings of ``omega_motor`` and ``dty_motor``. Its row is the bin of
+    ``ybinedges`` holding its dty, divided by ``gridstep`` (rows summed in groups); frames outside the bins, or that
+    the DataSet slices out, get row -1. With a monitor, intensities are normalised to the flux as
     ImageD11's ``DataSet.set_monitor`` does: multiplied by ``monitor_ref / monitor`` frame by frame, so beam decay
     within a rotation and between the dty rows' scans does not show in the data.
 
@@ -377,7 +418,8 @@ def stream_sparse(
     gridstep
         Rows summed in groups of this
     dataset_dty, scans
-        [scans, frames] dty and scan names from the DataSet, for files without a dty column
+        [scans, frames] dty and scan names from the DataSet (:func:`read_dataset`). A DataSet scan is a sparse group
+        ("1.1") or a slice of one ("1.1::[0:1440]": a fly scan split into its rotations)
     monitor
         Name of a counter in each group's ``measurement``, e.g. "fpico6"; None (default) for no normalisation.
         Frames where it is not positive are dropped.
@@ -385,11 +427,8 @@ def stream_sparse(
         Reference value; default the counter's mean over the groups read
     masterfile
         Where to find the monitor if the sparse file lacks it, see :func:`read_monitor`
-    dty_mean
-        Put every frame of a scan in the row of the scan's mean dty, not of its own reading. For fly scans where dty
-        drifts slowly through the rotation: frames binned by their own readings alias between neighbouring rows,
-        leaving gaps in some rows of the sinogram and doubling others (ImageD11 users replace ``ds.dty`` by its mean
-        over each scan for the same reason)
+    dataset_omega
+        [scans, frames] omega from the DataSet, as ``dataset_dty``
 
     Yields
     ------
@@ -404,22 +443,17 @@ def stream_sparse(
     mons = read_monitor(sparsefile, groups, monitor, masterfile) if monitor is not None else {}
     if monitor is not None and monitor_ref is None:
         monitor_ref = float(np.mean(np.concatenate(list(mons.values()))))
+    slices = _scan_slices(scans) if scans is not None else {}
     with h5py.File(sparsefile, "r") as h:
         for name in groups:
             gr = h[name]
             nnz = gr["nnz"][()]
-            om_f = gr[f"measurement/{omega_motor}"][()].astype(np.float32)
-            if dty_motor in gr["measurement"]:
-                dty_f = np.broadcast_to(gr[f"measurement/{dty_motor}"][()], nnz.shape)
-            elif dataset_dty is not None and scans is not None:
-                dty_f = np.asarray(dataset_dty)[scans.index(name)][: len(nnz)]
-            else:
-                msg = f"{sparsefile}:{name} has no {dty_motor}; pass the DataSet's dty and scans"
-                raise KeyError(msg)
-            if dty_mean:
-                dty_f = np.full(len(nnz), float(np.mean(dty_f)))
-            k_f = np.searchsorted(ybinedges, dty_f) - 1
-            k_f = np.where((k_f >= 0) & (k_f < n_rows), k_f // gridstep, -1).astype(np.int32)
+            om_f = _frame_positions(gr, name, omega_motor, dataset_omega, slices, sparsefile)
+            dty_f = _frame_positions(gr, name, dty_motor, dataset_dty, slices, sparsefile)
+            ok = np.isfinite(om_f) & np.isfinite(dty_f)
+            k_f = np.searchsorted(ybinedges, np.where(ok, dty_f, np.inf)) - 1
+            k_f = np.where(ok & (k_f >= 0) & (k_f < n_rows), k_f // gridstep, -1).astype(np.int32)
+            om_f = np.where(ok, om_f, 0.0).astype(np.float32)
             scale = np.ones(len(nnz), np.float32)
             if monitor is not None:
                 mon = mons[name]
