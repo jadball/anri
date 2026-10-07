@@ -353,6 +353,7 @@ def stream_sparse(
     monitor: str | None = None,
     monitor_ref: float | None = None,
     masterfile: str | None = None,
+    dty_mean: bool = False,
 ) -> Iterator[tuple]:
     """Read sparse pixels a chunk at a time, with each frame's dty row.
 
@@ -384,6 +385,11 @@ def stream_sparse(
         Reference value; default the counter's mean over the groups read
     masterfile
         Where to find the monitor if the sparse file lacks it, see :func:`read_monitor`
+    dty_mean
+        Put every frame of a scan in the row of the scan's mean dty, not of its own reading. For fly scans where dty
+        drifts slowly through the rotation: frames binned by their own readings alias between neighbouring rows,
+        leaving gaps in some rows of the sinogram and doubling others (ImageD11 users replace ``ds.dty`` by its mean
+        over each scan for the same reason)
 
     Yields
     ------
@@ -410,6 +416,8 @@ def stream_sparse(
             else:
                 msg = f"{sparsefile}:{name} has no {dty_motor}; pass the DataSet's dty and scans"
                 raise KeyError(msg)
+            if dty_mean:
+                dty_f = np.full(len(nnz), float(np.mean(dty_f)))
             k_f = np.searchsorted(ybinedges, dty_f) - 1
             k_f = np.where((k_f >= 0) & (k_f < n_rows), k_f // gridstep, -1).astype(np.int32)
             scale = np.ones(len(nnz), np.float32)

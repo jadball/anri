@@ -343,6 +343,22 @@ class TestStreamMonitor(unittest.TestCase):
             _, _, _, _, val = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100, monitor="fpico6")))
             np.testing.assert_allclose(val[:3], 10.0 * mon.mean() / mon[:3])  # default reference: the mean
 
+    def test_dty_mean(self):
+        """A fly scan's dty drifts across a row edge: by default each frame goes to its own row, with dty_mean all go
+        to the row of the scan's mean dty."""
+        from anri.io import stream_sparse
+
+        omega, dty = np.arange(4) + 0.5, np.array([-0.2, 0.1, 0.3, 0.6])  # mean 0.2
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "s.h5")
+            with h5py.File(path, "w") as h:
+                write_scan(h, "1.1", np.arange(4), np.arange(4), np.full(4, 5.0), omega, dty, (20, 30), cut=0)
+            edges = np.array([-1.0, 0.0, 1.0])
+            row = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100)))[3]
+            np.testing.assert_array_equal(row, [0, 1, 1, 1])
+            row = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100, dty_mean=True)))[3]
+            np.testing.assert_array_equal(row, [1, 1, 1, 1])
+
     def test_monitor_from_the_master_file(self):
         """A counter the sparse file lacks is read from the master file's scan of the same name, cut to the frames."""
         from anri.io import read_monitor, stream_sparse
