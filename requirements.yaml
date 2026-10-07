@@ -37,6 +37,7 @@ optional_dependencies:
     - pip: ipython
     - pip: ipykernel  # needed for nbsphinx to render notebooks
     - pip: ipywidgets  # needed for nbsphinx to render notebooks with interactive figures
+    - pip: ipympl  # interactive figures in docs/source/tutorials/indexing_parameters.ipynb
     - pip: sphinx-copybutton
     - pip: sphinx-autobuild
     - pip: sphinx-autodoc-typehints
