@@ -25,6 +25,11 @@ deformed metals, so peaks smear into arcs (bananas; see `AGENTS.md`, "What a pea
 - Peaks (`anri/sandbox/indexer/peak_shapes.py` on the centre row, 0.05° frames): smeared arcs about 0.5-1.5° across
   in eta and omega.
 - Phase 0: `3.5966 3.5966 3.5966 90 90 90`, space group 225. `B` has no 2π factor.
+- ImageD11's derived maps, computed from `UBI`: `B`, `U`, `UB`, `mt`, `unitcell`, `euler` and the IPF colours
+  `ipf_x`, `ipf_y`, `ipf_z`. No strain maps: every `UBI` is a rotation of the nominal lattice.
+- The maps are in TensorMap order. `anri.io.entries_from_tensormap` reads `UBI` through ImageD11's
+  `map_order_to_recon_order` (a transpose and a flip), so read the other maps the same way to pair them with its
+  entries.
 
 ## Provenance
 
@@ -46,7 +51,13 @@ ph = anri.phantom.polycrystal(
     seed=0,
 )
 tmap = anri.phantom.tensormap(ph, [3.5966, 3.5966, 3.5966, 90.0, 90.0, 90.0], 225, "316L", 0.5)
+for name in ("B", "U", "UB", "mt", "unitcell", "euler"):
+    getattr(tmap, name)  # computed from UBI and kept in the maps
+tmap.get_ipf_maps()  # needs orix
 tmap.to_h5("def316l_tmap.h5")
 ```
 
-Render it as an ImageD11 dataset with `anri/sandbox/indexer/render_phantom.py <out> --tmap <this file> --ostep 0.05`.
+Render it as an ImageD11 dataset with
+`anri/sandbox/indexer/render_phantom.py <out> --tmap <this file> --ostep 0.05 --max-frames 61`. Without
+`--max-frames`, each peak gets 3 frames, which cuts peaks broader than a frame in omega (about a third of the
+intensity is lost).
