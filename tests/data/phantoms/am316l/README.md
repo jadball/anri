@@ -15,6 +15,8 @@ metals: grains, misoriented cells inside them, and annealing twins. Load it with
   every 5 µm, with the twin plane normal to that <111>.
 - `misorientation`: each voxel's misorientation (degrees) from its grain's mean orientation.
 - Phase 0: `3.5966 3.5966 3.5966 90 90 90`, space group 225. `B` has no 2π factor.
+- ImageD11's derived maps, computed from `UBI`: `B`, `U`, `UB`, `mt`, `unitcell`, `euler` and the IPF colours
+  `ipf_x`, `ipf_y`, `ipf_z`.
 
 ## Provenance
 

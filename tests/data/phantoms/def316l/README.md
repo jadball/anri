@@ -27,9 +27,6 @@ deformed metals, so peaks smear into arcs (bananas; see `AGENTS.md`, "What a pea
 - Phase 0: `3.5966 3.5966 3.5966 90 90 90`, space group 225. `B` has no 2π factor.
 - ImageD11's derived maps, computed from `UBI`: `B`, `U`, `UB`, `mt`, `unitcell`, `euler` and the IPF colours
   `ipf_x`, `ipf_y`, `ipf_z`. No strain maps: every `UBI` is a rotation of the nominal lattice.
-- The maps are in TensorMap order. `anri.io.entries_from_tensormap` reads `UBI` through ImageD11's
-  `map_order_to_recon_order` (a transpose and a flip), so read the other maps the same way to pair them with its
-  entries.
 
 ## Provenance
 
