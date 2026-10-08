@@ -71,9 +71,11 @@ Indexing
 
 Indexing finds each voxel's orientations from the data alone, by fitting every voxel's orientation occupancies jointly with the forward model.
 The first notebook makes a phantom microstructure (grains, misoriented cells and twins), the second simulates a scan of it and indexes it from scratch.
-Both are stored runs: they are not re-executed when the docs are built.
+The third runs the steps of ``python -m anri.index`` one at a time on any ImageD11 dataset (or the phantom), with a diagnostic plot and, where it is cheap, a slider for each option, and prints the command line with the values chosen.
+They are not re-executed when the docs are built.
 
 .. nbgallery::
 
     phantom
     indexing
+    indexing_parameters
