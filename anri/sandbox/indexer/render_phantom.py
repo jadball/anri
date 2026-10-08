@@ -36,6 +36,7 @@ p.add_argument("--step", type=float, help="dty step (default: the phantom's voxe
 p.add_argument("--beam", type=float, help="beam FWHM (default: the step)")
 p.add_argument("--tmap", help="phantom TensorMap (default: tests/data/phantoms/am316l/am316l_tmap.h5)")
 p.add_argument("--ostep", type=float, default=0.1, help="frame step in omega, degrees (default 0.1)")
+p.add_argument("--max-frames", type=int, help="frames per peak at most, for peaks broad in omega (default: 3)")
 p.add_argument("--rows", help="only these dty rows, comma-separated, 0-based (default: all)")
 args = p.parse_args()
 out = args.out
@@ -71,7 +72,8 @@ omega, dty = anri.io.motor_grid((0.0, 180.0), args.ostep, (y0 - half, y0 + half)
 if args.rows:
     keep = [int(i) for i in args.rows.split(",")]
     omega, dty = omega[keep], dty[keep]
-anri.io.simulate_sparse(sparse, entries, rings8["hkls"], np.ones(len(rings8["hkls"])), geom, omega, dty, (2048, 2048))
+anri.io.simulate_sparse(sparse, entries, rings8["hkls"], np.ones(len(rings8["hkls"])), geom, omega, dty, (2048, 2048),
+                        max_frames=args.max_frames)
 names = ["cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma"]
 cell = {**dict(zip(names, (float(v) for v in lpars))), "cell_lattice_[P,A,B,C,I,F,R]": sg}
 parfile = anri.io.write_pars(os.path.join(out, "pars"), pars, {phase.name or "phase": cell})
