@@ -40,6 +40,23 @@ def _weight(delta, omega, geom, z=0.0):
     return beam_weight(jnp.array([0.0, delta, z]), omega, geom)
 
 
+class TestTailMass(unittest.TestCase):
+    def test_upper_tail_float32(self):
+        # Phi(b) - Phi(a) cancels in float32 far in the upper tail; the mass must stay accurate and never negative
+        from scipy.stats import norm as sp_norm
+
+        from anri.fwd._impl.render import bin_fractions, truncated_moments
+
+        lo = np.array([3.0, 5.0, 6.0, -5.1, -0.1], np.float32)
+        hi = lo + np.float32(0.1)
+        expect = sp_norm.cdf(hi.astype(float)) - sp_norm.cdf(lo.astype(float))
+        f = jnp.float32
+        for got in (bin_fractions(f(lo), f(hi), f(0.0), f(1.0)), truncated_moments(f(lo), f(hi), f(0.0), f(1.0))[0]):
+            self.assertEqual(got.dtype, jnp.float32)
+            np.testing.assert_allclose(np.asarray(got, float), expect, rtol=1e-3)
+            self.assertTrue(np.all(np.asarray(got) >= 0))
+
+
 class TestBeamWeight(unittest.TestCase):
     def test_area(self):
         # a column's weight integrated over its distance from the beam is its area, for any beam: the profile

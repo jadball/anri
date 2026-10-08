@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `anri.fwd` (`bin_fractions`, `truncated_moments`, so every rendered pixel): a Gaussian's mass in a bin far in its upper tail, Phi(b) - Phi(a), cancelled in float32 to about 1e-7 of either sign (2% off at 5 sigma, 0 instead of 5e-10 at 6 sigma). Times a bright peak's amplitude, and summed over the many voxels sharing a pixel, it made pixels far from peaks wrong, even negative (a log-likelihood of them was NaN). The upper tail now uses Phi(-a) - Phi(-b), and a mass is never negative.
 - `python -m anri.index`: the measured / fitted intensity per dty row (`row_ratio`) now sums only the eta bins the fit models. It included the data at |sin eta| <= `--etacut`, which the fit does not predict, so every row read too high.
 - `anri.io.write_pars` writes `t_x`, `t_y`, `t_z` (0) and `omegasign` (1) when the geometry lacks them: ImageD11 needs them to compute peak geometry (`DataSet.update_colfile_pars` raised a KeyError on simulated datasets).
 - `anri.index.inherit_candidates` finds each voxel's coarse neighbours with a KD-tree: sorting every distance took ~2 minutes on a 419 × 419 map, more than the candidate pass that `--coarse` saves (now ~4 s).

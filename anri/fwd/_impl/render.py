@@ -47,10 +47,20 @@ _COV_ELEMS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
 _VAR_FLOOR = (1e-4, 1e-4, 1e-8)
 
 
+def _interval_mass(a: jax.Array, b: jax.Array) -> jax.Array:
+    """Phi(b) - Phi(a) for a <= b, accurate in both tails and never negative.
+
+    In the upper tail Phi(b) and Phi(a) are both close to 1 and their difference cancels, in float32 to about 1e-7,
+    either sign. Times a bright peak's amplitude, and summed over the many voxels that share a pixel, that made
+    model pixels far from a peak wrong, even negative. There Phi(-a) - Phi(-b) is used instead.
+    """
+    return jnp.maximum(jnp.where(a > 0, ndtr(-a) - ndtr(-b), ndtr(b) - ndtr(a)), 0.0)
+
+
 def bin_fractions(lo: ArrayLike, hi: ArrayLike, mu: ArrayLike, sigma: ArrayLike) -> jax.Array:
     """Fraction of a 1D Gaussian N(mu, sigma^2) that lies in [lo, hi)."""
     lo, hi, mu, sigma = (jnp.asarray(x) for x in (lo, hi, mu, sigma))
-    return ndtr((hi - mu) / sigma) - ndtr((lo - mu) / sigma)
+    return _interval_mass((lo - mu) / sigma, (hi - mu) / sigma)
 
 
 def truncated_moments(lo: ArrayLike, hi: ArrayLike, mu: ArrayLike, sigma: ArrayLike) -> tuple:
@@ -61,7 +71,7 @@ def truncated_moments(lo: ArrayLike, hi: ArrayLike, mu: ArrayLike, sigma: ArrayL
     """
     lo, hi, mu, sigma = (jnp.asarray(x) for x in (lo, hi, mu, sigma))
     a, b = (lo - mu) / sigma, (hi - mu) / sigma
-    mass = ndtr(b) - ndtr(a)
+    mass = _interval_mass(a, b)
     pa, pb = jnp.asarray(norm.pdf(a)), jnp.asarray(norm.pdf(b))
     ok = mass > 1e-12
     safe = jnp.where(ok, mass, 1.0)
