@@ -364,10 +364,11 @@ def mlem(
     Empty bins are censored above ``censor`` (counts per bin, :func:`censored_ratio`); 0 for plain MLEM.
 
     ``accel``: SQUAREM (Varadhan & Roland 2008, Scand. J. Stat. 35, 335). Two MLEM steps f1, f2 from f; then
-    f - 2 a r + a^2 v with r = f1 - f, v = f2 - 2 f1 + f and a = -|r| / |v| (at most -1: never shorter than plain
-    MLEM), kept above 1e-3 f2 (MLEM multiplies: an occupancy at 0 could never come back), and one more MLEM step. If that fits worse than f1, f2's step is kept instead, so the deviance
-    never rises. Thin features (twins one or two voxels thick) converge in far fewer steps. ``n_iter`` counts MLEM
-    steps either way (3 per SQUAREM step), so the cost is the same.
+    ``f - 2 a r + a^2 v`` with ``r = f1 - f``, ``v = f2 - 2 f1 + f`` and ``a = -norm(r) / norm(v)`` (at most -1:
+    never shorter than plain MLEM), kept above 1e-3 f2 (MLEM multiplies: an occupancy at 0 could never come back),
+    and one more MLEM step. If that fits worse than f1, f2's step is kept instead, so the deviance never rises. Thin
+    features (twins one or two voxels thick) converge in far fewer steps. ``n_iter`` counts MLEM steps either way (3
+    per SQUAREM step), so the cost is the same.
 
     Parameters
     ----------
