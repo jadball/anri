@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from .occupancy import censored_ratio, deviance
 from .predict import lorentz_polarisation, predict
 
 
@@ -73,7 +74,7 @@ def _backward(
 @partial(jax.jit, static_argnames=("bins",))
 def _likelihood_ratio(
     d: jax.Array, mu: jax.Array, g: jax.Array, U: jax.Array, B: jax.Array, hkls: jax.Array, F2: jax.Array,
-    ring_j: jax.Array, geom: dict, etacut: float, bins: tuple,
+    ring_j: jax.Array, geom: dict, etacut: float, bins: tuple, censor: float,
 ) -> jax.Array:  # fmt: skip
     def one(ch: tuple) -> jax.Array:
         gc, uc = ch
@@ -82,7 +83,9 @@ def _likelihood_ratio(
         dd = jnp.where(idx >= 0, d[jnp.clip(idx, 0)], 0.0)
         ga = gc[:, None, None] * wt
         rest = jnp.maximum(m - ga, 1e-6 * jnp.maximum(m, 1e-30))
-        term = jnp.where((idx >= 0) & (m > 0), jnp.where(dd > 0, dd * jnp.log(m / rest), 0.0) - ga, 0.0)
+        # empty bins: only the model above the censoring level costs likelihood (censor = 0: all of it, -ga)
+        empty = jnp.where(censor > 0, jnp.maximum(rest - censor, 0.0) - jnp.maximum(m - censor, 0.0), -ga)
+        term = jnp.where((idx >= 0) & (m > 0), jnp.where(dd > 0, dd * jnp.log(m / rest) - ga, empty), 0.0)
         return 2 * jnp.sum(term, (1, 2))
 
     return jax.lax.map(one, (g, U))
@@ -99,7 +102,9 @@ def orientation_mlem(
     n_iter: int = 20,
     qc: int = 256,
     log: Callable = print,
-) -> tuple[np.ndarray, np.ndarray]:
+    censor: float = 0.0,
+    return_model: bool = False,
+) -> tuple:
     """Fit one occupancy per orientation to a row-summed histogram by MLEM, and score each orientation.
 
     The predictions of each orientation are computed afresh in every pass, so memory stays at a chunk of qc
@@ -128,6 +133,11 @@ def orientation_mlem(
         Orientations per chunk
     log
         Progress messages
+    censor
+        Empty bins censored above this many counts per bin, in the fit and in the likelihood ratio
+        (:func:`anri.index.censored_ratio`); 0: plain Poisson
+    return_model
+        Also return the fitted histogram, e.g. for its deviance (:func:`anri.index.deviance`)
 
     Returns
     -------
@@ -135,8 +145,11 @@ def orientation_mlem(
         [Nq] global occupancy of each orientation (in the units of d over Lorentz x polarisation x F^2)
     likelihood_ratio: np.ndarray
         [Nq] increase in the Poisson deviance if that orientation alone were removed, the others fixed:
-        ``2 sum_b [d_b log(mu_b / (mu_b - g a_b)) - g a_b]``. About chi-square with one degree of freedom for an
+        ``2 sum_b [d_b log(mu_b / (mu_b - g a_b)) - g a_b]`` over observed bins (empty bins: the change in
+        ``max(mu_b - censor, 0)``). About chi-square with one degree of freedom for an
         orientation that is not there, so ~25 is 5 sigma.
+    model: np.ndarray
+        [n_cells] the fitted histogram, if return_model
     """
     U = np.asarray(U, np.float32)
     n = len(U)
@@ -151,10 +164,11 @@ def orientation_mlem(
     g = live
     for it in range(n_iter):
         mu = _forward(g, Up, *args, bins, d.shape[0])
-        g = g * _backward(jnp.where(mu > 0, d / jnp.maximum(mu, 1e-30), 0.0), Up, *args, bins) / norm
+        g = g * _backward(censored_ratio(d, mu, censor), Up, *args, bins) / norm
         if it % 5 == 0 or it == n_iter - 1:
-            dev = jnp.sum(jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / jnp.maximum(mu, 1e-30)), 0.0) - d + mu)
-            log(f"  orientation MLEM {it}: deviance {2 * float(dev):.4g}")
+            log(f"  orientation MLEM {it}: deviance {float(deviance(d, mu, censor)):.4g}")
     mu = _forward(g, Up, *args, bins, d.shape[0])
-    lr = _likelihood_ratio(d, mu, g, Up, *args, bins)
+    lr = _likelihood_ratio(d, mu, g, Up, *args, bins, censor)
+    if return_model:
+        return np.asarray(g).ravel()[:n], np.asarray(lr).ravel()[:n], np.asarray(mu)
     return np.asarray(g).ravel()[:n], np.asarray(lr).ravel()[:n]

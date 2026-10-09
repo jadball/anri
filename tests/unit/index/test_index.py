@@ -117,6 +117,69 @@ class TestOccupancy(unittest.TestCase):
         self.assertGreater(float(jnp.sum(Af)), 0)
         np.testing.assert_allclose(float(jnp.sum(Af * r)), float(jnp.sum(f * ATr)), rtol=1e-4)
 
+    def test_adjoint_beam_profile(self):
+        """<A f, r> = <f, A^T r> with a beam profile over the rows too."""
+        c, B, _ = iron()
+        rings = ix.ring_table(*c, PARS["wavelength"], 2)
+        pred = ix.predictions(rotations(16, 2), B, rings, geometry(), 0.2)
+        rng = np.random.default_rng(3)
+        pos = jnp.asarray(np.column_stack([rng.uniform(-4, 4, (32, 2)), np.zeros(32)]), jnp.float32)
+        scan = {"y0": 0.0, "dty0": -6.0, "ystep": 1.0, "n_rows": 13, "om0": 0.0, "sig_beam": 0.6, "width_beam": 0.0,
+                "voxel": 1.0}  # fmt: skip
+        dims = (1.0, 1.0, 360, 180, ix.beam_rows(scan))
+        n_cells = 2 * 360 * 180 * 13
+        cand = jnp.asarray(rng.integers(0, 16, (32, 4)), jnp.int32)
+        f = jnp.asarray(rng.uniform(size=(32, 4)), jnp.float32)
+        r = jnp.asarray(rng.uniform(size=n_cells), jnp.float32)
+        Af = ix.forward(f, cand, pred, jnp.asarray(rings["ring_j"]), pos, scan, dims, n_cells, 8)
+        ATr = ix.backward(r, cand, pred, jnp.asarray(rings["ring_j"]), pos, scan, dims, 8)
+        self.assertGreater(float(jnp.sum(Af)), 0)
+        np.testing.assert_allclose(float(jnp.sum(Af * r)), float(jnp.sum(f * ATr)), rtol=1e-4)
+
+    def test_beam_profile_rows(self):
+        """Row weights: sum 1, centred on the voxel, variance of the beam plus the voxel's chord (omega 0: a box)."""
+        sig, ystep, vox = 0.8, 1.0, 1.0
+        scan = {"y0": 0.0, "dty0": -10.0, "ystep": ystep, "n_rows": 21, "om0": -180.0, "sig_beam": sig,
+                "width_beam": 0.0, "voxel": vox}  # fmt: skip
+        n_beam = ix.beam_rows(scan)
+        n_k, n_e, n_o = scan["n_rows"], 360, 360
+        for x, y in ((0.0, 0.3), (0.0, -2.45), (0.0, 4.0)):
+            pos = jnp.asarray([[x, y, 0.0]], jnp.float32)
+            one = jnp.ones((1, 1, 1))
+            idx, wt = ix.system(one * 10.0, one * 0.0, one > 0, one, jnp.asarray([0]), pos, scan, 1.0, 1.0, n_e, n_o,
+                                n_beam)  # fmt: skip
+            idx, wt = np.asarray(idx).ravel(), np.asarray(wt).ravel()
+            rows = idx[idx >= 0] % n_k
+            w = np.bincount(rows, weights=wt[idx >= 0], minlength=n_k)
+            dty = scan["dty0"] + np.arange(n_k) * ystep
+            centre = scan["y0"] - y  # at omega 0 the voxel is in the beam at dty = y0 - y
+            self.assertAlmostEqual(w.sum(), 1.0, delta=0.01)
+            self.assertAlmostEqual((w * dty).sum() / w.sum(), centre, delta=0.01)
+            var = (w * (dty - centre) ** 2).sum() / w.sum()
+            self.assertAlmostEqual(var, sig**2 + vox**2 / 12, delta=0.05 * (sig**2 + vox**2 / 12))
+
+    def test_censored_ratio(self):
+        d = jnp.asarray([4.0, 0.0, 0.0, 0.0])
+        mu = jnp.asarray([2.0, 1.0, 10.0, 0.0])
+        np.testing.assert_allclose(np.asarray(ix.censored_ratio(d, mu, 0.0)), [2.0, 0.0, 0.0, 0.0])
+        # empty bins: agreeing below the censoring level, censor / 2 above it
+        np.testing.assert_allclose(np.asarray(ix.censored_ratio(d, mu, 5.0)), [2.0, 1.0, 0.25, 0.0])
+        plain = 2 * float(jnp.sum(jnp.where(d > 0, d * jnp.log(d / jnp.maximum(mu, 1e-30)), 0.0) - d + mu))
+        self.assertAlmostEqual(float(ix.deviance(d, mu, 0.0)), plain, places=4)
+        self.assertAlmostEqual(float(ix.deviance(d, mu, 5.0)), plain - 2 * (1.0 + 5.0), places=4)
+
+    def test_masks(self):
+        yy, xx = np.indices((41, 41))
+        disk = ((yy - 20) ** 2 + (xx - 20) ** 2 <= 12**2).astype(float)
+        image = disk * 10 + np.random.default_rng(0).normal(0, 0.5, disk.shape)
+        m = ix.threshold_mask(image)
+        self.assertFalse(np.any(disk.astype(bool) & ~m))  # nothing of the sample missed
+        self.assertLess(
+            np.sum(m & ~disk.astype(bool)), 0.1 * disk.sum()
+        )  # the hull of a pixelated disk is a little more
+        sq = ix.polygon_mask((10, 10), [(2, 3), (7, 3), (7, 8), (2, 8)])  # (x, y) = (column, row)
+        self.assertTrue(sq[5, 4] and not sq[1, 4] and not sq[5, 9])
+
     def test_coarsen_rows(self):
         H = np.arange(2 * 7, dtype=float)
         Hc, n = ix.coarsen_rows(H, 7, 3)

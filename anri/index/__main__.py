@@ -184,13 +184,23 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--monitor", help="normalise intensities by this counter in each scan's measurement, frame by frame, "
                    "as ImageD11's DataSet.set_monitor does (e.g. fpico6; default: no normalisation)")  # fmt: skip
     p.add_argument("--occupied", type=float, default=0.2, help="voxels count as occupied (in the TensorMap and entries) "
-                   "above this x the 99th percentile of the total occupancy (default 0.2; the raw occupancy is always saved)")  # fmt: skip
+                   "above this x the 99th percentile of the total occupancy in the mask (default 0.2; the raw occupancy is always saved)")  # fmt: skip
     p.add_argument("--min-frac", type=float, default=0.1, help="report populations holding at least this fraction of a "
                    "voxel's occupancy (default 0.1)")  # fmt: skip
     p.add_argument(
         "--block-gb", type=float, default=1.0, help="memory for one block of voxels' system entries (default 1 GB)"
     )
     p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the DataSet's y0)")
+    p.add_argument("--beam", type=float, default=0.0, help="FWHM of the beam across dty, as dty: each voxel is spread "
+                   "over the rows by this Gaussian profile integrated over the voxel. Default 0: linearly over the 2 "
+                   "nearest rows, close to a beam of FWHM = the dty step (as fast, and maps as good there); set it for "
+                   "a beam wider than the step, e.g. overfocused")  # fmt: skip
+    p.add_argument("--mask", help="fit only the voxels in a sample mask: 'auto' (Otsu threshold and convex hull of a "
+                   "quick reconstruction, as ImageD11's tomo_2_map), or a .npy file of [voxels, voxels] booleans in "
+                   "reconstruction order, e.g. drawn with anri.index.draw_mask (default: every voxel)")  # fmt: skip
+    p.add_argument("--censor", type=float, default=0.0, help="counts per histogram bin below which an empty bin "
+                   "(every pixel below the segmentation cut) counts as agreeing with the model, in both MLEMs and "
+                   "the pruning (default 0: empty bins are zeros)")  # fmt: skip
     p.add_argument("--gridstep", type=int, default=1, help="voxel = gridstep x dty step; data rows are summed in groups "
                    "of gridstep to match (default 1)")  # fmt: skip
     p.add_argument("--outdir", default=".")
@@ -247,6 +257,7 @@ def main() -> None:
     G = args.gridstep
     ystep0, nk0 = float(np.median(np.diff(ybin))), len(ybin)
     YSTEP, DTY0, NK = G * ystep0, float(ybin[0]) + 0.5 * (G - 1) * ystep0, -(-nk0 // G)
+    BEAM = args.beam
     OM0, OSTEP = float(oedge[0]), float(np.median(np.diff(oedge)))
     N_E, N_O = round(360 / B_E), round(float(oedge[-1] - oedge[0]) / B_O)
     N_O -= N_O % R_O
@@ -359,7 +370,7 @@ def main() -> None:
                      "lattice": list(lpars), "space_group": sg, "wavelength": WL, "y0": Y0, "voxel_size": YSTEP,
                      "voxels": NR, "omega_step": OSTEP, "grid_step": step, "grid_auto": args.grid is None,
                      "grid_worst_case_deg": delta, "rings_tth_deg": list(rings["tth"]), "tth_tol_deg": list(tth_tol),
-                     "n_hkls": len(rings["hkls"]), "spatial_correction": spatial_src},
+                     "n_hkls": len(rings["hkls"]), "spatial_correction": spatial_src, "beam_fwhm": BEAM},
     }  # fmt: skip
     write_toml(params, run_info)
     log(f"-> {params}")
@@ -374,7 +385,7 @@ def main() -> None:
         pre = np.flatnonzero(comp > (info["chance"] if args.min_comp is None else args.min_comp))
         d = H.reshape(-1, NK).sum(1)
         bins_o = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O, OM0)
-        _, lr = ix.orientation_mlem(d, U_grid[pre], B, rings, geom, bins_o, args.etacut, log=log)
+        _, lr = ix.orientation_mlem(d, U_grid[pre], B, rings, geom, bins_o, args.etacut, log=log, censor=args.censor)
         above = np.flatnonzero(lr > args.min_lr)
         kept = pre[above[np.argsort(lr[above])[::-1]][: args.keep]]
         log(f"orientation fit of the {len(pre)} above chance ({time.perf_counter() - t1:.0f} s): {len(above)} with "
@@ -386,8 +397,26 @@ def main() -> None:
     pos = np.asarray(anri.geom.recon_positions(NR, YSTEP), np.float32)
     scan = {"y0": Y0, "dty0": DTY0, "ystep": YSTEP, "n_rows": NK, "om0": OM0}
     dims = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O)
-    f, cand, model = ix.fit_occupancy(H, pred, rings["ring_j"], pos, scan, dims, args.cand, args.iter, args.coarse,
-                                     args.block_gb * 1e9, log=log, return_model=True)  # fmt: skip
+    if BEAM > 0:  # the beam's profile across dty, over voxels of YSTEP; summed rows widen its flat top
+        scan.update({"sig_beam": BEAM / (2 * np.sqrt(2 * np.log(2))), "width_beam": (G - 1) * ystep0, "voxel": YSTEP})
+        dims = (*dims, ix.beam_rows(scan))
+        log(f"beam: FWHM {BEAM:g} across dty, each voxel spread over {dims[4]} rows")
+    mask, rec = np.ones(NV, bool), None
+    if args.mask:
+        if args.mask == "auto":
+            rec = ix.reconstruct(H, args.rings, N_E // R_E, N_O // R_O, scan, B_O * R_O, NR)
+            mask = ix.threshold_mask(rec).ravel()
+        else:
+            mask = np.load(args.mask).astype(bool).ravel()
+            if mask.size != NV:
+                raise SystemExit(f"--mask {args.mask}: {mask.size} voxels, the grid has {NR} x {NR}")
+        log(f"mask ({args.mask}): {mask.sum()} of {NV} voxels fitted")
+    f_m, cand_m, model = ix.fit_occupancy(H, pred, rings["ring_j"], pos[mask], scan, dims, args.cand, args.iter,
+                                         args.coarse, args.block_gb * 1e9, log=log, return_model=True,
+                                         censor=args.censor)  # fmt: skip
+    f = np.zeros((NV, f_m.shape[1]), f_m.dtype)
+    cand = np.zeros((NV, cand_m.shape[1]), cand_m.dtype)
+    f[mask], cand[mask] = f_m, cand_m
     # measured / fitted intensity per dty row: a row that is consistently off (e.g. flux varying between the rows'
     # scans) makes ring artefacts centred on the rotation axis
     # Only eta bins the fit models: reflections at |sin eta| <= etacut are not predicted, so their data would bias
@@ -405,7 +434,7 @@ def main() -> None:
 
     # ------------------------------------------------------------------------------------------------- 4. populations
     tot = f.sum(1)
-    occupied = tot > args.occupied * np.percentile(tot, 99)
+    occupied = mask & (tot > args.occupied * np.percentile(tot[mask], 99))
     t1 = time.perf_counter()
     frac, U_pop, spread, n_pop = ix.populations(f, cand, U_kept, ops, 1.8 * step, p=N_POP)
     present = (frac >= args.min_frac) & occupied[:, None]
@@ -423,7 +452,9 @@ def main() -> None:
     results = {"f": f, "cand": cand, "U": U_kept, "comp": comp[kept], "frac": frac, "U_pop": U_pop, "spread": spread,
                "n": n_pop, "comp_pop": comp_pop, "occupied": occupied, "present": present, "pos": pos,
                "grid_step": step, "delta": delta, "row_ratio": row_ratio, "row_data": d_row, "row_model": m_row,
-               "y0": Y0}  # fmt: skip
+               "y0": Y0, "mask": mask}  # fmt: skip
+    if rec is not None:
+        results["recon"] = rec  # the reconstruction the automatic mask was thresholded from
     save_results(tag, results, B, lpars, sg, phase, YSTEP)
     # the same parameters again, with what was only known at the end (e.g. --min-comp's default: the chance level)
     # likelihood pruning fits everything above the chance level (or --min-comp); completeness pruning uses its own cut
@@ -434,6 +465,7 @@ def main() -> None:
     )
     run_info["results"] = {"chance_completeness": info["chance"], "min_comp_used": min_comp_used,
                            "orientations_kept": len(U_kept), "voxels_occupied": int(occupied.sum()),
+                           "voxels_in_mask": int(mask.sum()),
                            "seconds": time.perf_counter() - T0}  # fmt: skip
     write_toml(params, run_info)
 

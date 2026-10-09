@@ -20,7 +20,30 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from anri.fwd._impl.render import _chord_weight
+
 from .data import coarsen_rows
+
+
+def censored_ratio(d: jax.Array, mu: jax.Array, censor: float) -> jax.Array:
+    """Compute the MLEM ratio d / mu, with empty bins taken as censored.
+
+    A bin with no data had every pixel below the segmentation cut. Where the model predicts less than ``censor``
+    there, the data cannot rule it out: the bin counts as agreeing (ratio 1). Where it predicts more, it counts as
+    ``censor / 2``. ``censor = 0``: empty bins are zeros (ratio 0), plain MLEM.
+    """
+    mus = jnp.maximum(mu, 1e-30)
+    return jnp.where(mu > 0, jnp.where(d > 0, d, jnp.where(mu < censor, mu, 0.5 * censor)) / mus, 0.0)
+
+
+def deviance(d: jax.Array, mu: jax.Array, censor: float) -> jax.Array:
+    """Poisson deviance of observed bins, plus 2 x (mu - censor) for empty bins the model predicts above ``censor``.
+
+    ``censor = 0``: the plain Poisson deviance.
+    """
+    mus = jnp.maximum(mu, 1e-30)
+    obs = jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / mus) - d + mu, 0.0)
+    return 2.0 * jnp.sum(obs + jnp.where(d > 0, 0.0, jnp.maximum(mu - censor, 0.0)))
 
 
 def system(
@@ -35,11 +58,19 @@ def system(
     b_o: float,
     n_e: int,
     n_o: int,
+    n_beam: int = 0,
 ) -> tuple[jax.Array, jax.Array]:
     """Entries of the system matrix: (cell index, weight) for voxels and predictions.
 
-    A prediction (eta, omega) is spread bilinearly over the 2 x 2 nearest (eta, omega) bins and linearly over the 2
-    rows nearest to where the voxel sits at that omega (lab y = x sin(omega) + y cos(omega)). Parallax is ignored.
+    A prediction (eta, omega) is spread bilinearly over the 2 x 2 nearest (eta, omega) bins, and over the dty rows by
+    where the voxel sits at that omega (lab y = x sin(omega) + y cos(omega)). Parallax is ignored.
+
+    - ``n_beam = 0``: linearly over the 2 nearest rows.
+    - ``n_beam > 0``: over the n_beam rows nearest to the voxel, each weighted by the beam's profile across dty
+      integrated over the voxel's chord at that omega (as :func:`anri.fwd.beam_weight`, for a beam along lab x):
+      a Gaussian of ``scan["sig_beam"]`` blurring a flat top of ``scan["width_beam"]``, over a square voxel of
+      side ``scan["voxel"]``. The weights are scaled to sum to about 1 over the rows. Each weight is evaluated at
+      the prediction's omega, so a voxel off the rotation axis moves across the beam with omega.
 
     Parameters
     ----------
@@ -51,14 +82,17 @@ def system(
     pos
         [Nv, 3] voxel positions in the sample frame
     scan
-        "y0", "dty0", "ystep", "n_rows" and "om0": the rows are at dty = dty0 + k ystep
+        "y0", "dty0", "ystep", "n_rows" and "om0": the rows are at dty = dty0 + k ystep; with a beam profile also
+        "sig_beam", "width_beam" and "voxel" (:func:`beam_rows`)
     b_e, b_o, n_e, n_o
         Bin widths and counts of the histogram in eta and omega
+    n_beam
+        Rows per prediction for the beam profile (static); 0 for the 2-row linear model
 
     Returns
     -------
     index, weight: jax.Array
-        [Nv, Q, Nj, 8] each; unused corners have index -1
+        [Nv, Q, Nj, 8] each (4 n_beam with a beam profile); unused corners have index -1
     """
     n_k = scan["n_rows"]
     om_w = jnp.mod(om - scan["om0"], 360.0) + scan["om0"]
@@ -68,13 +102,23 @@ def system(
     te, to = fe - e0, fo - o0
     c, s = jnp.cos(jnp.radians(om)), jnp.sin(jnp.radians(om))
     ylab = pos[:, 0, None, None] * s + pos[:, 1, None, None] * c
-    fk = (scan["y0"] - ylab - scan["dty0"]) / scan["ystep"]
-    k0 = jnp.floor(fk).astype(jnp.int32)
-    tk = fk - k0
+    fk = (scan["y0"] - ylab - scan["dty0"]) / scan["ystep"]  # the row whose beam is centred on the voxel
+    if n_beam == 0:
+        k0 = jnp.floor(fk).astype(jnp.int32)
+        tk = fk - k0
+        rows = ((0, 1.0 - tk), (1, tk))
+    else:
+        k0 = jnp.round(fk).astype(jnp.int32) - n_beam // 2
+        norm = scan["ystep"] / scan["voxel"] ** 2  # the chord weight integrates to voxel^2 over dty
+        rows = tuple(
+            (dk, norm * _chord_weight((k0 + dk - fk) * scan["ystep"], om, scan["voxel"], scan["sig_beam"],
+                                      scan["width_beam"]))
+            for dk in range(n_beam)
+        )  # fmt: skip
     idx, wt = [], []
     for de, we in ((0, 1.0 - te), (1, te)):
         for do, wo in ((0, 1.0 - to), (1, to)):
-            for dk, wk in ((0, 1.0 - tk), (1, tk)):
+            for dk, wk in rows:
                 ie, io, kk = (e0 + de) % n_e, o0 + do, k0 + dk
                 good = use & (io >= 0) & (io < n_o) & (kk >= 0) & (kk < n_k)
                 cell = ((ring_j[None, None, :] * n_e + ie) * n_o + io) * n_k + kk
@@ -83,10 +127,28 @@ def system(
     return jnp.stack(idx, -1), jnp.stack(wt, -1)
 
 
-def block_voxels(q: int, n_j: int, budget_bytes: float) -> int:
+def beam_rows(scan: dict) -> int:
+    """Rows a voxel's beam profile reaches (odd): the voxel's half diagonal, half the flat top and 3 sigma each side.
+
+    Parameters
+    ----------
+    scan
+        "ystep", "sig_beam" (standard deviation of the beam across dty), "width_beam" (its flat top) and "voxel"
+
+    Returns
+    -------
+    int
+        n_beam for :func:`system`, e.g. as the fifth element of ``dims``
+    """
+    reach = 3.0 * scan["sig_beam"] + 0.5 * scan["width_beam"] + scan["voxel"] / np.sqrt(2.0)
+    return 2 * int(np.ceil(reach / scan["ystep"])) + 1
+
+
+def block_voxels(q: int, n_j: int, budget_bytes: float, n_corners: int = 8) -> int:
     """Voxels per block (a power of 2) so that one block's system entries for q orientations take ~budget_bytes.
 
-    Counts ~256 bytes per (voxel, orientation, prediction): 8 corners of index and weight, temporaries and gathers.
+    Counts ~32 bytes per corner of each (voxel, orientation, prediction): index and weight, temporaries and gathers.
+    8 corners for the 2-row model, 4 n_beam with a beam profile (:func:`system`).
 
     Parameters
     ----------
@@ -96,13 +158,15 @@ def block_voxels(q: int, n_j: int, budget_bytes: float) -> int:
         Predictions per orientation
     budget_bytes
         Memory for one block
+    n_corners
+        System entries per prediction
 
     Returns
     -------
     int
         Voxels per block
     """
-    return int(2 ** max(0, np.floor(np.log2(budget_bytes / (256 * q * n_j)))))
+    return int(2 ** max(0, np.floor(np.log2(budget_bytes / (32 * n_corners * q * n_j)))))
 
 
 def pad_voxels(pos: ArrayLike, vb: int) -> jax.Array:
@@ -136,7 +200,7 @@ def _ones_block(
 
     def step(acc: jax.Array, ch: tuple) -> tuple:
         e, o, u, w = ch
-        idx, wt = system(e[None], o[None], u[None], w[None], ring_j, pos_b, scan, dims[0], dims[1], dims[2], dims[3])
+        idx, wt = system(e[None], o[None], u[None], w[None], ring_j, pos_b, scan, *dims)
         w_flat = wt.ravel().astype(acc.dtype)  # scan's floats may be float64 (jax_enable_x64)
         return acc + jax.ops.segment_sum(w_flat, jnp.where(idx >= 0, idx, n_cells).ravel(), n_cells + 1)[:-1], None
 
@@ -152,7 +216,7 @@ def _top_block(
 
     def one(ch: tuple) -> jax.Array:
         e, o, u, w = ch
-        idx, wt = system(e[None], o[None], u[None], w[None], ring_j, pos_b, scan, dims[0], dims[1], dims[2], dims[3])
+        idx, wt = system(e[None], o[None], u[None], w[None], ring_j, pos_b, scan, *dims)
         num = jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (2, 3))
         return num / jnp.maximum(jnp.sum(wt, (2, 3)), 1e-30)
 
@@ -241,7 +305,7 @@ def forward(
     def step(acc: jax.Array, ch: tuple) -> tuple:
         fb, cb, pb = ch
         e, o, u, w = (p[cb] for p in pred)
-        idx, wt = system(e, o, u, w, ring_j, pb, scan, dims[0], dims[1], dims[2], dims[3])  # [vb, K, Nj, 8]
+        idx, wt = system(e, o, u, w, ring_j, pb, scan, *dims)  # [vb, K, Nj, 8]
         contrib = (fb[:, :, None, None] * wt).astype(acc.dtype)
         return acc + jax.ops.segment_sum(contrib.ravel(), jnp.where(idx >= 0, idx, n_cells).ravel(), n_cells + 1)[
             :-1
@@ -277,7 +341,7 @@ def backward(
     def one(ch: tuple) -> jax.Array:
         cb, pb = ch
         e, o, u, w = (p[cb] for p in pred)
-        idx, wt = system(e, o, u, w, ring_j, pb, scan, dims[0], dims[1], dims[2], dims[3])
+        idx, wt = system(e, o, u, w, ring_j, pb, scan, *dims)
         return jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (2, 3))
 
     return jax.lax.map(one, (cand.reshape(-1, vb, k), pos.reshape(-1, vb, 3))).reshape(-1, k)
@@ -285,9 +349,11 @@ def backward(
 
 def mlem(
     d: jax.Array, cand: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array, scan: dict, dims: tuple,
-    f0: jax.Array, n_iter: int, vb: int, log: Callable = print,
+    f0: jax.Array, n_iter: int, vb: int, log: Callable = print, censor: float = 0.0,
 ) -> jax.Array:  # fmt: skip
     """Fit occupancies by MLEM: ``f <- f A^T(d / A f) / A^T 1``, n_iter times, logging the Poisson deviance.
+
+    Empty bins are censored above ``censor`` (counts per bin, :func:`censored_ratio`); 0 for plain MLEM.
 
     Parameters
     ----------
@@ -312,11 +378,9 @@ def mlem(
     f = f0
     for it in range(n_iter):
         Af = forward(f, cand, pred, ring_j, pos, scan, dims, n_cells, vb)
-        ratio = jnp.where(Af > 0, d / jnp.maximum(Af, 1e-30), 0.0)
-        f = f * backward(ratio, cand, pred, ring_j, pos, scan, dims, vb) / norm
+        f = f * backward(censored_ratio(d, Af, censor), cand, pred, ring_j, pos, scan, dims, vb) / norm
         if it % 5 == 0 or it == n_iter - 1:
-            dev = jnp.sum(jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / jnp.maximum(Af, 1e-30)), 0.0) - d + Af)
-            log(f"  MLEM {it}: deviance {2 * float(dev):.4g}")
+            log(f"  MLEM {it}: deviance {float(deviance(d, Af, censor)):.4g}")
     return f
 
 
@@ -419,6 +483,7 @@ def fit_occupancy(
     qc: int = 16,
     log: Callable = print,
     return_model: bool = False,
+    censor: float = 0.0,
 ) -> tuple:
     """Fit sparse occupancies: candidates per voxel, then MLEM.
 
@@ -437,7 +502,8 @@ def fit_occupancy(
     pos
         [Nv, 3] voxel positions
     scan, dims
-        Rows and (b_e, b_o, n_e, n_o) of the histogram, see :func:`system`
+        Rows and (b_e, b_o, n_e, n_o) of the histogram, plus n_beam for a beam profile (:func:`system`,
+        :func:`beam_rows`)
     k
         Candidates per voxel
     n_iter
@@ -450,6 +516,8 @@ def fit_occupancy(
         Orientations per chunk in passes over every orientation
     return_model
         Also return the fitted histogram ``A f``, e.g. to compare with the data row by row
+    censor
+        Empty bins censored above this many counts per bin in the MLEM (:func:`censored_ratio`); 0: plain MLEM
     log
         Progress messages
 
@@ -463,7 +531,8 @@ def fit_occupancy(
     H, ring_j, pos = jnp.asarray(H), jnp.asarray(ring_j), np.asarray(pos, np.float32)
     nv = len(pos)
     n_j = pred[0].shape[1]
-    vb_all, vb = block_voxels(qc, n_j, block_bytes), block_voxels(k, n_j, block_bytes)
+    n_corners = 4 * dims[4] if len(dims) > 4 and dims[4] > 0 else 8
+    vb_all, vb = block_voxels(qc, n_j, block_bytes, n_corners), block_voxels(k, n_j, block_bytes, n_corners)
     vbp = max(vb_all, vb)
     pos_p = pad_voxels(pos, vbp)
     t0 = time.perf_counter()
@@ -479,6 +548,9 @@ def fit_occupancy(
             "ystep": coarse * ystep,
             "n_rows": n_rows_c,
         }
+        if "voxel" in scan:  # summed rows: a flat top (coarse - 1) rows wider, over voxels coarse x larger
+            scan_c["voxel"] = coarse * scan["voxel"]
+            scan_c["width_beam"] = scan["width_beam"] + (coarse - 1) * ystep
         extent = float(np.abs(np.asarray(pos)[:, :2]).max())
         n_c = 2 * int(np.ceil(extent / (coarse * ystep))) + 3
         gc = (np.arange(n_c) - (n_c - 1) / 2) * coarse * ystep
@@ -489,13 +561,13 @@ def fit_occupancy(
             f"coarse: {n_c} x {n_c} voxels of {coarse * ystep:g} x {pred[0].shape[0]} orientations, the top {k} per voxel"
         )
         f_c, cand_c = candidates(H_c, pred, ring_j, pos_cp, scan_c, dims, k, vb_all, qc=qc, log=log)
-        f_c = mlem(H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log)
+        f_c = mlem(H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log, censor=censor)
         cand_in = inherit_candidates(pos_p, pos_c, f_c[: n_c * n_c], cand_c[: n_c * n_c], 2 * k)
         log(f"fine: {nv} voxels x {2 * k} orientations inherited from the coarse neighbourhood")
         f0, cand = candidates_from(H, cand_in, pred, ring_j, pos_p, scan, dims, k, max(vb // 2, 1), log=log)
     log(f"candidates: {time.perf_counter() - t0:.1f} s")
     t0 = time.perf_counter()
-    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log)
+    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor)
     log(f"MLEM {n_iter} iterations: {time.perf_counter() - t0:.1f} s")
     if return_model:
         mu = forward(f, cand, pred, ring_j, pos_p, scan, dims, H.shape[0], vb)
