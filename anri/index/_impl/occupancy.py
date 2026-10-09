@@ -83,8 +83,9 @@ def system(
         [Nv, 3] voxel positions in the sample frame
     scan
         "y0", "dty0", "ystep", "n_rows" and "om0": the rows are at dty = dty0 + k ystep; optionally "ddty" [n_rows,
-        n_o], each row's offset from that per omega bin (fly, helical scans: :func:`anri.index.dty_offsets`); with a
-        beam profile also "sig_beam", "width_beam" and "voxel" (:func:`beam_rows`)
+        n_o], each row's offset from that per omega bin (fly, helical scans: :func:`anri.index.dty_offsets`), and
+        "exposure" [n_rows, n_o], each (row, omega bin)'s frames relative to a full one; with a beam profile also
+        "sig_beam", "width_beam" and "voxel" (:func:`beam_rows`)
     b_e, b_o, n_e, n_o
         Bin widths and counts of the histogram in eta and omega
     n_beam
@@ -126,6 +127,8 @@ def system(
             for dk, wk in rows:
                 ie, io, kk = (e0 + de) % n_e, o0 + do, k0 + dk
                 good = use & (io >= 0) & (io < n_o) & (kk >= 0) & (kk < n_k)
+                if "exposure" in scan:  # frames in this (row, omega bin), relative to a full one
+                    wk = wk * scan["exposure"][jnp.clip(kk, 0, n_k - 1), jnp.clip(io, 0, n_o - 1)]
                 cell = ((ring_j[None, None, :] * n_e + ie) * n_o + io) * n_k + kk
                 idx.append(jnp.where(good, cell, -1))
                 wt.append(jnp.where(good, w * we * wo * wk, 0.0))

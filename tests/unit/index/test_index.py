@@ -183,6 +183,26 @@ class TestOccupancy(unittest.TestCase):
             # every row 0.3 further along dty: the voxel is seen by rows whose nominal dty is 0.3 lower
             self.assertAlmostEqual(rows[1] - rows[0], -0.3, delta=0.02)
 
+    def test_exposure(self):
+        """Frames binned by their own dty: bins without frames or with two rotations' worth, and system scaling by it."""
+        n_rows, n_fr, ystep = 6, 360, 1.0
+        om = np.tile((np.arange(n_fr) + 0.5) * 360.0 / n_fr, (n_rows, 1))
+        # 1.2 steps per turn, rows a little off their nominal dty (as measured): near a row's edges a frame lands in
+        # the next row, so some (row, omega) bins get two rotations' frames and some none
+        jitter = np.array([0.0, 0.3, -0.2, 0.25, -0.3, 0.1])[:, None]
+        dty = (np.arange(n_rows)[:, None] + jitter) * ystep + 1.2 * ystep * (om / 360.0 - 0.5)
+        edges = (np.arange(n_rows + 1) - 0.5) * ystep
+        _, ex = ix.dty_offsets(dty, om, edges, 1, 0.0, 1.0, 360, 0.0, ystep, bin_dty=dty, return_exposure=True)
+        self.assertTrue(np.any(ex[1:-1] == 0) and np.any(ex[1:-1] == 2))  # gaps and overlaps between rows
+        _, ex1 = ix.dty_offsets(dty, om, edges, 1, 0.0, 1.0, 360, 0.0, ystep, return_exposure=True)
+        np.testing.assert_allclose(ex1, 1.0)  # binned by the row means: one rotation per row
+        scan = {"y0": 0.0, "dty0": -10.0, "ystep": ystep, "n_rows": 21, "om0": -180.0}
+        one, pos = jnp.ones((1, 1, 1)), jnp.asarray([[0.0, 0.3, 0.0]], jnp.float32)
+        for ex2, total in ((np.ones((21, 360)), 1.0), (np.zeros((21, 360)), 0.0), (np.full((21, 360), 2.0), 2.0)):
+            sc = {**scan, "exposure": jnp.asarray(ex2, jnp.float32)}
+            _, wt = ix.system(one * 10.0, one * 0.0, one > 0, one, jnp.asarray([0]), pos, sc, 1.0, 1.0, 360, 360)
+            self.assertAlmostEqual(float(jnp.sum(wt)), total, places=5)
+
     def test_squarem(self):
         """SQUAREM reaches a deviance at least as low as plain MLEM for the same number of MLEM steps."""
         c, B, _ = iron()

@@ -198,6 +198,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mask", help="fit only the voxels in a sample mask: 'auto' (Otsu threshold and convex hull of a "
                    "quick reconstruction, as ImageD11's tomo_2_map), or a .npy file of [voxels, voxels] booleans in "
                    "reconstruction order, e.g. drawn with anri.index.draw_mask (default: every voxel)")  # fmt: skip
+    p.add_argument("--dty-source", choices=("dataset", "frames"), default="dataset", help="which dty bins the frames "
+                   "into rows: the DataSet's (default; for a fly or helical scan one row per rotation, at its mean), or "
+                   "each frame's own (the DataSet's plus the motion within its row, anri.io.read_frame_dty: a helical "
+                   "rotation then spreads over 2-3 rows)")  # fmt: skip
     p.add_argument("--no-frame-dty", action="store_true", help="ignore dty's motion within each row (fly and helical "
                    "scans): by default each frame's dty is the DataSet's for its row plus the motion read from the "
                    "sparse file (anri.io.read_frame_dty), and the model puts each voxel in the rows that really saw it")  # fmt: skip
@@ -317,6 +321,13 @@ def main() -> None:
         log(f"monitor {args.monitor}: mean {monitor_ref:.4g}, min / max {mon.min() / monitor_ref:.3f} / "
             f"{mon.max() / monitor_ref:.3f} of the mean; intensities normalised to the mean")  # fmt: skip
 
+    have_frames = ds["dty"] is not None and ds["scans"] is not None and ds["omega"] is not None
+    if args.dty_source == "frames" and not have_frames:
+        raise SystemExit("--dty-source frames needs the DataSet's dty, omega and scans")
+    # each frame's dty (fly, helical scans: the DataSet's row dty plus the motion within the row)
+    frame_dty = anri.io.read_frame_dty(ds, sparsefile) if have_frames else None
+    bin_dty = frame_dty if args.dty_source == "frames" else ds["dty"]  # what bins the frames into rows
+
     def stream(groups_: list) -> Iterator[tuple]:  # read the next chunk while this one is binned
         return anri.io.prefetch(
             anri.io.stream_sparse(
@@ -327,7 +338,7 @@ def main() -> None:
                 chunk,
                 groups_,
                 G,
-                ds["dty"],
+                bin_dty,
                 ds["scans"],
                 args.monitor,
                 monitor_ref,
@@ -401,14 +412,19 @@ def main() -> None:
     pred = ix.predictions(U_kept, B, rings, geom, args.etacut)
     pos = np.asarray(anri.geom.recon_positions(NR, YSTEP), np.float32)
     scan = {"y0": Y0, "dty0": DTY0, "ystep": YSTEP, "n_rows": NK, "om0": OM0}
-    if not args.no_frame_dty and ds["dty"] is not None and ds["scans"] is not None and ds["omega"] is not None:
+    if not args.no_frame_dty and frame_dty is not None:
         # fly and helical scans: where the beam really was, per row and omega bin
-        ddty = ix.dty_offsets(anri.io.read_frame_dty(ds, sparsefile), ds["omega"], yedge, G, OM0, B_O * R_O,
-                              N_O // R_O, DTY0, YSTEP)  # fmt: skip
+        ddty, expo = ix.dty_offsets(frame_dty, ds["omega"], yedge, G, OM0, B_O * R_O, N_O // R_O, DTY0, YSTEP,
+                                    frame_dty if args.dty_source == "frames" else None, return_exposure=True)  # fmt: skip
         if np.abs(ddty).max() > 1e-3 * YSTEP:
             scan["ddty"] = jnp.asarray(ddty, jnp.float32)
             log(f"dty moves within the rows: up to {np.abs(ddty).max() / YSTEP:.2f} dty steps from each row's dty; "
                 "the model follows it (--no-frame-dty to ignore it)")  # fmt: skip
+        uneven = np.mean(np.abs(expo[expo > 0] - 1) > 0.01)
+        if uneven > 0 or np.any(expo == 0):
+            scan["exposure"] = jnp.asarray(expo, jnp.float32)
+            log(f"exposure per (row, omega bin) uneven: {np.mean(expo == 0) * 100:.1f}% of bins without frames, "
+                f"{uneven * 100:.1f}% with more or fewer than usual; the model scales by it")  # fmt: skip
     dims = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O)
     if BEAM > 0:  # the beam's profile across dty, over voxels of YSTEP; summed rows widen its flat top
         scan.update({"sig_beam": BEAM / (2 * np.sqrt(2 * np.log(2))), "width_beam": (G - 1) * ystep0, "voxel": YSTEP})

@@ -86,6 +86,9 @@ def reconstruct(H: ArrayLike, n_rings: int, n_e: int, n_o: int, scan: dict, b_o:
     from anri.geom import recon_positions
 
     H4 = np.asarray(H).reshape(n_rings, n_e, n_o, scan["n_rows"])
+    if "exposure" in scan:  # bins with fewer or more frames than a full one: scaled to one
+        ex = np.asarray(scan["exposure"]).T  # [omega, row]
+        H4 = H4 / np.where(ex > 0, ex, 1.0)
     sino = np.log1p(H4).sum((0, 1))  # [omega, row]
     om = scan["om0"] + (np.arange(n_o) + 0.5) * b_o
     pos = jnp.asarray(recon_positions(nr, scan["ystep"]), jnp.float32)

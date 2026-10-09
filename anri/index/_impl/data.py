@@ -365,12 +365,12 @@ def coarsen_rows(H: ArrayLike, n_rows: int, g: int) -> tuple[jax.Array, int]:
 
 def dty_offsets(
     frame_dty: ArrayLike, frame_omega: ArrayLike, ybinedges: ArrayLike, gridstep: int, om0: float, b_o: float, n_o: int,
-    dty0: float, ystep: float,
-) -> np.ndarray:  # fmt: skip
+    dty0: float, ystep: float, bin_dty: ArrayLike | None = None, return_exposure: bool = False,
+) -> np.ndarray | tuple:  # fmt: skip
     """Each histogram row's dty, per omega bin, less its nominal dty: where the beam really was.
 
-    A row is the frames whose row-mean dty falls in one bin of ``ybinedges`` (as :func:`anri.io.stream_sparse` bins
-    them). In a step scan every frame of a row is at the row's dty and the offsets are 0. In a fly or helical scan dty
+    A row is the frames whose dty, as :func:`anri.io.stream_sparse` binned them (``bin_dty``; default each DataSet
+    row's mean dty, as when it bins by the DataSet's dty), falls in one bin of ``ybinedges``. In a step scan every frame of a row is at the row's dty and the offsets are 0. In a fly or helical scan dty
     moves while omega turns (e.g. one dty step per turn): the frames of one omega bin were taken at a dty up to half
     a step away from the row's. :func:`anri.index.system` uses the offsets (``scan["ddty"]``) to put each voxel in
     the rows that really saw it.
@@ -387,22 +387,34 @@ def dty_offsets(
         The histogram's first omega bin edge, bin width and number of bins
     dty0, ystep
         The histogram's rows: row k is nominally at dty0 + k ystep
+    bin_dty
+        [rows, frames] the dty each frame was binned by (e.g. ``frame_dty`` itself when frames are binned by their
+        own dty); default each row's mean of ``frame_dty``
+    return_exposure
+        Also return each (row, omega bin)'s exposure: its frames over the usual number (the median over bins with
+        frames). Binned by their own dty, a helical scan's frames give some bins none and some two rotations' worth;
+        the model must know (``scan["exposure"]``)
 
     Returns
     -------
-    np.ndarray
+    offsets: np.ndarray
         [n_rows, n_o] mean dty of the frames in each (row, omega bin) less dty0 + k ystep; 0 where no frames
+    exposure: np.ndarray
+        [n_rows, n_o], if return_exposure
     """
     fd = np.asarray(frame_dty, float)
     om = np.asarray(frame_omega, float)
     edges = np.asarray(ybinedges, float)
     n_rows = -(-(len(edges) - 1) // gridstep)
-    k = np.searchsorted(edges, np.nanmean(fd, 1)) - 1  # each scan's row, by its mean dty
-    k = np.where((k >= 0) & (k < len(edges) - 1), k // gridstep, -1)
+    bd = np.broadcast_to(np.nanmean(fd, 1, keepdims=True), fd.shape) if bin_dty is None else np.asarray(bin_dty, float)
+    kk = np.searchsorted(edges, np.where(np.isfinite(bd), bd, np.inf)) - 1  # each frame's row
+    kk = np.where((kk >= 0) & (kk < len(edges) - 1), kk // gridstep, -1)
     o = np.floor((np.mod(om - om0, 360.0)) / b_o).astype(int)
-    kk = np.broadcast_to(k[:, None], fd.shape)
     ok = (kk >= 0) & (o >= 0) & (o < n_o) & np.isfinite(fd)
     idx = kk[ok] * n_o + o[ok]
     s = np.bincount(idx, weights=fd[ok] - (dty0 + kk[ok] * ystep), minlength=n_rows * n_o)
     c = np.bincount(idx, minlength=n_rows * n_o)
-    return np.where(c > 0, s / np.maximum(c, 1), 0.0).reshape(n_rows, n_o)
+    off = np.where(c > 0, s / np.maximum(c, 1), 0.0).reshape(n_rows, n_o)
+    if not return_exposure:
+        return off
+    return off, (c / max(float(np.median(c[c > 0])), 1.0)).reshape(n_rows, n_o) if np.any(c > 0) else c
