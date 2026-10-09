@@ -82,8 +82,9 @@ def system(
     pos
         [Nv, 3] voxel positions in the sample frame
     scan
-        "y0", "dty0", "ystep", "n_rows" and "om0": the rows are at dty = dty0 + k ystep; with a beam profile also
-        "sig_beam", "width_beam" and "voxel" (:func:`beam_rows`)
+        "y0", "dty0", "ystep", "n_rows" and "om0": the rows are at dty = dty0 + k ystep; optionally "ddty" [n_rows,
+        n_o], each row's offset from that per omega bin (fly, helical scans: :func:`anri.index.dty_offsets`); with a
+        beam profile also "sig_beam", "width_beam" and "voxel" (:func:`beam_rows`)
     b_e, b_o, n_e, n_o
         Bin widths and counts of the histogram in eta and omega
     n_beam
@@ -103,6 +104,10 @@ def system(
     c, s = jnp.cos(jnp.radians(om)), jnp.sin(jnp.radians(om))
     ylab = pos[:, 0, None, None] * s + pos[:, 1, None, None] * c
     fk = (scan["y0"] - ylab - scan["dty0"]) / scan["ystep"]  # the row whose beam is centred on the voxel
+    if "ddty" in scan:  # rows not at their nominal dty (fly, helical scans): the beam's real dty in this omega bin
+        io = jnp.clip(jnp.floor((om_w - scan["om0"]) / b_o).astype(jnp.int32), 0, n_o - 1)
+        kh = jnp.clip(jnp.round(fk).astype(jnp.int32), 0, n_k - 1)
+        fk = fk - scan["ddty"][kh, io] / scan["ystep"]
     if n_beam == 0:
         k0 = jnp.floor(fk).astype(jnp.int32)
         tk = fk - k0
@@ -349,11 +354,17 @@ def backward(
 
 def mlem(
     d: jax.Array, cand: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array, scan: dict, dims: tuple,
-    f0: jax.Array, n_iter: int, vb: int, log: Callable = print, censor: float = 0.0,
+    f0: jax.Array, n_iter: int, vb: int, log: Callable = print, censor: float = 0.0, accel: bool = False,
 ) -> jax.Array:  # fmt: skip
     """Fit occupancies by MLEM: ``f <- f A^T(d / A f) / A^T 1``, n_iter times, logging the Poisson deviance.
 
     Empty bins are censored above ``censor`` (counts per bin, :func:`censored_ratio`); 0 for plain MLEM.
+
+    ``accel``: SQUAREM (Varadhan & Roland 2008, Scand. J. Stat. 35, 335). Two MLEM steps f1, f2 from f; then
+    f - 2 a r + a^2 v with r = f1 - f, v = f2 - 2 f1 + f and a = -|r| / |v| (at most -1: never shorter than plain
+    MLEM), kept above 1e-3 f2 (MLEM multiplies: an occupancy at 0 could never come back), and one more MLEM step. If that fits worse than f1, f2's step is kept instead, so the deviance
+    never rises. Thin features (twins one or two voxels thick) converge in far fewer steps. ``n_iter`` counts MLEM
+    steps either way (3 per SQUAREM step), so the cost is the same.
 
     Parameters
     ----------
@@ -375,12 +386,31 @@ def mlem(
     """
     n_cells = d.shape[0]
     norm = jnp.maximum(backward(jnp.ones(n_cells, d.dtype), cand, pred, ring_j, pos, scan, dims, vb), 1e-30)
-    f = f0
-    for it in range(n_iter):
+
+    def step(f: jax.Array) -> tuple:  # one MLEM step, and the model of the occupancies it started from
         Af = forward(f, cand, pred, ring_j, pos, scan, dims, n_cells, vb)
-        f = f * backward(censored_ratio(d, Af, censor), cand, pred, ring_j, pos, scan, dims, vb) / norm
-        if it % 5 == 0 or it == n_iter - 1:
-            log(f"  MLEM {it}: deviance {float(deviance(d, Af, censor)):.4g}")
+        return f * backward(censored_ratio(d, Af, censor), cand, pred, ring_j, pos, scan, dims, vb) / norm, Af
+
+    f = f0
+    if not accel:
+        for it in range(n_iter):
+            f, Af = step(f)
+            if it % 5 == 0 or it == n_iter - 1:
+                log(f"  MLEM {it}: deviance {float(deviance(d, Af, censor)):.4g}")
+        return f
+    it = 0
+    while it < n_iter:
+        f1, _ = step(f)
+        f2, A1 = step(f1)
+        r, v = f1 - f, f2 - 2.0 * f1 + f
+        a = jnp.minimum(-jnp.sqrt(jnp.sum(r * r)) / jnp.maximum(jnp.sqrt(jnp.sum(v * v)), 1e-30), -1.0)
+        # not below 1e-3 of f2: MLEM multiplies, so an occupancy set to 0 could never come back
+        fx = jnp.maximum(f - 2.0 * a * r + a * a * v, 1e-3 * f2)
+        fn, Ax = step(fx)
+        dev1, devx = deviance(d, A1, censor), deviance(d, Ax, censor)
+        f = jnp.where(devx <= dev1, fn, f2)  # never worse than plain MLEM
+        it += 3
+        log(f"  MLEM {it} (SQUAREM, step {float(-a):.1f}): deviance {float(jnp.minimum(devx, dev1)):.4g}")
     return f
 
 
@@ -484,6 +514,7 @@ def fit_occupancy(
     log: Callable = print,
     return_model: bool = False,
     censor: float = 0.0,
+    accel: bool = False,
 ) -> tuple:
     """Fit sparse occupancies: candidates per voxel, then MLEM.
 
@@ -518,6 +549,8 @@ def fit_occupancy(
         Also return the fitted histogram ``A f``, e.g. to compare with the data row by row
     censor
         Empty bins censored above this many counts per bin in the MLEM (:func:`censored_ratio`); 0: plain MLEM
+    accel
+        SQUAREM-accelerated MLEM (:func:`mlem`)
     log
         Progress messages
 
@@ -561,13 +594,15 @@ def fit_occupancy(
             f"coarse: {n_c} x {n_c} voxels of {coarse * ystep:g} x {pred[0].shape[0]} orientations, the top {k} per voxel"
         )
         f_c, cand_c = candidates(H_c, pred, ring_j, pos_cp, scan_c, dims, k, vb_all, qc=qc, log=log)
-        f_c = mlem(H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log, censor=censor)
+        f_c = mlem(
+            H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log, censor=censor, accel=accel
+        )
         cand_in = inherit_candidates(pos_p, pos_c, f_c[: n_c * n_c], cand_c[: n_c * n_c], 2 * k)
         log(f"fine: {nv} voxels x {2 * k} orientations inherited from the coarse neighbourhood")
         f0, cand = candidates_from(H, cand_in, pred, ring_j, pos_p, scan, dims, k, max(vb // 2, 1), log=log)
     log(f"candidates: {time.perf_counter() - t0:.1f} s")
     t0 = time.perf_counter()
-    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor)
+    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor, accel=accel)
     log(f"MLEM {n_iter} iterations: {time.perf_counter() - t0:.1f} s")
     if return_model:
         mu = forward(f, cand, pred, ring_j, pos_p, scan, dims, H.shape[0], vb)

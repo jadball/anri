@@ -34,16 +34,22 @@ def ramp_filter(sino: ArrayLike) -> np.ndarray:
 
 
 @jax.jit
-def backproject(sino: jax.Array, om_deg: jax.Array, pos: jax.Array, y0: float, dty0: float, ystep: float) -> jax.Array:
+def backproject(
+    sino: jax.Array, om_deg: jax.Array, pos: jax.Array, y0: float, dty0: float, ystep: float,
+    ddty: jax.Array | None = None,
+) -> jax.Array:  # fmt: skip
     """Back-project a sinogram [omega, row] onto voxels at ``pos`` [Nv, 3], linearly between rows.
 
-    A voxel is in the beam at dty = y0 - (x sin(omega) + y cos(omega)), as in :func:`anri.index.system`.
+    A voxel is in the beam at dty = y0 - (x sin(omega) + y cos(omega)), as in :func:`anri.index.system`; ``ddty``
+    [row, omega] is each row's offset from its nominal dty (fly, helical scans: :func:`anri.index.dty_offsets`).
     """
     n_k = sino.shape[1]
+    dd = jnp.zeros((sino.shape[0], n_k), sino.dtype) if ddty is None else jnp.asarray(ddty, sino.dtype).T
 
     def step(acc: jax.Array, so: tuple) -> tuple:
-        row, o = so
+        row, o, d = so
         fk = (y0 - (pos[:, 0] * jnp.sin(o) + pos[:, 1] * jnp.cos(o)) - dty0) / ystep
+        fk = fk - d[jnp.clip(jnp.round(fk).astype(jnp.int32), 0, n_k - 1)] / ystep
         k0 = jnp.floor(fk).astype(jnp.int32)
         t = fk - k0
 
@@ -52,7 +58,7 @@ def backproject(sino: jax.Array, om_deg: jax.Array, pos: jax.Array, y0: float, d
 
         return acc + (1 - t) * at(k0) + t * at(k0 + 1), None
 
-    acc, _ = jax.lax.scan(step, jnp.zeros(pos.shape[0], jnp.float32), (sino, jnp.radians(om_deg)))
+    acc, _ = jax.lax.scan(step, jnp.zeros(pos.shape[0], jnp.float32), (sino, jnp.radians(om_deg), dd))
     return acc / sino.shape[0]
 
 
@@ -66,7 +72,7 @@ def reconstruct(H: ArrayLike, n_rings: int, n_e: int, n_o: int, scan: dict, b_o:
     n_rings, n_e, n_o
         Its rings, eta bins and omega bins
     scan
-        "y0", "dty0", "ystep", "n_rows" and "om0" (as :func:`anri.index.system`)
+        "y0", "dty0", "ystep", "n_rows", "om0" and optionally "ddty" (as :func:`anri.index.system`)
     b_o
         Omega bin width (degrees)
     nr
@@ -84,7 +90,7 @@ def reconstruct(H: ArrayLike, n_rings: int, n_e: int, n_o: int, scan: dict, b_o:
     om = scan["om0"] + (np.arange(n_o) + 0.5) * b_o
     pos = jnp.asarray(recon_positions(nr, scan["ystep"]), jnp.float32)
     rec = backproject(jnp.asarray(ramp_filter(sino), jnp.float32), jnp.asarray(om, jnp.float32), pos,
-                      scan["y0"], scan["dty0"], scan["ystep"])  # fmt: skip
+                      scan["y0"], scan["dty0"], scan["ystep"], scan.get("ddty"))  # fmt: skip
     return np.asarray(rec).reshape(nr, nr)
 
 

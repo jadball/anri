@@ -158,6 +158,52 @@ class TestOccupancy(unittest.TestCase):
             var = (w * (dty - centre) ** 2).sum() / w.sum()
             self.assertAlmostEqual(var, sig**2 + vox**2 / 12, delta=0.05 * (sig**2 + vox**2 / 12))
 
+    def test_dty_offsets(self):
+        """Rows away from their nominal dty: a helical scan's offsets, and system putting a voxel in the right rows."""
+        n_rows, n_fr, ystep = 5, 360, 1.0
+        om = np.tile((np.arange(n_fr) + 0.5) * 360.0 / n_fr, (n_rows, 1))
+        dty = np.arange(n_rows)[:, None] * ystep + ystep * (om / 360.0 - 0.5)  # one step per turn, row mean on the row
+        edges = (np.arange(n_rows + 1) - 0.5) * ystep
+        dd = ix.dty_offsets(dty, om, edges, 1, 0.0, 1.0, 360, 0.0, ystep)
+        np.testing.assert_allclose(dd[2], ystep * ((np.arange(360) + 0.5) / 360.0 - 0.5), atol=1e-9)
+        for n_beam in (0, 7):  # the 2-row model and a beam profile
+            # a beam wide enough that rows sample its profile evenly (a narrow one, sampled at whole rows, has its
+            # centroid a little off its centre)
+            scan = {"y0": 0.0, "dty0": -10.0, "ystep": ystep, "n_rows": 21, "om0": -180.0, "sig_beam": 0.8,
+                    "width_beam": 0.0, "voxel": 1.0}  # fmt: skip
+            one, pos = jnp.ones((1, 1, 1)), jnp.asarray([[0.0, 0.3, 0.0]], jnp.float32)
+            rows = []
+            for ddty in (None, np.full((21, 360), 0.3)):
+                sc = scan if ddty is None else {**scan, "ddty": jnp.asarray(ddty, jnp.float32)}
+                idx, wt = ix.system(one * 10.0, one * 0.0, one > 0, one, jnp.asarray([0]), pos, sc, 1.0, 1.0, 360, 360,
+                                    n_beam)  # fmt: skip
+                idx, wt = np.asarray(idx).ravel(), np.asarray(wt).ravel()
+                w = np.bincount(idx[idx >= 0] % 21, weights=wt[idx >= 0], minlength=21)
+                rows.append((w * (scan["dty0"] + np.arange(21) * ystep)).sum() / w.sum())
+            # every row 0.3 further along dty: the voxel is seen by rows whose nominal dty is 0.3 lower
+            self.assertAlmostEqual(rows[1] - rows[0], -0.3, delta=0.02)
+
+    def test_squarem(self):
+        """SQUAREM reaches a deviance at least as low as plain MLEM for the same number of MLEM steps."""
+        c, B, _ = iron()
+        rings = ix.ring_table(*c, PARS["wavelength"], 2)
+        pred = ix.predictions(rotations(16, 2), B, rings, geometry(), 0.2)
+        rng = np.random.default_rng(5)
+        pos = jnp.asarray(np.column_stack([rng.uniform(-4, 4, (32, 2)), np.zeros(32)]), jnp.float32)
+        scan = {"y0": 0.0, "dty0": -6.0, "ystep": 1.0, "n_rows": 13, "om0": 0.0}
+        dims = (1.0, 1.0, 360, 180)
+        n_cells = 2 * 360 * 180 * 13
+        ring_j = jnp.asarray(rings["ring_j"])
+        cand = jnp.asarray(np.argsort(rng.uniform(size=(32, 16)), 1)[:, :4], jnp.int32)
+        f_true = jnp.asarray(rng.uniform(size=(32, 4)) * (rng.uniform(size=(32, 4)) > 0.5), jnp.float32)
+        d = ix.forward(f_true, cand, pred, ring_j, pos, scan, dims, n_cells, 8)
+        f0 = jnp.ones((32, 4), jnp.float32)
+        devs = {}
+        for accel in (False, True):
+            f = ix.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 30, 8, log=lambda m: None, accel=accel)
+            devs[accel] = float(ix.deviance(d, ix.forward(f, cand, pred, ring_j, pos, scan, dims, n_cells, 8), 0.0))
+        self.assertLessEqual(devs[True], devs[False] * 1.0001)
+
     def test_censored_ratio(self):
         d = jnp.asarray([4.0, 0.0, 0.0, 0.0])
         mu = jnp.asarray([2.0, 1.0, 10.0, 0.0])

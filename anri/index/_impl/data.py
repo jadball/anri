@@ -361,3 +361,48 @@ def coarsen_rows(H: ArrayLike, n_rows: int, g: int) -> tuple[jax.Array, int]:
     d = jnp.asarray(H).reshape(-1, n_rows)
     d = jnp.pad(d, ((0, 0), (0, -n_rows % g)))
     return d.reshape(d.shape[0], -1, g).sum(-1).ravel(), -(-n_rows // g)
+
+
+def dty_offsets(
+    frame_dty: ArrayLike, frame_omega: ArrayLike, ybinedges: ArrayLike, gridstep: int, om0: float, b_o: float, n_o: int,
+    dty0: float, ystep: float,
+) -> np.ndarray:  # fmt: skip
+    """Each histogram row's dty, per omega bin, less its nominal dty: where the beam really was.
+
+    A row is the frames whose row-mean dty falls in one bin of ``ybinedges`` (as :func:`anri.io.stream_sparse` bins
+    them). In a step scan every frame of a row is at the row's dty and the offsets are 0. In a fly or helical scan dty
+    moves while omega turns (e.g. one dty step per turn): the frames of one omega bin were taken at a dty up to half
+    a step away from the row's. :func:`anri.index.system` uses the offsets (``scan["ddty"]``) to put each voxel in
+    the rows that really saw it.
+
+    Parameters
+    ----------
+    frame_dty, frame_omega
+        [rows, frames] each frame's dty and omega, e.g. :func:`anri.io.read_frame_dty` and the DataSet's ``omega``
+    ybinedges
+        [n + 1] dty bin edges of the rows (the DataSet's ``ybinedges``)
+    gridstep
+        Rows summed in groups of this, as in the histogram
+    om0, b_o, n_o
+        The histogram's first omega bin edge, bin width and number of bins
+    dty0, ystep
+        The histogram's rows: row k is nominally at dty0 + k ystep
+
+    Returns
+    -------
+    np.ndarray
+        [n_rows, n_o] mean dty of the frames in each (row, omega bin) less dty0 + k ystep; 0 where no frames
+    """
+    fd = np.asarray(frame_dty, float)
+    om = np.asarray(frame_omega, float)
+    edges = np.asarray(ybinedges, float)
+    n_rows = -(-(len(edges) - 1) // gridstep)
+    k = np.searchsorted(edges, np.nanmean(fd, 1)) - 1  # each scan's row, by its mean dty
+    k = np.where((k >= 0) & (k < len(edges) - 1), k // gridstep, -1)
+    o = np.floor((np.mod(om - om0, 360.0)) / b_o).astype(int)
+    kk = np.broadcast_to(k[:, None], fd.shape)
+    ok = (kk >= 0) & (o >= 0) & (o < n_o) & np.isfinite(fd)
+    idx = kk[ok] * n_o + o[ok]
+    s = np.bincount(idx, weights=fd[ok] - (dty0 + kk[ok] * ystep), minlength=n_rows * n_o)
+    c = np.bincount(idx, minlength=n_rows * n_o)
+    return np.where(c > 0, s / np.maximum(c, 1), 0.0).reshape(n_rows, n_o)

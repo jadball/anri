@@ -14,6 +14,7 @@ The steps, in order (``python -m anri.index`` runs them on an ImageD11 dataset):
 
 from ._impl.data import (
     coarsen_rows,
+    dty_offsets,
     histogram,
     histogram_pixels,
     lit_table,
@@ -68,6 +69,7 @@ __all__ = [
     "completeness_of",
     "deviance",
     "draw_mask",
+    "dty_offsets",
     "fit_occupancy",
     "forward",
     "histogram",

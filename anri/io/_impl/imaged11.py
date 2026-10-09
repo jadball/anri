@@ -433,6 +433,46 @@ def _frame_positions(
     raise KeyError(msg)
 
 
+def read_frame_dty(ds: dict, sparsefile: str | None = None) -> np.ndarray:
+    """Each frame's dty: the DataSet's (corrected) dty of its row, plus the motion of dty within the row.
+
+    ImageD11 gives every frame of a row one dty (e.g. the mean over a rotation of a fly or helical scan, where dty
+    moves while omega turns). The raw readings in the sparse file move within the row; a straight line fitted to
+    them over the row's frames (time) gives that motion, smooth below the encoder's resolution. Whatever the DataSet
+    corrects per row (an offset, or the mean) is kept. Where the sparse file has no reading per frame, the motion is 0.
+
+    Parameters
+    ----------
+    ds
+        From :func:`read_dataset`: "dty", "scans", "dtymotor" and "sparsefile"
+    sparsefile
+        The sparse pixels file (default: the DataSet's)
+
+    Returns
+    -------
+    np.ndarray
+        [scans, frames] dty, as the DataSet's ``dty``
+    """
+    dty = np.asarray(ds["dty"], float)
+    out = dty.copy()
+    slices = _scan_slices(ds["scans"])
+    with h5py.File(sparsefile or ds["sparsefile"], "r") as h:
+        for name, parts in slices.items():
+            meas = h[name].get("measurement")
+            if meas is None or ds["dtymotor"] not in meas or np.ndim(meas[ds["dtymotor"]]) == 0:
+                continue
+            raw = np.asarray(meas[ds["dtymotor"]][()], float)
+            for i, a, b in parts:
+                n = dty.shape[1]
+                r = raw[a : (len(raw) if b is None else b)][:n]
+                if len(r) < 2:
+                    continue
+                t = np.arange(len(r), dtype=float)
+                slope = np.polyfit(t, r, 1)[0]
+                out[i, : len(r)] = dty[i, : len(r)] + slope * (t - t.mean())
+    return out
+
+
 def stream_sparse(
     sparsefile: str,
     ybinedges: ArrayLike,

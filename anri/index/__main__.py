@@ -198,6 +198,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mask", help="fit only the voxels in a sample mask: 'auto' (Otsu threshold and convex hull of a "
                    "quick reconstruction, as ImageD11's tomo_2_map), or a .npy file of [voxels, voxels] booleans in "
                    "reconstruction order, e.g. drawn with anri.index.draw_mask (default: every voxel)")  # fmt: skip
+    p.add_argument("--no-frame-dty", action="store_true", help="ignore dty's motion within each row (fly and helical "
+                   "scans): by default each frame's dty is the DataSet's for its row plus the motion read from the "
+                   "sparse file (anri.io.read_frame_dty), and the model puts each voxel in the rows that really saw it")  # fmt: skip
+    p.add_argument("--accel", action="store_true", help="SQUAREM-accelerated MLEM in the occupancy fit: thin features "
+                   "(twins) converge in fewer iterations, at the same cost per iteration")  # fmt: skip
     p.add_argument("--censor", type=float, default=0.0, help="counts per histogram bin below which an empty bin "
                    "(every pixel below the segmentation cut) counts as agreeing with the model, in both MLEMs and "
                    "the pruning (default 0: empty bins are zeros)")  # fmt: skip
@@ -396,6 +401,14 @@ def main() -> None:
     pred = ix.predictions(U_kept, B, rings, geom, args.etacut)
     pos = np.asarray(anri.geom.recon_positions(NR, YSTEP), np.float32)
     scan = {"y0": Y0, "dty0": DTY0, "ystep": YSTEP, "n_rows": NK, "om0": OM0}
+    if not args.no_frame_dty and ds["dty"] is not None and ds["scans"] is not None and ds["omega"] is not None:
+        # fly and helical scans: where the beam really was, per row and omega bin
+        ddty = ix.dty_offsets(anri.io.read_frame_dty(ds, sparsefile), ds["omega"], yedge, G, OM0, B_O * R_O,
+                              N_O // R_O, DTY0, YSTEP)  # fmt: skip
+        if np.abs(ddty).max() > 1e-3 * YSTEP:
+            scan["ddty"] = jnp.asarray(ddty, jnp.float32)
+            log(f"dty moves within the rows: up to {np.abs(ddty).max() / YSTEP:.2f} dty steps from each row's dty; "
+                "the model follows it (--no-frame-dty to ignore it)")  # fmt: skip
     dims = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O)
     if BEAM > 0:  # the beam's profile across dty, over voxels of YSTEP; summed rows widen its flat top
         scan.update({"sig_beam": BEAM / (2 * np.sqrt(2 * np.log(2))), "width_beam": (G - 1) * ystep0, "voxel": YSTEP})
@@ -412,8 +425,8 @@ def main() -> None:
                 raise SystemExit(f"--mask {args.mask}: {mask.size} voxels, the grid has {NR} x {NR}")
         log(f"mask ({args.mask}): {mask.sum()} of {NV} voxels fitted")
     f_m, cand_m, model = ix.fit_occupancy(H, pred, rings["ring_j"], pos[mask], scan, dims, args.cand, args.iter,
-                                         args.coarse, args.block_gb * 1e9, log=log, return_model=True,
-                                         censor=args.censor)  # fmt: skip
+                                             args.coarse, args.block_gb * 1e9, log=log, return_model=True,
+                                         censor=args.censor, accel=args.accel)  # fmt: skip
     f = np.zeros((NV, f_m.shape[1]), f_m.dtype)
     cand = np.zeros((NV, cand_m.shape[1]), cand_m.dtype)
     f[mask], cand[mask] = f_m, cand_m
