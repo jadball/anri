@@ -9,7 +9,7 @@ from ._impl.detector import (
     lab_to_det,
     raytrace_to_det,
 )
-from ._impl.gonio import dty_and_origin_lab, find_dty_for_beam_xy, lab_to_sample, sample_to_lab
+from ._impl.gonio import dty_and_origin_lab, find_dty_for_beam_xy, lab_to_sample, origin_lab, sample_to_lab
 from ._impl.scan import (
     recon_positions,
     recon_to_step,
@@ -18,10 +18,11 @@ from ._impl.scan import (
     step_to_recon,
     step_to_sample,
 )
-from ._impl.utils import beam_basis, rmat_from_axis_angle, rot_x, rot_y, rot_z
+from ._impl.utils import beam_basis, beam_offsets, rmat_from_axis_angle, rot_x, rot_y, rot_z
 
 __all__ = [
     "beam_basis",
+    "beam_offsets",
     "det_to_lab",
     "detector_basis_vectors_lab",
     "detector_orientation_matrix",
@@ -31,6 +32,7 @@ __all__ = [
     "find_dty_for_beam_xy",
     "lab_to_det",
     "lab_to_sample",
+    "origin_lab",
     "raytrace_to_det",
     "recon_positions",
     "recon_to_step",

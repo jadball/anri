@@ -128,3 +128,34 @@ def beam_basis(k_in_lab: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
     e_h = jnp.cross(jnp.array([0.0, 0.0, 1.0], dtype=k_hat.dtype), k_hat)
     e_h = e_h / jnp.linalg.norm(e_h)
     return k_hat, e_h, jnp.cross(k_hat, e_h)
+
+
+@jax.jit
+def beam_offsets(pos_lab: jax.Array, k_in_lab: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    r"""Return where a lab point sits relative to the beam's centre line, which passes through the lab origin.
+
+    Parameters
+    ----------
+    pos_lab
+        [3] Point in the lab frame
+    k_in_lab
+        [3] Direction of the incoming beam (need not be normalised; must not be vertical)
+
+    Returns
+    -------
+    across: jax.Array
+        Distance across the beam, horizontally (along :math:`\hat{e}_h` of :func:`beam_basis`)
+    height: jax.Array
+        Height of the point above the beam's centre line, measured vertically (along lab z)
+    rise: jax.Array
+        Height of the beam's centre line at the point's horizontal position: ``pos_lab[2] - height``. A beam
+        tilted by :math:`\alpha` out of the horizontal plane rises by :math:`\tan\alpha` per unit of horizontal
+        distance along it.
+    cos_alpha: jax.Array
+        Cosine of the beam's tilt out of the horizontal plane
+    """
+    k, e_h, _ = beam_basis(k_in_lab)
+    cos_alpha = jnp.hypot(k[0], k[1])
+    along = (pos_lab[0] * k[0] + pos_lab[1] * k[1]) / cos_alpha  # horizontal distance along the beam
+    rise = k[2] / cos_alpha * along
+    return pos_lab @ e_h, pos_lab[2] - rise, rise, cos_alpha

@@ -1,11 +1,8 @@
 """Forward projection code for box-beam scans (near or far-field)."""
 
 import jax
-import jax.numpy as jnp
 
-from anri.geom import raytrace_to_det, sample_to_lab
-
-from .base import hkl_to_k_omega, hkl_to_k_omega_both, make_propagator
+from .base import get_centroid, get_centroid_both, make_propagator
 
 
 @jax.jit
@@ -69,29 +66,14 @@ def get_centroid_box(
 
     Notes
     -----
-    Propagates (h,k,l) into k-vectors using :func:`anri.fwd.hkl_to_k_omega`
-
-    Then computes the origin in the lab frame, and ray-traces into the detector.
+    This is :func:`anri.fwd.get_centroid` with the rotation axis in the beam (dty = y0) and the voxel a cube,
+    scattering from its centre.
     """
-    k_in_lab, k_out_lab, omega, valid = hkl_to_k_omega(
-        ubi,
-        hkl,
-        etasign,
-        wavelength,
-        k_in_lab,
-        ky,
-        kz,
-        wedge,
-        chi,
-    )
-
-    origin_lab = sample_to_lab(origin_sample, omega, wedge, chi, 0.0, 0.0)
-
-    sc, fc = raytrace_to_det(k_out_lab, origin_lab, s_step_lab, f_step_lab, det_origin_lab)
-
-    centroid = jnp.array([sc, fc, omega])
-
-    return centroid, valid
+    # the voxel at its real position with the rotation axis in the beam (dty = y0), scattering from its centre
+    return get_centroid(
+        ubi, origin_sample, hkl, etasign, wavelength, k_in_lab, ky, kz, wedge, chi, 0.0, 0.0,
+        s_step_lab, f_step_lab, det_origin_lab, column=False,
+    )  # fmt: skip
 
 
 @jax.jit
@@ -153,23 +135,17 @@ def get_centroid_box_both(
 
     Notes
     -----
-    There is no ``etasign`` argument. Both solutions come from one call to
-    :func:`anri.fwd.hkl_to_k_omega_both`, which evaluates the geometry shared
-    between the branches once. Only ray-tracing to the detector is done per branch.
+    There is no ``etasign`` argument. This is :func:`anri.fwd.get_centroid_both` with the rotation axis in the
+    beam (dty = y0) and the voxel a cube, scattering from its centre.
 
     See Also
     --------
     get_centroid_box : Single-solution version, taking an ``etasign`` argument.
     """
-    _, k_out_labs, omegas, valid = hkl_to_k_omega_both(ubi, hkl, wavelength, k_in_lab, ky, kz, wedge, chi)
-
-    centroids = []
-    for i in range(2):
-        origin_lab = sample_to_lab(origin_sample, omegas[i], wedge, chi, 0.0, 0.0)
-        sc, fc = raytrace_to_det(k_out_labs[i], origin_lab, s_step_lab, f_step_lab, det_origin_lab)
-        centroids.append(jnp.array([sc, fc, omegas[i]]))
-
-    return jnp.stack(centroids), valid
+    return get_centroid_both(
+        ubi, origin_sample, hkl, wavelength, k_in_lab, ky, kz, wedge, chi, 0.0, 0.0,
+        s_step_lab, f_step_lab, det_origin_lab, column=False,
+    )  # fmt: skip
 
 
 propagate_cov_box = make_propagator(get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True)

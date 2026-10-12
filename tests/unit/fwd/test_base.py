@@ -103,5 +103,27 @@ class TestDivergence(unittest.TestCase):
         np.testing.assert_allclose(k_in_x, [1.0, 2e-4, -3e-4], atol=1e-15)
 
 
+class TestGetCentroid(unittest.TestCase):
+    def test_matches_scan_on_the_beam(self):
+        # at the dty that puts the voxel on the pencil's centre line, the real-position centroid is the scan centroid
+        ubi, origin, hkl, _, wl, k, ky, kz, wedge, chi, *det = _box_args()
+        y0 = 0.7
+        for es in (1.0, -1.0):
+            scan, valid = anri.fwd.get_centroid_scan(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, y0, *det)
+            self.assertTrue(bool(valid))
+            cen, _ = anri.fwd.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, scan[3], y0, *det)
+            np.testing.assert_allclose(cen, scan[:3], atol=1e-9)
+
+    def test_both_and_box(self):
+        ubi, origin, hkl, _, wl, k, ky, kz, wedge, chi, *det = _box_args()
+        both, _ = anri.fwd.get_centroid_both(ubi, origin, hkl, wl, k, ky, kz, wedge, chi, 2.0, 0.5, *det)
+        for i, es in enumerate((1.0, -1.0)):
+            one, _ = anri.fwd.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, 2.0, 0.5, *det)
+            np.testing.assert_allclose(both[i], one, atol=1e-12)
+            box, _ = anri.fwd.get_centroid_box(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, *det)
+            cube, _ = anri.fwd.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, 0.0, 0.0, *det, False)
+            np.testing.assert_allclose(box, cube, atol=1e-12)
+
+
 if __name__ == "__main__":
     unittest.main()

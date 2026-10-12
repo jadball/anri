@@ -3,7 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-from .utils import rot_x, rot_y, rot_z
+from .utils import beam_offsets, rot_x, rot_y, rot_z
 
 
 @jax.jit
@@ -105,6 +105,56 @@ def lab_to_sample(v_lab: jax.Array, omega: float, wedge: float, chi: float, dty:
 
 
 @jax.jit
+def origin_lab(
+    v_sample: jax.Array,
+    k_in_lab: jax.Array,
+    omega: float,
+    wedge: float,
+    chi: float,
+    dty: float,
+    y0: float,
+    column: bool = True,
+) -> jax.Array:
+    """Where a voxel scatters, in the lab frame: its real position at this omega and dty.
+
+    Parameters
+    ----------
+    v_sample
+        [3] Voxel centre in sample coordinates
+    k_in_lab
+        [3] Direction of the incoming beam (need not be normalised; must not be vertical)
+    omega
+        Omega motor value (degrees)
+    wedge
+        Wedge motor value (degrees)
+    chi
+        Chi motor value (degrees)
+    dty
+        Base diffractometer Y translation value (same units as v_sample)
+    y0
+        The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
+    column
+        True if the voxel is a column (a 2D map): it scatters at the height where the beam crosses it. False for a
+        cube (a 3D map), which scatters from its centre.
+
+    Returns
+    -------
+    origin_lab: jax.Array
+        [3] ``sample_to_lab(v_sample, omega, wedge, chi, dty, y0)``, raised for a column to the height of a beam
+        tilted out of the horizontal plane
+
+    Notes
+    -----
+    A tilted beam is taken to cross the rotation axis at the voxel's own height (in a 2D map, the layer's height),
+    so that a voxel's height never depends on other layers. For a beam in the horizontal plane, or a cube, the
+    origin is ``sample_to_lab(v_sample, omega, wedge, chi, dty, y0)``.
+    """
+    lab = sample_to_lab(v_sample, omega, wedge, chi, dty, y0)
+    _, _, rise, _ = beam_offsets(lab, k_in_lab)
+    return lab + jnp.where(column, 1.0, 0.0) * jnp.array([0.0, 0.0, 1.0]) * rise
+
+
+@jax.jit
 def find_dty_for_beam_xy(
     v_sample: jax.Array, k_in_lab: jax.Array, omega: float, wedge: float, chi: float, y0: float
 ) -> jax.Array:
@@ -170,41 +220,21 @@ def dty_and_origin_lab(
 
     Notes
     -----
-    Applying dty shifts the lab position by ``(0, dty - y0, 0)``. Because dty is
-    chosen so that the point sits on the beam, ``dty - y0`` equals
-    ``y_ray - v_lab[1]``, and the y coordinate of the shifted position collapses
-    to ``y_ray``. Both return values therefore come from a single rotation of
-    ``v_sample``.
-
-    A beam tilted out of the horizontal plane is taken to cross the rotation axis
-    at the point's own height (in a 2D map, the layer's height), so that a point's
-    height never depends on other layers. The beam is a pencil and the voxel a
-    column, so the scattering happens where the pencil crosses the column: the
-    origin is raised by ``(k_z / k_x) * v_lab[0]``. For a beam in the horizontal
-    plane this is zero, and ``origin_lab`` equals
-    ``sample_to_lab(v_sample, omega, wedge, chi, dty_required, y0)``.
+    Applying dty shifts the lab position by ``(0, dty - y0, 0)``, so dty is chosen to put the point on the beam's
+    horizontal line. The origin is then :func:`origin_lab` at that dty, for a column: a beam tilted out of the
+    horizontal plane is taken to cross the rotation axis at the point's own height, and the scattering happens
+    where the pencil crosses the column.
 
     See Also
     --------
     find_dty_for_beam_xy : Returns the dty value alone.
-    sample_to_lab : The underlying sample to lab transform.
+    origin_lab : The scattering origin for a given dty.
     """
     # Rotate v_sample into v_lab, ignoring y0 and dty for now (just find angles)
     v_lab = sample_to_lab(v_sample, omega, wedge, chi, 0.0, 0.0)
 
-    # Find slope of ray in lab frame
-    beam_slope = k_in_lab[1] / k_in_lab[0]
-
-    # Find y value of ray at lab x coordinate
-    y_ray = beam_slope * v_lab[0]
-
-    # Find dty required
-    # When dty = y0, y_ray
+    # y of the beam's horizontal line at the point's lab x; dty moves the point there (when dty = y0, no shift)
+    y_ray = k_in_lab[1] / k_in_lab[0] * v_lab[0]
     dty_required = y_ray - v_lab[1] + y0
 
-    # Height of the beam there, if it is tilted: it crosses the rotation axis at the point's own height
-    z_ray = v_lab[2] + k_in_lab[2] / k_in_lab[0] * v_lab[0]
-
-    origin_lab = jnp.array([v_lab[0], y_ray, z_ray])
-
-    return dty_required, origin_lab
+    return dty_required, origin_lab(v_sample, k_in_lab, omega, wedge, chi, dty_required, y0)

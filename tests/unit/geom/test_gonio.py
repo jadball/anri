@@ -263,3 +263,30 @@ class TestDtyAndOriginLab(unittest.TestCase):
             # dty only depends on the horizontal part of the beam
             dty_flat, _ = anri.geom.dty_and_origin_lab(self.v, k.at[2].set(0.0), *self.args)
             self.assertAlmostEqual(float(dty), float(dty_flat))
+
+
+class TestOriginLab(unittest.TestCase):
+    def setUp(self):
+        self.v = jnp.array([12.0, -7.0, 3.0])
+        self.args = (35.0, 1.5, -2.0, 4.0, 0.4)  # omega, wedge, chi, dty, y0
+
+    def test_horizontal_beam_or_cube(self):
+        # the voxel's real position: no rise for a horizontal beam, nor for a cube in any beam
+        lab = anri.geom.sample_to_lab(self.v, *self.args)
+        for k, column in ((jnp.array([1.0, 0.2, 0.0]), True), (jnp.array([1.0, -0.2, 0.1]), False)):
+            np.testing.assert_allclose(anri.geom.origin_lab(self.v, k, *self.args, column), lab, atol=1e-12)
+
+    def test_tilted_beam_column(self):
+        # a column scatters where the beam, crossing the rotation axis at the voxel's own height, passes through it
+        lab = anri.geom.sample_to_lab(self.v, *self.args)
+        for k in (jnp.array([1.0, 0.0, 0.1]), jnp.array([1.0, -0.2, -0.05])):
+            origin = anri.geom.origin_lab(self.v, k, *self.args)
+            np.testing.assert_allclose(origin[:2], lab[:2], atol=1e-12)
+            _, height, _, _ = anri.geom.beam_offsets(origin - jnp.array([0.0, 0.0, lab[2]]), k)
+            self.assertAlmostEqual(float(height), 0.0, places=12)
+
+    def test_dty_and_origin_lab_uses_it(self):
+        omega, wedge, chi, _, y0 = self.args
+        k = jnp.array([1.0, -0.2, -0.05])
+        dty, origin = anri.geom.dty_and_origin_lab(self.v, k, omega, wedge, chi, y0)
+        np.testing.assert_allclose(origin, anri.geom.origin_lab(self.v, k, omega, wedge, chi, dty, y0), atol=1e-12)

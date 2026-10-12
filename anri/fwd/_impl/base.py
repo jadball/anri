@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from anri.diffract import omega_from_core, omega_solns_core, q_lab_to_k_out, scale_norm_k
-from anri.geom import beam_basis, lab_to_sample, sample_to_lab
+from anri.geom import beam_basis, lab_to_sample, origin_lab, raytrace_to_det, sample_to_lab
 from anri.utils import inv3
 
 
@@ -155,6 +155,113 @@ def hkl_to_k_omega_both(
     )
 
     return k_in_lab, k_outs, omegas, valid
+
+
+@jax.jit
+def get_centroid(
+    ubi: jax.Array,  # grain stuff
+    origin_sample: jax.Array,
+    hkl: jax.Array,  # peak stuff
+    etasign: float,
+    wavelength: float,  # beam
+    k_in_lab: jax.Array,
+    ky: float,
+    kz: float,
+    wedge: float,  # gonio
+    chi: float,
+    dty: float,
+    y0: float,
+    s_step_lab: jax.Array,  # detector
+    f_step_lab: jax.Array,
+    det_origin_lab: jax.Array,
+    column: bool = True,
+) -> tuple[jax.Array, jax.Array]:
+    """Forward project (ubi, hkl) to a peak centroid (sc, fc, omega), with the voxel at its real position for dty.
+
+    This is the forward model's one centroid: the renderer uses it, :func:`anri.fwd.get_centroid_box` is it at
+    dty = y0 for a cube, and :func:`anri.fwd.get_centroid_scan` instead solves for the dty that puts the voxel on a
+    pencil beam's centre line.
+
+    Parameters
+    ----------
+    ubi
+        [3,3] (U.B)^(-1) matrix of the grain/voxel
+    origin_sample
+        [3] Voxel centre in the sample reference frame
+    hkl
+        [3] (h,k,l) reciprocal space vector
+    etasign
+        +1 (omega1 in ImageD11) or -1 (omega2 in ImageD11) to select which omega solution to return
+    wavelength
+        Wavelength in angstroms
+    k_in_lab
+        [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical). The beam's
+        centre line runs along it through the lab origin.
+    ky, kz
+        Horizontal and vertical beam divergence: small tilts of the beam (radians) across it, see
+        :func:`anri.geom.beam_basis`. They change the diffraction, not where the voxel is. Usually zero.
+    wedge, chi
+        Wedge and chi motor values (degrees)
+    dty
+        Base diffractometer Y translation value (same units as origin_sample)
+    y0
+        The true value of dty when the rotation axis (untilted by wedge, chi) intersects the beam
+    s_step_lab, f_step_lab, det_origin_lab
+        [3] Lab-frame pixel steps (slow, fast) and position of pixel (0, 0), from
+        :func:`anri.geom.detector_basis_vectors_lab`
+    column
+        True if the voxel is a column (2D map), False for a cube (3D map), see :func:`anri.geom.origin_lab`
+
+    Returns
+    -------
+    centroid: jax.Array
+        [3] Peak centre-of-mass in (sc, fc, omega)
+    valid: jax.Array
+        Boolean indicating if a valid solution exists
+    """
+    _, k_out_lab, omega, valid = hkl_to_k_omega(ubi, hkl, etasign, wavelength, k_in_lab, ky, kz, wedge, chi)
+    origin = origin_lab(origin_sample, k_in_lab, omega, wedge, chi, dty, y0, column)
+    sc, fc = raytrace_to_det(k_out_lab, origin, s_step_lab, f_step_lab, det_origin_lab)
+    return jnp.array([sc, fc, omega]), valid
+
+
+@jax.jit
+def get_centroid_both(
+    ubi: jax.Array,  # grain stuff
+    origin_sample: jax.Array,
+    hkl: jax.Array,  # peak stuff
+    wavelength: float,  # beam
+    k_in_lab: jax.Array,
+    ky: float,
+    kz: float,
+    wedge: float,  # gonio
+    chi: float,
+    dty: float,
+    y0: float,
+    s_step_lab: jax.Array,  # detector
+    f_step_lab: jax.Array,
+    det_origin_lab: jax.Array,
+    column: bool = True,
+) -> tuple[jax.Array, jax.Array]:
+    """Both Friedel peak centroids of :func:`get_centroid` from one call.
+
+    Parameters are those of :func:`get_centroid`, without ``etasign``.
+
+    Returns
+    -------
+    centroids: jax.Array
+        [2,3] Peak centres of mass in (sc, fc, omega). Index 0 is the ``etasign = +1`` solution, index 1 is
+        ``etasign = -1``.
+    valid: jax.Array
+        Boolean indicating if a valid solution exists, shared by both branches
+    """
+    _, k_out_labs, omegas, valid = hkl_to_k_omega_both(ubi, hkl, wavelength, k_in_lab, ky, kz, wedge, chi)
+    centroids = []
+    for i in range(2):
+        origin = origin_lab(origin_sample, k_in_lab, omegas[i], wedge, chi, dty, y0, column)
+        sc, fc = raytrace_to_det(k_out_labs[i], origin, s_step_lab, f_step_lab, det_origin_lab)
+        centroids.append(jnp.array([sc, fc, omegas[i]]))
+    return jnp.stack(centroids), valid
 
 
 @jax.jit
