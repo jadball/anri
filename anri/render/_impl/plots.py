@@ -72,10 +72,12 @@ def plot_rings(fig: Figure, cov: dict) -> Callable:
     return update
 
 
-def plot_counts(fig: Figure, probe: dict) -> Callable:
-    """Draw the rendered intensities; ``update(density, cut)`` shows what survives the segmentation cut.
+def plot_survival(fig: Figure, probe: dict) -> Callable:
+    """Draw how many peaks the cut removes against density; ``update(density)`` shows what each peak keeps there.
 
-    Intensities scale with ``density`` (counts per unit density), so the probe at one density shows any other.
+    Left: the share of peaks with no pixel above the cut (gone from the data), and the median share of a peak's
+    intensity above it, against density. Right: each peak's kept share at the chosen density. The faint ends and tails
+    of peaks go first, then whole weak reflections and small grains.
 
     Parameters
     ----------
@@ -84,35 +86,30 @@ def plot_counts(fig: Figure, probe: dict) -> Callable:
     probe
         From :func:`anri.render.diagnostics.probe_rows`
     """
-    v = probe["values"]
+    d, lost, kept = probe["densities"], probe["lost_below"], probe["kept_share"]
     ax = fig.subplots(1, 2)
-    hist = ax[0]
-    a1 = ax[1]
+    gone = np.array([(lost > x).mean() for x in d])
+    ax[0].semilogx(d, gone, color="tab:red", label="peaks gone (no pixel above the cut)")
+    ax[0].semilogx(d, np.median(kept, 0), color="tab:blue", label="median share of a peak kept")
+    ax[0].semilogx(d, np.percentile(kept, 10, 0), color="tab:blue", ls=":", label="10th percentile")
+    v = ax[0].axvline(probe["density"], color="k")
+    ax[0].set(xlabel="density (counts per unit density)", ylabel="fraction", ylim=(0, 1.02),
+              title=f"cut {probe['cut']:g}; {len(lost)} peaks, rows {probe['rows']}")  # fmt: skip
+    ax[0].legend(fontsize=8)
     drawn: list = []
 
-    def update(density: float, cut: float) -> str:
-        x = v * density / probe["density"]
-        counts = np.round(x)
-        keep = counts > cut
+    def update(density: float) -> str:
+        k = int(np.argmin(np.abs(np.log(d / density))))
+        share = kept[:, k]
         for art in drawn:
             art.remove()
-        bins = np.logspace(np.log10(max(x[x > 0].min(), 1e-3)), np.log10(max(x.max(), 1.0)) + 0.01, 120)
-        drawn[:] = [*hist.hist(x, bins=bins, color="0.7", log=True)[2], *hist.hist(x[keep], bins=bins, color="tab:blue",
-                    log=True)[2], hist.axvline(cut + 0.5, color="tab:red")]  # fmt: skip
-        hist.set(xscale="log", xlabel="counts per pixel (rendered)", ylabel="pixels",
-                 title=f"density {density:g}: blue kept above cut {cut:g}")  # fmt: skip
-        cuts = np.arange(0, 51)
-        n_kept = [(counts > c).mean() for c in cuts]
-        i_kept = [x[counts > c].sum() / max(x.sum(), 1e-30) for c in cuts]
-        drawn.extend(a1.plot(cuts, n_kept, color="tab:blue", label="pixels kept"))
-        drawn.extend(a1.plot(cuts, i_kept, color="tab:orange", label="intensity kept"))
-        drawn.append(a1.axvline(cut, color="tab:red"))
-        a1.set(xlabel="cut (counts)", ylabel="fraction", ylim=(0, 1.02), title="against the cut")
-        a1.legend(fontsize=8)
+        drawn[:] = list(ax[1].hist(share, bins=np.linspace(0, 1, 51), color="tab:blue", log=True)[2])
+        ax[1].set(xlabel="share of the peak's intensity above the cut", ylabel="peaks", title=f"density {d[k]:.3g}")
+        v.set_xdata([density, density])
         fig.canvas.draw_idle()
-        return (f"density {density:g}, cut {cut:g}: {keep.sum()} of {len(x)} rendered pixels kept "
-                f"({keep.mean() * 100:.1f}%), holding {x[keep].sum() / max(x.sum(), 1e-30) * 100:.1f}% of the "
-                f"intensity; brightest pixel {x.max():.3g} counts (rows {probe['rows']})")  # fmt: skip
+        return (f"density {d[k]:.3g}: {(lost > d[k]).mean() * 100:.1f}% of the peaks gone; a peak keeps "
+                f"{np.median(share) * 100:.0f}% of its intensity (median), {np.percentile(share, 10) * 100:.0f}% "
+                f"(10th percentile)")  # fmt: skip
 
     return update
 

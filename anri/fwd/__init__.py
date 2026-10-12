@@ -20,6 +20,7 @@ from ._impl.render import (
     render_peaks,
     render_phases,
     render_row,
+    row_peaks,
     select_peaks,
 )
 from ._impl.scan import (
@@ -73,6 +74,7 @@ __all__ = [
     "render_peaks",
     "render_phases",
     "render_row",
+    "row_peaks",
     "select_peaks",
 ]
 # fmt: on

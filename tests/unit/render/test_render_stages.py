@@ -83,6 +83,12 @@ class TestRenderStages(unittest.TestCase):
             img = dg.row_image(prov["resolved"]["sparse_file"], 1)
             with h5py.File(prov["resolved"]["sparse_file"], "r") as h:
                 self.assertEqual(img["image"].sum(), h["2.1"]["intensity"][()].sum())
+            pr = dg.probe_rows(p, [1], cut=1.0, densities=[1.0, 50.0, 1e4], log=lambda m: None)
+            self.assertGreater(len(pr["lost_below"]), 0)
+            gone = [(pr["lost_below"] > d).mean() for d in pr["densities"]]
+            self.assertEqual(gone, sorted(gone, reverse=True))  # fewer peaks gone as the density rises
+            self.assertEqual(gone[-1], 0.0)
+            self.assertTrue((pr["kept_share"] <= 1 + 1e-9).all() and (np.diff(pr["kept_share"], axis=1) >= 0).all())
             cov = dg.ring_coverage(p, n_tth=50, n_eta=90)
             self.assertEqual(cov["on_detector"][0], 1.0)  # the innermost ring is wholly on the detector
 

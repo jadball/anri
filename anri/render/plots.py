@@ -2,16 +2,16 @@
 
 from ._impl.plots import (
     plot_capture,
-    plot_counts,
     plot_footprint,
     plot_rings,
     plot_row_image,
+    plot_survival,
 )
 
 __all__ = [
     "plot_capture",
-    "plot_counts",
     "plot_footprint",
     "plot_rings",
     "plot_row_image",
+    "plot_survival",
 ]

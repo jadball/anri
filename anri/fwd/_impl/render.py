@@ -795,6 +795,78 @@ def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict
     return entries, hkls, F2, jax.tree.map(jnp.asarray, geom), jax.tree.map(jnp.asarray, row)
 
 
+def row_peaks(
+    entries: dict, hkls: jax.Array, geom: dict, row: dict, det_shape: tuple[int, int], window: tuple[int, int, int],
+    max_frames: int | None = None, mesh: Mesh | None = None, select_chunk: int = 2**20,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list]:  # fmt: skip
+    """Return the peaks of one phase that can reach a dty row, and the window size each gets, as :func:`render_row`.
+
+    Parameters
+    ----------
+    entries, hkls, geom, row
+        As :func:`render_row` (JAX arrays, in the entries' dtype)
+    det_shape, window, max_frames, mesh, select_chunk
+        See :func:`render_row`
+
+    Returns
+    -------
+    entry, hkl, branch: np.ndarray
+        [P] int32 indices of the peaks: map entry, row of ``hkls``, and 0 / 1 for etasign +1 / -1
+    peak_class: np.ndarray
+        [P] index into classes of each peak's window
+    classes: list
+        Frames per window, smallest first (window[0], 2 window[0] + 1, ... up to max_frames)
+    """
+    mesh = anri.utils.mesh() if mesh is None else mesh
+    nd = mesh.size
+    ubi, pos = entries["ubi"], entries["pos"]
+    dtype = ubi.dtype
+    n_entries, n_hkls = ubi.shape[0], hkls.shape[0]
+    wo, ws, wf = window
+    classes = [wo]  # frames per window, smallest first
+    if max_frames is not None:
+        while 2 * classes[-1] + 1 <= max_frames:
+            classes.append(2 * classes[-1] + 1)
+    margin = _select_margin((classes[-1], ws, wf), row, geom, dtype)
+    ce = max(nd, (select_chunk // n_hkls) // nd * nd)
+    found = []
+    for start in range(0, n_entries, ce):
+        stop = min(start + ce, n_entries)
+        idx = np.arange(start, start + ce) % n_entries  # padding repeats real entries, then is discarded
+        mask = _select_sharded(ubi[idx], pos[idx], hkls, geom, row, margin, det_shape, mesh)
+        e, h, b = np.nonzero(np.asarray(mask)[: stop - start])
+        found.append((e + start, h, b))
+    e = np.concatenate([f[0] for f in found]).astype(np.int32)
+    h = np.concatenate([f[1] for f in found]).astype(np.int32)
+    b = np.concatenate([f[2] for f in found]).astype(np.int32)
+    n_peaks = e.size
+
+    # Window size class of each peak: the fewest frames that hold +-3.5 sigma of it in omega
+    peak_class = np.zeros(n_peaks, np.int32)
+    if len(classes) > 1 and n_peaks > 0:
+        ostep = float(np.median(np.diff(np.asarray(row["omega_edges"]))))
+        chunk = 2**16  # fixed size: one compile
+        pad = -n_peaks % chunk
+        ehb = [jnp.asarray(np.pad(x, (0, pad))) for x in (e, h, b)]
+        sig_frames = (
+            np.concatenate(
+                [
+                    np.asarray(
+                        _omega_sigma(
+                            ubi, pos, hkls, *(x[i : i + chunk] for x in ehb), geom, row, entries.get("sig_rot")
+                        )
+                    )
+                    for i in range(0, n_peaks + pad, chunk)
+                ]
+            )[:n_peaks]
+            / ostep
+        )
+        needed = 2 * np.ceil(3.5 * sig_frames + 0.5) + 1
+        peak_class = np.minimum(np.searchsorted(np.asarray(classes), needed), len(classes) - 1).astype(np.int32)
+
+    return e, h, b, peak_class, classes
+
+
 def render_row(
     entries: dict,
     hkls: np.ndarray,
@@ -862,55 +934,16 @@ def render_row(
     mesh = anri.utils.mesh() if mesh is None else mesh
     nd = mesh.size
     entries, hkls_j, F2_j, geom, row_j = _as_jax(entries, hkls, F2, geom, row)
-    ubi, pos = entries["ubi"], entries["pos"]
-    dtype = ubi.dtype
-    n_entries, n_hkls = ubi.shape[0], hkls_j.shape[0]
+    dtype = entries["ubi"].dtype
 
-    # 1. Which peaks can reach this row? Chunks of entries, padded to a multiple of the device count.
-    wo, ws, wf = window
-    classes = [wo]  # frames per window, smallest first
-    if max_frames is not None:
-        while 2 * classes[-1] + 1 <= max_frames:
-            classes.append(2 * classes[-1] + 1)
-    margin = _select_margin((classes[-1], ws, wf), row, geom, dtype)
-    ce = max(nd, (select_chunk // n_hkls) // nd * nd)
-    found = []
-    for start in range(0, n_entries, ce):
-        stop = min(start + ce, n_entries)
-        idx = np.arange(start, start + ce) % n_entries  # padding repeats real entries, then is discarded
-        mask = _select_sharded(ubi[idx], pos[idx], hkls_j, geom, row_j, margin, det_shape, mesh)
-        e, h, b = np.nonzero(np.asarray(mask)[: stop - start])
-        found.append((e + start, h, b))
-    e = np.concatenate([f[0] for f in found]).astype(np.int32)
-    h = np.concatenate([f[1] for f in found]).astype(np.int32)
-    b = np.concatenate([f[2] for f in found]).astype(np.int32)
+    # 1. Which peaks can reach this row, and the window size of each
+    _, ws, wf = window
+    e, h, b, peak_class, classes = row_peaks(entries, hkls_j, geom, row_j, det_shape, window, max_frames, mesh,
+                                             select_chunk)  # fmt: skip
     n_peaks = e.size
     if n_peaks == 0:
         empty = np.zeros(0, np.int32)
         return empty, empty, np.zeros(0), {"n_peaks": 0, "captured": np.zeros(0), "in_range": np.zeros(0)}
-
-    # Window size class of each peak: the fewest frames that hold +-3.5 sigma of it in omega
-    peak_class = np.zeros(n_peaks, np.int32)
-    if len(classes) > 1:
-        ostep = float(np.median(np.diff(np.asarray(row["omega_edges"]))))
-        chunk = 2**16  # fixed size: one compile
-        pad = -n_peaks % chunk
-        ehb = [jnp.asarray(np.pad(x, (0, pad))) for x in (e, h, b)]
-        sig_frames = (
-            np.concatenate(
-                [
-                    np.asarray(
-                        _omega_sigma(
-                            ubi, pos, hkls_j, *(x[i : i + chunk] for x in ehb), geom, row_j, entries.get("sig_rot")
-                        )
-                    )
-                    for i in range(0, n_peaks + pad, chunk)
-                ]
-            )[:n_peaks]
-            / ostep
-        )
-        needed = 2 * np.ceil(3.5 * sig_frames + 0.5) + 1
-        peak_class = np.minimum(np.searchsorted(np.asarray(classes), needed), len(classes) - 1).astype(np.int32)
 
     # 2. Render in fixed-size batches split over the devices, one window size at a time. Small problems use smaller
     # batches: 1024 peaks per device times a power of 4, so a scan compiles few shapes. Each compile takes seconds,
