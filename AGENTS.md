@@ -171,6 +171,56 @@ Earlier AI-written attempts were removed for exactly this reason: they were hard
 - Check in before adding new abstractions or API surface.
 - Going slower with better understanding beats a fast, opaque result.
 
+## One way to do each thing
+
+Each computation exists once. Before writing one, look for it in the lower layers and extend that instead of copying
+it. The layers, each importing only from those above it:
+
+1. `anri.utils`: JAX setup and devices.
+2. `anri.maths`: pure maths. `rotation` holds all rotation algebra; `utils` holds small numerical helpers.
+3. `anri.geom`: frames (goniometer, detector, beam, scan grids).
+4. `anri.diffract`: scattering (Ewald, 2θ/η, Lorentz and polarisation).
+5. `anri.crystal`: lattices, symmetry, structure factors, and orientations *with* crystal symmetry.
+6. Methods: `anri.fwd`, `anri.index`.
+
+`anri.io` and `anri.phantom` sit at the edges. When unifying copies, prove the outputs unchanged with a before/after
+comparison, and explain every difference that remains.
+
+## Methods: stages, diagnostics, plots
+
+A method is driven three ways: from the command line when the numbers are known, from Jupyter to choose them by
+looking at the data, and from workflow systems such as Ewoks and its Orange canvas. Ewoks is not built yet, but keep it
+possible. All three share three layers inside anri; a front-end only adds its own controls.
+
+- **Stages**: steps worth re-running on their own with other options. Each is a plain function: input file paths and
+  keyword options in, one HDF5 file written, its path returned. Inputs and outputs are JSON-serialisable (paths,
+  numbers, strings), and big arrays stay on disk. The command line has one subcommand per stage, plus `run` and `show`.
+- **Split stages at decision points**: a parameter chosen by looking at a stage's output belongs to a later stage. For
+  example, y0 is read off the histogram's sinogram, so it is an option of the fit, not of the histogram.
+- **Diagnostics**: pure functions that return the numbers behind each decision (curves, histograms, maps), from stage
+  files or arrays. No plotting and no widgets.
+- **Plots**: optional matplotlib functions `plot_x(fig, diag) -> update(**params)`. Each draws once and returns a
+  closure that redraws for new parameter values. Jupyter binds ipywidgets to `update`; an Orange widget would bind Qt
+  controls to the same function. No plotting classes.
+- **Progress**: library code never prints. It reports through a `log` callable and, in iterative steps, a
+  `callback(iteration, state, ...)`.
+- **Notebooks**: they call the same stages, diagnostics and plots, and write the same files as the command line. They
+  never copy library maths or command-line glue.
+
+### Provenance
+
+The worst outcome is a good result on disk that nobody knows how to make again.
+
+- Every stage file has a `provenance` group. Its attributes hold the stage, a unique id, the source file and that
+  file's id (checked when read, so a remade upstream file is refused), the anri version, git commit and dirty flag, the
+  date, the working directory and the command. Three subgroups hold attributes too: `options` (as given; None
+  omitted), `resolved` (worked out from the data) and `results` (a summary).
+- Use plain HDF5 attributes. Not NeXus: community NeXus definitions for these processes are being worked out, so
+  don't pre-empt them. Not TOML sidecars either: one copy of the provenance, in the file it describes. `show` prints
+  the chain for humans.
+- Variants (the same stage with other options) are separate files (`--out`), each pointing back to its source. Never
+  overwrite a source in place.
+
 ## Installing software
 
 **Never install anything without asking the maintainer first:** no `pip`, `conda`/`mamba`, `npm` or downloaded binaries, not even into a temporary folder.
