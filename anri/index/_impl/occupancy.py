@@ -523,6 +523,7 @@ def fit_occupancy(
     log: Callable = print,
     return_model: bool = False,
     censor: float = 0.0,
+    callback: Callable | None = None,
 ) -> tuple:
     """Fit sparse occupancies: candidates per voxel, then MLEM.
 
@@ -557,6 +558,9 @@ def fit_occupancy(
         Also return the fitted histogram ``A f``, e.g. to compare with the data row by row
     censor
         Empty bins censored above this many counts per bin in the MLEM (:func:`censored_ratio`); 0: plain MLEM
+    callback
+        Passed to the final :func:`mlem`: ``callback(iteration, f, deviance)`` after each iteration, f over the fitted
+        voxels padded to whole blocks (the first ``len(pos)`` are the voxels)
     log
         Progress messages
 
@@ -594,7 +598,7 @@ def fit_occupancy(
         f0, cand = candidates_from(H, cand_in, pred, ring_j, pos_p, scan, dims, k, max(vb // 2, 1), log=log)
     log(f"candidates: {time.perf_counter() - t0:.1f} s")
     t0 = time.perf_counter()
-    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor)
+    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor, callback=callback)
     log(f"MLEM {n_iter} iterations: {time.perf_counter() - t0:.1f} s")
     if return_model:
         mu = forward(f, cand, pred, ring_j, pos_p, scan, dims, H.shape[0], vb)

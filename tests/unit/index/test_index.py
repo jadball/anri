@@ -397,28 +397,28 @@ class TestProvenance(unittest.TestCase):
                     write_provenance(h, stage, source, {"cand": 64, "y0": None, "path": "C:\\data\\x"},
                                      {"lattice": [2.87, 2.87, 2.87], "flag": True})  # fmt: skip
                 source = paths[-1]
-            self.assertEqual(ix.upstream(paths[3], "histogram"), paths[0])
+            self.assertEqual(ix.upstream(paths[-1], "histogram"), paths[0])
             prov = ix.read_provenance(paths[2])
             self.assertEqual((prov["stage"], prov["options"]["cand"], prov["options"]["path"]),
                              ("filter", 64, "C:\\data\\x"))  # fmt: skip
             self.assertNotIn("y0", prov["options"])  # None is left out: HDF5 has no null
             self.assertEqual(prov["resolved"]["lattice"], [2.87, 2.87, 2.87])
             self.assertIs(prov["resolved"]["flag"], True)
-            text = ix.show(paths[3])
+            text = ix.show(paths[-1])
             self.assertLess(text.index("[histogram]"), text.index("[search]"))
-            self.assertLess(text.index("[filter]"), text.index("[map]"))
+            self.assertLess(text.index("[filter]"), text.index("[populations]"))
             # moved together to another folder: the sources are found beside each other
             moved = os.path.join(tmp, "moved")
             os.mkdir(moved)
             for p in paths:
                 shutil.move(p, moved)
-            self.assertEqual(ix.upstream(os.path.join(moved, "x_map.h5"), "histogram"),
+            self.assertEqual(ix.upstream(os.path.join(moved, "x_populations.h5"), "histogram"),
                              os.path.join(moved, "x_histogram.h5"))  # fmt: skip
-            # a remade search is not the one the filter and map were made from
+            # a remade search is not the one the later stages were made from
             with h5py.File(os.path.join(moved, "x_search.h5"), "w") as h:
                 write_provenance(h, "search", os.path.join(moved, "x_histogram.h5"), {}, {})
             with self.assertRaises(ValueError):
-                ix.upstream(os.path.join(moved, "x_map.h5"), "histogram")
+                ix.upstream(os.path.join(moved, "x_populations.h5"), "histogram")
 
 
 if __name__ == "__main__":

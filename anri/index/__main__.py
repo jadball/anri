@@ -1,12 +1,14 @@
 """Index an ImageD11 scanning-3DXRD dataset from scratch: orientation populations per voxel.
 
-The indexer runs in four stages, each a subcommand that writes one HDF5 file the next one reads:
+The indexer runs in five stages, each a subcommand that writes one HDF5 file the next one reads:
 
     python -m anri.index histogram <analysisroot> <sample> <dataset> [options]   -> <sample>_<dataset>_histogram.h5
     python -m anri.index search  <..._histogram.h5> [options]                    -> <...>_search.h5
     python -m anri.index filter  <..._search.h5> [options]                       -> <...>_filter.h5
-    python -m anri.index map     <..._filter.h5> [options]                       -> <...>_map.h5, _entries.npz, _tmap.h5
-    python -m anri.index run <analysisroot> <sample> <dataset> [options]         all four
+    python -m anri.index fit     <..._filter.h5> [options]                       -> <...>_fit.h5
+    python -m anri.index populations <..._fit.h5> [options]                      -> <...>_populations.h5, _entries.npz,
+                                                                                    _tmap.h5
+    python -m anri.index run <analysisroot> <sample> <dataset> [options]         all five
     python -m anri.index show <any stage file>                                   how it was made, back to the dataset
 
 Each file records its options, the values resolved from the data, the file it was made from (checked by id when
@@ -41,7 +43,6 @@ def _histogram_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--tth-tol", type=float, help="2theta tolerance of the rings (deg; default: measured per ring)")
     p.add_argument("--monitor", help="normalise intensities by this counter in each scan's measurement, frame by frame, "
                    "as ImageD11's DataSet.set_monitor does (e.g. fpico6; default: no normalisation)")  # fmt: skip
-    p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the DataSet's y0)")
     p.add_argument("--dty-source", choices=("dataset", "frames"), default="dataset", help="which dty bins the frames "
                    "into rows: the DataSet's (default; for a fly or helical scan one row per rotation, at its mean), or "
                    "each frame's own (the DataSet's plus the motion within its row, anri.io.read_frame_dty: a helical "
@@ -87,7 +88,8 @@ def _filter_options(p: argparse.ArgumentParser) -> None:
                    "about 5 sigma)")  # fmt: skip
 
 
-def _map_options(p: argparse.ArgumentParser) -> None:
+def _fit_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the DataSet's y0)")
     p.add_argument(
         "--iter",
         type=int,
@@ -99,10 +101,6 @@ def _map_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--cand", type=int, default=64, help="candidate orientations per voxel (default 64)")
     p.add_argument("--coarse", type=int, default=1, help="first fit voxels this many times larger, then give each voxel "
                    "the candidates of its coarse neighbourhood (default 1: off; 4 is ~16x cheaper on large maps)")  # fmt: skip
-    p.add_argument("--occupied", type=float, default=0.2, help="voxels count as occupied (in the TensorMap and entries) "
-                   "above this x the 99th percentile of the total occupancy in the mask (default 0.2; the raw occupancy is always saved)")  # fmt: skip
-    p.add_argument("--min-frac", type=float, default=0.1, help="report populations holding at least this fraction of a "
-                   "voxel's occupancy (default 0.1)")  # fmt: skip
     p.add_argument(
         "--block-gb", type=float, default=1.0, help="memory for one block of voxels' system entries (default 1 GB)"
     )
@@ -113,6 +111,13 @@ def _map_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--mask", help="fit only the voxels in a sample mask: 'auto' (Otsu threshold and convex hull of a "
                    "quick reconstruction, as ImageD11's tomo_2_map), or a .npy file of [voxels, voxels] booleans in "
                    "reconstruction order, e.g. drawn with anri.index.draw_mask (default: every voxel)")  # fmt: skip
+
+
+def _populations_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--occupied", type=float, default=0.2, help="voxels count as occupied (in the TensorMap and entries) "
+                   "above this x the 99th percentile of the total occupancy in the mask (default 0.2; the raw occupancy is always saved)")  # fmt: skip
+    p.add_argument("--min-frac", type=float, default=0.1, help="report populations holding at least this fraction of a "
+                   "voxel's occupancy (default 0.1)")  # fmt: skip
 
 
 def parse_args() -> argparse.Namespace:
@@ -143,18 +148,24 @@ def parse_args() -> argparse.Namespace:
     _censor_option(f)
     f.add_argument("--out", help="output file (default: the source's name with _filter)")
 
-    m = sub.add_parser("map", parents=[common], help="occupancies per voxel, populations, TensorMap and entries")
+    m = sub.add_parser("fit", parents=[common], help="occupancies of the kept orientations per voxel")
     m.add_argument("source", help="a filter stage file")
-    _map_options(m)
+    _fit_options(m)
     _censor_option(m)
-    m.add_argument("--out", help="output file (default: the source's name with _map)")
+    m.add_argument("--out", help="output file (default: the source's name with _fit)")
 
-    r = sub.add_parser("run", parents=[dataset, common], help="all four stages, into --outdir")
+    q = sub.add_parser("populations", parents=[common], help="orientation populations, TensorMap and entries")
+    q.add_argument("source", help="a fit stage file")
+    _populations_options(q)
+    q.add_argument("--out", help="output file (default: the source's name with _populations)")
+
+    r = sub.add_parser("run", parents=[dataset, common], help="all five stages, into --outdir")
     _histogram_options(r)
     _search_options(r)
     _keep_option(r)
     _filter_options(r)
-    _map_options(r)
+    _fit_options(r)
+    _populations_options(r)
     _censor_option(r)
     r.add_argument("--outdir", default=".")
 
@@ -177,14 +188,13 @@ def main() -> None:
     import anri.index as ix
 
     cmd = args.command
-    run = {"command": "python -m anri.index " + shlex.join(sys.argv[1:]), "log": log}
+    command = "python -m anri.index " + shlex.join(sys.argv[1:])
     if cmd in ("histogram", "run"):
         out = getattr(args, "out", None) or os.path.join(args.outdir, f"{args.sample}_{args.dataset}_histogram.h5")
         source = ix.stage_histogram(
             args.analysisroot, args.sample, args.dataset, out, phase=args.phase, parfile=args.parfile,
-            rings=args.rings, cif=args.cif, tth_tol=args.tth_tol, monitor=args.monitor, y0=args.y0,
-            dty_source=args.dty_source, frame_dty=not args.no_frame_dty, gridstep=args.gridstep, check=args.check,
-            **run,
+            rings=args.rings, cif=args.cif, tth_tol=args.tth_tol, monitor=args.monitor, dty_source=args.dty_source,
+            frame_dty=not args.no_frame_dty, gridstep=args.gridstep, check=args.check, command=command, log=log,
         )  # fmt: skip
         if args.check or cmd == "histogram":
             return
@@ -193,14 +203,17 @@ def main() -> None:
     out = None if cmd == "run" else args.out
     if cmd in ("search", "run"):
         source = ix.stage_search(source, out, grid=args.grid, max_chance=args.max_chance, lit=args.lit,
-                                 etacut=args.etacut, min_comp=args.min_comp, keep=args.keep, **run)  # fmt: skip
+                                 etacut=args.etacut, min_comp=args.min_comp, keep=args.keep, command=command,
+                                 log=log)  # fmt: skip
     if cmd in ("filter", "run"):
         source = ix.stage_filter(source, out, prune=args.prune, min_lr=args.min_lr, keep=args.keep,
-                                 censor=args.censor, **run)  # fmt: skip
-    if cmd in ("map", "run"):
-        ix.stage_map(source, out, cand=args.cand, n_iter=args.iter, coarse=args.coarse, beam=args.beam,
-                     mask=args.mask, block_gb=args.block_gb, censor=args.censor, occupied=args.occupied,
-                     min_frac=args.min_frac, **run)  # fmt: skip
+                                 censor=args.censor, command=command, log=log)  # fmt: skip
+    if cmd in ("fit", "run"):
+        source = ix.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.iter, coarse=args.coarse,
+                              beam=args.beam, mask=args.mask, block_gb=args.block_gb, censor=args.censor,
+                              command=command, log=log)  # fmt: skip
+    if cmd in ("populations", "run"):
+        ix.stage_populations(source, out, occupied=args.occupied, min_frac=args.min_frac, command=command, log=log)
     log(f"done in {time.perf_counter() - T0:.0f} s")
 
 

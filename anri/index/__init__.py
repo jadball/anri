@@ -11,10 +11,11 @@ The steps, in order (``python -m anri.index`` runs them on an ImageD11 dataset):
 4. :func:`fit_occupancy`: sparse occupancy of the kept orientations per voxel by MLEM, every voxel fitted jointly.
 5. :func:`populations`: each voxel's occupancy grouped into orientation populations with fractions and spreads.
 
-The same steps as four stages that each write one HDF5 file with its provenance, for the command line, notebooks and
+The same steps as five stages that each write one HDF5 file with its provenance, for the command line, notebooks and
 workflow systems: :func:`stage_histogram` (step 1), :func:`stage_search` (completeness), :func:`stage_filter`
-(likelihood or completeness) and :func:`stage_map` (steps 4 and 5). :func:`show` prints how any stage file was made,
-back to the dataset (:func:`read_provenance` and :func:`upstream` read the chain).
+(likelihood or completeness), :func:`stage_fit` (step 4) and :func:`stage_populations` (step 5). :func:`show`
+prints how any stage file was made, back to the dataset (:func:`read_provenance` and :func:`upstream` read the
+chain). :func:`open_dataset` opens a dataset as the histogram stage does.
 """
 
 from ._impl.data import (
@@ -59,14 +60,22 @@ from ._impl.predict import (
     prune,
 )
 from ._impl.stages import (
+    lit_map,
     load_histogram,
+    open_dataset,
     read_provenance,
+    row_intensities,
+    sample_groups,
+    select_by_likelihood,
+    select_populations,
     show,
     stage_filter,
+    stage_fit,
     stage_histogram,
-    stage_map,
+    stage_populations,
     stage_search,
     upstream,
+    voxel_grid,
 )
 
 __all__ = [
@@ -91,10 +100,12 @@ __all__ = [
     "histogram",
     "histogram_pixels",
     "inherit_candidates",
+    "lit_map",
     "lit_table",
     "load_histogram",
     "match_tolerances",
     "mlem",
+    "open_dataset",
     "orientation_mlem",
     "otsu",
     "pad_voxels",
@@ -110,13 +121,19 @@ __all__ = [
     "ring_profile",
     "ring_table",
     "ring_widths",
+    "row_intensities",
+    "sample_groups",
+    "select_by_likelihood",
+    "select_populations",
     "show",
     "stage_filter",
+    "stage_fit",
     "stage_histogram",
-    "stage_map",
+    "stage_populations",
     "stage_search",
     "system",
     "threshold_mask",
     "tth_profile",
     "upstream",
+    "voxel_grid",
 ]
