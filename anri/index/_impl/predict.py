@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from anri.crystal import orientation_grid
+from anri.crystal import U_B_to_UBI, orientation_grid
 from anri.fwd import hkl_to_k_omega, lorentz, polarisation
 from anri.geom import sample_to_lab, wrap_omega
 
@@ -45,7 +45,7 @@ def predict(U: jax.Array, B: jax.Array, hkls: jax.Array, geom: dict) -> tuple[ja
     eta, omega, valid: jax.Array
         [Nq, 2 Nh] each, prediction ``j = 2 h + branch``; eta and omega in degrees
     """
-    ubi = jnp.linalg.inv(U @ B)
+    ubi = U_B_to_UBI(U, B)
 
     def one(u: jax.Array, h: jax.Array, e: jax.Array) -> tuple:
         _, k_out, om, ok = hkl_to_k_omega(
@@ -75,7 +75,7 @@ def lorentz_polarisation(U: jax.Array, B: jax.Array, hkls: jax.Array, geom: dict
     jax.Array
         [Nq, 2 Nh] factors
     """
-    ubi = jnp.linalg.inv(U @ B)
+    ubi = U_B_to_UBI(U, B)
     axis = sample_to_lab(jnp.array([0.0, 0.0, 1.0], U.dtype), 0.0, geom["wedge"], geom["chi"], 0.0, 0.0)
 
     def one(u: jax.Array, h: jax.Array, e: jax.Array) -> jax.Array:

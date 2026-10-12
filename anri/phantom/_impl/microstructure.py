@@ -301,7 +301,7 @@ def tensormap(ph: dict, lattice_parameters: ArrayLike, spacegroup: int, phase_na
         grain's mean orientation (taken over the grain's non-twin voxels); and "sig_rot" (radians) if the phantom has
         an intrinsic spread
     """
-    from anri.crystal import B_matrix, disorientation, laue_rotations, symmetry_matrices
+    from anri.crystal import B_matrix, U_B_to_UBI, disorientation, float64, laue_rotations, symmetry_matrices
     from anri.io import tensormap_from_recon
 
     B = np.asarray(B_matrix(np.asarray(lattice_parameters, float)))
@@ -316,8 +316,10 @@ def tensormap(ph: dict, lattice_parameters: ArrayLike, spacegroup: int, phase_na
     mis = np.full(len(U), np.nan)
     mis[inside] = np.asarray(disorientation(U[inside], mean_U[inside], ops))
     shape = ph["inside"].shape
+    with float64():  # phantom strains are ~1e-5: keep UBI in float64
+        ubi = np.asarray(U_B_to_UBI(ph["U"], B))
     maps = {
-        "UBI": np.where(ph["inside"][..., None, None], np.linalg.inv(ph["U"] @ B), np.nan),
+        "UBI": np.where(ph["inside"][..., None, None], ubi, np.nan),
         "phase_ids": np.where(ph["inside"], 0, -1),
         "labels": ph["grain"],
         "cell": ph["cell"],

@@ -179,3 +179,12 @@ class TestMetricTensors(unittest.TestCase):
         # the metric tensor does not depend on the orientation
         U = anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0)
         np.testing.assert_allclose(anri.crystal.UBI_to_mt(jnp.linalg.inv(U @ B)), uc.g, rtol=1e-10)
+
+
+class TestUBToUBI(unittest.TestCase):
+    def test_against_inverse(self):
+        q = np.random.default_rng(0).normal(size=(5, 4))
+        U = np.asarray(anri.crystal.quat_to_mat(q / np.linalg.norm(q, axis=1, keepdims=True)))
+        B = np.asarray(anri.crystal.lpars_to_B(jnp.array([3.0, 4.0, 5.0, 85.0, 95.0, 100.0])))
+        np.testing.assert_allclose(anri.crystal.U_B_to_UBI(U, B), np.linalg.inv(U @ B), rtol=0, atol=1e-13)
+        self.assertTrue(np.all(np.isnan(anri.crystal.U_B_to_UBI(np.full((3, 3), np.nan), B))))

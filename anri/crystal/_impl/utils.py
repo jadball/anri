@@ -12,6 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from anri.utils import inv3
+
 
 @jax.jit
 def lpars_to_mt(lpars: jax.Array) -> jax.Array:
@@ -284,6 +286,25 @@ def UBI_to_mt(UBI: jax.Array) -> jax.Array:
     """
     mt = UBI @ UBI.T
     return mt
+
+
+@jax.jit
+def U_B_to_UBI(U: jax.Array, B: jax.Array) -> jax.Array:
+    r"""Convert an orientation and a B matrix to the (U.B)^-1 matrix.
+
+    Parameters
+    ----------
+    U
+        [..., 3, 3] Orientation matrices
+    B
+        [..., 3, 3] Reciprocal space orthogonalization matrix (broadcasts against U)
+
+    Returns
+    -------
+    UBI: jax.Array
+        [..., 3, 3] :math:`\left(\matr{U}\matr{B}\right)^{-1}`; NaN where U is NaN
+    """
+    return inv3(U @ B)
 
 
 ### cross-transforms for convenience

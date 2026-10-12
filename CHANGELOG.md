@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `anri.crystal.U_B_to_UBI`: the one (U B)^-1, used by the indexer's predictions and results and by `anri.phantom.tensormap` (each inverted U @ B itself). The indexer's predictions now use the explicit 3x3 inverse (`anri.utils.inv3`); results agree to float32 rounding.
 - `anri.geom.wrap_omega` (into [om0, om0 + 360)) and `nearest_omega` (the turn nearest a reference): the indexer's histogram binning, `dty_offsets` and the renderer each wrapped omega inline. `dty_offsets` now bins omega exactly as `anri.index.system` does, so its offsets always line up with the histogram's omega bins.
 - `anri.geom.dty_to_row`: the one frame-to-row assignment, used by `anri.io.stream_sparse` and `anri.index.dty_offsets` (which had separate copies that had to agree).
 - `anri.utils.fwhm_to_sigma` and `sigma_to_fwhm`: the one Gaussian FWHM conversion. `python -m anri.index` used both 2.355 and 2 sqrt(2 ln 2); it now uses the exact factor everywhere, so its default beam and bandwidth widths change by 0.008%.

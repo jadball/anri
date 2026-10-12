@@ -25,6 +25,7 @@ from ._impl.structure import (
 )
 from ._impl.utils import (
     B_to_rmt,
+    U_B_to_UBI,
     UBI_to_mt,
     allowed_hkls,
     lpars_rlpars_to_B,
@@ -40,6 +41,7 @@ __all__ = [
     "B_matrix",
     "B_to_rmt",
     "UBI_to_mt",
+    "U_B_to_UBI",
     "allowed_hkls",
     "cubic_grid_misorientation",
     "cubochoric_quaternions",

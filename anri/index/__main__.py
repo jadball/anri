@@ -102,6 +102,7 @@ def save_results(
     """
     import numpy as np
 
+    import anri.crystal
     import anri.io
 
     os.makedirs(os.path.dirname(os.path.abspath(tag)), exist_ok=True)
@@ -111,11 +112,14 @@ def save_results(
     tot = f.sum(1)
     n_side = round(np.sqrt(len(f)))
     v, q = np.nonzero(present)
-    np.savez(f"{tag}_entries.npz", ubi=np.linalg.inv(U_pop[v, q] @ B), pos=pos[v], density=tot[v] * frac[v, q],
+    with anri.crystal.float64():
+        ubi_pop = np.asarray(anri.crystal.U_B_to_UBI(U_pop[v, q], B))
+        ubi_main = np.asarray(anri.crystal.U_B_to_UBI(U_pop[:, 0], B))
+    np.savez(f"{tag}_entries.npz", ubi=ubi_pop, pos=pos[v], density=tot[v] * frac[v, q],
              sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q])  # fmt: skip
     try:
         maps = {
-            "UBI": np.where(occupied[:, None, None], np.linalg.inv(U_pop[:, 0] @ B), np.nan),
+            "UBI": np.where(occupied[:, None, None], ubi_main, np.nan),
             "phase_ids": np.where(occupied, 0, -1),
             "occupancy": tot,
             "n_populations": present.sum(1),
