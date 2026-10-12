@@ -66,7 +66,7 @@ def closest_equivalent(U_ref: ArrayLike, U: ArrayLike, ops: ArrayLike) -> tuple[
     U_S: jax.Array
         [..., 3, 3] the equivalents
     angle: jax.Array
-        [...] their misorientation from U_ref (radians), from :func:`rotation_angle`
+        [...] their misorientation from U_ref (radians), from :func:`~anri.maths.rotation.rotation_angle`
     """
     U_ref, U, ops = jnp.asarray(U_ref), jnp.asarray(U), jnp.asarray(ops)
     sym = U[..., None, :, :] @ ops  # [..., n, 3, 3]

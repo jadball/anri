@@ -16,7 +16,7 @@ cheap to redo without fitting again. The selections that sliders redo are functi
 Each file records how it was made in a ``provenance`` group: the stage, a unique id, the file it was made from and
 that file's id (checked when it is read), the anri version and git commit, the date and command, and as attributes of
 ``provenance/options``, ``provenance/resolved`` and ``provenance/results`` every option given, every value worked out
-from the data, and a summary of the results. :func:`show` prints the whole chain. Variants (e.g. fits with different
+from the data, and a summary of the results. :func:`~anri.io.provenance.show` prints the whole chain. Variants (e.g. fits with different
 options from one filter) are separate files, each pointing back to its input.
 """
 

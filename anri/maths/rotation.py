@@ -340,7 +340,7 @@ def rotation_angle(R: ArrayLike) -> jax.Array:
 def mean_rotation(U: ArrayLike, w: ArrayLike) -> jax.Array:
     """Weighted mean of nearby rotations: the rotation closest to their weighted sum (SVD projection).
 
-    Align symmetric equivalents first (:func:`closest_equivalent`). The projection keeps det = +1, so the result is
+    Align symmetric equivalents first (:func:`~anri.crystal.orientation.closest_equivalent`). The projection keeps det = +1, so the result is
     always a proper rotation. With all weights zero it is the identity.
 
     Parameters
