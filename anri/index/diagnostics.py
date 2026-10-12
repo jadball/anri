@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .data import pixel_cake, ring_table, ring_widths
-from .predict import GRID_STEPS, grid_chance, prune
+from .search import GRID_STEPS, grid_chance, prune
 from .stages import B_E, B_O, R_E, R_O, sample_groups
 
 
@@ -205,7 +205,7 @@ def eta_profile(H_lit: np.ndarray, n_rings: int, scan: dict) -> dict:
 
 def grid_chances(d: dict, lit: dict, steps: tuple = GRID_STEPS, max_orientations: float = 4e6, seed: int = 0,
                  log: Callable = print) -> dict:  # fmt: skip
-    """Return the chance completeness of every grid step, drawn as :func:`anri.index.predict.choose_grid` draws it.
+    """Return the chance completeness of every grid step, drawn as :func:`anri.index.search.choose_grid` draws it.
 
     Parameters
     ----------
@@ -242,7 +242,7 @@ def grid_deviances(d: dict, lit: dict, steps: tuple, etacut: float, min_lr: floa
     """Fit the orientations above chance of each grid step to the row-summed data: how fine a grid the fit needs.
 
     The deviance falls as the grid gets finer while the grid limits the fit, and flattens where the data no longer
-    tell finer grids apart. About one orientation fit (:func:`anri.index.orientations.orientation_mlem`) per step.
+    tell finer grids apart. About one orientation fit (:func:`anri.index.orientations.fit`) per step.
 
     Returns
     -------
@@ -251,8 +251,8 @@ def grid_deviances(d: dict, lit: dict, steps: tuple, etacut: float, min_lr: floa
     """
     import anri.crystal
 
+    from . import orientations
     from .occupancy import deviance
-    from .orientations import orientation_mlem
 
     sc = d["scan"]
     data = d["H"].reshape(-1, sc["n_rows"]).sum(1)
@@ -262,7 +262,7 @@ def grid_deviances(d: dict, lit: dict, steps: tuple, etacut: float, min_lr: floa
         U, delta = anri.crystal.orientation.orientation_grid(s, d["ops"])
         _, comp, info = prune(U, delta, d["B"], d["rings"], d["geom"], lit, None, keep)
         fitted = np.flatnonzero(comp > info["chance"])
-        _, lr, mu = orientation_mlem(data, U[fitted], d["B"], d["rings"], d["geom"], bins, etacut,
+        _, lr, mu = orientations.fit(data, U[fitted], d["B"], d["rings"], d["geom"], bins, etacut,
                                      log=lambda m: None, censor=censor, return_model=True)  # fmt: skip
         out[s] = (len(fitted), float(deviance(data, jnp.asarray(mu), censor)), int(np.sum(lr > min_lr)))
         log(f"grid {s} deg: {out[s][0]} orientations above chance; deviance {out[s][1]:.5g}; {out[s][2]} with "

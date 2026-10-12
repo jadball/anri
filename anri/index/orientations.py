@@ -19,7 +19,7 @@ from jax.typing import ArrayLike
 
 from .data import eta_omega_corners
 from .occupancy import censored_ratio, deviance
-from .predict import predict
+from .search import predict
 
 
 def _system(
@@ -86,7 +86,7 @@ def _likelihood_ratio(
     return jax.lax.map(one, (g, U))
 
 
-def orientation_mlem(
+def fit(
     d: ArrayLike,
     U: ArrayLike,
     B: ArrayLike,
@@ -116,7 +116,7 @@ def orientation_mlem(
     rings
         From :func:`anri.index.data.ring_table` ("hkls", "ring_j" and, optionally, "F2")
     geom
-        Geometry dict, see :func:`anri.index.predict.predict`
+        Geometry dict, see :func:`anri.index.search.predict`
     bins
         (b_e, b_o, n_e, n_o, om0): the histogram's eta and omega bin widths (degrees) and counts, and its first omega
         bin edge

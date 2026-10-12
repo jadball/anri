@@ -95,7 +95,7 @@ def beam_from_pars(pars: dict, k_in_lab: ArrayLike | None = None) -> dict:
         ImageD11 parameters with ``wavelength``. ImageD11 has no beam direction: its beam is along lab x.
     k_in_lab
         [3] Direction of the incoming beam in the lab frame (default lab x), normalised here. It must not be
-        vertical: beam divergence and polarisation are defined across it, see :func:`anri.geom.utils.beam_basis`.
+        vertical: beam divergence and polarisation are defined across it, see :func:`anri.geom.beam.beam_basis`.
 
     Returns
     -------

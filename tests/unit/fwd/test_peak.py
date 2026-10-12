@@ -9,7 +9,7 @@ import anri.fwd
 import anri.geom
 import anri.io
 import anri.maths.rotation
-from anri.fwd.base import make_propagator
+from anri.fwd.peak import make_propagator
 
 jax.config.update("jax_enable_x64", True)
 
@@ -21,7 +21,7 @@ def _box_args():
         "tilt_x": 0.0, "distance": 150e3, "o11": 1, "o12": 0, "o21": 0, "o22": 1,
     }  # fmt: skip
     det = anri.io.imaged11.detector_from_pars(pars)
-    B = anri.crystal.utils.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0]))
+    B = anri.crystal.lattice.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0]))
     ubi = jnp.linalg.inv(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ B)
     detector = (det["s_step_lab"], det["f_step_lab"], det["det_origin_lab"])
     # (ubi, origin, hkl, etasign, wavelength, k_in_lab, ky, kz, wedge, chi, s_step, f_step, det_origin)
@@ -46,12 +46,12 @@ class TestPropagate(unittest.TestCase):
         self.args = _box_args()
         self.assertTrue(anri.fwd.box.get_centroid_box(*self.args)[1])
         self.j_parts, self.J = _jacobian(self.args)
-        self.cov_in = anri.fwd.base.get_cov_in(jnp.array([1.0, 2.0, 0.5]), 3e-4, 1e-4, 2e-4)
+        self.cov_in = anri.fwd.peak.get_cov_in(jnp.array([1.0, 2.0, 0.5]), 3e-4, 1e-4, 2e-4)
 
     def test_diagonal(self):
         expected = self.J @ self.cov_in @ self.J.T
         np.testing.assert_allclose(anri.fwd.box.propagate_cov_box(*self.args, self.cov_in), expected, rtol=1e-10)
-        np.testing.assert_allclose(anri.fwd.base.propagate_cov(self.j_parts, self.cov_in), expected, rtol=1e-10)
+        np.testing.assert_allclose(anri.fwd.peak.propagate_cov(self.j_parts, self.cov_in), expected, rtol=1e-10)
 
     def test_diag_out(self):
         # diag_out keeps the four variances of the scanning centroid (sc, fc, omega, dty)
@@ -92,15 +92,15 @@ class TestDivergence(unittest.TestCase):
         args = _box_args()
         rng = np.random.default_rng(1)
         for k in [np.array([1.0, 0.0, 0.0]), *rng.normal(size=(5, 3)) + [3.0, 0.0, 0.0]]:
-            k_hat, e_h, e_v = anri.geom.utils.beam_basis(jnp.asarray(k))
-            k_in, _, _, _ = anri.fwd.base.hkl_to_k_omega(
+            k_hat, e_h, e_v = anri.geom.beam.beam_basis(jnp.asarray(k))
+            k_in, _, _, _ = anri.fwd.peak.hkl_to_k_omega(
                 args[0], args[2], 1.0, 0.3, jnp.asarray(k), 2e-4, -3e-4, 1.0, -2.0
             )
             np.testing.assert_allclose([k_in @ k_hat, k_in @ e_h, k_in @ e_v], [1.0, 2e-4, -3e-4], atol=1e-14)
-            both = anri.fwd.base.hkl_to_k_omega_both(args[0], args[2], 0.3, jnp.asarray(k), 2e-4, -3e-4, 1.0, -2.0)
+            both = anri.fwd.peak.hkl_to_k_omega_both(args[0], args[2], 0.3, jnp.asarray(k), 2e-4, -3e-4, 1.0, -2.0)
             np.testing.assert_allclose(both[0], k_in, atol=1e-14)
         # along x, the divergence is the lab y and z components, as before
-        k_in_x = anri.fwd.base.hkl_to_k_omega(
+        k_in_x = anri.fwd.peak.hkl_to_k_omega(
             args[0], args[2], 1.0, 0.3, jnp.array([1.0, 0.0, 0.0]), 2e-4, -3e-4, 1.0, -2.0
         )[0]
         np.testing.assert_allclose(k_in_x, [1.0, 2e-4, -3e-4], atol=1e-15)
@@ -114,17 +114,17 @@ class TestGetCentroid(unittest.TestCase):
         for es in (1.0, -1.0):
             scan, valid = anri.fwd.scan.get_centroid_scan(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, y0, *det)
             self.assertTrue(bool(valid))
-            cen, _ = anri.fwd.base.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, scan[3], y0, *det)
+            cen, _ = anri.fwd.peak.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, scan[3], y0, *det)
             np.testing.assert_allclose(cen, scan[:3], atol=1e-9)
 
     def test_both_and_box(self):
         ubi, origin, hkl, _, wl, k, ky, kz, wedge, chi, *det = _box_args()
-        both, _ = anri.fwd.base.get_centroid_both(ubi, origin, hkl, wl, k, ky, kz, wedge, chi, 2.0, 0.5, *det)
+        both, _ = anri.fwd.peak.get_centroid_both(ubi, origin, hkl, wl, k, ky, kz, wedge, chi, 2.0, 0.5, *det)
         for i, es in enumerate((1.0, -1.0)):
-            one, _ = anri.fwd.base.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, 2.0, 0.5, *det)
+            one, _ = anri.fwd.peak.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, 2.0, 0.5, *det)
             np.testing.assert_allclose(both[i], one, atol=1e-12)
             box, _ = anri.fwd.box.get_centroid_box(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, *det)
-            cube, _ = anri.fwd.base.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, 0.0, 0.0, *det, False)
+            cube, _ = anri.fwd.peak.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, 0.0, 0.0, *det, False)
             np.testing.assert_allclose(box, cube, atol=1e-12)
 
 

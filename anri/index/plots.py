@@ -311,7 +311,7 @@ def plot_grid(fig: Figure, chances: dict, grid: float | None = None) -> Callable
     grid
         A fixed step, if given (then max_chance does not choose it)
     """
-    from .predict import GRID_STEPS
+    from .search import GRID_STEPS
 
     ax = fig.subplots()
     xs = [str(s) for s in chances]
@@ -370,7 +370,7 @@ def plot_completeness(fig: Figure, comp: np.ndarray, chance: float, halfway: flo
     keep
         The filter's keep
     """
-    from .predict import select_by_completeness
+    from .search import select_by_completeness
 
     ax = fig.subplots(1, 2, sharex=True)
     ax[0].hist(comp, bins=100, log=True, color="tab:blue")
@@ -612,7 +612,7 @@ def plot_populations(fig: Figure, tot: np.ndarray, mask: np.ndarray, frac: np.nd
     tot, mask
         [Nv] each voxel's total occupancy and the voxels fitted (a fit stage file)
     frac, spread
-        [Nv, P] the populations' fractions and spreads (:func:`anri.index.populations.populations`)
+        [Nv, P] the populations' fractions and spreads (:func:`anri.index.populations.group`)
     step
         The grid step (spreads include it)
     nr

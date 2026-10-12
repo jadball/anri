@@ -4,8 +4,8 @@ import jax
 import jax.numpy as jnp
 from jax.typing import ArrayLike
 
+from anri.geom.beam import beam_basis
 from anri.geom.gonio import sample_to_lab
-from anri.geom.utils import beam_basis
 
 
 def lorentz(k_in: jax.Array, k_out: jax.Array, rot_axis: jax.Array) -> jax.Array:
@@ -21,7 +21,7 @@ def lorentz(k_in: jax.Array, k_out: jax.Array, rot_axis: jax.Array) -> jax.Array
 def polarisation(k_in: jax.Array, k_out: jax.Array, factor: ArrayLike) -> jax.Array:
     """Polarisation factor for a beam polarised horizontally, with degree of polarisation ``factor``.
 
-    Horizontal and vertical are across the beam, see :func:`anri.geom.utils.beam_basis`. For a beam along lab x
+    Horizontal and vertical are across the beam, see :func:`anri.geom.beam.beam_basis`. For a beam along lab x
     (horizontal = lab y) this equals :func:`ImageD11.refinegrains.polarization` with ``eta0 = 0``.
     ``factor = 1`` is fully horizontally polarised, ``factor = 0`` is unpolarised.
     """
@@ -39,7 +39,7 @@ def lorentz_polarisation(
     ----------
     k_in, k_out
         [3] Incoming and outgoing wave-vectors in the lab frame (any length), e.g. from
-        :func:`anri.fwd.base.hkl_to_k_omega`
+        :func:`anri.fwd.peak.hkl_to_k_omega`
     wedge, chi
         Wedge and chi motor values (degrees): they tilt the rotation axis
     pol_factor

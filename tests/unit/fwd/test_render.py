@@ -204,7 +204,7 @@ def _single_peak_setup():
     }  # fmt: skip
 
     U = np.asarray(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0))
-    B = np.asarray(anri.crystal.utils.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+    B = np.asarray(anri.crystal.lattice.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
     ubi = np.linalg.inv(U @ B)
     i, j = np.mgrid[0:10, 0:10]
     pos = np.stack([(i.ravel() - 4.5) * voxel, (j.ravel() - 4.5) * voxel, np.zeros(100)], 1)
@@ -688,7 +688,7 @@ class TestBoxBeam(unittest.TestCase):
             width_beam=1000.0, sig_beam_v=0.5, width_beam_v=1000.0, voxel_3d=True,
         )  # fmt: skip
         g = jax.tree.map(jnp.asarray, geom)
-        B = anri.crystal.utils.lpars_to_B(jnp.array([2.8665, 2.8665, 2.8665, 90.0, 90.0, 90.0]))
+        B = anri.crystal.lattice.lpars_to_B(jnp.array([2.8665, 2.8665, 2.8665, 90.0, 90.0, 90.0]))
         ubi = jnp.linalg.inv(
             anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0) @ B
         )

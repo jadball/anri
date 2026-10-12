@@ -14,7 +14,7 @@ jax.config.update("jax_enable_x64", True)
 class TestCentroidBoxBoth(unittest.TestCase):
     def test_matches_single_branches(self):
         # both Friedel solutions at once == two single-branch calls, with a tilted detector, wedge and chi
-        B = anri.crystal.utils.lpars_to_B(jnp.array([4.0, 4.0, 4.0, 90.0, 90.0, 90.0]))
+        B = anri.crystal.lattice.lpars_to_B(jnp.array([4.0, 4.0, 4.0, 90.0, 90.0, 90.0]))
         rng = np.random.default_rng(0)
         q, _ = np.linalg.qr(rng.normal(size=(5, 3, 3)))
         ubi = jnp.linalg.inv(jnp.asarray(q) @ B)

@@ -307,7 +307,7 @@ def select_populations(tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, occu
     mask
         [Nv] the voxels fitted
     frac
-        [Nv, P] each population's fraction of its voxel (:func:`anri.index.populations.populations`)
+        [Nv, P] each population's fraction of its voxel (:func:`anri.index.populations.group`)
     occupied, min_frac
         See :func:`stage_populations`
 
@@ -486,7 +486,7 @@ def stage_search(
     """
     import anri.crystal
 
-    from .predict import choose_grid, completeness_levels, completeness_of
+    from .search import choose_grid, completeness_levels, completeness_of
 
     options = {"grid": grid, "max_chance": max_chance, "lit": lit, "etacut": etacut}
     d = load_histogram(histogram_file)
@@ -547,8 +547,8 @@ def stage_filter(
     str
         The file written
     """
-    from .orientations import orientation_mlem
-    from .predict import select_by_completeness
+    from . import orientations
+    from .search import select_by_completeness
 
     options = {"prune": prune, "min_comp": min_comp, "min_lr": min_lr, "keep": keep, "censor": censor}
     s_prov = read_provenance(search_file)
@@ -565,7 +565,7 @@ def stage_filter(
         sc = d["scan"]
         data = d["H"].reshape(-1, sc["n_rows"]).sum(1)
         bins_o = (B_E * R_E, B_O * R_O, sc["n_e"] // R_E, sc["n_o"] // R_O, sc["om0"])
-        _, lr = orientation_mlem(data, U_grid[fitted], d["B"], d["rings"], d["geom"], bins_o, so["etacut"], log=log,
+        _, lr = orientations.fit(data, U_grid[fitted], d["B"], d["rings"], d["geom"], bins_o, so["etacut"], log=log,
                                  censor=censor)  # fmt: skip
         kept = select_by_likelihood(fitted, lr, min_lr, keep)
         n_above = int(np.sum(lr > min_lr))
@@ -645,7 +645,7 @@ def stage_fit(
 
     from .mask import disc_mask, reconstruct, threshold_mask
     from .occupancy import beam_rows, fit_occupancy
-    from .predict import predictions
+    from .search import predictions
 
     options = {"y0": y0, "cand": cand, "n_iter": n_iter, "coarse": coarse, "beam": beam, "mask": mask,
                "block_gb": block_gb, "censor": censor, "save_model": save_model}  # fmt: skip
@@ -775,8 +775,8 @@ def stage_populations(
     import anri.io
     from anri.maths.utils import float64
 
-    from .populations import populations
-    from .predict import completeness_of
+    from . import populations
+    from .search import completeness_of
 
     options = {"occupied": occupied, "min_frac": min_frac}
     search_file = upstream(fit_file, "search")
@@ -791,7 +791,7 @@ def stage_populations(
     step, delta = sres["grid_step"], sres["grid_worst_case_deg"]
     tot = f.sum(1)
     t1 = time.perf_counter()
-    frac, U_pop, spread, n_pop = populations(f, cands, U_kept, d["ops"], 1.8 * step, p=N_POP)
+    frac, U_pop, spread, n_pop = populations.group(f, cands, U_kept, d["ops"], 1.8 * step, p=N_POP)
     occ, present = select_populations(tot, sel, frac, occupied, min_frac)
     comp_pop = np.zeros(frac.shape, np.float32)
     lm = lit_map(d["H_lit"], d["scan"], d["n_rings"], so["lit"], so["etacut"])
@@ -816,8 +816,8 @@ def stage_populations(
     stem = os.path.splitext(out)[0]
     v, q = np.nonzero(present)
     with float64():
-        ubi_pop = np.asarray(anri.crystal.utils.U_B_to_UBI(U_pop[v, q], d["B"]))
-        ubi_main = np.asarray(anri.crystal.utils.U_B_to_UBI(U_pop[:, 0], d["B"]))
+        ubi_pop = np.asarray(anri.crystal.lattice.U_B_to_UBI(U_pop[v, q], d["B"]))
+        ubi_main = np.asarray(anri.crystal.lattice.U_B_to_UBI(U_pop[:, 0], d["B"]))
     np.savez(f"{stem}_entries.npz", ubi=ubi_pop, pos=pos[v].astype(np.float32), density=tot[v] * frac[v, q],
              sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q], voxel_size=YSTEP,
              lattice=np.asarray(r["lattice"], float), space_group=r["space_group"], phase=r["phase"])  # fmt: skip

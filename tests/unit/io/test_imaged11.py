@@ -194,7 +194,7 @@ class TestSimulateSparse(unittest.TestCase):
             "tilt_x": 0.0, "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1, "wavelength": 0.2883,
         }  # fmt: skip
         geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0)
-        B = np.asarray(anri.crystal.utils.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+        B = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
         entries = {"ubi": np.linalg.inv(B)[None], "pos": np.zeros((1, 3)), "density": np.ones(1)}
         omega, dty = motor_grid((0.0, 10.0), 0.25, (100.0, 101.0), 1.0)  # the beam never reaches the voxel
         with tempfile.TemporaryDirectory() as tmp:
@@ -220,7 +220,7 @@ class TestSimulateSparse(unittest.TestCase):
         U = np.asarray(
             anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0)
         )
-        B = np.asarray(anri.crystal.utils.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+        B = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
         i, j = np.mgrid[0:4, 0:4]
         pos = np.stack([i.ravel() - 1.5, j.ravel() - 1.5, np.zeros(16)], 1)
         entries = {"ubi": np.repeat(np.linalg.inv(U @ B)[None], 16, 0), "pos": pos, "density": np.full(16, 50.0)}
@@ -254,7 +254,7 @@ class TestSimulateSparse(unittest.TestCase):
         cell = {"cell__a": a, "cell__b": a, "cell__c": a, "cell_alpha": 90.0, "cell_beta": 90.0, "cell_gamma": 90.0}
         cell["cell_lattice_[P,A,B,C,I,F,R]"] = 229
         geom = geom_from_pars(pars, 0.0, pars["wavelength"] * 1e-3, 1e-3, 1e-3, sig_beam=0.5, voxel_size=1.0)
-        B = np.asarray(anri.crystal.utils.lpars_to_B(np.array([a, a, a, 90.0, 90.0, 90.0])))
+        B = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([a, a, a, 90.0, 90.0, 90.0])))
         U = np.asarray(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0))
         entries = {"ubi": np.linalg.inv(U @ B)[None], "pos": np.zeros((1, 3)), "density": np.full(1, 100.0)}
         hkls = np.array([[1.0, 1.0, 0.0], [-1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
@@ -354,7 +354,7 @@ class TestGeomFromPars(unittest.TestCase):
         U = np.asarray(
             anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0)
         )
-        B = np.asarray(anri.crystal.utils.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+        B = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
         ubi = np.linalg.inv(U @ B)
         checked = 0
         for hkl in ([1.0, 1.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 1.0], [-1.0, 2.0, 1.0], [3.0, 1.0, 0.0]):

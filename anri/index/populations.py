@@ -40,7 +40,7 @@ def _populations(
     return jax.vmap(one)(f, cand)
 
 
-def populations(
+def group(
     f: ArrayLike,
     cand: ArrayLike,
     U_list: ArrayLike,

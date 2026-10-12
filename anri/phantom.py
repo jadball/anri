@@ -243,9 +243,9 @@ def tensormap(ph: dict, lattice_parameters: ArrayLike, spacegroup: int, phase_na
         grain's mean orientation (taken over the grain's non-twin voxels); and "sig_rot" (radians) if the phantom has
         an intrinsic spread
     """
+    from anri.crystal.lattice import U_B_to_UBI
     from anri.crystal.orientation import disorientation, laue_rotations
     from anri.crystal.structure import B_matrix, symmetry_matrices
-    from anri.crystal.utils import U_B_to_UBI
     from anri.io.imaged11 import tensormap_from_recon
     from anri.maths.rotation import mean_rotation
 

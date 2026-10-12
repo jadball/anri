@@ -284,7 +284,7 @@ class TestOriginLab(unittest.TestCase):
         for k in (jnp.array([1.0, 0.0, 0.1]), jnp.array([1.0, -0.2, -0.05])):
             origin = anri.geom.gonio.origin_lab(self.v, k, *self.args)
             np.testing.assert_allclose(origin[:2], lab[:2], atol=1e-12)
-            _, height, _, _ = anri.geom.utils.beam_offsets(origin - jnp.array([0.0, 0.0, lab[2]]), k)
+            _, height, _, _ = anri.geom.beam.beam_offsets(origin - jnp.array([0.0, 0.0, lab[2]]), k)
             self.assertAlmostEqual(float(height), 0.0, places=12)
 
     def test_dty_and_origin_lab_uses_it(self):

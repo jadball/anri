@@ -10,9 +10,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from anri.diffract.scatter import omega_from_core, omega_solns_core, q_lab_to_k_out, scale_norm_k
+from anri.geom.beam import beam_basis
 from anri.geom.detector import raytrace_to_det
 from anri.geom.gonio import lab_to_sample, origin_lab, sample_to_lab
-from anri.geom.utils import beam_basis
 from anri.maths.utils import inv3
 
 
@@ -65,10 +65,10 @@ def hkl_to_k_omega(
         [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky:
         Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     kz:
         Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     wedge:
         Wedge motor value (degrees)
     chi:
@@ -118,10 +118,10 @@ def hkl_to_k_omega_both(
         [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky:
         Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     kz:
         Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     wedge:
         Wedge motor value (degrees)
     chi:
@@ -204,7 +204,7 @@ def get_centroid(
         centre line runs along it through the lab origin.
     ky, kz
         Horizontal and vertical beam divergence: small tilts of the beam (radians) across it, see
-        :func:`anri.geom.utils.beam_basis`. They change the diffraction, not where the voxel is. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. They change the diffraction, not where the voxel is. Usually zero.
     wedge, chi
         Wedge and chi motor values (degrees)
     dty

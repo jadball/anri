@@ -50,21 +50,22 @@ class TestLattice(unittest.TestCase):
                 continue
             np.testing.assert_allclose(anri.crystal.structure.B_matrix(lp), uc.B, rtol=1e-7, atol=1e-10)
             with anri.maths.utils.float64():
-                mt = np.asarray(anri.crystal.utils.lpars_to_mt(lp))
-                rmt = np.asarray(anri.crystal.utils.mt_to_rmt(mt))
+                mt = np.asarray(anri.crystal.lattice.lpars_to_mt(lp))
+                rmt = np.asarray(anri.crystal.lattice.mt_to_rmt(mt))
                 np.testing.assert_allclose(mt, uc.g, rtol=1e-7, atol=1e-10)
                 np.testing.assert_allclose(rmt, uc.gi, rtol=1e-7, atol=1e-10)
                 np.testing.assert_allclose(
-                    anri.crystal.utils.mt_to_lpars(rmt), [uc.astar, uc.bstar, uc.cstar, uc.alphas, uc.betas, uc.gammas]
+                    anri.crystal.lattice.mt_to_lpars(rmt),
+                    [uc.astar, uc.bstar, uc.cstar, uc.alphas, uc.betas, uc.gammas],
                 )
-                np.testing.assert_allclose(anri.crystal.utils.metric_to_volume(mt), cellvolume(lp))
+                np.testing.assert_allclose(anri.crystal.lattice.metric_to_volume(mt), cellvolume(lp))
 
     def test_float64(self):
         """The B matrix is float64 (the JAX definition evaluated in float64), whatever JAX's global setting."""
         B = anri.crystal.structure.B_matrix([3.1, 3.2, 5.1, 90.0, 95.0, 120.0])
         self.assertEqual(B.dtype, np.float64)
         with anri.maths.utils.float64():
-            ref = np.asarray(anri.crystal.utils.lpars_to_B(np.array([3.1, 3.2, 5.1, 90.0, 95.0, 120.0])))
+            ref = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([3.1, 3.2, 5.1, 90.0, 95.0, 120.0])))
         np.testing.assert_array_equal(B, ref)
 
 

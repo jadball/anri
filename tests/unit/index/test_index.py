@@ -72,11 +72,11 @@ class TestTolerances(unittest.TestCase):
         axis = np.random.default_rng(1).normal(size=(200, 3))
         dU = anri.maths.rotation.quat_to_mat(np.column_stack([np.full(200, np.cos(np.radians(0.5))),
                                                        np.sin(np.radians(0.5)) * axis / np.linalg.norm(axis, axis=1, keepdims=True)]))  # fmt: skip
-        e0, o0, k0, _ = ix.predict.predict(jnp.asarray(U0), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom)
-        e1, o1, k1, _ = ix.predict.predict(
+        e0, o0, k0, _ = ix.search.predict(jnp.asarray(U0), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom)
+        e1, o1, k1, _ = ix.search.predict(
             jnp.asarray((dU @ U0).astype(np.float32)), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom
         )
-        te, to = ix.predict.match_tolerances(
+        te, to = ix.search.match_tolerances(
             e0, jnp.asarray(rings["ring_j"]), jnp.asarray(rings["tth"]), jnp.zeros(3), 1.0, 0.0
         )
         use = np.asarray(k0 & k1) & (np.abs(np.sin(np.radians(np.asarray(e0)))) > 0.3)
@@ -94,7 +94,7 @@ class TestTolerances(unittest.TestCase):
         ok = jnp.ones((1, 3), bool)
 
         def comp(te, to):
-            c, n = ix.predict.completeness(table, eta, om, ok, jnp.zeros(3, jnp.int32), jnp.full((1, 3), te), jnp.full((1, 3), to),
+            c, n = ix.search.completeness(table, eta, om, ok, jnp.zeros(3, jnp.int32), jnp.full((1, 3), te), jnp.full((1, 3), to),
                                   0.0, 1.0, 1.0, 360, 180)  # fmt: skip
             self.assertEqual(int(n[0]), 3)
             return float(c[0])
@@ -110,7 +110,7 @@ class TestOccupancy(unittest.TestCase):
         c, B, _ = iron()
         rings = ix.data.ring_table(*c, PARS["wavelength"], 2)
         geom = geometry()
-        pred = ix.predict.predictions(rotations(16, 2), B, rings, geom, 0.2)
+        pred = ix.search.predictions(rotations(16, 2), B, rings, geom, 0.2)
         rng = np.random.default_rng(3)
         pos = jnp.asarray(np.column_stack([rng.uniform(-4, 4, (32, 2)), np.zeros(32)]), jnp.float32)
         scan = {"y0": 0.0, "dty0": -6.0, "ystep": 1.0, "n_rows": 13, "om0": 0.0}
@@ -128,7 +128,7 @@ class TestOccupancy(unittest.TestCase):
         """<A f, r> = <f, A^T r> with a beam profile over the rows too."""
         c, B, _ = iron()
         rings = ix.data.ring_table(*c, PARS["wavelength"], 2)
-        pred = ix.predict.predictions(rotations(16, 2), B, rings, geometry(), 0.2)
+        pred = ix.search.predictions(rotations(16, 2), B, rings, geometry(), 0.2)
         rng = np.random.default_rng(3)
         pos = jnp.asarray(np.column_stack([rng.uniform(-4, 4, (32, 2)), np.zeros(32)]), jnp.float32)
         scan = {"y0": 0.0, "dty0": -6.0, "ystep": 1.0, "n_rows": 13, "om0": 0.0, "sig_beam": 0.6, "width_beam": 0.0,
@@ -216,7 +216,7 @@ class TestOccupancy(unittest.TestCase):
         """mlem (SQUAREM): the deviance never rises, and it fits at least as well as plain MLEM with the same updates."""
         c, B, _ = iron()
         rings = ix.data.ring_table(*c, PARS["wavelength"], 2)
-        pred = ix.predict.predictions(rotations(16, 2), B, rings, geometry(), 0.2)
+        pred = ix.search.predictions(rotations(16, 2), B, rings, geometry(), 0.2)
         rng = np.random.default_rng(5)
         pos = jnp.asarray(np.column_stack([rng.uniform(-4, 4, (32, 2)), np.zeros(32)]), jnp.float32)
         scan = {"y0": 0.0, "dty0": -6.0, "ystep": 1.0, "n_rows": 13, "om0": 0.0}
@@ -279,7 +279,7 @@ class TestOccupancy(unittest.TestCase):
         om = jnp.asarray(rng.uniform(-180, 180, (6, 1, 1)), jnp.float32)
         dty = anri.geom.gonio.find_dty_for_beam_xy(pos[:, None, None, :], k, om, wedge, chi, y0)[:, 0, 0]
         for v, o, d in zip(pos, om[:, 0, 0], dty):
-            across = anri.geom.utils.beam_offsets(anri.geom.gonio.sample_to_lab(v, o, wedge, chi, d, y0), k)[0]
+            across = anri.geom.beam.beam_offsets(anri.geom.gonio.sample_to_lab(v, o, wedge, chi, d, y0), k)[0]
             self.assertAlmostEqual(float(across), 0.0, places=4)  # the renderer's beam passes through the voxel
         scan = {"y0": y0, "dty0": -10.0, "ystep": 1.0, "n_rows": 21, "om0": -180.0, "k_in_lab": k, "wedge": wedge,
                 "chi": chi}  # fmt: skip
@@ -323,7 +323,7 @@ class TestPopulations(unittest.TestCase):
         U_list = np.stack([U0, *(s @ U0 for s in small), twin @ U0, rotations(1, 5)[0]])  # parent x 4, twin, decoy
         f = np.array([[0.3, 0.2, 0.15, 0.15, 0.17, 0.03]])
         cand = np.arange(6)[None]
-        frac, U, spread, n = ix.populations.populations(f, cand, U_list, ops, 2.0)
+        frac, U, spread, n = ix.populations.group(f, cand, U_list, ops, 2.0)
         np.testing.assert_allclose(frac[0, :3], [0.8, 0.17, 0.03], atol=1e-5)
         np.testing.assert_array_equal(n[0, :3], [4, 1, 1])
         self.assertLess(anri.crystal.orientation.disorientation(U[0, :1], U0[None], ops)[0], 0.5)
@@ -380,10 +380,10 @@ class TestEndToEnd(unittest.TestCase):
             "etacut": 0.2,
         }
         U_grid, delta = anri.crystal.orientation.orientation_grid(5.0, ops)
-        kept, _, info = ix.predict.prune(U_grid, delta, B, rings, geom, lit)
+        kept, _, info = ix.search.prune(U_grid, delta, B, rings, geom, lit)
         self.assertGreater(info["min_comp"], info["chance"])
         U_kept = U_grid[kept]
-        pred = ix.predict.predictions(U_kept, B, rings, geom, 0.2)
+        pred = ix.search.predictions(U_kept, B, rings, geom, 0.2)
         _, pad = anri.geom.scan.sino_shift_and_pad(0.0, nk, float(ds["ybincens"][0]), 1.0)
         nr = nk + pad
         vox = np.asarray(anri.geom.scan.recon_positions(nr, 1.0), np.float32)
@@ -391,7 +391,7 @@ class TestEndToEnd(unittest.TestCase):
         f, cand = ix.occupancy.fit_occupancy(
             H, pred, rings["ring_j"], vox, scan, (1.0, 1.0, 360, 180), k=16, n_iter=2, log=lambda m: None
         )
-        frac, U_pop, _, _ = ix.populations.populations(f, cand, U_kept, ops, 1.8 * 5.0)
+        frac, U_pop, _, _ = ix.populations.group(f, cand, U_kept, ops, 1.8 * 5.0)
         # voxels well inside each grain find it as their main population, to within the grid's spacing
         for g, sel in ((0, (vox[:, 0] < -0.9) & (vox[:, 0] > -2.6)), (1, (vox[:, 0] > 0.9) & (vox[:, 0] < 2.6))):
             sel &= np.abs(vox[:, 1]) < 2.6
@@ -495,11 +495,11 @@ class TestSelections(unittest.TestCase):
     def test_completeness(self):
         """The filter's completeness cut: at or above min_comp, the most complete first, at most keep."""
         comp = np.array([0.1, 0.5, 0.3, 0.5, 0.9, 0.2, 0.1])
-        chance, halfway = ix.predict.completeness_levels(comp)
+        chance, halfway = ix.search.completeness_levels(comp)
         np.testing.assert_allclose((chance, halfway), (0.3, 0.6))  # median, and halfway to 0.9
-        np.testing.assert_array_equal(ix.predict.select_by_completeness(comp, 0.3, 3)[:1], [4])
-        self.assertEqual(set(ix.predict.select_by_completeness(comp, 0.3, 10)), {1, 2, 3, 4})
-        self.assertEqual(len(ix.predict.select_by_completeness(comp, 0.3, 2)), 2)
+        np.testing.assert_array_equal(ix.search.select_by_completeness(comp, 0.3, 3)[:1], [4])
+        self.assertEqual(set(ix.search.select_by_completeness(comp, 0.3, 10)), {1, 2, 3, 4})
+        self.assertEqual(len(ix.search.select_by_completeness(comp, 0.3, 2)), 2)
 
 
 if __name__ == "__main__":
@@ -541,9 +541,7 @@ class TestOrientationFit(unittest.TestCase):
         d = _forward(
             jnp.asarray(g_true.reshape(-1, 8)), jnp.asarray(U.reshape(-1, 8, 3, 3)), *args, bins, 3 * 360 * 180
         )
-        g, lr = ix.orientations.orientation_mlem(
-            np.asarray(d), U, B, rings, geom, bins, 0.2, n_iter=50, qc=8, log=lambda m: None
-        )
+        g, lr = ix.orientations.fit(np.asarray(d), U, B, rings, geom, bins, 0.2, n_iter=50, qc=8, log=lambda m: None)
         self.assertEqual(set(np.argsort(lr)[-2:]), {17, 123})
         self.assertGreater(lr[[17, 123]].min(), 25.0)
         np.testing.assert_allclose(g[[17, 123]], [100.0, 25.0], rtol=0.1)

@@ -16,11 +16,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from anri.crystal.lattice import U_B_to_UBI
 from anri.crystal.orientation import orientation_grid
-from anri.crystal.utils import U_B_to_UBI
 from anri.diffract.factors import lorentz_polarisation
 from anri.diffract.scatter import k_out_to_tth_eta
-from anri.fwd.base import hkl_to_k_omega
+from anri.fwd.peak import hkl_to_k_omega
 from anri.geom.gonio import wrap_omega
 
 from .data import eta_bin, omega_bin

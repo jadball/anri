@@ -21,11 +21,11 @@ from jax.typing import ArrayLike
 from anri.diffract.scatter import ds_to_tth
 from anri.maths.utils import float64
 
-from .utils import allowed_hkls, lpars_to_B
+from .lattice import allowed_hkls, lpars_to_B
 
 
 def B_matrix(lattice_parameters: ArrayLike) -> np.ndarray:
-    """Compute the B matrix of a lattice in float64 (from :func:`anri.crystal.utils.lpars_to_B`, no 2 pi).
+    """Compute the B matrix of a lattice in float64 (from :func:`anri.crystal.lattice.lpars_to_B`, no 2 pi).
 
     Parameters
     ----------
@@ -101,7 +101,7 @@ def reflections(
     """List every reflection of a crystal up to a d* (and that diffracts at this wavelength), without absences.
 
     Systematic absences of the space group (lattice centring, screw axes, glide planes) are removed with
-    :func:`anri.crystal.utils.allowed_hkls`. Reflections with no intensity for other reasons (atoms on special positions)
+    :func:`anri.crystal.lattice.allowed_hkls`. Reflections with no intensity for other reasons (atoms on special positions)
     remain; :func:`structure_factors` finds those.
 
     Parameters

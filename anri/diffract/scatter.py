@@ -5,7 +5,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from anri.geom.utils import beam_basis
+from anri.geom.beam import beam_basis
 
 
 @jax.jit
@@ -123,7 +123,7 @@ def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float, k_in_lab
     k_in_lab:
         [3] Direction of the incoming beam; default along lab x. For any beam,
         $\hat{k}_{\text{out}} = \cos 2\theta \, \hat{k} + \sin 2\theta \, (-\sin\eta \, \hat{e}_h + \cos\eta \, \hat{e}_v)$
-        (:func:`anri.geom.utils.beam_basis`), which is the formula below for a beam along x
+        (:func:`anri.geom.beam.beam_basis`), which is the formula below for a beam along x
 
     Returns
     -------
@@ -157,7 +157,7 @@ def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float, k_in_lab
 def k_out_to_tth_eta(k_out: jax.Array, k_in_lab: jax.Array) -> tuple[jax.Array, jax.Array]:
     r"""Convert outgoing directions to (tth, eta) angles about a beam: the inverse of :func:`tth_eta_to_k_out`.
 
-    With $\hat{k}$, $\hat{e}_h$, $\hat{e}_v$ along and across the beam (:func:`anri.geom.utils.beam_basis`):
+    With $\hat{k}$, $\hat{e}_h$, $\hat{e}_v$ along and across the beam (:func:`anri.geom.beam.beam_basis`):
 
     .. math::
         2\theta = \arccos\left(\hat{k}_{\text{out}} \cdot \hat{k}\right), \qquad

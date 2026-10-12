@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from anri.geom.detector import raytrace_to_det
 from anri.geom.gonio import dty_and_origin_lab
 
-from .base import hkl_to_k_omega, hkl_to_k_omega_both, make_propagator
+from .peak import hkl_to_k_omega, hkl_to_k_omega_both, make_propagator
 
 
 @jax.jit
@@ -47,10 +47,10 @@ def get_centroid_scan(
         [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky
         Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     kz
         Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     wedge
         Wedge motor value (degrees)
     chi
@@ -71,7 +71,7 @@ def get_centroid_scan(
 
     Notes
     -----
-    Propagates (h,k,l) into k-vectors using :func:`anri.fwd.base.hkl_to_k_omega`
+    Propagates (h,k,l) into k-vectors using :func:`anri.fwd.peak.hkl_to_k_omega`
 
     Then computes the origin in the lab frame, and ray-traces into the detector.
     """
@@ -131,10 +131,10 @@ def get_centroid_scan_both(
         [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky
         Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     kz
         Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     wedge
         Wedge motor value (degrees)
     chi
@@ -159,7 +159,7 @@ def get_centroid_scan_both(
     Notes
     -----
     There is no ``etasign`` argument. Both solutions come from one call to
-    :func:`anri.fwd.base.hkl_to_k_omega_both`, which evaluates the geometry shared
+    :func:`anri.fwd.peak.hkl_to_k_omega_both`, which evaluates the geometry shared
     between the branches once. Only ray-tracing to the detector, and the dty
     that follows from each omega, are done per branch.
 

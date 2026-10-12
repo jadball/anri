@@ -5,13 +5,13 @@ The steps, in order (``python -m anri.index`` runs them on an ImageD11 dataset):
 1. :func:`data.ring_table` and :func:`data.ring_profile`: the rings, and how wide they are in the data.
 2. :func:`data.histogram_pixels`: the sparse pixels binned once into ``H[ring, eta, omega, row]``, and a row-summed lit
    map (:func:`data.lit_table`).
-3. :func:`predict.choose_grid`, :func:`predict.prune` and :func:`orientations.orientation_mlem`: an orientation grid
+3. :func:`search.choose_grid`, :func:`search.prune` and :func:`orientations.fit`: an orientation grid
    over the fundamental zone (:func:`anri.crystal.orientation.orientation_grid`), first filtered by completeness with
-   tolerances from the grid and the data (:func:`predict.match_tolerances`), then kept by the likelihood ratio of a
+   tolerances from the grid and the data (:func:`search.match_tolerances`), then kept by the likelihood ratio of a
    global, intensity-aware orientation fit.
 4. :func:`occupancy.fit_occupancy`: sparse occupancy of the kept orientations per voxel by MLEM, every voxel fitted
    jointly (:mod:`anri.index.mask` chooses which voxels).
-5. :func:`populations.populations`: each voxel's occupancy grouped into orientation populations with fractions and
+5. :func:`populations.group`: each voxel's occupancy grouped into orientation populations with fractions and
    spreads.
 
 :mod:`anri.index.stages` runs the same steps as five stages that each write one HDF5 file with its provenance, for the
@@ -23,6 +23,6 @@ dataset as the histogram stage does. The numbers behind each option's choice are
 their plots in :mod:`anri.index.plots`.
 """
 
-from . import data, diagnostics, mask, occupancy, orientations, plots, populations, predict, stages
+from . import data, diagnostics, mask, occupancy, orientations, plots, populations, search, stages
 
-__all__ = ["data", "diagnostics", "mask", "occupancy", "orientations", "plots", "populations", "predict", "stages"]
+__all__ = ["data", "diagnostics", "mask", "occupancy", "orientations", "plots", "populations", "search", "stages"]

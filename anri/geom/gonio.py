@@ -10,7 +10,7 @@ from jax.typing import ArrayLike
 
 from anri.maths.rotation import rot_x, rot_y, rot_z
 
-from .utils import beam_offsets
+from .beam import beam_offsets
 
 
 @jax.jit

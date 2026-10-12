@@ -2,7 +2,7 @@
 
 import jax
 
-from .base import get_centroid, get_centroid_both, make_propagator
+from .peak import get_centroid, get_centroid_both, make_propagator
 
 
 @jax.jit
@@ -42,10 +42,10 @@ def get_centroid_box(
         [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky
         Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     kz
         Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     wedge
         Wedge motor value (degrees)
     chi
@@ -66,7 +66,7 @@ def get_centroid_box(
 
     Notes
     -----
-    This is :func:`anri.fwd.base.get_centroid` with the rotation axis in the beam (dty = y0) and the voxel a cube,
+    This is :func:`anri.fwd.peak.get_centroid` with the rotation axis in the beam (dty = y0) and the voxel a cube,
     scattering from its centre.
     """
     # the voxel at its real position with the rotation axis in the beam (dty = y0), scattering from its centre
@@ -110,10 +110,10 @@ def get_centroid_box_both(
         [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
     ky
         Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     kz
         Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
-        :func:`anri.geom.utils.beam_basis`. Usually zero.
+        :func:`anri.geom.beam.beam_basis`. Usually zero.
     wedge
         Wedge motor value (degrees)
     chi
@@ -135,7 +135,7 @@ def get_centroid_box_both(
 
     Notes
     -----
-    There is no ``etasign`` argument. This is :func:`anri.fwd.base.get_centroid_both` with the rotation axis in the
+    There is no ``etasign`` argument. This is :func:`anri.fwd.peak.get_centroid_both` with the rotation axis in the
     beam (dty = y0) and the voxel a cube, scattering from its centre.
 
     See Also

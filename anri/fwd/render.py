@@ -1,9 +1,9 @@
 """Render peaks from a voxel map into sparse detector pixels, one dty row (one rotation scan) at a time.
 
 A map is a flat list of entries (position, UBI, density), so several orientations per voxel are allowed.
-Each peak is an (entry, hkl, branch) triple. Its (slow, fast, omega) centroid is :func:`anri.fwd.base.get_centroid`,
+Each peak is an (entry, hkl, branch) triple. Its (slow, fast, omega) centroid is :func:`anri.fwd.peak.get_centroid`,
 with the voxel at its real position for the row's dty, and its covariance comes from propagating the beam's spreads
-through it with :func:`anri.fwd.base.make_propagator`.
+through it with :func:`anri.fwd.peak.make_propagator`.
 
 The beam is described by its profile across it, horizontally and vertically: each a flat top of some width,
 blurred by a Gaussian (a pure Gaussian with zero width). A pencil beam is narrow both ways, a line beam wide one
@@ -35,11 +35,11 @@ except ImportError:  # JAX < 0.6, e.g. 0.4.30, the last release for Python 3.9
 
 import anri.utils
 from anri.diffract.factors import lorentz_polarisation
+from anri.geom.beam import beam_basis, beam_offsets
 from anri.geom.gonio import nearest_omega, sample_to_lab
-from anri.geom.utils import beam_basis, beam_offsets
 from anri.maths.rotation import skew
 
-from .base import get_centroid, get_centroid_both, hkl_to_k_omega, make_propagator
+from .peak import get_centroid, get_centroid_both, hkl_to_k_omega, make_propagator
 
 # Smallest batch per device that render_row compiles (see there)
 _MIN_BATCH = 1024
@@ -177,7 +177,7 @@ def _centroid(
     ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, wavelength: ArrayLike, ky: ArrayLike,
     kz: ArrayLike, dty: ArrayLike, geom: dict,
 ) -> tuple[jax.Array, jax.Array]:  # fmt: skip
-    """:func:`anri.fwd.base.get_centroid` with the geometry dict: (sc, fc, omega) of a peak, and whether it diffracts."""
+    """:func:`anri.fwd.peak.get_centroid` with the geometry dict: (sc, fc, omega) of a peak, and whether it diffracts."""
     return get_centroid(
         ubi, pos, hkl, etasign, wavelength, geom["k_in_lab"], ky, kz, geom["wedge"], geom["chi"], dty, geom["y0"],
         geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"], jnp.logical_not(geom["voxel_3d"]),
