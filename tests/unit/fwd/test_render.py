@@ -16,7 +16,7 @@ from anri.fwd import (
     render_row,
     select_peaks,
 )
-from anri.fwd._impl.render import _centroid, _compact, _free_memory, _merge
+from anri.fwd._impl.render import _centroid, _compact, _free_memory, _merge, _merge_host
 from anri.fwd._impl.scan import get_centroid_scan
 from anri.geom import sample_to_lab
 
@@ -606,24 +606,25 @@ class TestGuessBatchSize(unittest.TestCase):
 
 
 class TestMerge(unittest.TestCase):
-    """_merge (used on GPUs) sums duplicates on the device; it must match _compact plus a host merge (CPUs)."""
+    """_merge (GPUs, per batch) and _compact + _merge_host (CPUs) are one merge on two backends: they must agree."""
 
-    def test_matches_host_merge(self):
+    def test_device_and_host_agree(self):
         rng = np.random.default_rng(0)
-        n = 5000
+        n, npix = 5000, 40
         frame = rng.integers(-1, 6, n).astype(np.int32)  # -1: unused cell
-        pixel = rng.integers(0, 40, n).astype(np.int32)  # few pixels, so many duplicates
+        pixel = rng.integers(0, npix, n).astype(np.int32)  # few pixels, so many duplicates
         value = rng.exponential(1.0, n)
         min_value = jnp.asarray(0.5)
         fr, px, val, count = (np.asarray(x) for x in _merge(frame, pixel, value, min_value))
-        fr, px, val = fr[:count], px[:count], val[:count]
         c_fr, c_px, c_val, c_count = (np.asarray(x) for x in _compact(frame, pixel, value, min_value))
-        key = c_fr[:c_count].astype(np.int64) * 40 + c_px[:c_count]
-        uniq, inverse = np.unique(key, return_inverse=True)
-        expected = np.bincount(inverse, weights=c_val[:c_count])
-        np.testing.assert_array_equal(fr.astype(np.int64) * 40 + px, uniq)  # sorted by (frame, pixel), unique
-        np.testing.assert_allclose(val, expected, rtol=1e-6)
-        self.assertTrue(np.all(fr >= 0))
+        h_fr, h_px, h_val = _merge_host(c_fr[:c_count], c_px[:c_count], c_val[:c_count], npix)
+        np.testing.assert_array_equal(fr[:count], h_fr)
+        np.testing.assert_array_equal(px[:count], h_px)
+        np.testing.assert_allclose(val[:count], h_val, rtol=1e-12)
+        self.assertTrue(np.all(h_fr >= 0) and np.all(np.diff(h_fr.astype(np.int64) * npix + h_px) > 0))
+        # merging the device's output again on the host changes nothing (render_row does both on GPUs)
+        again = _merge_host(fr[:count], px[:count], val[:count], npix)
+        np.testing.assert_allclose(again[2], h_val, rtol=1e-12)
 
 
 class TestPolarisationDirection(unittest.TestCase):

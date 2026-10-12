@@ -577,6 +577,8 @@ def _merge(
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Drop contributions below min_value, then sum duplicate (frame, pixel)s: sorted, unique ones first.
 
+    The merge on the device (GPUs), per batch; :func:`_merge_host` is the same merge on the host, across batches and
+    devices (and the only one on CPUs, where XLA's sort is ~3x slower than NumPy's). The two must agree (tested).
     Neighbouring voxels light up the same pixels, so a batch has many duplicates (~100x for a grain). Merging them
     here means only the unique pixels go to the host. Returns fixed-size arrays plus the number of leading entries
     that are used.
@@ -595,6 +597,35 @@ def _merge(
     frame = jnp.zeros_like(frame).at[first].set(frame, mode="drop")
     pixel = jnp.zeros_like(pixel).at[first].set(pixel, mode="drop")
     return frame, pixel, value, jnp.sum(new)
+
+
+def _merge_host(
+    frame: np.ndarray, pixel: np.ndarray, value: np.ndarray, npix: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sum duplicate (frame, pixel)s on the host: unique ones, sorted by (frame, pixel).
+
+    The host side of :func:`_merge` (same result), with NumPy's sort on one int64 key, frame x npix + pixel.
+
+    Parameters
+    ----------
+    frame, pixel, value
+        [N] contributions (all kept: :func:`_compact` or :func:`_merge` has dropped the rest)
+    npix
+        Pixels per frame (n_slow x n_fast)
+
+    Returns
+    -------
+    frame, pixel, value: np.ndarray
+        [M] unique (frame, pixel)s (int32) and their summed values
+    """
+    key = np.asarray(frame).astype(np.int64) * npix + np.asarray(pixel)
+    order = np.argsort(key)
+    key, value = key[order], np.asarray(value)[order]
+    new = np.ones(key.size, bool)
+    new[1:] = key[1:] != key[:-1]
+    starts = np.flatnonzero(new)
+    frame, pixel = np.divmod(key[starts], npix)
+    return frame.astype(np.int32), pixel.astype(np.int32), np.add.reduceat(value, starts)
 
 
 def make_row(omega: np.ndarray, dty: np.ndarray, transmission: np.ndarray | None = None) -> dict:
@@ -905,20 +936,13 @@ def render_row(
             captured_all[sel[start:stop]] = np.asarray(cap)[: stop - start]
 
     # 3. Merge batches and devices: sort by (frame, pixel) and sum duplicates
-    npix = det_shape[0] * det_shape[1]
-    key = np.concatenate(frames).astype(np.int64) * npix + np.concatenate(pixels)
-    value = np.concatenate(values)
-    order = np.argsort(key)
-    key, value = key[order], value[order]
-    new = np.ones(key.size, bool)
-    new[1:] = key[1:] != key[:-1]
-    starts = np.flatnonzero(new)
-    value = np.add.reduceat(value, starts)
-    frame, pixel = np.divmod(key[starts], npix)
+    frame, pixel, value = _merge_host(
+        np.concatenate(frames), np.concatenate(pixels), np.concatenate(values), det_shape[0] * det_shape[1]
+    )
     stats = {"n_peaks": n_peaks, "captured": captured_all}
     if len(classes) > 1:
         stats["window_frames"] = np.asarray(classes)[peak_class]
-    return frame.astype(np.int32), pixel.astype(np.int32), value, stats
+    return frame, pixel, value, stats
 
 
 def check_render(
