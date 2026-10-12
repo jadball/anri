@@ -17,11 +17,11 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from anri.crystal import U_B_to_UBI, orientation_grid
-from anri.diffract import lorentz_polarisation
+from anri.diffract import k_out_to_tth_eta, lorentz_polarisation
 from anri.fwd import hkl_to_k_omega
 from anri.geom import wrap_omega
 
-from .data import _tth_eta, eta_bin, omega_bin
+from .data import eta_bin, omega_bin
 
 GRID_STEPS = (3.0, 2.5, 2.0, 1.5, 1.0)  # tried by choose_grid, coarsest first
 
@@ -56,7 +56,7 @@ def predict(
             u, h, e, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
         )
         lp = lorentz_polarisation(k_in, k_out, geom["wedge"], geom["chi"], geom["pol_factor"])
-        return _tth_eta(k_out, geom["k_in_lab"])[1], om, ok, lp
+        return k_out_to_tth_eta(k_out, geom["k_in_lab"])[1], om, ok, lp
 
     f = jax.vmap(jax.vmap(jax.vmap(one, (None, None, 0)), (None, 0, None)), (0, None, None))
     eta, om, ok, lp = f(ubi, hkls, jnp.array([1.0, -1.0], U.dtype))

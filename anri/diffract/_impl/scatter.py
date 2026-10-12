@@ -1,7 +1,11 @@
 """Functions related to X-ray diffraction, Ewald conditions, etc."""
 
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
+
+from anri.geom import beam_basis
 
 
 @jax.jit
@@ -105,7 +109,7 @@ def peak_lab_to_k_out(peak_lab: jax.Array, origin_lab: jax.Array, wavelength: fl
 
 
 @jax.jit
-def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float) -> jax.Array:
+def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float, k_in_lab: jax.Array | None = None) -> jax.Array:
     r"""Convert from (tth, eta) angles to scaled normalised $\vec{k_{\text{out}}}$ in the lab frame.
 
     Parameters
@@ -116,6 +120,10 @@ def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float) -> jax.A
         :math:`\eta` angle in degrees
     wavelength:
         wavelength in angstroms
+    k_in_lab:
+        [3] Direction of the incoming beam; default along lab x. For any beam,
+        $\hat{k}_{\text{out}} = \cos 2\theta \, \hat{k} + \sin 2\theta \, (-\sin\eta \, \hat{e}_h + \cos\eta \, \hat{e}_v)$
+        (:func:`anri.geom.beam_basis`), which is the formula below for a beam along x
 
     Returns
     -------
@@ -140,12 +148,39 @@ def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float) -> jax.A
     """
     tth = jnp.radians(tth)
     eta = jnp.radians(eta)
+    k, e_h, e_v = beam_basis(jnp.array([1.0, 0.0, 0.0]) if k_in_lab is None else k_in_lab)
+    k_out_vec = jnp.cos(tth) * k + jnp.sin(tth) * (-jnp.sin(eta) * e_h + jnp.cos(eta) * e_v)
+    return scale_norm_k(k_out_vec, wavelength)
 
-    k_out_vec = jnp.array([jnp.cos(tth), -jnp.sin(tth) * jnp.sin(eta), jnp.sin(tth) * jnp.cos(eta)])
 
-    k_out = scale_norm_k(k_out_vec, wavelength)
+@jax.jit
+def k_out_to_tth_eta(k_out: jax.Array, k_in_lab: jax.Array) -> tuple[jax.Array, jax.Array]:
+    r"""Convert outgoing directions to (tth, eta) angles about a beam: the inverse of :func:`tth_eta_to_k_out`.
 
-    return k_out
+    With $\hat{k}$, $\hat{e}_h$, $\hat{e}_v$ along and across the beam (:func:`anri.geom.beam_basis`):
+
+    .. math::
+        2\theta = \arccos\left(\hat{k}_{\text{out}} \cdot \hat{k}\right), \qquad
+        \eta = \arctan2\left(-\hat{k}_{\text{out}} \cdot \hat{e}_h, \, \hat{k}_{\text{out}} \cdot \hat{e}_v\right)
+
+    For a beam along lab x this is $\eta = \arctan2(-k_y, k_z)$, ImageD11's convention.
+
+    Parameters
+    ----------
+    k_out
+        [..., 3] Outgoing directions, or lab points seen from the lab origin (any length)
+    k_in_lab
+        [3] Direction of the incoming beam
+
+    Returns
+    -------
+    tth, eta: jax.Array
+        [...] angles in degrees
+    """
+    k, e_h, e_v = beam_basis(k_in_lab)
+    v = k_out / jnp.linalg.norm(k_out, axis=-1, keepdims=True)
+    tth = jnp.degrees(jnp.arccos(jnp.clip(v @ k, -1.0, 1.0)))
+    return tth, jnp.degrees(jnp.arctan2(-(v @ e_h), v @ e_v))
 
 
 @jax.jit
@@ -193,7 +228,9 @@ def ds_to_tth(ds: float, wavelength: float) -> jax.Array:
 
 
 @jax.jit
-def q_lab_to_tth_eta(q_lab: jax.Array, wavelength: float) -> tuple[jax.Array, jax.Array]:
+def q_lab_to_tth_eta(
+    q_lab: jax.Array, wavelength: float, k_in_lab: jax.Array | None = None
+) -> tuple[jax.Array, jax.Array]:
     r"""Convert from scattering vector $\vec{Q}$ in lab frame to (tth, eta) angles.
 
     Adapted from :func:`ImageD11.transform.uncompute_g_vectors`
@@ -204,6 +241,8 @@ def q_lab_to_tth_eta(q_lab: jax.Array, wavelength: float) -> tuple[jax.Array, ja
         [3] Scattering vector in lab frame
     wavelength
         wavelength, same units as q_lab
+    k_in_lab
+        [3] Direction of the incoming beam, for eta; default along lab x
 
     Returns
     -------
@@ -221,11 +260,13 @@ def q_lab_to_tth_eta(q_lab: jax.Array, wavelength: float) -> tuple[jax.Array, ja
             2\theta &= 2 \arcsin\left(\frac{\abs{\vec{Q}}\lambda}{2}\right) = 2 \arcsin\left(\frac{d^* \lambda}{2}\right)\\
             \eta &= \arctan2\left(-Q_2, Q_3\right)
         \end{aligned}
+
+    for a beam along lab x (the default). For any beam, eta is :func:`k_out_to_tth_eta`'s of $\vec{Q}$ itself: the
+    directions across the beam are perpendicular to $\vec{k}_{\text{in}}$, so $\vec{Q} = \vec{k}_{\text{out}} -
+    \vec{k}_{\text{in}}$ has the same components along them as $\vec{k}_{\text{out}}$.
     """
-    _q1, q2, q3 = q_lab
-    ds = q_to_ds(q_lab)
-    tth = ds_to_tth(ds, wavelength)
-    eta = jnp.degrees(jnp.arctan2(-q2, q3))
+    tth = ds_to_tth(q_to_ds(q_lab), wavelength)
+    eta = k_out_to_tth_eta(q_lab, jnp.array([1.0, 0.0, 0.0]) if k_in_lab is None else k_in_lab)[1]
     return tth, eta
 
 

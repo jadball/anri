@@ -16,8 +16,8 @@ from Dans_Diffraction.classes_crystal import Crystal as DansCrystal
 from jax.typing import ArrayLike
 
 from anri.crystal import float64, reflections, rings, structure_factors
-from anri.diffract import ds_to_tth
-from anri.geom import beam_basis, dty_to_row, wrap_omega
+from anri.diffract import ds_to_tth, k_out_to_tth_eta
+from anri.geom import dty_to_row, wrap_omega
 
 
 def ring_table(
@@ -76,14 +76,6 @@ def ring_table(
     }
 
 
-def _tth_eta(v: jax.Array, k_in: jax.Array) -> jax.Array:
-    """[..., 2] (2theta, eta) in degrees of directions or lab points v [..., 3], seen from the lab origin."""
-    k, e_h, e_v = beam_basis(k_in)
-    v = v / jnp.linalg.norm(v, axis=-1, keepdims=True)
-    tth = jnp.degrees(jnp.arccos(jnp.clip(v @ k, -1.0, 1.0)))
-    return jnp.stack([tth, jnp.degrees(jnp.arctan2(-(v @ e_h), v @ e_v))], -1)
-
-
 @jax.jit
 def pixel_angles(slow: jax.Array, fast: jax.Array, omega: jax.Array, geom: dict) -> jax.Array:
     """Compute (2theta, eta, omega) of pixel centres, seen from the lab origin (no parallax).
@@ -104,7 +96,8 @@ def pixel_angles(slow: jax.Array, fast: jax.Array, omega: jax.Array, geom: dict)
         [N, 3] (2theta, eta, omega) in degrees
     """
     p = geom["det_origin_lab"] + slow[:, None] * geom["s_step_lab"] + fast[:, None] * geom["f_step_lab"]
-    return jnp.concatenate([_tth_eta(p, geom["k_in_lab"]), omega[:, None]], 1)
+    tth, eta = k_out_to_tth_eta(p, geom["k_in_lab"])
+    return jnp.stack([tth, eta, omega], 1)
 
 
 @partial(jax.jit, static_argnames=("n",))

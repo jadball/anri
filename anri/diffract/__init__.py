@@ -3,6 +3,7 @@
 from ._impl.factors import lorentz, lorentz_polarisation, polarisation
 from ._impl.scatter import (
     ds_to_tth,
+    k_out_to_tth_eta,
     k_to_q_lab,
     omega_from_core,
     omega_solns,
@@ -18,6 +19,7 @@ from ._impl.scatter import (
 
 __all__ = [
     "ds_to_tth",
+    "k_out_to_tth_eta",
     "k_to_q_lab",
     "lorentz",
     "lorentz_polarisation",
