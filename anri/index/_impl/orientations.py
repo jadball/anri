@@ -20,7 +20,7 @@ from jax.typing import ArrayLike
 from anri.geom import wrap_omega
 
 from .occupancy import censored_ratio, deviance
-from .predict import lorentz_polarisation, predict
+from .predict import predict
 
 
 def _system(
@@ -29,8 +29,8 @@ def _system(
 ) -> tuple[jax.Array, jax.Array]:  # fmt: skip
     """(cell index, weight) [Q, Nj, 4] of orientations U [Q, 3, 3] in a row-summed (ring, eta, omega) histogram."""
     b_e, b_o, n_e, n_o, om0 = bins
-    eta, om, ok = predict(U, B, hkls, geom)
-    w = lorentz_polarisation(U, B, hkls, geom) * F2[None]
+    eta, om, ok, lp = predict(U, B, hkls, geom)
+    w = lp * F2[None]
     use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut)
     om_w = wrap_omega(om, om0)
     fe, fo = (eta + 180.0) / b_e - 0.5, (om_w - om0) / b_o - 0.5

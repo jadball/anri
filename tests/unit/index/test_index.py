@@ -65,8 +65,8 @@ class TestTolerances(unittest.TestCase):
         axis = np.random.default_rng(1).normal(size=(200, 3))
         dU = anri.crystal.quat_to_mat(np.column_stack([np.full(200, np.cos(np.radians(0.5))),
                                                        np.sin(np.radians(0.5)) * axis / np.linalg.norm(axis, axis=1, keepdims=True)]))  # fmt: skip
-        e0, o0, k0 = ix.predict(jnp.asarray(U0), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom)
-        e1, o1, k1 = ix.predict(
+        e0, o0, k0, _ = ix.predict(jnp.asarray(U0), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom)
+        e1, o1, k1, _ = ix.predict(
             jnp.asarray((dU @ U0).astype(np.float32)), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom
         )
         te, to = ix.match_tolerances(

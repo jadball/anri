@@ -6,13 +6,12 @@ import numpy as np
 
 import anri.crystal
 import anri.geom
+from anri.diffract import lorentz, polarisation
 from anri.fwd import (
     beam_weight,
     check_render,
     guess_batch_size,
-    lorentz,
     make_row,
-    polarisation,
     render_peaks,
     render_row,
     select_peaks,

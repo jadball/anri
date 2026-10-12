@@ -144,7 +144,7 @@ def geom_from_pars(
     voxel_size
         Side length of the voxels (same units as dty)
     pol_factor
-        Degree of horizontal polarisation, see :func:`anri.fwd.polarisation`
+        Degree of horizontal polarisation, see :func:`anri.diffract.polarisation`
     sig_psf
         Standard deviation of the detector point spread, in pixels. Spots much narrower than a pixel have
         intensity-weighted centroids snapped towards pixel centres (by up to ~0.3 px at 0.1 px wide); a real

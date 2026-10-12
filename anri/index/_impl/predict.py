@@ -17,8 +17,9 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from anri.crystal import U_B_to_UBI, orientation_grid
-from anri.fwd import hkl_to_k_omega, lorentz, polarisation
-from anri.geom import sample_to_lab, wrap_omega
+from anri.diffract import lorentz_polarisation
+from anri.fwd import hkl_to_k_omega
+from anri.geom import wrap_omega
 
 from .data import _tth_eta
 
@@ -26,7 +27,9 @@ GRID_STEPS = (3.0, 2.5, 2.0, 1.5, 1.0)  # tried by choose_grid, coarsest first
 
 
 @jax.jit
-def predict(U: jax.Array, B: jax.Array, hkls: jax.Array, geom: dict) -> tuple[jax.Array, jax.Array, jax.Array]:
+def predict(
+    U: jax.Array, B: jax.Array, hkls: jax.Array, geom: dict
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Predict (eta, omega) of every reflection of some orientations, with both omega solutions.
 
     Parameters
@@ -38,54 +41,27 @@ def predict(U: jax.Array, B: jax.Array, hkls: jax.Array, geom: dict) -> tuple[ja
     hkls
         [Nh, 3] reflections
     geom
-        Geometry dict with "wavelength", "k_in_lab", "wedge" and "chi"
+        Geometry dict with "wavelength", "k_in_lab", "wedge", "chi" and "pol_factor"
 
     Returns
     -------
-    eta, omega, valid: jax.Array
-        [Nq, 2 Nh] each, prediction ``j = 2 h + branch``; eta and omega in degrees
+    eta, omega, valid, lp: jax.Array
+        [Nq, 2 Nh] each, prediction ``j = 2 h + branch``: eta and omega in degrees, whether it diffracts, and its
+        Lorentz x polarisation factor (:func:`anri.diffract.lorentz_polarisation`)
     """
     ubi = U_B_to_UBI(U, B)
 
     def one(u: jax.Array, h: jax.Array, e: jax.Array) -> tuple:
-        _, k_out, om, ok = hkl_to_k_omega(
+        k_in, k_out, om, ok = hkl_to_k_omega(
             u, h, e, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
         )
-        return _tth_eta(k_out, geom["k_in_lab"])[1], om, ok
+        lp = lorentz_polarisation(k_in, k_out, geom["wedge"], geom["chi"], geom["pol_factor"])
+        return _tth_eta(k_out, geom["k_in_lab"])[1], om, ok, lp
 
     f = jax.vmap(jax.vmap(jax.vmap(one, (None, None, 0)), (None, 0, None)), (0, None, None))
-    eta, om, ok = f(ubi, hkls, jnp.array([1.0, -1.0], U.dtype))
+    eta, om, ok, lp = f(ubi, hkls, jnp.array([1.0, -1.0], U.dtype))
     nq = U.shape[0]
-    return eta.reshape(nq, -1), om.reshape(nq, -1), ok.reshape(nq, -1)
-
-
-@jax.jit
-def lorentz_polarisation(U: jax.Array, B: jax.Array, hkls: jax.Array, geom: dict) -> jax.Array:
-    """Lorentz x polarisation factor of every prediction of some orientations (see :func:`predict`).
-
-    Parameters
-    ----------
-    U, B, hkls
-        See :func:`predict`
-    geom
-        Geometry dict, as for :func:`predict` plus "pol_factor"
-
-    Returns
-    -------
-    jax.Array
-        [Nq, 2 Nh] factors
-    """
-    ubi = U_B_to_UBI(U, B)
-    axis = sample_to_lab(jnp.array([0.0, 0.0, 1.0], U.dtype), 0.0, geom["wedge"], geom["chi"], 0.0, 0.0)
-
-    def one(u: jax.Array, h: jax.Array, e: jax.Array) -> jax.Array:
-        k_in, k_out, _, _ = hkl_to_k_omega(
-            u, h, e, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
-        )
-        return lorentz(k_in, k_out, axis) * polarisation(k_in, k_out, geom["pol_factor"])
-
-    f = jax.vmap(jax.vmap(jax.vmap(one, (None, None, 0)), (None, 0, None)), (0, None, None))
-    return f(ubi, hkls, jnp.array([1.0, -1.0], U.dtype)).reshape(U.shape[0], -1)
+    return eta.reshape(nq, -1), om.reshape(nq, -1), ok.reshape(nq, -1), lp.reshape(nq, -1)
 
 
 def match_tolerances(
@@ -215,7 +191,7 @@ def completeness_of(
         u = U[s0 : s0 + chunk]
         m = len(u)
         u = np.concatenate([u, np.repeat(np.eye(3, dtype=np.float32)[None], chunk - m, 0)]) if len(U) > chunk else u
-        eta, om, ok = predict(jnp.asarray(u), jnp.asarray(B, jnp.float32), hkls, geom)
+        eta, om, ok, _ = predict(jnp.asarray(u), jnp.asarray(B, jnp.float32), hkls, geom)
         te, to = match_tolerances(eta, ring_j, tth, hw, delta, lit["frame_step"])
         ok = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > lit["etacut"])
         c, _ = completeness(lit["table"], eta, om, ok, ring_j, te, to, lit["om0"], b_e, b_o, n_e, n_o)
@@ -341,8 +317,7 @@ def predictions(U: ArrayLike, B: ArrayLike, rings: dict, geom: dict, etacut: flo
     nq = len(U)
     Up = jnp.asarray(np.concatenate([U, np.repeat(U[:1], -nq % qc, 0)]))
     Bj, hkls = jnp.asarray(B, jnp.float32), jnp.asarray(rings["hkls"])
-    eta, om, ok = predict(Up, Bj, hkls, geom)
-    lp = lorentz_polarisation(Up, Bj, hkls, geom)
+    eta, om, ok, lp = predict(Up, Bj, hkls, geom)
     use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut) & (jnp.arange(Up.shape[0]) < nq)[:, None]
     F2 = jnp.asarray(np.repeat(rings.get("F2", np.ones(len(rings["hkls"]))), 2), jnp.float32)
     return eta, om, use, jnp.where(use, lp * F2[None], 0.0)
