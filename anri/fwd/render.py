@@ -23,7 +23,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.scipy.special import ndtr
-from jax.scipy.stats import norm
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax.typing import ArrayLike
@@ -38,6 +37,7 @@ from anri.diffract.factors import lorentz_polarisation
 from anri.geom.beam import beam_basis, beam_offsets
 from anri.geom.gonio import nearest_omega, sample_to_lab
 from anri.maths.rotation import skew
+from anri.maths.utils import bin_fractions, ramp_integral, ramp_integral2, truncated_moments
 
 from .peak import get_centroid, get_centroid_both, hkl_to_k_omega, make_propagator
 
@@ -51,52 +51,6 @@ _COV_ELEMS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
 _VAR_FLOOR = (1e-4, 1e-4, 1e-8)
 
 
-def _interval_mass(a: jax.Array, b: jax.Array) -> jax.Array:
-    """Phi(b) - Phi(a) for a <= b, accurate in both tails and never negative.
-
-    In the upper tail Phi(b) and Phi(a) are both close to 1 and their difference cancels, in float32 to about 1e-7,
-    either sign. Times a bright peak's amplitude, and summed over the many voxels that share a pixel, that made
-    model pixels far from a peak wrong, even negative. There Phi(-a) - Phi(-b) is used instead.
-    """
-    return jnp.maximum(jnp.where(a > 0, ndtr(-a) - ndtr(-b), ndtr(b) - ndtr(a)), 0.0)
-
-
-def bin_fractions(lo: ArrayLike, hi: ArrayLike, mu: ArrayLike, sigma: ArrayLike) -> jax.Array:
-    """Fraction of a 1D Gaussian N(mu, sigma^2) that lies in [lo, hi)."""
-    lo, hi, mu, sigma = (jnp.asarray(x) for x in (lo, hi, mu, sigma))
-    return _interval_mass((lo - mu) / sigma, (hi - mu) / sigma)
-
-
-def truncated_moments(lo: ArrayLike, hi: ArrayLike, mu: ArrayLike, sigma: ArrayLike) -> tuple:
-    """Mass, mean and variance of N(mu, sigma^2) restricted to [lo, hi).
-
-    Where the mass is negligible, the mean falls back to mu clipped into the interval and the variance to 0
-    (those cells carry no intensity, and this keeps gradients finite).
-    """
-    lo, hi, mu, sigma = (jnp.asarray(x) for x in (lo, hi, mu, sigma))
-    a, b = (lo - mu) / sigma, (hi - mu) / sigma
-    mass = _interval_mass(a, b)
-    pa, pb = jnp.asarray(norm.pdf(a)), jnp.asarray(norm.pdf(b))
-    ok = mass > 1e-12
-    safe = jnp.where(ok, mass, 1.0)
-    r = (pa - pb) / safe
-    mean = jnp.where(ok, mu + sigma * r, jnp.clip(mu, lo, hi))
-    var = jnp.where(ok, sigma**2 * (1.0 + (a * pa - b * pb) / safe - r**2), 0.0)
-    return mass, mean, jnp.maximum(var, 0.0)
-
-
-def _ramp_integral(x: ArrayLike, sigma: ArrayLike) -> jax.Array:
-    """Antiderivative of ndtr(x / sigma): x * Phi(x / sigma) + sigma * phi(x / sigma)."""
-    x, sigma = jnp.asarray(x), jnp.asarray(sigma)
-    return x * ndtr(x / sigma) + sigma * jnp.asarray(norm.pdf(x / sigma))
-
-
-def _ramp_integral2(x: ArrayLike, sigma: ArrayLike) -> jax.Array:
-    """Antiderivative of :func:`_ramp_integral`: (x^2 + sigma^2) / 2 * Phi(x / sigma) + x sigma / 2 * phi(x / sigma)."""
-    x, sigma = jnp.asarray(x), jnp.asarray(sigma)
-    return 0.5 * (x**2 + sigma**2) * ndtr(x / sigma) + 0.5 * x * sigma * jnp.asarray(norm.pdf(x / sigma))
-
-
 def _smoothed(order: int, x: ArrayLike, width: ArrayLike, sigma: ArrayLike) -> jax.Array:
     """Antiderivative ``order`` of the beam profile: a flat top of ``width`` blurred by a Gaussian of ``sigma``.
 
@@ -107,10 +61,10 @@ def _smoothed(order: int, x: ArrayLike, width: ArrayLike, sigma: ArrayLike) -> j
     gauss = width < 0.01 * sigma
     w = jnp.where(gauss, 1.0, width)  # double-where: no NaN gradients from either branch
     if order == 1:
-        flat_top = (_ramp_integral(x + w / 2, sigma) - _ramp_integral(x - w / 2, sigma)) / w
+        flat_top = (ramp_integral(x + w / 2, sigma) - ramp_integral(x - w / 2, sigma)) / w
         return jnp.where(gauss, ndtr(x / sigma), flat_top)
-    flat_top = (_ramp_integral2(x + w / 2, sigma) - _ramp_integral2(x - w / 2, sigma)) / w
-    return jnp.where(gauss, _ramp_integral(x, sigma), flat_top)
+    flat_top = (ramp_integral2(x + w / 2, sigma) - ramp_integral2(x - w / 2, sigma)) / w
+    return jnp.where(gauss, ramp_integral(x, sigma), flat_top)
 
 
 def _chord_weight(
