@@ -55,7 +55,8 @@ def plot_rings(fig: Figure, cov: dict) -> Callable:
     ax[0].plot(cov["tth"], cov["on_detector"], color="k")
     ax[0].set(ylabel="fraction of the ring on the detector", ylim=(0, 1.05))
     for i, (name, refl) in enumerate(zip(cov["names"], cov["reflections"])):
-        tth, mult = np.unique(np.round(refl, 4), return_counts=True)
+        tth, counts = np.unique(np.round(refl, 4), return_counts=True)
+        mult = np.asarray(counts, dtype=float)
         ax[1].vlines(tth, i, i + 0.8 * mult / mult.max(), color=f"C{i}", lw=1)
     ax[1].set(xlabel="2θ (°)", yticks=np.arange(len(cov["names"])) + 0.4, yticklabels=cov["names"],
               title="reflections (height: multiplicity)")  # fmt: skip
