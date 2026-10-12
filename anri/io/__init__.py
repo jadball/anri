@@ -1,84 +1,10 @@
 """Reading and writing files: ImageD11's formats, and the provenance of anri's own stage files.
 
-ImageD11 parameters, TensorMaps, sparse and DataSet files are read and written without ImageD11 where possible.
+- :mod:`anri.io.imaged11`: ImageD11 parameters, TensorMaps, sparse and DataSet files, read and written without
+  ImageD11 where possible
+- :mod:`anri.io.provenance`: what made each stage file and from what (:func:`anri.io.provenance.show` prints it)
 """
 
-from ._impl.imaged11 import (
-    beam_from_pars,
-    detector_from_pars,
-    entries_from_tensormap,
-    geom_from_pars,
-    gonio_from_pars,
-    motor_grid,
-    prefetch,
-    read_dataset,
-    read_frame_dty,
-    read_geometry,
-    read_monitor,
-    read_par,
-    read_pars_json,
-    read_raw_frames,
-    read_sparse_frames,
-    read_spatial,
-    simulate_sparse,
-    stream_sparse,
-    tensormap_from_recon,
-    write_dataset,
-    write_par,
-    write_pars,
-    write_peaks_table,
-    write_rendered_rows,
-    write_scan,
-    write_zero_distortion,
-)
-from ._impl.provenance import (
-    chain,
-    read_attrs,
-    read_provenance,
-    show,
-    source_of,
-    stage_path,
-    upstream,
-    write_attrs,
-    write_provenance,
-    write_results,
-)
+from . import imaged11, provenance
 
-__all__ = [
-    "beam_from_pars",
-    "chain",
-    "detector_from_pars",
-    "entries_from_tensormap",
-    "geom_from_pars",
-    "gonio_from_pars",
-    "motor_grid",
-    "prefetch",
-    "read_attrs",
-    "read_dataset",
-    "read_frame_dty",
-    "read_geometry",
-    "read_monitor",
-    "read_par",
-    "read_pars_json",
-    "read_provenance",
-    "read_raw_frames",
-    "read_sparse_frames",
-    "read_spatial",
-    "show",
-    "simulate_sparse",
-    "source_of",
-    "stage_path",
-    "stream_sparse",
-    "tensormap_from_recon",
-    "upstream",
-    "write_attrs",
-    "write_dataset",
-    "write_par",
-    "write_pars",
-    "write_peaks_table",
-    "write_provenance",
-    "write_rendered_rows",
-    "write_results",
-    "write_scan",
-    "write_zero_distortion",
-]
+__all__ = ["imaged11", "provenance"]

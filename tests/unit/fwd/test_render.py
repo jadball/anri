@@ -7,8 +7,13 @@ import numpy as np
 import anri.crystal
 import anri.geom
 import anri.maths.rotation
-from anri.diffract import lorentz, polarisation
-from anri.fwd import (
+from anri.diffract.factors import lorentz, polarisation
+from anri.fwd.render import (
+    _centroid,
+    _compact,
+    _free_memory,
+    _merge,
+    _merge_host,
     beam_weight,
     check_render,
     guess_batch_size,
@@ -17,9 +22,8 @@ from anri.fwd import (
     render_row,
     select_peaks,
 )
-from anri.fwd._impl.render import _centroid, _compact, _free_memory, _merge, _merge_host
-from anri.fwd._impl.scan import get_centroid_scan
-from anri.geom import sample_to_lab
+from anri.fwd.scan import get_centroid_scan
+from anri.geom.gonio import sample_to_lab
 
 jax.config.update("jax_enable_x64", True)
 
@@ -45,7 +49,7 @@ class TestTailMass(unittest.TestCase):
         # Phi(b) - Phi(a) cancels in float32 far in the upper tail; the mass must stay accurate and never negative
         from scipy.stats import norm as sp_norm
 
-        from anri.fwd._impl.render import bin_fractions, truncated_moments
+        from anri.fwd.render import bin_fractions, truncated_moments
 
         lo = np.array([3.0, 5.0, 6.0, -5.1, -0.1], np.float32)
         hi = lo + np.float32(0.1)
@@ -183,11 +187,11 @@ def _single_peak_setup():
         "wavelength": 12.398419843320026 / 43.0, "wedge": 0.0, "chi": 0.0,
     }  # fmt: skip
     det_shape = (2162, 2068)
-    det_trans, shift, xshift = anri.geom.detector_transforms(
+    det_trans, shift, xshift = anri.geom.detector.detector_transforms(
         *(pars[k] for k in ("y_center", "y_size", "tilt_y", "z_center", "z_size", "tilt_z", "tilt_x", "distance")),
         *(pars[k] for k in ("o11", "o12", "o21", "o22")),
     )
-    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(det_trans, shift, xshift)
+    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector.detector_basis_vectors_lab(det_trans, shift, xshift)
     voxel = 1.0
     geom = {
         "wavelength": pars["wavelength"], "k_in_lab": jnp.array([1.0, 0.0, 0.0]),
@@ -200,7 +204,7 @@ def _single_peak_setup():
     }  # fmt: skip
 
     U = np.asarray(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0))
-    B = np.asarray(anri.crystal.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+    B = np.asarray(anri.crystal.utils.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
     ubi = np.linalg.inv(U @ B)
     i, j = np.mgrid[0:10, 0:10]
     pos = np.stack([(i.ravel() - 4.5) * voxel, (j.ravel() - 4.5) * voxel, np.zeros(100)], 1)
@@ -211,7 +215,7 @@ def _single_peak_setup():
     hkls = np.array([h for h in np.ndindex(3, 3, 3) if sorted(np.abs(np.array(h) - 1)) == [0, 1, 1]]) - 1
     args = (1.0, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, 0.0, 0.0, 0.0, s_step_lab, f_step_lab, det_origin_lab)
     cen, valid = centroid_fn(ubi, jnp.zeros(3), jnp.asarray(hkls, float), *args)
-    xyz = jax.vmap(anri.geom.det_to_lab, in_axes=(0, 0, None, None, None))(
+    xyz = jax.vmap(anri.geom.detector.det_to_lab, in_axes=(0, 0, None, None, None))(
         cen[:, 0], cen[:, 1], det_trans, shift, xshift
     )
     eta = np.degrees(np.arctan2(-xyz[:, 1], xyz[:, 2]))
@@ -465,7 +469,7 @@ class TestLargeBatch(unittest.TestCase):
 
         from ImageD11.sinograms.tensor_map import TensorMap
 
-        from anri.io import entries_from_tensormap, geom_from_pars
+        from anri.io.imaged11 import entries_from_tensormap, geom_from_pars
 
         data = os.path.join(os.path.dirname(__file__), "..", "..", "data")
         tmap = TensorMap.from_h5(os.path.join(data, "phantoms", "quartz_flyxdm", "quartz_flyxdm_tmap.h5"))
@@ -474,8 +478,10 @@ class TestLargeBatch(unittest.TestCase):
         import Dans_Diffraction
 
         xtl = Dans_Diffraction.Crystal(os.path.join(data, "cif", "SiO2.cif"))
-        refl = anri.crystal.reflections(anri.crystal.lattice_parameters(xtl), anri.crystal.space_group(xtl), wl, 1.0)
-        F2 = anri.crystal.structure_factors(xtl, refl["hkl"], wl)
+        refl = anri.crystal.structure.reflections(
+            anri.crystal.structure.lattice_parameters(xtl), anri.crystal.structure.space_group(xtl), wl, 1.0
+        )
+        F2 = anri.crystal.structure.structure_factors(xtl, refl["hkl"], wl)
         strong = F2 > 0.01  # as the old rings_table kept them
         hkls = jnp.asarray(refl["hkl"][strong], dtype=float)
         F2 = jnp.asarray(F2[strong], dtype=float)
@@ -571,9 +577,9 @@ class TestGuessBatchSize(unittest.TestCase):
         # GPUs: free device memory, without the host copy of the output that CPU devices share memory with
         from unittest import mock
 
-        with mock.patch("anri.fwd._impl.render._free_memory", return_value=(2**30, True)):
+        with mock.patch("anri.fwd.render._free_memory", return_value=(2**30, True)):
             host = self.guess()
-        with mock.patch("anri.fwd._impl.render._free_memory", return_value=(2**30, False)):
+        with mock.patch("anri.fwd.render._free_memory", return_value=(2**30, False)):
             device = self.guess()
         self.assertGreaterEqual(device, host)
 
@@ -584,12 +590,12 @@ class TestGuessBatchSize(unittest.TestCase):
         fake = mock.MagicMock()
         analysis = fake.lower.return_value.compile.return_value.memory_analysis
         analysis.return_value = None  # none at all
-        with mock.patch("anri.fwd._impl.render._render_sharded", fake), self.assertRaises(RuntimeError):
+        with mock.patch("anri.fwd.render._render_sharded", fake), self.assertRaises(RuntimeError):
             guess_batch_size(*args)
         sizes = mock.MagicMock(temp_size_in_bytes=1000, argument_size_in_bytes=0, output_size_in_bytes=0)
         sizes.alias_size_in_bytes = 0
         analysis.return_value = sizes  # the same for any batch
-        with mock.patch("anri.fwd._impl.render._render_sharded", fake), self.assertRaises(RuntimeError):
+        with mock.patch("anri.fwd.render._render_sharded", fake), self.assertRaises(RuntimeError):
             guess_batch_size(*args)
 
     def test_free_memory(self):
@@ -668,8 +674,8 @@ class TestBoxBeam(unittest.TestCase):
     def test_dct_spot(self):
         """A cube of voxels in a box beam bigger than it, near-field detector: every voxel is lit equally, and the
         spot is the cube projected along the diffracted beam."""
-        from anri.fwd._impl.render import _peak_cov
-        from anri.io import geom_from_pars
+        from anri.fwd.render import _peak_cov
+        from anri.io.imaged11 import geom_from_pars
 
         wl = 0.2845704100778472
         pars = {
@@ -682,7 +688,7 @@ class TestBoxBeam(unittest.TestCase):
             width_beam=1000.0, sig_beam_v=0.5, width_beam_v=1000.0, voxel_3d=True,
         )  # fmt: skip
         g = jax.tree.map(jnp.asarray, geom)
-        B = anri.crystal.lpars_to_B(jnp.array([2.8665, 2.8665, 2.8665, 90.0, 90.0, 90.0]))
+        B = anri.crystal.utils.lpars_to_B(jnp.array([2.8665, 2.8665, 2.8665, 90.0, 90.0, 90.0]))
         ubi = jnp.linalg.inv(
             anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0) @ B
         )

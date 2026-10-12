@@ -59,7 +59,7 @@ class TestSampleToLab(unittest.TestCase):
         y0 = 0.0
 
         v_sample = jnp.array([1.0, 2.0, 3.0])
-        result = anri.geom.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
+        result = anri.geom.gonio.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
 
         # just identity so v_lab = v_sample
         np.testing.assert_allclose(result, v_sample)
@@ -73,7 +73,7 @@ class TestSampleToLab(unittest.TestCase):
         y0 = 0.5
 
         v_sample = jnp.array([1.0, 2.0, 3.0])
-        result = anri.geom.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
+        result = anri.geom.gonio.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
         desired = jnp.array([1.0, 2.0 + 10.0 - 0.5, 3.0])
         np.testing.assert_allclose(result, desired)
 
@@ -86,7 +86,7 @@ class TestSampleToLab(unittest.TestCase):
 
         # sample x goes to lab y
         v_sample = jnp.array([1.0, 0.0, 0.0])
-        result = anri.geom.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
+        result = anri.geom.gonio.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
         desired = jnp.array([0.0, 1.0, 0.0])
         np.testing.assert_allclose(result, desired, atol=1e-15)
 
@@ -100,7 +100,7 @@ class TestSampleToLab(unittest.TestCase):
         # lean fully rightwards when looking down beam
         # sample z is along lab -y
         v_sample = jnp.array([0.0, 0.0, 1.0])
-        result = anri.geom.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
+        result = anri.geom.gonio.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
         desired = jnp.array([0.0, -1.0, 0.0])
         np.testing.assert_allclose(result, desired, atol=1e-15)
 
@@ -115,7 +115,7 @@ class TestSampleToLab(unittest.TestCase):
         # sample z ends up along lab x
         # in ImageD11, the sign of the wedge is flipped. It isn't for us.
         v_sample = jnp.array([0.0, 0.0, 1.0])
-        result = anri.geom.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
+        result = anri.geom.gonio.sample_to_lab(v_sample, omega=omega, wedge=wedge, chi=chi, dty=dty, y0=y0)
         desired = jnp.array([1.0, 0.0, 0.0])
         np.testing.assert_allclose(result, desired, atol=1e-15)
 
@@ -147,7 +147,7 @@ class TestSampleToLab(unittest.TestCase):
 
         from ImageD11.transform import compute_grain_origins
 
-        sample_to_lab_vec = jax.vmap(anri.geom.sample_to_lab)
+        sample_to_lab_vec = jax.vmap(anri.geom.gonio.sample_to_lab)
         result = sample_to_lab_vec(vec_sample, omega_arr, wedge_arr, chi_arr, dty, y0)
         desired = compute_grain_origins(
             omega=omega_arr, wedge=-wedge, chi=chi, t_x=vec_sample[:, 0], t_y=vec_sample[:, 1], t_z=vec_sample[:, 2]
@@ -171,8 +171,8 @@ class TestSampleToLab(unittest.TestCase):
         dty = random.uniform(subkeys[4], shape=(npks,), minval=-1000.0, maxval=1000.0)
         y0 = random.uniform(subkeys[5], shape=(npks,), minval=-1000.0, maxval=1000.0)
 
-        sample_to_lab_vec = jax.vmap(anri.geom.sample_to_lab)
-        lab_to_sample_vec = jax.vmap(fun=anri.geom.lab_to_sample)
+        sample_to_lab_vec = jax.vmap(anri.geom.gonio.sample_to_lab)
+        lab_to_sample_vec = jax.vmap(fun=anri.geom.gonio.lab_to_sample)
 
         desired = vec_sample
         vec_lab = sample_to_lab_vec(vec_sample, omega, wedge, chi, dty, y0)
@@ -200,7 +200,7 @@ class TestFindDtyForBeamXY(unittest.TestCase):
         # fmt: off
         dty_desired = jnp.array([-1.0])
         # fmt: on
-        dty_result = anri.geom.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
+        dty_result = anri.geom.gonio.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
         np.testing.assert_allclose(dty_desired, dty_result)
 
     def test_simple_y0(self):
@@ -219,7 +219,7 @@ class TestFindDtyForBeamXY(unittest.TestCase):
         # fmt: off
         dty_desired = jnp.array([0.0])
         # fmt: on
-        dty_result = anri.geom.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
+        dty_result = anri.geom.gonio.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
         self.assertAlmostEqual(dty_desired, dty_result)
 
     def test_imaged11(self):
@@ -237,7 +237,7 @@ class TestFindDtyForBeamXY(unittest.TestCase):
         from ImageD11.sinograms.geometry import dty_values_grain_in_beam
         dty_desired = dty_values_grain_in_beam(v_sample[0], v_sample[1], y0, omega)
         # fmt: on
-        dty_result = anri.geom.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
+        dty_result = anri.geom.gonio.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
         self.assertAlmostEqual(dty_desired, dty_result)
 
 
@@ -249,19 +249,21 @@ class TestDtyAndOriginLab(unittest.TestCase):
     def test_horizontal_beam(self):
         omega, wedge, chi, y0 = self.args
         for k in (jnp.array([1.0, 0.0, 0.0]), jnp.array([1.0, 0.2, 0.0])):
-            dty, origin = anri.geom.dty_and_origin_lab(self.v, k, *self.args)
-            np.testing.assert_allclose(origin, anri.geom.sample_to_lab(self.v, omega, wedge, chi, dty, y0), atol=1e-12)
+            dty, origin = anri.geom.gonio.dty_and_origin_lab(self.v, k, *self.args)
+            np.testing.assert_allclose(
+                origin, anri.geom.gonio.sample_to_lab(self.v, omega, wedge, chi, dty, y0), atol=1e-12
+            )
 
     def test_tilted_beam(self):
         # the beam crosses the rotation axis at the voxel's own height; the origin is on it, in the voxel's column
         omega, wedge, chi, _ = self.args
-        v_lab = anri.geom.sample_to_lab(self.v, omega, wedge, chi, 0.0, 0.0)
+        v_lab = anri.geom.gonio.sample_to_lab(self.v, omega, wedge, chi, 0.0, 0.0)
         for k in (jnp.array([1.0, 0.0, 0.1]), jnp.array([1.0, -0.2, -0.05])):
-            dty, origin = anri.geom.dty_and_origin_lab(self.v, k, *self.args)
+            dty, origin = anri.geom.gonio.dty_and_origin_lab(self.v, k, *self.args)
             np.testing.assert_allclose(jnp.cross(origin - jnp.array([0.0, 0.0, v_lab[2]]), k), 0.0, atol=1e-12)
             self.assertAlmostEqual(float(origin[0]), float(v_lab[0]))
             # dty only depends on the horizontal part of the beam
-            dty_flat, _ = anri.geom.dty_and_origin_lab(self.v, k.at[2].set(0.0), *self.args)
+            dty_flat, _ = anri.geom.gonio.dty_and_origin_lab(self.v, k.at[2].set(0.0), *self.args)
             self.assertAlmostEqual(float(dty), float(dty_flat))
 
 
@@ -272,35 +274,37 @@ class TestOriginLab(unittest.TestCase):
 
     def test_horizontal_beam_or_cube(self):
         # the voxel's real position: no rise for a horizontal beam, nor for a cube in any beam
-        lab = anri.geom.sample_to_lab(self.v, *self.args)
+        lab = anri.geom.gonio.sample_to_lab(self.v, *self.args)
         for k, column in ((jnp.array([1.0, 0.2, 0.0]), True), (jnp.array([1.0, -0.2, 0.1]), False)):
-            np.testing.assert_allclose(anri.geom.origin_lab(self.v, k, *self.args, column), lab, atol=1e-12)
+            np.testing.assert_allclose(anri.geom.gonio.origin_lab(self.v, k, *self.args, column), lab, atol=1e-12)
 
     def test_tilted_beam_column(self):
         # a column scatters where the beam, crossing the rotation axis at the voxel's own height, passes through it
-        lab = anri.geom.sample_to_lab(self.v, *self.args)
+        lab = anri.geom.gonio.sample_to_lab(self.v, *self.args)
         for k in (jnp.array([1.0, 0.0, 0.1]), jnp.array([1.0, -0.2, -0.05])):
-            origin = anri.geom.origin_lab(self.v, k, *self.args)
+            origin = anri.geom.gonio.origin_lab(self.v, k, *self.args)
             np.testing.assert_allclose(origin[:2], lab[:2], atol=1e-12)
-            _, height, _, _ = anri.geom.beam_offsets(origin - jnp.array([0.0, 0.0, lab[2]]), k)
+            _, height, _, _ = anri.geom.utils.beam_offsets(origin - jnp.array([0.0, 0.0, lab[2]]), k)
             self.assertAlmostEqual(float(height), 0.0, places=12)
 
     def test_dty_and_origin_lab_uses_it(self):
         omega, wedge, chi, _, y0 = self.args
         k = jnp.array([1.0, -0.2, -0.05])
-        dty, origin = anri.geom.dty_and_origin_lab(self.v, k, omega, wedge, chi, y0)
-        np.testing.assert_allclose(origin, anri.geom.origin_lab(self.v, k, omega, wedge, chi, dty, y0), atol=1e-12)
+        dty, origin = anri.geom.gonio.dty_and_origin_lab(self.v, k, omega, wedge, chi, y0)
+        np.testing.assert_allclose(
+            origin, anri.geom.gonio.origin_lab(self.v, k, omega, wedge, chi, dty, y0), atol=1e-12
+        )
 
 
 class TestOmegaWrap(unittest.TestCase):
     def test_wrap_and_nearest(self):
         om = np.array([-725.0, -10.0, 0.0, 179.9, 359.99, 360.0, 541.0])
-        w = anri.geom.wrap_omega(om, -180.0)
+        w = anri.geom.gonio.wrap_omega(om, -180.0)
         self.assertTrue(np.all((w >= -180.0) & (w < 180.0)))
         np.testing.assert_allclose(np.mod(w - om, 360.0) % 360.0, 0.0, atol=1e-9)
-        n = anri.geom.nearest_omega(om, 90.0)
+        n = anri.geom.gonio.nearest_omega(om, 90.0)
         self.assertTrue(np.all(np.abs(n - 90.0) <= 180.0))
         np.testing.assert_allclose(np.mod(n - om, 360.0) % 360.0, 0.0, atol=1e-9)
         # NumPy in, NumPy out; JAX in, JAX out
         self.assertIsInstance(w, np.ndarray)
-        self.assertIsInstance(anri.geom.wrap_omega(jnp.asarray(om), 0.0), jax.Array)
+        self.assertIsInstance(anri.geom.gonio.wrap_omega(jnp.asarray(om), 0.0), jax.Array)

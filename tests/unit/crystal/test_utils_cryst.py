@@ -16,7 +16,7 @@ class TestLParsToMT(unittest.TestCase):
         alpha = beta = gamma = 90.0
         lpars = jnp.array([a, b, c, alpha, beta, gamma])
         expected = jnp.array([[9.0, 0, 0], [0, 9, 0], [0, 0, 9]])
-        result = anri.crystal.lpars_to_mt(lpars)
+        result = anri.crystal.utils.lpars_to_mt(lpars)
         np.testing.assert_allclose(result, expected, atol=1e-15)
 
     def test_id11(self):
@@ -32,7 +32,7 @@ class TestLParsToMT(unittest.TestCase):
 
         uc = unitcell(lpars, 1)
         expected = uc.g
-        result = anri.crystal.lpars_to_mt(lpars)
+        result = anri.crystal.utils.lpars_to_mt(lpars)
         np.testing.assert_allclose(result, expected, atol=1e-15)
 
 
@@ -43,8 +43,8 @@ class TestLParsToMT(unittest.TestCase):
 #         a = b = c = 3.0
 #         alpha = beta = gamma = 90.0
 #         lpars = jnp.array([a, b, c, alpha, beta, gamma])
-#         mt = anri.crystal.lpars_to_mt(lpars)
-#         rmt = anri.crystal.mt_to_rmt(mt)
+#         mt = anri.crystal.utils.lpars_to_mt(lpars)
+#         rmt = anri.crystal.utils.mt_to_rmt(mt)
 #         result = anri.crystal.rmt_to_rlpars(rmt)
 #         expected = jnp.array([1 / 3.0, 1 / 3.0, 1 / 3.0, 90.0, 90.0, 90.0])
 #         np.testing.assert_allclose(result, expected, atol=1e-15)
@@ -57,8 +57,8 @@ class TestLParsToMT(unittest.TestCase):
 #         beta = 95.8
 #         gamma = 101.6
 #         lpars = jnp.array([a, b, c, alpha, beta, gamma])
-#         mt = anri.crystal.lpars_to_mt(lpars)
-#         rmt = anri.crystal.mt_to_rmt(mt)
+#         mt = anri.crystal.utils.lpars_to_mt(lpars)
+#         rmt = anri.crystal.utils.mt_to_rmt(mt)
 
 #         from ImageD11.unitcell import unitcell
 
@@ -73,11 +73,11 @@ class TestBuildBMat(unittest.TestCase):
         a = b = c = 3.0
         alpha = beta = gamma = 90.0
         lpars = jnp.array([a, b, c, alpha, beta, gamma])
-        mt = anri.crystal.lpars_to_mt(lpars)
-        rmt = anri.crystal.mt_to_rmt(mt)
-        rlpars = anri.crystal.mt_to_lpars(rmt)
+        mt = anri.crystal.utils.lpars_to_mt(lpars)
+        rmt = anri.crystal.utils.mt_to_rmt(mt)
+        rlpars = anri.crystal.utils.mt_to_lpars(rmt)
         expected = jnp.array([[1 / 3.0, 0, 0], [0, 1 / 3.0, 0], [0, 0, 1 / 3.0]])
-        result = anri.crystal.lpars_rlpars_to_B(lpars, rlpars)
+        result = anri.crystal.utils.lpars_rlpars_to_B(lpars, rlpars)
         np.testing.assert_allclose(result, expected, atol=1e-15)
 
     def test_id11(self):
@@ -88,15 +88,15 @@ class TestBuildBMat(unittest.TestCase):
         beta = 95.8
         gamma = 101.6
         lpars = jnp.array([a, b, c, alpha, beta, gamma])
-        mt = anri.crystal.lpars_to_mt(lpars)
-        rmt = anri.crystal.mt_to_rmt(mt)
-        rlpars = anri.crystal.mt_to_lpars(rmt)
+        mt = anri.crystal.utils.lpars_to_mt(lpars)
+        rmt = anri.crystal.utils.mt_to_rmt(mt)
+        rlpars = anri.crystal.utils.mt_to_lpars(rmt)
 
         from ImageD11.unitcell import unitcell
 
         uc = unitcell(lpars, 1)
         expected = uc.B
-        result = anri.crystal.lpars_rlpars_to_B(lpars, rlpars)
+        result = anri.crystal.utils.lpars_rlpars_to_B(lpars, rlpars)
         np.testing.assert_allclose(result, expected, atol=1e-15)
 
     def test_dd(self):
@@ -107,13 +107,13 @@ class TestBuildBMat(unittest.TestCase):
         beta = 95.8
         gamma = 101.6
         lpars = jnp.array([a, b, c, alpha, beta, gamma])
-        mt = anri.crystal.lpars_to_mt(lpars)
-        rmt = anri.crystal.mt_to_rmt(mt)
-        rlpars = anri.crystal.mt_to_lpars(rmt)
+        mt = anri.crystal.utils.lpars_to_mt(lpars)
+        rmt = anri.crystal.utils.mt_to_rmt(mt)
+        rlpars = anri.crystal.utils.mt_to_lpars(rmt)
 
         from Dans_Diffraction.classes_crystal import Cell
 
-        result = anri.crystal.lpars_rlpars_to_B(lpars, rlpars)
+        result = anri.crystal.utils.lpars_rlpars_to_B(lpars, rlpars)
         expected = Cell(a, b, c, alpha, beta, gamma).Bmatrix()
         np.testing.assert_allclose(result, expected, atol=1e-15)
 
@@ -130,7 +130,7 @@ class TestBuildBMat(unittest.TestCase):
         self.assertTupleEqual(lpars_batch.shape, (ntests, 6))
         self.assertTrue(~jnp.any(jnp.isnan(lpars_batch)))
 
-        lpars_to_B_vec = jax.vmap(anri.crystal.lpars_to_B)
+        lpars_to_B_vec = jax.vmap(anri.crystal.utils.lpars_to_B)
         results = lpars_to_B_vec(lpars_batch)
 
         for i in range(ntests):
@@ -156,13 +156,13 @@ class TestEverything(unittest.TestCase):
 
         uc = unitcell(lpars, 1)
 
-        mt = anri.crystal.lpars_to_mt(lpars)
+        mt = anri.crystal.utils.lpars_to_mt(lpars)
         np.testing.assert_allclose(mt, uc.g, atol=1e-15)
 
-        rmt = anri.crystal.mt_to_rmt(mt)
+        rmt = anri.crystal.utils.mt_to_rmt(mt)
         np.testing.assert_allclose(rmt, uc.gi, atol=1e-15)
 
-        B = anri.crystal.lpars_to_B(lpars)
+        B = anri.crystal.utils.lpars_to_B(lpars)
         np.testing.assert_allclose(B, uc.B)
 
 
@@ -174,18 +174,18 @@ class TestMetricTensors(unittest.TestCase):
 
         lpars = [4.9, 5.1, 5.4, 88.0, 92.0, 119.0]
         uc = unitcell_id11(lpars, "P")
-        B = anri.crystal.lpars_to_B(jnp.array(lpars))
-        np.testing.assert_allclose(anri.crystal.B_to_rmt(B), uc.gi, rtol=1e-10)
-        np.testing.assert_allclose(anri.crystal.rmt_to_mt(jnp.asarray(uc.gi)), uc.g, rtol=1e-10)
+        B = anri.crystal.utils.lpars_to_B(jnp.array(lpars))
+        np.testing.assert_allclose(anri.crystal.utils.B_to_rmt(B), uc.gi, rtol=1e-10)
+        np.testing.assert_allclose(anri.crystal.utils.rmt_to_mt(jnp.asarray(uc.gi)), uc.g, rtol=1e-10)
         # the metric tensor does not depend on the orientation
         U = anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0)
-        np.testing.assert_allclose(anri.crystal.UBI_to_mt(jnp.linalg.inv(U @ B)), uc.g, rtol=1e-10)
+        np.testing.assert_allclose(anri.crystal.utils.UBI_to_mt(jnp.linalg.inv(U @ B)), uc.g, rtol=1e-10)
 
 
 class TestUBToUBI(unittest.TestCase):
     def test_against_inverse(self):
         q = np.random.default_rng(0).normal(size=(5, 4))
         U = np.asarray(anri.maths.rotation.quat_to_mat(q / np.linalg.norm(q, axis=1, keepdims=True)))
-        B = np.asarray(anri.crystal.lpars_to_B(jnp.array([3.0, 4.0, 5.0, 85.0, 95.0, 100.0])))
-        np.testing.assert_allclose(anri.crystal.U_B_to_UBI(U, B), np.linalg.inv(U @ B), rtol=0, atol=1e-13)
-        self.assertTrue(np.all(np.isnan(anri.crystal.U_B_to_UBI(np.full((3, 3), np.nan), B))))
+        B = np.asarray(anri.crystal.utils.lpars_to_B(jnp.array([3.0, 4.0, 5.0, 85.0, 95.0, 100.0])))
+        np.testing.assert_allclose(anri.crystal.utils.U_B_to_UBI(U, B), np.linalg.inv(U @ B), rtol=0, atol=1e-13)
+        self.assertTrue(np.all(np.isnan(anri.crystal.utils.U_B_to_UBI(np.full((3, 3), np.nan), B))))

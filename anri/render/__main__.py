@@ -40,7 +40,7 @@ def _cif(values: list | None) -> str | dict | None:
 
 
 def _prepare_options(p: argparse.ArgumentParser) -> None:
-    from anri.render import BANDWIDTH, OPTICS
+    from anri.render.stages import BANDWIDTH, OPTICS
 
     p.add_argument("--dataset", help="an ImageD11 DataSet to simulate: its frames' omega and dty, detector shape, y0 and "
                    "geometry replace the scan options")  # fmt: skip
@@ -128,7 +128,7 @@ def main() -> None:
     """Run the subcommand named on the command line."""
     args = parse_args()
     if args.command == "show":
-        from anri.io import show
+        from anri.io.provenance import show
 
         print(show(args.file))
         return
@@ -143,7 +143,7 @@ def main() -> None:
         out = getattr(args, "out", None) or os.path.join(
             args.outdir, os.path.splitext(os.path.basename(args.map))[0] + "_prepare.h5"
         )
-        source = rd.stage_prepare(
+        source = rd.stages.stage_prepare(
             args.map, args.pars, out, dataset=args.dataset,
             remap=dict(v.split("=", 1) for v in args.remap) if args.remap else None, cif=_cif(args.cif), optics=args.optics, divergence=args.divergence,
             bandwidth=args.bandwidth, beam_fwhm=args.beam_fwhm, psf=args.psf, pol_factor=args.pol_factor, y0=args.y0,
@@ -154,11 +154,11 @@ def main() -> None:
     else:
         source = args.source
     if cmd in ("render", "run"):
-        rd.stage_render(source, None if cmd == "run" else args.out, rows=getattr(args, "rows", None), cut=args.cut,
+        rd.stages.stage_render(source, None if cmd == "run" else args.out, rows=getattr(args, "rows", None), cut=args.cut,
                         window=tuple(args.window), max_frames=args.max_frames, batch=args.batch, command=command,
                         log=log)  # fmt: skip
     if cmd in ("assemble", "run"):
-        rd.stage_assemble(source, args.analysisroot, args.sample, args.dataset, None if cmd == "run" else args.out,
+        rd.stages.stage_assemble(source, args.analysisroot, args.sample, args.dataset, None if cmd == "run" else args.out,
                           parts=getattr(args, "parts", None), peaks_table=args.peaks_table, command=command,
                           log=log)  # fmt: skip
     log(f"done in {time.perf_counter() - T0:.0f} s")

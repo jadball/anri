@@ -18,7 +18,7 @@ class TestDetectorOrientationMatrix(unittest.TestCase):
         o21 = 0.0
         o22 = 1.0
         expected = jnp.eye(3)
-        result = anri.geom.detector_orientation_matrix(o11, o12, o21, o22)
+        result = anri.geom.detector.detector_orientation_matrix(o11, o12, o21, o22)
         np.testing.assert_allclose(result, expected)
 
     def test_simple(self):
@@ -27,7 +27,7 @@ class TestDetectorOrientationMatrix(unittest.TestCase):
         o21 = 0.0
         o22 = 1.0
         expected = jnp.array([[0, 1, 0], [0, 1, 0], [0, 0, 1]])
-        result = anri.geom.detector_orientation_matrix(o11, o12, o21, o22)
+        result = anri.geom.detector.detector_orientation_matrix(o11, o12, o21, o22)
         np.testing.assert_allclose(result, expected)
 
 
@@ -37,7 +37,7 @@ class TestDetectorRotationMatrix(unittest.TestCase):
         tilt_y = 0.0
         tilt_z = 0.0
         expected = jnp.eye(3)
-        result = anri.geom.detector_rotation_matrix(tilt_x, tilt_y, tilt_z)
+        result = anri.geom.detector.detector_rotation_matrix(tilt_x, tilt_y, tilt_z)
         np.testing.assert_allclose(result, expected)
 
     def test_id11(self):
@@ -47,7 +47,7 @@ class TestDetectorRotationMatrix(unittest.TestCase):
         from ImageD11.transform import detector_rotation_matrix as detector_rotation_matrix_id11
 
         expected = detector_rotation_matrix_id11(tilt_x, tilt_y, tilt_z)
-        result = anri.geom.detector_rotation_matrix(tilt_x, tilt_y, tilt_z)
+        result = anri.geom.detector.detector_rotation_matrix(tilt_x, tilt_y, tilt_z)
         np.testing.assert_allclose(result, expected)
 
 
@@ -72,7 +72,7 @@ class TestDetectorTransforms(unittest.TestCase):
         expected_cob_matrix = jnp.array([[0, 0, 1], [0, 1, 0], [1, 0, 0]])  # hard-coded anyway
         expected_det_tilts = jnp.eye(3)
         expected_det_trans = expected_det_tilts @ expected_cob_matrix @ expected_det_flips @ expected_pixel_size_scale
-        result_det_trans, result_beam_cen_shift, result_x_distance_shift = anri.geom.detector_transforms(
+        result_det_trans, result_beam_cen_shift, result_x_distance_shift = anri.geom.detector.detector_transforms(
             y_center=y_center,
             z_center=z_center,
             tilt_x=tilt_x,
@@ -108,7 +108,7 @@ class TestDetToLab(unittest.TestCase):
         sc = 1100.0
         fc = 900.0
 
-        det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(
+        det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector.detector_transforms(
             y_center=y_center,
             z_center=z_center,
             tilt_x=tilt_x,
@@ -124,7 +124,7 @@ class TestDetToLab(unittest.TestCase):
         )
 
         expected = jnp.array([500.0, -50.0, 50.0])
-        result = anri.geom.det_to_lab(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
+        result = anri.geom.detector.det_to_lab(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
         np.testing.assert_allclose(result, expected)
 
     def test_id11(self):
@@ -151,7 +151,7 @@ class TestDetToLab(unittest.TestCase):
         o21 = 0.0
         o22 = 1.0
 
-        det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(
+        det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector.detector_transforms(
             y_center=y_center,
             z_center=z_center,
             tilt_x=tilt_x,
@@ -185,7 +185,7 @@ class TestDetToLab(unittest.TestCase):
             o21=o21,
             o22=o22,
         ).T
-        det_to_lab_vec = jax.vmap(anri.geom.det_to_lab, in_axes=[0, 0, None, None, None])
+        det_to_lab_vec = jax.vmap(anri.geom.detector.det_to_lab, in_axes=[0, 0, None, None, None])
         result = det_to_lab_vec(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
         np.testing.assert_allclose(result, expected)
 
@@ -213,7 +213,7 @@ class TestDetToLab(unittest.TestCase):
         o21 = 0.0
         o22 = 1.0
 
-        det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(
+        det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector.detector_transforms(
             y_center=y_center,
             z_center=z_center,
             tilt_x=tilt_x,
@@ -228,8 +228,8 @@ class TestDetToLab(unittest.TestCase):
             o22=o22,
         )
 
-        det_to_lab_vec = jax.vmap(anri.geom.det_to_lab, in_axes=[0, 0, None, None, None])
-        lab_to_det_vec = jax.vmap(anri.geom.lab_to_det, in_axes=[0, 0, 0, None, None, None])
+        det_to_lab_vec = jax.vmap(anri.geom.detector.det_to_lab, in_axes=[0, 0, None, None, None])
+        lab_to_det_vec = jax.vmap(anri.geom.detector.lab_to_det, in_axes=[0, 0, 0, None, None, None])
 
         vec_lab = det_to_lab_vec(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
         vec_det = lab_to_det_vec(
@@ -257,7 +257,7 @@ class TestRaytraceToDet(unittest.TestCase):
         omega = random.uniform(key, shape=(npks,), minval=-180.0, maxval=180.0)
         self.wavelength = 0.1
 
-        vec_lab = vmap(anri.diffract.tth_eta_to_k_out, in_axes=[0, 0, None])(tth, eta, self.wavelength)
+        vec_lab = vmap(anri.diffract.scatter.tth_eta_to_k_out, in_axes=[0, 0, None])(tth, eta, self.wavelength)
 
         # set up some ImageD11 parameters
         from ImageD11.parameters import AnalysisSchema
@@ -299,13 +299,13 @@ class TestRaytraceToDet(unittest.TestCase):
         del pars_for_det["weight_hist_intensities"]
         del pars_for_det["no_bins"]
         del pars_for_det["wavelength"]
-        det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(**pars_for_det)
-        s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(
+        det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector.detector_transforms(**pars_for_det)
+        s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector.detector_basis_vectors_lab(
             det_trans, beam_cen_shift, x_distance_shift
         )
 
         # vectorize our function
-        raytrace_to_det_vec = vmap(anri.geom.raytrace_to_det, in_axes=(0, None, None, None, None))
+        raytrace_to_det_vec = vmap(anri.geom.detector.raytrace_to_det, in_axes=(0, None, None, None, None))
         sc_anri, fc_anri = raytrace_to_det_vec(
             self.vec_lab,
             jnp.array([0.0, 0.0, 0.0]),  # origin_lab,
@@ -338,9 +338,9 @@ class TestRaytraceFloat32(unittest.TestCase):
         out = {}
         for dtype in (np.float32, np.float64):
             # under x64 the transforms promote to float64; cast them, as a GPU run would have them in float32
-            transforms = [jnp.asarray(t, dtype) for t in anri.geom.detector_transforms(*pars.values())]
-            basis = anri.geom.detector_basis_vectors_lab(*transforms)
-            trace = jax.vmap(anri.geom.raytrace_to_det, in_axes=(0, 0, None, None, None))
+            transforms = [jnp.asarray(t, dtype) for t in anri.geom.detector.detector_transforms(*pars.values())]
+            basis = anri.geom.detector.detector_basis_vectors_lab(*transforms)
+            trace = jax.vmap(anri.geom.detector.raytrace_to_det, in_axes=(0, 0, None, None, None))
             sc, fc = trace(jnp.asarray(k_out, dtype), jnp.asarray(origin, dtype), *basis)
             self.assertEqual(sc.dtype, dtype)
             out[dtype] = np.stack([sc, fc], 1).astype(np.float64)

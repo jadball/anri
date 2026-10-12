@@ -98,7 +98,7 @@ html_favicon = "_static/favicon.ico"
 # https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html
 # By default, sort documented members by type within classes and modules.
 autosummary_ignore_module_all = False
-autosummary_imported_members = True
+autosummary_imported_members = False  # a module's page shows what it defines
 autodoc_typehints_format = "short"
 autodoc_default_options = {
     "show-inheritance": True,

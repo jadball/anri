@@ -1,37 +1,9 @@
-"""Diffraction-related utilities and functions."""
+"""Diffraction: the Ewald condition, (2theta, eta) of scattered beams, and intensity factors.
 
-from ._impl.factors import lorentz, lorentz_polarisation, polarisation
-from ._impl.scatter import (
-    ds_to_tth,
-    k_out_to_tth_eta,
-    k_to_q_lab,
-    omega_from_core,
-    omega_solns,
-    omega_solns_both,
-    omega_solns_core,
-    peak_lab_to_k_out,
-    q_lab_to_k_out,
-    q_lab_to_tth_eta,
-    q_to_ds,
-    scale_norm_k,
-    tth_eta_to_k_out,
-)
+- :mod:`anri.diffract.scatter`: Ewald conditions, omega solutions, scattering angles and wave-vectors
+- :mod:`anri.diffract.factors`: Lorentz and polarisation factors
+"""
 
-__all__ = [
-    "ds_to_tth",
-    "k_out_to_tth_eta",
-    "k_to_q_lab",
-    "lorentz",
-    "lorentz_polarisation",
-    "omega_from_core",
-    "omega_solns",
-    "omega_solns_both",
-    "omega_solns_core",
-    "peak_lab_to_k_out",
-    "polarisation",
-    "q_lab_to_k_out",
-    "q_lab_to_tth_eta",
-    "q_to_ds",
-    "scale_norm_k",
-    "tth_eta_to_k_out",
-]
+from . import factors, scatter
+
+__all__ = ["factors", "scatter"]

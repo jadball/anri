@@ -30,7 +30,7 @@ def two_phase_map(folder):
     phase[:, :2], phase[:, 2:] = 0, 1
     ubi = np.full((4, 4, 3, 3), np.nan)
     for p in (0, 1):
-        ubi[phase == p] = np.linalg.inv(np.asarray(U[p]) @ anri.crystal.B_matrix(np.array(lp[p])))
+        ubi[phase == p] = np.linalg.inv(np.asarray(U[p]) @ anri.crystal.structure.B_matrix(np.array(lp[p])))
     maps = {"UBI": ubi, "phase_ids": phase}
     tmap = TensorMap(maps={k: TensorMap.recon_order_to_map_order(v) for k, v in maps.items()}, steps=[2.0] * 3)
     tmap.phases = {0: unitcell(lp[0], 229, name="Fe"), 1: unitcell(lp[1], 225, name="Ni")}
@@ -44,37 +44,37 @@ class TestRenderStages(unittest.TestCase):
         """Two phases, rendered in two parts and assembled into an ImageD11 dataset with the provenance chain."""
         with tempfile.TemporaryDirectory() as tmp:
             parfile = os.path.join(tmp, "geometry.par")
-            anri.io.write_par(parfile, PARS)
+            anri.io.imaged11.write_par(parfile, PARS)
             map_file = two_phase_map(tmp)
-            prep = rd.stage_prepare(map_file, parfile, os.path.join(tmp, "x_prepare.h5"), omega_step=2.0,
+            prep = rd.stages.stage_prepare(map_file, parfile, os.path.join(tmp, "x_prepare.h5"), omega_step=2.0,
                                     dty_step=8.0, margin=0.25, density=50.0, log=lambda m: None)  # fmt: skip
-            p = rd.load_prepare(prep)
+            p = rd.stages.load_prepare(prep)
             self.assertEqual(p["names"], ["Fe", "Ni"])
             self.assertEqual(p["omega"].shape, (3, 90))  # radius 4.2 + 0.25 x 8: one row either side of y0
             self.assertEqual(p["cells"]["Ni"]["cell_lattice_[P,A,B,C,I,F,R]"], 225)
-            self.assertEqual(list(rd.parse_rows("1:", 3)), [1, 2])
-            a = rd.stage_render(prep, rows=":1", log=lambda m: None)
+            self.assertEqual(list(rd.stages.parse_rows("1:", 3)), [1, 2])
+            a = rd.stages.stage_render(prep, rows=":1", log=lambda m: None)
             self.assertTrue(a.endswith("x_render_0000-0000.h5"))
             with self.assertRaises(ValueError):  # row 1 and 2 missing
-                rd.stage_assemble(prep, tmp, "s", "d", log=lambda m: None)
-            b = rd.stage_render(prep, rows="1:", log=lambda m: None)
-            self.assertEqual(rd.render_parts(prep), [a, b])
-            out = rd.stage_assemble(prep, tmp, "s", "d", log=lambda m: None)
-            prov = anri.io.read_provenance(out)
-            ds = anri.io.read_dataset(prov["resolved"]["dataset_file"])
+                rd.stages.stage_assemble(prep, tmp, "s", "d", log=lambda m: None)
+            b = rd.stages.stage_render(prep, rows="1:", log=lambda m: None)
+            self.assertEqual(rd.stages.render_parts(prep), [a, b])
+            out = rd.stages.stage_assemble(prep, tmp, "s", "d", log=lambda m: None)
+            prov = anri.io.provenance.read_provenance(out)
+            ds = anri.io.imaged11.read_dataset(prov["resolved"]["dataset_file"])
             self.assertEqual(len(ds["ybincens"]), 3)
             with h5py.File(prov["resolved"]["sparse_file"], "r") as h:
                 n = sum(int(h[g]["nnz"][()].sum()) for g in h)
                 self.assertEqual(sorted(h), ["1.1", "2.1", "3.1"])
             self.assertEqual(n, prov["results"]["pixels"])
             self.assertGreater(n, 0)
-            self.assertEqual(anri.io.chain(out), [out, prep])
-            _, _, cell = anri.io.read_pars_json(prov["resolved"]["parfile"], "Ni")
+            self.assertEqual(anri.io.provenance.chain(out), [out, prep])
+            _, _, cell = anri.io.imaged11.read_pars_json(prov["resolved"]["parfile"], "Ni")
             self.assertEqual(cell["cell_lattice_[P,A,B,C,I,F,R]"], 225)
             # the command line that remakes it parses back to the same options
             from anri.render.__main__ import parse_args
 
-            args = parse_args(shlex.split(rd.run_command(out))[3:])
+            args = parse_args(shlex.split(rd.stages.run_command(out))[3:])
             self.assertEqual((args.command, args.sample, args.omega_step, args.dty_step, args.density),
                              ("run", "s", 2.0, 8.0, 50.0))  # fmt: skip
             self.assertEqual((list(args.det_shape), list(args.window), args.cut), ([2162, 2068], [3, 7, 7], 1.0))
@@ -94,10 +94,10 @@ class TestRenderStages(unittest.TestCase):
             self.assertEqual(cov["on_detector"][0], 1.0)  # the innermost ring is wholly on the detector
             # the map prepared from the dataset it made, rendered again, matches that dataset's measured row
             dsfile = prov["resolved"]["dataset_file"]
-            again = rd.load_prepare(rd.stage_prepare(map_file, None, os.path.join(tmp, "y_prepare.h5"),
+            again = rd.stages.load_prepare(rd.stages.stage_prepare(map_file, None, os.path.join(tmp, "y_prepare.h5"),
                                                      dataset=dsfile, density=50.0, log=lambda m: None))  # fmt: skip
             np.testing.assert_array_equal(again["omega"], p["omega"])
-            ds = anri.io.read_dataset(dsfile)
+            ds = anri.io.imaged11.read_dataset(dsfile)
             obs, mod = dg.observed_row(ds, 1), dg.model_row(again, 1)
             self.assertAlmostEqual(dg.row_scale(obs, mod), 1.0, delta=0.02)
             npix = 2162 * 2068

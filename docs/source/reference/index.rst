@@ -11,19 +11,15 @@ API reference
 .. autosummary::
     :toctree: generated
     :template: custom-module-template.rst
+    :recursive:
 
-    crystal
-    diffract
+    utils
+    maths
     geom
+    diffract
+    crystal
     fwd
     index
-    index.diagnostics
-    index.plots
-    io
-    maths.rotation
-    maths.utils
-    phantom
     render
-    render.diagnostics
-    render.plots
-    utils
+    io
+    phantom

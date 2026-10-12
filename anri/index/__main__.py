@@ -45,11 +45,11 @@ def _histogram_options(p: argparse.ArgumentParser) -> None:
                    "as ImageD11's DataSet.set_monitor does (e.g. fpico6; default: no normalisation)")  # fmt: skip
     p.add_argument("--dty-source", choices=("dataset", "frames"), default="dataset", help="which dty bins the frames "
                    "into rows: the DataSet's (default; for a fly or helical scan one row per rotation, at its mean), or "
-                   "each frame's own (the DataSet's plus the motion within its row, anri.io.read_frame_dty: a helical "
+                   "each frame's own (the DataSet's plus the motion within its row, anri.io.imaged11.read_frame_dty: a helical "
                    "rotation then spreads over 2-3 rows)")  # fmt: skip
     p.add_argument("--no-frame-dty", action="store_true", help="ignore dty's motion within each row (fly and helical "
                    "scans): by default each frame's dty is the DataSet's for its row plus the motion read from the "
-                   "sparse file (anri.io.read_frame_dty), and the model puts each voxel in the rows that really saw it")  # fmt: skip
+                   "sparse file (anri.io.imaged11.read_frame_dty), and the model puts each voxel in the rows that really saw it")  # fmt: skip
     p.add_argument("--gridstep", type=int, default=1, help="voxel = gridstep x dty step; data rows are summed in groups "
                    "of gridstep to match (default 1)")  # fmt: skip
     p.add_argument("--check", action="store_true", help="print the resolved paths and parameters, then stop")
@@ -115,7 +115,7 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
         "the beam sees at every omega, within the scanned dty range all round the rotation axis; those further "
         "out are hardly constrained), 'auto' (in the disc, the Otsu threshold, largest region and convex hull "
         "of a quick reconstruction, as ImageD11's tomo_2_map), or a .npy file of [voxels, voxels] booleans in "
-        "reconstruction order, e.g. drawn with anri.index.draw_mask",
+        "reconstruction order, e.g. drawn with anri.index.mask.draw_mask",
     )
 
 
@@ -183,7 +183,7 @@ def main() -> None:
     """Run the subcommand named on the command line."""
     args = parse_args()
     if args.command == "show":
-        from anri.io import show
+        from anri.io.provenance import show
 
         print(show(args.file))
         return
@@ -196,7 +196,7 @@ def main() -> None:
     command = "python -m anri.index " + shlex.join(sys.argv[1:])
     if cmd in ("histogram", "run"):
         out = getattr(args, "out", None) or os.path.join(args.outdir, f"{args.sample}_{args.dataset}_histogram.h5")
-        source = ix.stage_histogram(
+        source = ix.stages.stage_histogram(
             args.analysisroot, args.sample, args.dataset, out, phase=args.phase, parfile=args.parfile,
             rings=args.rings, cif=args.cif, tth_tol=args.tth_tol, monitor=args.monitor, dty_source=args.dty_source,
             frame_dty=not args.no_frame_dty, gridstep=args.gridstep, check=args.check, command=command, log=log,
@@ -207,17 +207,19 @@ def main() -> None:
         source = args.source
     out = None if cmd == "run" else args.out
     if cmd in ("search", "run"):
-        source = ix.stage_search(source, out, grid=args.grid, max_chance=args.max_chance, lit=args.lit,
+        source = ix.stages.stage_search(source, out, grid=args.grid, max_chance=args.max_chance, lit=args.lit,
                                  etacut=args.etacut, command=command, log=log)  # fmt: skip
     if cmd in ("filter", "run"):
-        source = ix.stage_filter(source, out, prune=args.prune, min_comp=args.min_comp, min_lr=args.min_lr,
+        source = ix.stages.stage_filter(source, out, prune=args.prune, min_comp=args.min_comp, min_lr=args.min_lr,
                                  keep=args.keep, censor=args.censor, command=command, log=log)  # fmt: skip
     if cmd in ("fit", "run"):
-        source = ix.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.iter, coarse=args.coarse,
+        source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.iter, coarse=args.coarse,
                               beam=args.beam, mask=args.mask, block_gb=args.block_gb, censor=args.censor,
                               command=command, log=log)  # fmt: skip
     if cmd in ("populations", "run"):
-        ix.stage_populations(source, out, occupied=args.occupied, min_frac=args.min_frac, command=command, log=log)
+        ix.stages.stage_populations(
+            source, out, occupied=args.occupied, min_frac=args.min_frac, command=command, log=log
+        )
     log(f"done in {time.perf_counter() - T0:.0f} s")
 
 

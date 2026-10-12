@@ -2,15 +2,14 @@ import unittest
 
 import numpy as np
 
-from anri.crystal import (
-    B_matrix,
+from anri.crystal.orientation import (
     cubochoric_quaternions,
     disorientation,
     laue_rotations,
     orientation_grid,
-    symmetry_matrices,
     to_fundamental_zone,
 )
+from anri.crystal.structure import B_matrix, symmetry_matrices
 from anri.maths.rotation import quat_to_mat
 
 
