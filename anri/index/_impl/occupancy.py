@@ -23,7 +23,7 @@ from jax.typing import ArrayLike
 from anri.fwd._impl.render import _chord_weight
 from anri.geom import recon_positions, wrap_omega
 
-from .data import coarsen_rows, eta_omega_corners, omega_bin
+from .data import coarsen_rows, coarsen_scan, eta_omega_corners, omega_bin
 
 
 def censored_ratio(d: jax.Array, mu: jax.Array, censor: float) -> jax.Array:
@@ -578,24 +578,14 @@ def fit_occupancy(
         log(f"candidates: {nv} voxels x {pred[0].shape[0]} orientations, the top {k} per voxel")
         f0, cand = candidates(H, pred, ring_j, pos_p, scan, dims, k, vb_all, qc=qc, log=log)
     else:
-        H_c, n_rows_c = coarsen_rows(H, scan["n_rows"], coarse)
-        ystep = scan["ystep"]
-        scan_c = {
-            **scan,
-            "dty0": scan["dty0"] + 0.5 * (coarse - 1) * ystep,
-            "ystep": coarse * ystep,
-            "n_rows": n_rows_c,
-        }
-        if "voxel" in scan:  # summed rows: a flat top (coarse - 1) rows wider, over voxels coarse x larger
-            scan_c["voxel"] = coarse * scan["voxel"]
-            scan_c["width_beam"] = scan["width_beam"] + (coarse - 1) * ystep
+        H_c, _ = coarsen_rows(H, scan["n_rows"], coarse)
+        scan_c = coarsen_scan(scan, coarse)
+        step_c = scan_c["ystep"]
         extent = float(np.abs(np.asarray(pos)[:, :2]).max())
-        n_c = 2 * int(np.ceil(extent / (coarse * ystep))) + 3
-        pos_c = np.asarray(recon_positions(n_c, coarse * ystep), np.float32)
+        n_c = 2 * int(np.ceil(extent / step_c)) + 3
+        pos_c = np.asarray(recon_positions(n_c, step_c), np.float32)
         pos_cp = pad_voxels(pos_c, vbp)
-        log(
-            f"coarse: {n_c} x {n_c} voxels of {coarse * ystep:g} x {pred[0].shape[0]} orientations, the top {k} per voxel"
-        )
+        log(f"coarse: {n_c} x {n_c} voxels of {step_c:g} x {pred[0].shape[0]} orientations, the top {k} per voxel")
         f_c, cand_c = candidates(H_c, pred, ring_j, pos_cp, scan_c, dims, k, vb_all, qc=qc, log=log)
         f_c = mlem(H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log, censor=censor)
         cand_in = inherit_candidates(pos_p, pos_c, f_c[: n_c * n_c], cand_c[: n_c * n_c], 2 * k)

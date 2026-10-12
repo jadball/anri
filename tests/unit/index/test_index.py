@@ -254,6 +254,21 @@ class TestOccupancy(unittest.TestCase):
         sq = ix.polygon_mask((10, 10), [(2, 3), (7, 3), (7, 8), (2, 8)])  # (x, y) = (column, row)
         self.assertTrue(sq[5, 4] and not sq[1, 4] and not sq[5, 9])
 
+    def test_coarsen_scan(self):
+        """Coarse rows: the geometry of summed rows, and ddty as dty_offsets gives it for the summed rows directly."""
+        n_fr, ystep = 360, 1.0
+        for n_rows, g in ((6, 2), (5, 2), (7, 3)):  # with a partial last group too
+            om = np.tile((np.arange(n_fr) + 0.5) * 360.0 / n_fr, (n_rows, 1))
+            dty = np.arange(n_rows)[:, None] * ystep + 1.2 * ystep * (om / 360.0 - 0.5)  # helical, 1.2 steps a turn
+            edges = (np.arange(n_rows + 1) - 0.5) * ystep
+            fine = {"dty0": 0.0, "ystep": ystep, "n_rows": n_rows, "voxel": ystep, "width_beam": 0.0,
+                    "ddty": jnp.asarray(ix.dty_offsets(dty, om, edges, 1, 0.0, 1.0, 360, 0.0, ystep))}  # fmt: skip
+            c = ix.coarsen_scan(fine, g)
+            self.assertEqual((c["n_rows"], c["ystep"], c["voxel"], c["width_beam"]), (-(-n_rows // g), g, g, g - 1))
+            self.assertAlmostEqual(c["dty0"], 0.5 * (g - 1) * ystep)
+            direct = ix.dty_offsets(dty, om, edges, g, 0.0, 1.0, 360, c["dty0"], c["ystep"])
+            np.testing.assert_allclose(c["ddty"], direct, atol=1e-6)
+
     def test_coarsen_rows(self):
         H = np.arange(2 * 7, dtype=float)
         Hc, n = ix.coarsen_rows(H, 7, 3)

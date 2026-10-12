@@ -402,6 +402,47 @@ def coarsen_rows(H: ArrayLike, n_rows: int, g: int) -> tuple[jax.Array, int]:
     return d.reshape(d.shape[0], -1, g).sum(-1).ravel(), -(-n_rows // g)
 
 
+def coarsen_scan(scan: dict, g: int) -> dict:
+    """Return the scan of a histogram whose rows are summed in groups of g (:func:`coarsen_rows`).
+
+    Coarse row k is rows k g ... (k + 1) g - 1, at their middle: dty0 moves by (g - 1) / 2 rows, ystep is g times
+    larger and there are ceil(n_rows / g) rows. With a beam profile ("voxel", "width_beam") voxels are g times larger
+    and the beam's flat top (g - 1) rows wider. Per-row "exposure" becomes each group's mean (a coarse row is the sum
+    of g rows), and "ddty" each group's mean real dty (weighted by exposure) less the coarse row's nominal dty.
+
+    Parameters
+    ----------
+    scan
+        Scan dict, see :func:`system`
+    g
+        Group size
+
+    Returns
+    -------
+    dict
+        The coarse scan
+    """
+    ystep, n = scan["ystep"], scan["n_rows"]
+    n_c = -(-n // g)
+    out = {**scan, "dty0": scan["dty0"] + 0.5 * (g - 1) * ystep, "ystep": g * ystep, "n_rows": n_c}
+    if "voxel" in scan:  # summed rows: a flat top (g - 1) rows wider, over voxels g x larger
+        out["voxel"] = g * scan["voxel"]
+        out["width_beam"] = scan["width_beam"] + (g - 1) * ystep
+
+    def groups(a: jax.Array) -> jax.Array:  # [n, n_o] -> [n_c, g, n_o], missing rows of the last group as 0
+        return jnp.pad(a, ((0, n_c * g - n), (0, 0))).reshape(n_c, g, -1)
+
+    if "exposure" in scan:
+        out["exposure"] = groups(scan["exposure"]).sum(1) / g
+    if "ddty" in scan:
+        w = groups(scan.get("exposure", jnp.ones_like(scan["ddty"])))
+        real = groups(scan["ddty"] + (jnp.arange(n) * ystep)[:, None])  # each row's real dty, less dty0
+        mean = (w * real).sum(1) / jnp.maximum(w.sum(1), 1e-30)
+        nominal = 0.5 * (g - 1) * ystep + jnp.arange(n_c) * g * ystep  # each coarse row's dty, less dty0
+        out["ddty"] = jnp.where(w.sum(1) > 0, mean - nominal[:, None], 0.0)
+    return out
+
+
 def dty_offsets(
     frame_dty: ArrayLike, frame_omega: ArrayLike, ybinedges: ArrayLike, gridstep: int, om0: float, b_o: float, n_o: int,
     dty0: float, ystep: float, bin_dty: ArrayLike | None = None, return_exposure: bool = False,

@@ -14,6 +14,7 @@ The steps, in order (``python -m anri.index`` runs them on an ImageD11 dataset):
 
 from ._impl.data import (
     coarsen_rows,
+    coarsen_scan,
     dty_offsets,
     histogram,
     histogram_pixels,
@@ -64,6 +65,7 @@ __all__ = [
     "censored_ratio",
     "choose_grid",
     "coarsen_rows",
+    "coarsen_scan",
     "completeness",
     "completeness_of",
     "deviance",

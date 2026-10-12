@@ -268,8 +268,11 @@ def main() -> None:
 
     ybin, yedge, oedge = ds["ybincens"], ds["ybinedges"], ds["obinedges"]
     G = args.gridstep
-    ystep0, nk0 = float(np.median(np.diff(ybin))), len(ybin)
-    YSTEP, DTY0, NK = G * ystep0, float(ybin[0]) + 0.5 * (G - 1) * ystep0, -(-nk0 // G)
+    ystep0 = float(np.median(np.diff(ybin)))
+    # the DataSet's rows summed in groups of G, voxels of one (coarse) row
+    rows = ix.coarsen_scan({"dty0": float(ybin[0]), "ystep": ystep0, "n_rows": len(ybin), "voxel": ystep0,
+                            "width_beam": 0.0}, G)  # fmt: skip
+    YSTEP, DTY0, NK = rows["ystep"], rows["dty0"], rows["n_rows"]
     BEAM = args.beam
     OM0, OSTEP = float(oedge[0]), float(np.median(np.diff(oedge)))
     N_E, N_O = round(360 / B_E), round(float(oedge[-1] - oedge[0]) / B_O)
@@ -434,7 +437,7 @@ def main() -> None:
                 f"{uneven * 100:.1f}% with more or fewer than usual; the model scales by it")  # fmt: skip
     dims = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O)
     if BEAM > 0:  # the beam's profile across dty, over voxels of YSTEP; summed rows widen its flat top
-        scan.update({"sig_beam": fwhm_to_sigma(BEAM), "width_beam": (G - 1) * ystep0, "voxel": YSTEP})
+        scan.update({"sig_beam": fwhm_to_sigma(BEAM), "width_beam": rows["width_beam"], "voxel": rows["voxel"]})
         dims = (*dims, ix.beam_rows(scan))
         log(f"beam: FWHM {BEAM:g} across dty, each voxel spread over {dims[4]} rows")
     mask, rec = np.ones(NV, bool), None
