@@ -183,7 +183,7 @@ def main() -> None:
     """Run the subcommand named on the command line."""
     args = parse_args()
     if args.command == "show":
-        from anri.index import show
+        from anri.io import show
 
         print(show(args.file))
         return

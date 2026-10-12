@@ -22,17 +22,23 @@ options from one filter) are separate files, each pointing back to its input.
 
 from __future__ import annotations
 
-import datetime
 import os
-import subprocess
 import time
-import uuid
 from collections.abc import Callable, Iterator
 
 import h5py
 import numpy as np
 
-import anri
+from anri.io import (
+    chain,
+    read_attrs,
+    read_provenance,
+    stage_path,
+    upstream,
+    write_attrs,
+    write_provenance,
+    write_results,
+)
 
 STAGES = ("histogram", "search", "filter", "fit", "populations")
 B_E, B_O = 0.5, 0.25  # lit histogram bins (deg): eta, omega
@@ -42,159 +48,6 @@ _LATTICE_KEYS = ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "ce
 
 
 # ------------------------------------------------------------------------------------------------------- provenance
-def _git_commit() -> dict:
-    """Return the git commit of the running anri code and whether it has uncommitted changes ({} outside git)."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    try:
-        commit = subprocess.run(["git", "-C", here, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10,
-                                check=False)  # fmt: skip
-        status = subprocess.run(["git", "-C", here, "status", "--porcelain", "--untracked-files=no"],
-                                capture_output=True, text=True, timeout=10, check=False)  # fmt: skip
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    if commit.returncode != 0:
-        return {}
-    return {"git_commit": commit.stdout.strip(), "git_dirty": bool(status.stdout.strip())}
-
-
-def _set_attrs(group: h5py.Group, values: dict) -> None:
-    """Store a flat dict as attributes; None (which HDF5 cannot hold) is left out, lists become arrays."""
-    for k, v in values.items():
-        if v is None:
-            continue
-        group.attrs[k] = np.asarray(v) if isinstance(v, (list, tuple)) else v
-
-
-def _get_attrs(group: h5py.Group) -> dict:
-    """Read attributes back as Python values (str, bool, int, float, lists)."""
-    out = {}
-    for k, v in group.attrs.items():
-        if isinstance(v, bytes):
-            v = v.decode()
-        out[k] = v.tolist() if hasattr(v, "tolist") else v
-    return out
-
-
-def write_provenance(
-    h: h5py.File, stage: str, source: str | None, options: dict, resolved: dict, command: str | None = None
-) -> str:
-    """Write a stage file's provenance group: what made it and from what. Returns the file's new id.
-
-    Parameters
-    ----------
-    h
-        The stage file, open for writing
-    stage
-        One of :data:`STAGES`
-    source
-        The file this stage read (None for the first stage), whose id is recorded too
-    options, resolved
-        Every option of this stage as given, and every value worked out from the data
-    command
-        The command line, if run from one
-    """
-    file_id = uuid.uuid4().hex
-    p = h.create_group("provenance")
-    _set_attrs(p, {"stage": stage, "id": file_id, "anri_version": anri.VERSION, **_git_commit(),
-                   "date": datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec="seconds"),
-                   "cwd": os.getcwd(), "command": command})  # fmt: skip
-    if source is not None:
-        p.attrs["source"] = os.path.abspath(source)
-        p.attrs["source_id"] = read_provenance(source)["id"]
-    _set_attrs(p.create_group("options"), options)
-    _set_attrs(p.create_group("resolved"), resolved)
-    p.create_group("results")
-    return file_id
-
-
-def write_results(path: str, results: dict) -> None:
-    """Add a summary of a stage's results to its provenance (``provenance/results``)."""
-    with h5py.File(path, "a") as h:
-        _set_attrs(h["provenance/results"], results)
-
-
-def read_provenance(path: str) -> dict:
-    """Read a stage file's provenance: its attributes, with "options", "resolved" and "results" as dicts."""
-    with h5py.File(path, "r") as h:
-        p = h["provenance"]
-        out = _get_attrs(p)
-        for g in ("options", "resolved", "results"):
-            out[g] = _get_attrs(p[g])
-    return out
-
-
-def _source_path(path: str, prov: dict) -> str:
-    """Return the file a stage file was made from: its recorded path, else the same name beside it (moved together)."""
-    src = prov["source"]
-    if os.path.exists(src):
-        return src
-    beside = os.path.join(os.path.dirname(os.path.abspath(path)), os.path.basename(src))
-    if os.path.exists(beside):
-        return beside
-    msg = f"{path} was made from {src}, which is not there (nor beside {path})"
-    raise FileNotFoundError(msg)
-
-
-def upstream(path: str, stage: str) -> str:
-    """Follow a stage file's sources back to the file of an earlier stage, checking each file is the one recorded.
-
-    Parameters
-    ----------
-    path
-        A stage file
-    stage
-        The stage wanted: this file's own or an earlier one
-
-    Returns
-    -------
-    str
-        That stage's file
-    """
-    prov = read_provenance(path)
-    while prov["stage"] != stage:
-        if "source" not in prov:
-            msg = f"{path} ({prov['stage']}) has no {stage} stage upstream"
-            raise ValueError(msg)
-        src = _source_path(path, prov)
-        src_prov = read_provenance(src)
-        if src_prov["id"] != prov["source_id"]:
-            msg = (f"{src} is not the file {path} was made from (its id is {src_prov['id']}, {path} records "
-                   f"{prov['source_id']}): it was remade or replaced since")  # fmt: skip
-            raise ValueError(msg)
-        path, prov = src, src_prov
-    return path
-
-
-def show(path: str) -> str:
-    """Return how a stage file was made, all the way back to the dataset, as text: one section per stage, first first.
-
-    Parameters
-    ----------
-    path
-        Any stage file
-    """
-    chain = [path]
-    prov = read_provenance(path)
-    while "source" in prov:
-        upstream(chain[-1], STAGES[STAGES.index(prov["stage"]) - 1])  # checks the ids
-        chain.append(_source_path(chain[-1], prov))
-        prov = read_provenance(chain[-1])
-    lines = []
-    for p in reversed(chain):
-        prov = read_provenance(p)
-        lines.append(f"[{prov['stage']}]")
-        lines.append(f"file = {os.path.abspath(p)!r}")
-        for k, v in prov.items():
-            if k not in ("stage", "options", "resolved", "results"):
-                lines.append(f"{k} = {v!r}")
-        for g in ("options", "resolved", "results"):
-            if prov[g]:
-                lines.append(f"\n[{prov['stage']}.{g}]")
-                lines += [f"{k} = {v!r}" for k, v in prov[g].items()]
-        lines.append("")
-    return "\n".join(lines)
-
-
 def run_command(path: str) -> str:
     """Return the ``python -m anri.index run`` command that remakes a stage file and those before it.
 
@@ -209,12 +62,9 @@ def run_command(path: str) -> str:
     """
     import shlex
 
-    prov = read_provenance(path)
-    opts = dict(prov["options"])
-    while "source" in prov:
-        path = upstream(path, STAGES[STAGES.index(prov["stage"]) - 1])
-        prov = read_provenance(path)
-        opts = {**prov["options"], **opts}
+    opts: dict = {}
+    for p in reversed(chain(path)):  # the first stage first, so that a later stage's value wins
+        opts.update(read_provenance(p)["options"])
     cmd = ["python", "-m", "anri.index", "run", *(str(opts.pop(k)) for k in ("analysisroot", "sample", "dataset"))]
     for k, v in opts.items():
         if k == "frame_dty":  # on by default; the command line can only turn it off
@@ -222,16 +72,6 @@ def run_command(path: str) -> str:
         elif k != "save_model" and v is not False:
             cmd += ["--" + {"n_iter": "iter"}.get(k, k).replace("_", "-")] + ([] if v is True else [str(v)])
     return shlex.join(cmd)
-
-
-def _out(source: str, stage: str, out: str | None) -> str:
-    """Return a stage's default output: the source's name with its stage replaced, beside it."""
-    if out is not None:
-        return out
-    prev = STAGES[STAGES.index(stage) - 1]
-    base = os.path.basename(source)
-    stem = base[: -len(f"_{prev}.h5")] if base.endswith(f"_{prev}.h5") else os.path.splitext(base)[0]
-    return os.path.join(os.path.dirname(os.path.abspath(source)), f"{stem}_{stage}.h5")
 
 
 # ----------------------------------------------------------------------------------------- shared setup (one source)
@@ -301,9 +141,9 @@ def load_histogram(path: str) -> dict:
     prov = read_provenance(path)
     r = prov["resolved"]
     with h5py.File(path, "r") as h:
-        geo = _get_attrs(h["geometry"])
+        geo = read_attrs(h["geometry"])
         rings = {k: h["rings"][k][()] for k in h["rings"]}
-        scan = _get_attrs(h["scan"])
+        scan = read_attrs(h["scan"])
         for k in ("ddty", "exposure"):
             if k in h["scan"]:
                 scan[k] = jnp.asarray(h["scan"][k][()], jnp.float32)
@@ -589,12 +429,12 @@ def stage_histogram(
                 "n_hkls": len(ring_t["hkls"]), "spatial_correction": d["spatial_correction"]}  # fmt: skip
     with h5py.File(out, "w") as h:
         write_provenance(h, "histogram", None, options, resolved, command)
-        _set_attrs(h.create_group("geometry"), d["geo"])
+        write_attrs(h.create_group("geometry"), d["geo"])
         g = h.create_group("rings")
         for k, v in ring_t.items():
             g[k] = np.asarray(v)
         g = h.create_group("scan")
-        _set_attrs(g, sc)
+        write_attrs(g, sc)
         if ddty is not None:
             g["ddty"] = np.asarray(ddty, np.float32)
         if expo is not None:
@@ -653,7 +493,7 @@ def stage_search(
     log(f"grid {step} deg{'' if grid is not None else ' (auto)'}: {len(U_grid)} orientations, up to {delta:.2f} deg "
         f"from the truth; completeness {time.perf_counter() - t1:.1f} s: median (chance) {chance:.2f}, 99th "
         f"{np.percentile(comp, 99):.2f}, max {comp.max():.2f}, halfway {halfway:.2f}")  # fmt: skip
-    out = _out(histogram_file, "search", out)
+    out = stage_path(histogram_file, "search", out)
     with h5py.File(out, "w") as h:
         write_provenance(h, "search", histogram_file, options, {"grid_step": step, "grid_auto": grid is None,
                                                                  "grid_worst_case_deg": delta}, command)  # fmt: skip
@@ -733,7 +573,7 @@ def stage_filter(
     else:
         msg = f"prune must be 'likelihood' or 'completeness', not {prune!r}"
         raise ValueError(msg)
-    out = _out(search_file, "filter", out)
+    out = stage_path(search_file, "filter", out)
     with h5py.File(out, "w") as h:
         write_provenance(h, "filter", search_file, options, {"min_comp_used": min_comp_used}, command)
         h["kept"] = np.asarray(kept)
@@ -860,7 +700,7 @@ def stage_fit(
     log(f"measured / fitted intensity per dty row ({lit_rows.sum()} rows with intensity): rms {np.sqrt(np.mean(dev**2)):.3f}, "
         f"min {np.nanmin(row_ratio):.3f}, max {np.nanmax(row_ratio):.3f}; row-to-row rms {np.sqrt(np.nanmean(np.diff(row_ratio) ** 2)):.3f}")  # fmt: skip
 
-    out = _out(filter_file, "fit", out)
+    out = stage_path(filter_file, "fit", out)
     results = {"f": f, "cand": cands, "U": U_kept, "comp": comp_kept, "pos": pos, "mask": sel, "row_ratio": row_ratio,
                "row_data": d_row, "row_model": m_row}  # fmt: skip
     if rec is not None:
@@ -955,7 +795,7 @@ def stage_populations(
         + f"; main fraction median {np.median(frac[occ, 0]):.2f}; spread median {np.median(spread[present]):.2f} deg "
         f"(includes the grid); completeness median {np.median(comp_pop[present]):.2f}")  # fmt: skip
 
-    out = _out(fit_file, "populations", out)
+    out = stage_path(fit_file, "populations", out)
     results = {"frac": frac, "U_pop": U_pop, "spread": spread, "n": n_pop, "comp_pop": comp_pop, "occupied": occ,
                "present": present}  # fmt: skip
     with h5py.File(out, "w") as h:

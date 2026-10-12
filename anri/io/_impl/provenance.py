@@ -1,0 +1,175 @@
+"""Provenance of anri's stage files: what made each file and from what, as plain HDF5 attributes.
+
+A method's stages each write one HDF5 file with a ``provenance`` group. Its attributes hold the stage, a unique id,
+the file it was made from and that file's id (checked when the chain is followed, so a remade or replaced source is
+refused), the anri version, git commit and dirty flag, the date, working directory and command. Three subgroups hold
+attributes too: ``options`` (as given; None left out), ``resolved`` (worked out from the data) and ``results`` (a
+summary). :func:`show` prints the chain back to the first stage.
+"""
+
+from __future__ import annotations
+
+import datetime
+import os
+import subprocess
+import uuid
+
+import h5py
+import numpy as np
+
+import anri
+
+
+def _git_commit() -> dict:
+    """Return the git commit of the running anri code and whether it has uncommitted changes ({} outside git)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        commit = subprocess.run(["git", "-C", here, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10,
+                                check=False)  # fmt: skip
+        status = subprocess.run(["git", "-C", here, "status", "--porcelain", "--untracked-files=no"],
+                                capture_output=True, text=True, timeout=10, check=False)  # fmt: skip
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if commit.returncode != 0:
+        return {}
+    return {"git_commit": commit.stdout.strip(), "git_dirty": bool(status.stdout.strip())}
+
+
+def write_attrs(group: h5py.Group, values: dict) -> None:
+    """Store a flat dict as attributes; None (which HDF5 cannot hold) is left out, lists become arrays."""
+    for k, v in values.items():
+        if v is None:
+            continue
+        group.attrs[k] = np.asarray(v) if isinstance(v, (list, tuple)) else v
+
+
+def read_attrs(group: h5py.Group) -> dict:
+    """Read attributes back as Python values (str, bool, int, float, lists)."""
+    out = {}
+    for k, v in group.attrs.items():
+        if isinstance(v, bytes):
+            v = v.decode()
+        out[k] = v.tolist() if hasattr(v, "tolist") else v
+    return out
+
+
+def write_provenance(
+    h: h5py.File, stage: str, source: str | None, options: dict, resolved: dict, command: str | None = None
+) -> str:
+    """Write a stage file's provenance group: what made it and from what. Returns the file's new id.
+
+    Parameters
+    ----------
+    h
+        The stage file, open for writing
+    stage
+        The stage's name
+    source
+        The file this stage read (None for a first stage), whose id is recorded too
+    options, resolved
+        Every option of this stage as given, and every value worked out from the data
+    command
+        The command line, if run from one
+    """
+    file_id = uuid.uuid4().hex
+    p = h.create_group("provenance")
+    write_attrs(p, {"stage": stage, "id": file_id, "anri_version": anri.VERSION, **_git_commit(),
+                    "date": datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec="seconds"),
+                    "cwd": os.getcwd(), "command": command})  # fmt: skip
+    if source is not None:
+        p.attrs["source"] = os.path.abspath(source)
+        p.attrs["source_id"] = read_provenance(source)["id"]
+    write_attrs(p.create_group("options"), options)
+    write_attrs(p.create_group("resolved"), resolved)
+    p.create_group("results")
+    return file_id
+
+
+def write_results(path: str, results: dict) -> None:
+    """Add a summary of a stage's results to its provenance (``provenance/results``)."""
+    with h5py.File(path, "a") as h:
+        write_attrs(h["provenance/results"], results)
+
+
+def read_provenance(path: str) -> dict:
+    """Read a stage file's provenance: its attributes, with "options", "resolved" and "results" as dicts."""
+    with h5py.File(path, "r") as h:
+        p = h["provenance"]
+        out = read_attrs(p)
+        for g in ("options", "resolved", "results"):
+            out[g] = read_attrs(p[g])
+    return out
+
+
+def source_of(path: str) -> str | None:
+    """Return the file a stage file was made from (None for a first stage), checking that it is that file.
+
+    The recorded path is tried first, then the same name beside the file (files moved together). Its id must be the
+    one recorded: a source remade or replaced since is refused.
+    """
+    prov = read_provenance(path)
+    if "source" not in prov:
+        return None
+    src = prov["source"]
+    if not os.path.exists(src):
+        src = os.path.join(os.path.dirname(os.path.abspath(path)), os.path.basename(prov["source"]))
+        if not os.path.exists(src):
+            msg = f"{path} was made from {prov['source']}, which is not there (nor beside {path})"
+            raise FileNotFoundError(msg)
+    src_id = read_provenance(src)["id"]
+    if src_id != prov["source_id"]:
+        msg = (f"{src} is not the file {path} was made from (its id is {src_id}, {path} records "
+               f"{prov['source_id']}): it was remade or replaced since")  # fmt: skip
+        raise ValueError(msg)
+    return src
+
+
+def chain(path: str) -> list[str]:
+    """Return a stage file and every file it was made from, back to the first stage (this file first)."""
+    files = [path]
+    while (src := source_of(files[-1])) is not None:
+        files.append(src)
+    return files
+
+
+def upstream(path: str, stage: str) -> str:
+    """Follow a stage file's sources back to the file of a stage (this file's own or an earlier one)."""
+    for p in chain(path):
+        if read_provenance(p)["stage"] == stage:
+            return p
+    msg = f"{path} has no {stage} stage upstream"
+    raise ValueError(msg)
+
+
+def show(path: str) -> str:
+    """Return how a stage file was made, all the way back to the first stage, as text: one section per stage.
+
+    Parameters
+    ----------
+    path
+        Any stage file
+    """
+    lines = []
+    for p in reversed(chain(path)):
+        prov = read_provenance(p)
+        lines.append(f"[{prov['stage']}]")
+        lines.append(f"file = {os.path.abspath(p)!r}")
+        for k, v in prov.items():
+            if k not in ("stage", "options", "resolved", "results"):
+                lines.append(f"{k} = {v!r}")
+        for g in ("options", "resolved", "results"):
+            if prov[g]:
+                lines.append(f"\n[{prov['stage']}.{g}]")
+                lines += [f"{k} = {v!r}" for k, v in prov[g].items()]
+        lines.append("")
+    return "\n".join(lines)
+
+
+def stage_path(source: str, stage: str, out: str | None = None) -> str:
+    """Return a stage's output path: ``out`` if given, else the source's name with its stage replaced, beside it."""
+    if out is not None:
+        return out
+    prev = read_provenance(source)["stage"]
+    base = os.path.basename(source)
+    stem = base[: -len(f"_{prev}.h5")] if base.endswith(f"_{prev}.h5") else os.path.splitext(base)[0]
+    return os.path.join(os.path.dirname(os.path.abspath(source)), f"{stem}_{stage}.h5")

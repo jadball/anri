@@ -389,7 +389,8 @@ class TestProvenance(unittest.TestCase):
 
         import h5py
 
-        from anri.index._impl.stages import STAGES, write_provenance
+        from anri.index._impl.stages import STAGES
+        from anri.io import write_provenance
 
         with tempfile.TemporaryDirectory() as tmp:
             paths, source = [], None
@@ -399,14 +400,14 @@ class TestProvenance(unittest.TestCase):
                     write_provenance(h, stage, source, {"cand": 64, "y0": None, "path": "C:\\data\\x"},
                                      {"lattice": [2.87, 2.87, 2.87], "flag": True})  # fmt: skip
                 source = paths[-1]
-            self.assertEqual(ix.upstream(paths[-1], "histogram"), paths[0])
-            prov = ix.read_provenance(paths[2])
+            self.assertEqual(anri.io.upstream(paths[-1], "histogram"), paths[0])
+            prov = anri.io.read_provenance(paths[2])
             self.assertEqual((prov["stage"], prov["options"]["cand"], prov["options"]["path"]),
                              ("filter", 64, "C:\\data\\x"))  # fmt: skip
             self.assertNotIn("y0", prov["options"])  # None is left out: HDF5 has no null
             self.assertEqual(prov["resolved"]["lattice"], [2.87, 2.87, 2.87])
             self.assertIs(prov["resolved"]["flag"], True)
-            text = ix.show(paths[-1])
+            text = anri.io.show(paths[-1])
             self.assertLess(text.index("[histogram]"), text.index("[search]"))
             self.assertLess(text.index("[filter]"), text.index("[populations]"))
             # moved together to another folder: the sources are found beside each other
@@ -414,13 +415,13 @@ class TestProvenance(unittest.TestCase):
             os.mkdir(moved)
             for p in paths:
                 shutil.move(p, moved)
-            self.assertEqual(ix.upstream(os.path.join(moved, "x_populations.h5"), "histogram"),
+            self.assertEqual(anri.io.upstream(os.path.join(moved, "x_populations.h5"), "histogram"),
                              os.path.join(moved, "x_histogram.h5"))  # fmt: skip
             # a remade search is not the one the later stages were made from
             with h5py.File(os.path.join(moved, "x_search.h5"), "w") as h:
                 write_provenance(h, "search", os.path.join(moved, "x_histogram.h5"), {}, {})
             with self.assertRaises(ValueError):
-                ix.upstream(os.path.join(moved, "x_populations.h5"), "histogram")
+                anri.io.upstream(os.path.join(moved, "x_populations.h5"), "histogram")
 
     def test_run_command(self):
         """run_command gives every option recorded along the chain, and the command line parses each one back."""
@@ -430,7 +431,8 @@ class TestProvenance(unittest.TestCase):
         import h5py
 
         from anri.index.__main__ import parse_args
-        from anri.index._impl.stages import STAGES, write_provenance
+        from anri.index._impl.stages import STAGES
+        from anri.io import write_provenance
 
         values = {"analysisroot": "/data/a b", "sample": "s", "dataset": "d", "tth_tol": 0.02, "frame_dty": False,
                   "grid": 1.5, "min_comp": 0.3, "y0": -1.25, "mask": "auto"}  # fmt: skip
