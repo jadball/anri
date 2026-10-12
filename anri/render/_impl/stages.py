@@ -391,3 +391,37 @@ def stage_assemble(
     write_results(out, {"rows": n_rows, "pixels": n_pixels})
     log(f"-> {out}")
     return out
+
+
+def run_command(assemble_file: str) -> str:
+    """Return the ``python -m anri.render run`` command that remakes an assemble stage file and the dataset.
+
+    Every option recorded by the prepare stage, the render parts (all rows) and the assemble stage is given, defaults
+    included.
+
+    Parameters
+    ----------
+    assemble_file
+        From :func:`stage_assemble`
+    """
+    import shlex
+
+    from anri.io import upstream
+
+    a = read_provenance(assemble_file)
+    prep = read_provenance(upstream(assemble_file, "prepare"))["options"]
+    part = read_provenance(a["resolved"]["parts"][0])["options"]
+    asm = a["options"]
+    cmd = ["python", "-m", "anri.render", "run", prep.pop("map"), prep.pop("pars"),
+           *(str(asm.pop(k)) for k in ("analysisroot", "sample", "dataset"))]  # fmt: skip
+    part.pop("rows", None)
+    for k, v in {**prep, **part, **asm}.items():
+        flag = "--" + k.replace("_", "-")
+        if k == "cif":
+            for c in [v] if isinstance(v, str) else v:
+                cmd += [flag, c]
+        elif v is True:
+            cmd.append(flag)
+        elif v is not False:
+            cmd += [flag, *(str(x) for x in (v if isinstance(v, list) else [v]))]
+    return shlex.join(cmd)

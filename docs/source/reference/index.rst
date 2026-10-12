@@ -24,4 +24,6 @@ API reference
     maths.utils
     phantom
     render
+    render.diagnostics
+    render.plots
     utils

@@ -1,4 +1,5 @@
 import os
+import shlex
 import tempfile
 import unittest
 
@@ -9,6 +10,7 @@ import anri.crystal
 import anri.io
 import anri.maths.rotation
 import anri.render as rd
+from anri.render import diagnostics as dg
 
 PARS = {
     "y_center": 1049.9, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1116.5, "z_size": 75.0, "tilt_z": 0.0,
@@ -68,6 +70,21 @@ class TestRenderStages(unittest.TestCase):
             self.assertEqual(anri.io.chain(out), [out, prep])
             _, _, cell = anri.io.read_pars_json(prov["resolved"]["parfile"], "Ni")
             self.assertEqual(cell["cell_lattice_[P,A,B,C,I,F,R]"], 225)
+            # the command line that remakes it parses back to the same options
+            from anri.render.__main__ import parse_args
+
+            args = parse_args(shlex.split(rd.run_command(out))[3:])
+            self.assertEqual((args.command, args.sample, args.omega_step, args.dty_step, args.density),
+                             ("run", "s", 2.0, 8.0, 50.0))  # fmt: skip
+            self.assertEqual((list(args.det_shape), list(args.window), args.cut), ([2162, 2068], [3, 7, 7], 1.0))
+            # diagnostics: the rows reach past the sample, and a row's image holds the pixels written
+            fp = dg.footprint(p)
+            self.assertGreater(fp["covered"], fp["radius"])
+            img = dg.row_image(prov["resolved"]["sparse_file"], 1)
+            with h5py.File(prov["resolved"]["sparse_file"], "r") as h:
+                self.assertEqual(img["image"].sum(), h["2.1"]["intensity"][()].sum())
+            cov = dg.ring_coverage(p, n_tth=50, n_eta=90)
+            self.assertEqual(cov["on_detector"][0], 1.0)  # the innermost ring is wholly on the detector
 
 
 if __name__ == "__main__":

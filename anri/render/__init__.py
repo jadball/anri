@@ -5,7 +5,8 @@ instrument (ID11's optics, or numbers) into map entries, reflections, structure 
 motor positions. :func:`stage_render` renders rows of the scan into sparse pixels (:func:`anri.fwd.render_phases`);
 rows split between jobs go to separate files. :func:`stage_assemble` gathers them into an ImageD11 dataset that
 ``python -m anri.index`` reads. ``python -m anri.render`` runs them from the command line; :func:`anri.io.show` prints
-how any of the files was made.
+how any of the files was made, and :func:`run_command` the command line that remakes a dataset. The numbers behind
+each option's choice are in :mod:`anri.render.diagnostics`, and their plots in :mod:`anri.render.plots`.
 """
 
 from ._impl.stages import (
@@ -16,6 +17,7 @@ from ._impl.stages import (
     parse_rows,
     read_map,
     render_parts,
+    run_command,
     stage_assemble,
     stage_prepare,
     stage_render,
@@ -29,6 +31,7 @@ __all__ = [
     "parse_rows",
     "read_map",
     "render_parts",
+    "run_command",
     "stage_assemble",
     "stage_prepare",
     "stage_render",
