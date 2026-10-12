@@ -265,7 +265,7 @@ def select_peaks(
     mask: jax.Array
         [Ne, Nh, 2] bool, branch 0 is etasign +1
     """
-    dty = 0.5 * (row["dty_min"] + row["dty_max"])
+    dty = row["dty_mid"]
 
     def one(u: jax.Array, p: jax.Array, h: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
         cens, valid = get_centroid_both(
@@ -286,7 +286,7 @@ def select_peaks(
         ubi, pos, hkls
     )
     sc, fc, om = centroids[..., 0], centroids[..., 1], centroids[..., 2]
-    om = nearest_omega(om, 0.5 * (row["omega_min"] + row["omega_max"]))
+    om = nearest_omega(om, row["omega_mid"])
     keep = (
         valid[..., None]
         & (sc > -margin[0]) & (sc < det_shape[0] - 1 + margin[0])
@@ -392,7 +392,7 @@ def _peak_shape(
     valid: jax.Array
         Whether the reflection diffracts
     """
-    dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
+    dty_row = row["dty_mid"]
     centroid, valid = _centroid(ubi, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty_row, geom)
     cov = _peak_cov(ubi, pos, hkl, etasign, dty_row, geom, sig_rot)
     # detector point spread adds to the slow and fast variances (pixels^2)
@@ -429,7 +429,7 @@ def _window_cells(
     mu_s, mu_f, mu_o = mu
     ss, ff, oo, sf, so, fo = shape
     omega_peak = mu_o  # before wrapping
-    mu_o = nearest_omega(mu_o, 0.5 * (row["omega_min"] + row["omega_max"]))
+    mu_o = nearest_omega(mu_o, row["omega_mid"])
 
     # Window origin: no gradient through which cells a peak touches
     if org is None:
@@ -497,8 +497,9 @@ def _frame_weights(pos: jax.Array, om_fr: jax.Array, fclip: jax.Array, row: dict
     At the mean omega of the peak's mass within each frame: a peak spread in omega (e.g. by sig_rot) diffracts at
     different omegas, where an off-axis voxel sits at a different place across the beam.
     """
-    lab0 = jax.vmap(lambda o: sample_to_lab(pos, o, geom["wedge"], geom["chi"], geom["y0"], geom["y0"]))(om_fr)
-    lab = lab0 + jnp.array([0.0, 1.0, 0.0]) * (row["dty_sorted"][fclip] - geom["y0"])[:, None]  # [wo, 3]
+    lab = jax.vmap(lambda o, d: sample_to_lab(pos, o, geom["wedge"], geom["chi"], d, geom["y0"]))(
+        om_fr, row["dty_sorted"][fclip]
+    )  # [wo, 3]
     w_beam = jax.vmap(beam_weight, in_axes=(0, 0, None))(lab, om_fr, geom)
     per_frame = w_beam * row["transmission_sorted"][fclip]  # [wo]
 
@@ -625,6 +626,13 @@ def make_row(omega: np.ndarray, dty: np.ndarray, transmission: np.ndarray | None
         [nframes] omega (degrees, frame centres) and dty for each frame, in file order
     transmission
         [nframes] optional transmission factor per frame (default 1)
+
+    Returns
+    -------
+    dict
+        Frames sorted by omega ("omega_sorted", "omega_edges", "dty_sorted", "transmission_sorted", and "order", each
+        sorted frame's index in file order), and the row's range and middle in omega and dty ("omega_min",
+        "omega_max", "omega_mid", "dty_min", "dty_max", "dty_mid")
     """
     omega = np.asarray(omega, dtype=float)
     dty = np.asarray(dty, dtype=float)
@@ -642,8 +650,10 @@ def make_row(omega: np.ndarray, dty: np.ndarray, transmission: np.ndarray | None
         "order": jnp.asarray(order.astype(np.int32)),
         "omega_min": float(edges[0]),
         "omega_max": float(edges[-1]),
+        "omega_mid": float(0.5 * (edges[0] + edges[-1])),
         "dty_min": float(dty.min()),
         "dty_max": float(dty.max()),
+        "dty_mid": float(0.5 * (dty.min() + dty.max())),
     }
 
 
@@ -734,7 +744,7 @@ def _omega_sigma(
     sig_rot: jax.Array | None = None,
 ) -> jax.Array:
     """Return the standard deviation in omega (degrees) of each peak, as render_peaks spreads it."""
-    dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
+    dty_row = row["dty_mid"]
 
     def one(ei: jax.Array, hi: jax.Array, bi: jax.Array) -> jax.Array:
         cov = _peak_cov(
@@ -753,8 +763,7 @@ def _select_margin(window: tuple[int, int, int], row: dict, geom: dict, dtype: j
     """
     wo, ws, wf = window
     ostep = float(np.max(np.diff(np.asarray(row["omega_edges"]))))
-    k = np.asarray(geom["k_in_lab"], dtype=float)
-    cos_alpha = np.hypot(k[0], k[1]) / np.linalg.norm(k)
+    cos_alpha = float(beam_offsets(jnp.zeros(3), jnp.asarray(geom["k_in_lab"]))[3])  # the beam's tilt
     size = float(geom["voxel_size"])
     dty_range = float(row["dty_max"]) - float(row["dty_min"])  # frames of a row may have different dty
     across = float(geom["width_beam"]) / 2 + 4 * float(geom["sig_beam"]) + size + dty_range
@@ -1011,7 +1020,7 @@ def check_render(
     ) -> jax.Array:
         return _centroid(u, p, q, etasign, wavelength, ky, kz, dty_row, geom)[0]
 
-    dty_row = 0.5 * (row["dty_min"] + row["dty_max"])
+    dty_row = row["dty_mid"]
     sample = jax.jit(jax.vmap(centroid, in_axes=(None, None, None, None, 0, 0, 0)))
     sd_beam = np.array([float(geom["sig_wavelength"]), float(geom["sig_ky"]), float(geom["sig_kz"])])
     psf2 = float(geom["sig_psf"]) ** 2
@@ -1020,7 +1029,7 @@ def check_render(
     )
     sorted_index = np.argsort(np.asarray(row["order"]))  # file-order frame -> sorted-omega frame
     edges_all = np.asarray(row["omega_edges"])
-    omega_mid = 0.5 * (row["omega_min"] + row["omega_max"])
+    omega_mid = row["omega_mid"]
     keep, err, cap_mc = [], [], []
     for i in np.flatnonzero(whole):
         spreads = rng.standard_normal((n_samples, 3)) * sd_beam
