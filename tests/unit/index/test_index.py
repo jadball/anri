@@ -9,6 +9,7 @@ import anri.crystal
 import anri.geom
 import anri.index as ix
 import anri.io
+import anri.maths.rotation
 
 PARS = {
     "y_center": 1049.9, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1116.5, "z_size": 75.0, "tilt_z": 0.0,
@@ -33,7 +34,7 @@ def iron():
 
 def rotations(n, seed):
     q = np.random.default_rng(seed).normal(size=(n, 4))
-    return anri.crystal.quat_to_mat(q / np.linalg.norm(q, axis=1, keepdims=True)).astype(np.float32)
+    return anri.maths.rotation.quat_to_mat(q / np.linalg.norm(q, axis=1, keepdims=True)).astype(np.float32)
 
 
 class TestRings(unittest.TestCase):
@@ -63,7 +64,7 @@ class TestTolerances(unittest.TestCase):
         geom = geometry()
         U0 = rotations(200, 0)
         axis = np.random.default_rng(1).normal(size=(200, 3))
-        dU = anri.crystal.quat_to_mat(np.column_stack([np.full(200, np.cos(np.radians(0.5))),
+        dU = anri.maths.rotation.quat_to_mat(np.column_stack([np.full(200, np.cos(np.radians(0.5))),
                                                        np.sin(np.radians(0.5)) * axis / np.linalg.norm(axis, axis=1, keepdims=True)]))  # fmt: skip
         e0, o0, k0, _ = ix.predict(jnp.asarray(U0), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom)
         e1, o1, k1, _ = ix.predict(
@@ -298,8 +299,8 @@ class TestPopulations(unittest.TestCase):
     def test_parent_twin_and_decoy(self):
         _, _, ops = iron()
         U0 = rotations(1, 4)[0].astype(float)
-        twin = anri.crystal.quat_to_mat(np.r_[np.cos(np.radians(30)), np.sin(np.radians(30)) * np.ones(3) / np.sqrt(3)])
-        small = [anri.crystal.quat_to_mat(np.r_[np.cos(np.radians(a / 2)), np.sin(np.radians(a / 2)) * np.array(v)])
+        twin = anri.maths.rotation.quat_to_mat(np.r_[np.cos(np.radians(30)), np.sin(np.radians(30)) * np.ones(3) / np.sqrt(3)])
+        small = [anri.maths.rotation.quat_to_mat(np.r_[np.cos(np.radians(a / 2)), np.sin(np.radians(a / 2)) * np.array(v)])
                  for a, v in ((0.8, [1, 0, 0]), (0.8, [0, 1, 0]), (0.8, [0, 0, -1]))]  # fmt: skip
         U_list = np.stack([U0, *(s @ U0 for s in small), twin @ U0, rotations(1, 5)[0]])  # parent x 4, twin, decoy
         f = np.array([[0.3, 0.2, 0.15, 0.15, 0.17, 0.03]])

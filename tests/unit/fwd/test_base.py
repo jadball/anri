@@ -8,6 +8,7 @@ import anri.crystal
 import anri.fwd
 import anri.geom
 import anri.io
+import anri.maths.rotation
 from anri.fwd._impl.base import make_propagator
 
 jax.config.update("jax_enable_x64", True)
@@ -21,7 +22,7 @@ def _box_args():
     }  # fmt: skip
     det = anri.io.detector_from_pars(pars)
     B = anri.crystal.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0]))
-    ubi = jnp.linalg.inv(anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0) @ B)
+    ubi = jnp.linalg.inv(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ B)
     detector = (det["s_step_lab"], det["f_step_lab"], det["det_origin_lab"])
     # (ubi, origin, hkl, etasign, wavelength, k_in_lab, ky, kz, wedge, chi, s_step, f_step, det_origin)
     return (ubi, jnp.array([20.0, -10.0, 5.0]), jnp.array([1.0, 1.0, 0.0]), 1.0, 0.3, jnp.array([1.0, 0.0, 0.0]),

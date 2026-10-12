@@ -37,7 +37,7 @@ Our goniometer stack is as follows::
     dty stage - horizontal translation. Defines Y axis.
     Hutch floor
 
-General rotation functions like :func:`anri.geom.rot_z` work thusly. 
+General rotation functions like :func:`anri.maths.rotation.rot_z` work thusly. 
 Imagine the most basic stage, with a single rotation about $Z$. 
 We want to generate a rotation matrix that encodes the pose of the stage. 
 When we receive the matrix $\matr{R_z}$, it is applied like this:

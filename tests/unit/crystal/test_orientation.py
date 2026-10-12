@@ -1,24 +1,17 @@
 import unittest
 
-import jax.numpy as jnp
 import numpy as np
 
-import anri.crystal
-import anri.geom
 from anri.crystal import (
     B_matrix,
     cubochoric_quaternions,
     disorientation,
     laue_rotations,
-    mat_to_quat,
-    mat_to_rod,
     orientation_grid,
-    quat_mul,
-    quat_to_mat,
-    rod_to_mat,
     symmetry_matrices,
     to_fundamental_zone,
 )
+from anri.maths.rotation import quat_to_mat
 
 
 def ops_of(lpars, sg):
@@ -42,18 +35,6 @@ CASES = {  # name: (lattice parameters, space group, Laue-group rotations)
     "2/m": ([4.0, 5.0, 6.0, 90, 100, 90], 14, 2),
     "-1": ([4.0, 5.0, 6.0, 80, 100, 95], 2, 1),
 }
-
-
-class TestConversions(unittest.TestCase):
-    def test_round_trips(self):
-        U = random_rotations(500)
-        np.testing.assert_allclose(quat_to_mat(mat_to_quat(U)), U, atol=1e-12)
-        small = U[np.trace(U, axis1=1, axis2=2) > -0.5]  # rotation angles well below 180 degrees
-        np.testing.assert_allclose(np.asarray(rod_to_mat(mat_to_rod(small))), small, atol=1e-5)
-
-    def test_quat_mul_is_matrix_product(self):
-        a, b = random_rotations(50, 1), random_rotations(50, 2)
-        np.testing.assert_allclose(quat_to_mat(quat_mul(mat_to_quat(a), mat_to_quat(b))), a @ b, atol=1e-12)
 
 
 class TestLaueRotations(unittest.TestCase):
@@ -129,22 +110,6 @@ class TestGrids(unittest.TestCase):
             ratio = len(U) * len(S) / n_all
             self.assertGreaterEqual(ratio, 0.99)
             self.assertLess(ratio, 1.3)  # plus the shell
-
-
-class TestRotationHelpers(unittest.TestCase):
-    def test_rotation_angle_small_and_large(self):
-        # arccos of the trace loses small angles in float32; the angle must not
-        for deg in (1e-4, 1e-2, 1.0, 90.0, 179.0):
-            R = jnp.asarray(anri.geom.rmat_from_axis_angle(jnp.array([0.3, -0.5, 0.8]), deg), jnp.float32)
-            self.assertAlmostEqual(float(np.degrees(anri.crystal.rotation_angle(R))) / deg, 1.0, delta=1e-3)
-
-    def test_mean_rotation_is_proper(self):
-        U = random_rotations(5)
-        M = np.asarray(anri.crystal.mean_rotation(U, np.ones(5)))
-        self.assertAlmostEqual(float(np.linalg.det(M)), 1.0, places=6)
-        np.testing.assert_allclose(M @ M.T, np.eye(3), atol=1e-6)
-        np.testing.assert_allclose(anri.crystal.mean_rotation(U[:1], np.ones(1)), U[0], atol=1e-6)
-        np.testing.assert_allclose(anri.crystal.mean_rotation(U, np.zeros(5)), np.eye(3), atol=1e-12)
 
 
 if __name__ == "__main__":

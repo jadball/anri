@@ -104,6 +104,7 @@ def save_results(
 
     import anri.crystal
     import anri.io
+    import anri.maths.utils
 
     os.makedirs(os.path.dirname(os.path.abspath(tag)), exist_ok=True)
     np.savez(f"{tag}.npz", **results)
@@ -112,7 +113,7 @@ def save_results(
     tot = f.sum(1)
     n_side = round(np.sqrt(len(f)))
     v, q = np.nonzero(present)
-    with anri.crystal.float64():
+    with anri.maths.utils.float64():
         ubi_pop = np.asarray(anri.crystal.U_B_to_UBI(U_pop[v, q], B))
         ubi_main = np.asarray(anri.crystal.U_B_to_UBI(U_pop[:, 0], B))
     np.savez(f"{tag}_entries.npz", ubi=ubi_pop, pos=pos[v], density=tot[v] * frac[v, q],
@@ -235,6 +236,7 @@ def main() -> None:
     import anri.geom
     import anri.index as ix
     import anri.io
+    import anri.maths.utils
 
     B_E, B_O = 0.5, 0.25  # lit-map bins (deg): eta, omega
     R_E, R_O = 2, 4  # histogram bins = lit bins x these (1 x 1 deg)
@@ -278,7 +280,7 @@ def main() -> None:
     N_E, N_O = round(360 / B_E), round(float(oedge[-1] - oedge[0]) / B_O)
     N_O -= N_O % R_O
     WL = geo["wavelength"]
-    fwhm_to_sigma = anri.utils.fwhm_to_sigma
+    fwhm_to_sigma = anri.maths.utils.fwhm_to_sigma
     geom = anri.io.geom_from_pars(
         geo, Y0, fwhm_to_sigma(WL * 2e-3), 1.5e-4, 1.5e-4, sig_beam=fwhm_to_sigma(YSTEP), voxel_size=YSTEP
     )

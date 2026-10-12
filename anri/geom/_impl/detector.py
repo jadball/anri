@@ -3,7 +3,7 @@
 import jax
 import jax.numpy as jnp
 
-from .utils import rot_x, rot_y, rot_z
+from anri.maths.rotation import rot_x, rot_y, rot_z
 
 
 @jax.jit

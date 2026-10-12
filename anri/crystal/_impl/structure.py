@@ -4,16 +4,14 @@ A structure with atoms is a ``Dans_Diffraction.Crystal``, which also reads CIFs:
 Everything else needs only the lattice parameters and the space-group number.
 
 These run once, on the host, so they return NumPy arrays in float64. The lattice definitions they use (B matrix,
-metric tensors) are the JAX functions of :mod:`anri.crystal`, evaluated in float64 here (:func:`float64`), so that
+metric tensors) are the JAX functions of :mod:`anri.crystal`, evaluated in float64 here (:func:`anri.maths.utils.float64`), so that
 there is a single definition of each and it can still be jitted and differentiated elsewhere.
 """
 
 from __future__ import annotations
 
 import warnings
-from contextlib import AbstractContextManager
 
-import jax
 import numpy as np
 from Dans_Diffraction.classes_crystal import Crystal as DansCrystal
 from Dans_Diffraction.classes_crystal import Symmetry as DansSymmetry
@@ -21,24 +19,9 @@ from Dans_Diffraction.functions_crystallography import find_spacegroup
 from jax.typing import ArrayLike
 
 from anri.diffract import ds_to_tth
+from anri.maths.utils import float64
 
 from .utils import allowed_hkls, lpars_to_B
-
-
-def float64() -> AbstractContextManager:
-    """Evaluate JAX in float64 inside a ``with`` block, without changing the global setting.
-
-    Returns
-    -------
-    AbstractContextManager
-        ``jax.enable_x64(True)``, or ``jax.experimental.enable_x64()`` on older JAX
-    """
-    if hasattr(jax, "enable_x64"):
-        return jax.enable_x64(True)
-    import importlib
-
-    # only in older JAX (e.g. 0.4.30); getattr keeps the type checker, run with a newer JAX, from flagging it
-    return getattr(importlib.import_module("jax.experimental"), "enable_x64")()  # noqa: B009
 
 
 def B_matrix(lattice_parameters: ArrayLike) -> np.ndarray:

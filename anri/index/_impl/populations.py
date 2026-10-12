@@ -9,7 +9,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from anri.crystal import closest_equivalent, mean_rotation, rotation_angle
+from anri.crystal import closest_equivalent
+from anri.maths.rotation import mean_rotation, rotation_angle
 
 
 @partial(jax.jit, static_argnames=("m", "p"))

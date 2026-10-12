@@ -15,9 +15,10 @@ import numpy as np
 from Dans_Diffraction.classes_crystal import Crystal as DansCrystal
 from jax.typing import ArrayLike
 
-from anri.crystal import float64, reflections, rings, structure_factors
+from anri.crystal import reflections, rings, structure_factors
 from anri.diffract import ds_to_tth, k_out_to_tth_eta
 from anri.geom import dty_to_row, wrap_omega
+from anri.maths.utils import float64
 
 
 def ring_table(

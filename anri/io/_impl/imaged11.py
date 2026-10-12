@@ -686,7 +686,7 @@ def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0)
     """
     from ImageD11.sinograms.tensor_map import TensorMap
 
-    from anri.crystal import float64
+    from anri.maths.utils import float64
 
     _, ny, nx = tmap.shape
     ystep = float(tmap.steps[1])

@@ -8,7 +8,9 @@ import jax
 import jax.numpy as jnp
 from jax.typing import ArrayLike
 
-from .utils import beam_offsets, rot_x, rot_y, rot_z
+from anri.maths.rotation import rot_x, rot_y, rot_z
+
+from .utils import beam_offsets
 
 
 @jax.jit

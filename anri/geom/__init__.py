@@ -28,7 +28,7 @@ from ._impl.scan import (
     step_to_recon,
     step_to_sample,
 )
-from ._impl.utils import beam_basis, beam_offsets, rmat_from_axis_angle, rot_x, rot_y, rot_z, skew
+from ._impl.utils import beam_basis, beam_offsets
 
 __all__ = [
     "beam_basis",
@@ -49,13 +49,8 @@ __all__ = [
     "recon_positions",
     "recon_to_sample",
     "recon_to_step",
-    "rmat_from_axis_angle",
-    "rot_x",
-    "rot_y",
-    "rot_z",
     "sample_to_lab",
     "sino_shift_and_pad",
-    "skew",
     "step_grid_from_ybincens",
     "step_to_recon",
     "step_to_sample",

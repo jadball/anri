@@ -6,6 +6,7 @@ import numpy as np
 
 import anri.crystal
 import anri.geom
+import anri.maths.rotation
 from anri.diffract import lorentz, polarisation
 from anri.fwd import (
     beam_weight,
@@ -198,7 +199,7 @@ def _single_peak_setup():
         "voxel_size": voxel, "pol_factor": 1.0, "sig_psf": 0.0,
     }  # fmt: skip
 
-    U = np.asarray(anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0) @ anri.geom.rot_y(10.0))
+    U = np.asarray(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0))
     B = np.asarray(anri.crystal.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
     ubi = np.linalg.inv(U @ B)
     i, j = np.mgrid[0:10, 0:10]
@@ -637,7 +638,7 @@ class TestPolarisationDirection(unittest.TestCase):
         pol = jax.vmap(polarisation, in_axes=(None, 0, None))
         for factor in (1.0, 0.9, 0.0):
             reference = pol(k_in, k_out, factor)
-            for R in (anri.geom.rot_z(40.0), anri.geom.rot_y(-25.0)):
+            for R in (anri.maths.rotation.rot_z(40.0), anri.maths.rotation.rot_y(-25.0)):
                 np.testing.assert_allclose(pol(R @ k_in, k_out @ R.T, factor), reference, rtol=1e-12)
 
 
@@ -679,7 +680,7 @@ class TestBoxBeam(unittest.TestCase):
         )  # fmt: skip
         g = jax.tree.map(jnp.asarray, geom)
         B = anri.crystal.lpars_to_B(jnp.array([2.8665, 2.8665, 2.8665, 90.0, 90.0, 90.0]))
-        ubi = jnp.linalg.inv(anri.geom.rot_z(25.0) @ anri.geom.rot_x(35.0) @ anri.geom.rot_y(10.0) @ B)
+        ubi = jnp.linalg.inv(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0) @ B)
         i, j, k = np.mgrid[0:6, 0:6, 0:6]
         pos = (np.stack([i.ravel(), j.ravel(), k.ravel()], 1) - 2.5).astype(float)
         entries = {"ubi": np.repeat(np.asarray(ubi)[None], len(pos), 0), "pos": pos, "density": np.ones(len(pos))}

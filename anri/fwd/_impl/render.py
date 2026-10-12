@@ -34,7 +34,8 @@ except ImportError:  # JAX < 0.6, e.g. 0.4.30, the last release for Python 3.9
 
 import anri.utils
 from anri.diffract import lorentz_polarisation
-from anri.geom import beam_basis, beam_offsets, nearest_omega, sample_to_lab, skew
+from anri.geom import beam_basis, beam_offsets, nearest_omega, sample_to_lab
+from anri.maths.rotation import skew
 
 from .base import get_centroid, get_centroid_both, hkl_to_k_omega, make_propagator
 

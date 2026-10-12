@@ -4,6 +4,7 @@ import numpy as np
 
 import anri.crystal
 import anri.io
+import anri.maths.rotation
 import anri.phantom
 
 
@@ -11,18 +12,6 @@ def cubic_ops():
     return anri.crystal.laue_rotations(
         anri.crystal.symmetry_matrices(225), anri.crystal.B_matrix([3.6] * 3 + [90.0] * 3)
     )
-
-
-class TestRotations(unittest.TestCase):
-    def test_small_rotations(self):
-        R = anri.phantom.small_rotations(20000, 0.5, np.random.default_rng(0))
-        angle = np.degrees(np.arccos(np.clip((np.trace(R, axis1=1, axis2=2) - 1) / 2, -1, 1)))
-        self.assertAlmostEqual(np.sqrt(np.mean(angle**2)), 0.5 * np.sqrt(3), delta=0.02)  # rms of a 3D normal
-
-    def test_random_rotations(self):
-        R = anri.phantom.random_rotations(1000, np.random.default_rng(1))
-        np.testing.assert_allclose(R @ np.swapaxes(R, 1, 2), np.broadcast_to(np.eye(3), R.shape), atol=1e-12)
-        np.testing.assert_allclose(np.linalg.det(R), 1.0, atol=1e-12)
 
 
 class TestPolycrystal(unittest.TestCase):

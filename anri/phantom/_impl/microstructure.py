@@ -21,57 +21,15 @@ from jax.typing import ArrayLike
 if TYPE_CHECKING:
     from ImageD11.sinograms.tensor_map import TensorMap
 
-from anri.geom import recon_positions, rmat_from_axis_angle
-
-
-def random_rotations(n: int, rng: np.random.Generator) -> np.ndarray:
-    """Draw rotations uniformly over SO(3).
-
-    Parameters
-    ----------
-    n
-        How many
-    rng
-        Random generator
-
-    Returns
-    -------
-    np.ndarray
-        [n, 3, 3] rotation matrices
-    """
-    from anri.crystal import quat_to_mat
-
-    q = rng.normal(size=(n, 4))
-    return quat_to_mat(q / np.linalg.norm(q, axis=1, keepdims=True))
+from anri.geom import recon_positions
+from anri.maths.rotation import random_rotations, rmat_from_axis_angle, small_rotations
+from anri.maths.utils import float64
 
 
 def _axis_angle(axis: ArrayLike, angle_deg: ArrayLike) -> np.ndarray:
-    """:func:`anri.geom.rmat_from_axis_angle` on the host, in float64: [..., 3] axes, [...] angles (degrees)."""
-    from anri.crystal import float64
-
+    """:func:`anri.maths.rotation.rmat_from_axis_angle` on the host, in float64: [..., 3] axes, [...] angles (deg)."""
     with float64():
         return np.asarray(rmat_from_axis_angle(np.asarray(axis, float), np.asarray(angle_deg, float)))
-
-
-def small_rotations(n: int, sigma_deg: float, rng: np.random.Generator) -> np.ndarray:
-    """Draw small rotations: rotation vectors with each component normal with standard deviation sigma_deg.
-
-    Parameters
-    ----------
-    n
-        How many
-    sigma_deg
-        Standard deviation of each component, degrees
-    rng
-        Random generator
-
-    Returns
-    -------
-    np.ndarray
-        [n, 3, 3] rotation matrices
-    """
-    v = rng.normal(scale=sigma_deg, size=(n, 3))
-    return _axis_angle(v + (np.linalg.norm(v, axis=1, keepdims=True) == 0), np.linalg.norm(v, axis=1))
 
 
 def voronoi(xy: ArrayLike, seeds: ArrayLike) -> np.ndarray:
@@ -285,16 +243,9 @@ def tensormap(ph: dict, lattice_parameters: ArrayLike, spacegroup: int, phase_na
         grain's mean orientation (taken over the grain's non-twin voxels); and "sig_rot" (radians) if the phantom has
         an intrinsic spread
     """
-    from anri.crystal import (
-        B_matrix,
-        U_B_to_UBI,
-        disorientation,
-        float64,
-        laue_rotations,
-        mean_rotation,
-        symmetry_matrices,
-    )
+    from anri.crystal import B_matrix, U_B_to_UBI, disorientation, laue_rotations, symmetry_matrices
     from anri.io import tensormap_from_recon
+    from anri.maths.rotation import mean_rotation
 
     B = np.asarray(B_matrix(np.asarray(lattice_parameters, float)))
     ops = laue_rotations(symmetry_matrices(int(spacegroup)), B)

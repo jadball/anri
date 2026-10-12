@@ -27,7 +27,8 @@ import numpy as np
 from scipy.spatial import KDTree
 
 import anri.crystal
-import anri.phantom
+import anri.maths.rotation
+import anri.maths.utils
 
 p = argparse.ArgumentParser()
 p.add_argument("npz")
@@ -45,7 +46,8 @@ B = anri.crystal.B_matrix(args.lattice)
 ops = anri.crystal.laue_rotations(anri.crystal.symmetry_matrices(args.sg), B)
 A = np.linalg.inv(B).T  # direct lattice vectors as columns: a direction [u v w] is A @ [u v w]
 axis = A @ np.array(args.axis)
-R = anri.phantom.axis_angle(axis, args.angle)  # crystal frame
+with anri.maths.utils.float64():
+    R = np.asarray(anri.maths.rotation.rmat_from_axis_angle(np.asarray(axis, float), float(args.angle)))  # crystal frame
 U_kept, f, cand = r["U"].astype(float), r["f"], r["cand"]
 occ = np.flatnonzero(r["occupied"])
 rng = np.random.default_rng(0)
@@ -55,9 +57,9 @@ delta = float(r["delta"])
 
 # all symmetric variants of the twin of each main orientation: U S R, for every S in the Laue group
 T = (U_main[:, None] @ ops[None] @ R[None, None]).reshape(-1, 3, 3)
-q_kept = anri.crystal.mat_to_quat((U_kept[:, None] @ ops[None]).reshape(-1, 3, 3))
+q_kept = anri.maths.rotation.mat_to_quat((U_kept[:, None] @ ops[None]).reshape(-1, 3, 3))
 tree = KDTree(np.concatenate([q_kept, -q_kept]))
-d, _ = tree.query(anri.crystal.mat_to_quat(T))
+d, _ = tree.query(anri.maths.rotation.mat_to_quat(T))
 ang = np.degrees(4 * np.arcsin(np.minimum(d, 2.0) / 2)).reshape(len(vox), len(ops))
 best = ang.min(1)
 print(f"{len(vox)} occupied voxels sampled; delta (grid) {delta:.2f} deg; twin {args.angle} deg about {args.axis}")

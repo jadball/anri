@@ -3,10 +3,8 @@
 from ._impl.microstructure import (
     brownian_field,
     polycrystal,
-    random_rotations,
-    small_rotations,
     tensormap,
     voronoi,
 )
 
-__all__ = ["brownian_field", "polycrystal", "random_rotations", "small_rotations", "tensormap", "voronoi"]
+__all__ = ["brownian_field", "polycrystal", "tensormap", "voronoi"]

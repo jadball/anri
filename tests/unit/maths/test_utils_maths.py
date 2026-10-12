@@ -3,7 +3,7 @@ import unittest
 import jax
 import numpy as np
 
-from anri.utils import fwhm_to_sigma, inv3, sigma_to_fwhm
+from anri.maths.utils import fwhm_to_sigma, inv3, sigma_to_fwhm
 
 jax.config.update("jax_enable_x64", True)
 

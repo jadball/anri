@@ -1,11 +1,12 @@
-"""Orientations: rotation conventions, crystal symmetry, fundamental zones and orientation grids.
+"""Crystal orientations: Laue-group symmetry, disorientations, fundamental zones and orientation grids.
 
 An orientation is a rotation matrix ``U`` taking crystal Cartesian vectors to the sample frame, so that a reflection
 ``h`` scatters along ``g = U B h`` (``B`` without 2 pi). Two orientations ``U`` and ``U S`` give the same reflections
 when ``S`` is a proper rotation of the crystal's Laue group (:func:`laue_rotations`), so orientations are compared
 over those (:func:`disorientation`) and grids cover one fundamental zone (:func:`orientation_grid`).
 
-Grid generation runs once per indexing in NumPy; :func:`rod_to_mat` is in JAX for use inside jitted code.
+Built on the rotation algebra of :mod:`anri.maths.rotation`. Grid generation runs once per indexing in NumPy;
+:func:`anri.maths.rotation.rod_to_mat` is in JAX for use inside jitted code.
 """
 
 from __future__ import annotations
@@ -15,167 +16,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from anri.geom import skew
-
-from .structure import float64
-
-
-def rod_to_mat(r: ArrayLike) -> jax.Array:
-    r"""Convert Rodrigues vectors ``r = tan(t / 2) n`` to rotation matrices.
-
-    $$
-    \matr{R} = \matr{I} + \frac{2}{1 + \vec{r} \cdot \vec{r}}
-    \left([\vec{r}]_\times + \vec{r}\vec{r}^T - (\vec{r} \cdot \vec{r}) \matr{I}\right)
-    $$
-
-    with :func:`anri.geom.skew`, the second and third terms being $[\vec{r}]_\times^2$.
-
-    Parameters
-    ----------
-    r
-        [..., 3] Rodrigues vectors
-
-    Returns
-    -------
-    jax.Array
-        [..., 3, 3] rotation matrices
-    """
-    r = jnp.asarray(r)
-    rr = jnp.sum(r * r, -1)[..., None, None]
-    KK = r[..., :, None] * r[..., None, :] - rr * jnp.eye(3, dtype=r.dtype)  # [r]x^2, without a matrix product
-    return jnp.eye(3, dtype=r.dtype) + 2.0 / (1.0 + rr) * (skew(r) + KK)
-
-
-def mat_to_rod(U: ArrayLike) -> np.ndarray:
-    """Convert rotation matrices (rotation angle below 180 degrees) to Rodrigues vectors.
-
-    Parameters
-    ----------
-    U
-        [..., 3, 3] rotation matrices
-
-    Returns
-    -------
-    np.ndarray
-        [..., 3] Rodrigues vectors
-    """
-    U = np.asarray(U)
-    w = np.stack([U[..., 2, 1] - U[..., 1, 2], U[..., 0, 2] - U[..., 2, 0], U[..., 1, 0] - U[..., 0, 1]], -1)
-    return w / (1.0 + np.trace(U, axis1=-2, axis2=-1))[..., None]
-
-
-def mat_to_quat(U: ArrayLike) -> np.ndarray:
-    """Convert rotation matrices to unit quaternions ``(w, x, y, z)`` with ``w >= 0``.
-
-    Parameters
-    ----------
-    U
-        [..., 3, 3] rotation matrices
-
-    Returns
-    -------
-    np.ndarray
-        [..., 4] quaternions
-    """
-    U = np.asarray(U, float)
-    tr = np.trace(U, axis1=-2, axis2=-1)
-    # the four candidates of Shepperd's method; take the best-conditioned one for each matrix
-    d = np.stack([tr, U[..., 0, 0], U[..., 1, 1], U[..., 2, 2]], -1)
-    k = np.argmax(d, -1)
-    q = np.zeros(U.shape[:-2] + (4,))
-    a = np.stack(
-        [
-            1 + tr,
-            U[..., 2, 1] - U[..., 1, 2],
-            U[..., 0, 2] - U[..., 2, 0],
-            U[..., 1, 0] - U[..., 0, 1],
-        ],
-        -1,
-    )
-    b = np.stack(
-        [
-            U[..., 2, 1] - U[..., 1, 2],
-            1 + 2 * U[..., 0, 0] - tr,
-            U[..., 0, 1] + U[..., 1, 0],
-            U[..., 0, 2] + U[..., 2, 0],
-        ],
-        -1,
-    )
-    c = np.stack(
-        [
-            U[..., 0, 2] - U[..., 2, 0],
-            U[..., 0, 1] + U[..., 1, 0],
-            1 + 2 * U[..., 1, 1] - tr,
-            U[..., 1, 2] + U[..., 2, 1],
-        ],
-        -1,
-    )
-    e = np.stack(
-        [
-            U[..., 1, 0] - U[..., 0, 1],
-            U[..., 0, 2] + U[..., 2, 0],
-            U[..., 1, 2] + U[..., 2, 1],
-            1 + 2 * U[..., 2, 2] - tr,
-        ],
-        -1,
-    )
-    for i, v in enumerate((a, b, c, e)):
-        m = k == i
-        q[m] = v[m]
-    q /= np.linalg.norm(q, axis=-1, keepdims=True)
-    return q * np.where(q[..., :1] < 0, -1.0, 1.0)
-
-
-def quat_to_mat(q: ArrayLike) -> np.ndarray:
-    """Convert unit quaternions ``(w, x, y, z)`` to rotation matrices.
-
-    Parameters
-    ----------
-    q
-        [..., 4] quaternions
-
-    Returns
-    -------
-    np.ndarray
-        [..., 3, 3] rotation matrices
-    """
-    q = np.asarray(q, float)
-    w, x, y, z = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
-    return np.stack(
-        [
-            np.stack([1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)], -1),
-            np.stack([2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)], -1),
-            np.stack([2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)], -1),
-        ],
-        -2,
-    )
-
-
-def quat_mul(a: ArrayLike, b: ArrayLike) -> np.ndarray:
-    """Multiply quaternions ``(w, x, y, z)``: the rotation ``b`` followed by ``a``.
-
-    Parameters
-    ----------
-    a, b
-        [..., 4] quaternions (broadcast together)
-
-    Returns
-    -------
-    np.ndarray
-        [..., 4] products
-    """
-    a, b = np.asarray(a), np.asarray(b)
-    aw, ax, ay, az = a[..., 0], a[..., 1], a[..., 2], a[..., 3]
-    bw, bx, by, bz = b[..., 0], b[..., 1], b[..., 2], b[..., 3]
-    return np.stack(
-        [
-            aw * bw - ax * bx - ay * by - az * bz,
-            aw * bx + ax * bw + ay * bz - az * by,
-            aw * by - ax * bz + ay * bw + az * bx,
-            aw * bz + ax * by - ay * bx + az * bw,
-        ],
-        -1,
-    )
+from anri.maths.rotation import mat_to_quat, quat_mul, quat_to_mat, rod_to_mat, rotation_angle
+from anri.maths.utils import float64
 
 
 def laue_rotations(sym_ops: ArrayLike, B: ArrayLike) -> np.ndarray:
@@ -207,27 +49,6 @@ def laue_rotations(sym_ops: ArrayLike, B: ArrayLike) -> np.ndarray:
     return np.concatenate([S[is_identity], S[~is_identity]])
 
 
-def rotation_angle(R: ArrayLike) -> jax.Array:
-    """Rotation angle (radians) of rotation matrices, accurate at every angle.
-
-    From the axial part (sin) and the trace (cos) together, ``atan2(|axial|, (trace - 1) / 2)``: ``arccos`` of the
-    trace alone loses small angles (in float32, any angle below ~0.03 degrees).
-
-    Parameters
-    ----------
-    R
-        [..., 3, 3] rotation matrices
-
-    Returns
-    -------
-    jax.Array
-        [...] angles in [0, pi]
-    """
-    R = jnp.asarray(R)
-    axial = 0.5 * jnp.stack([R[..., 2, 1] - R[..., 1, 2], R[..., 0, 2] - R[..., 2, 0], R[..., 1, 0] - R[..., 0, 1]], -1)
-    return jnp.arctan2(jnp.linalg.norm(axial, axis=-1), 0.5 * (jnp.trace(R, axis1=-2, axis2=-1) - 1.0))
-
-
 def closest_equivalent(U_ref: ArrayLike, U: ArrayLike, ops: ArrayLike) -> tuple[jax.Array, jax.Array]:
     """Return each orientation's symmetric equivalent ``U S`` closest to a reference, and the angle between them.
 
@@ -252,30 +73,6 @@ def closest_equivalent(U_ref: ArrayLike, U: ArrayLike, ops: ArrayLike) -> tuple[
     tr = jnp.einsum("...ij,...sij->...s", U_ref, sym)  # trace(U_ref^T U S): largest for the smallest angle
     best = jnp.take_along_axis(sym, jnp.argmax(tr, -1)[..., None, None, None], -3)[..., 0, :, :]
     return best, rotation_angle(jnp.swapaxes(U_ref, -1, -2) @ best)
-
-
-def mean_rotation(U: ArrayLike, w: ArrayLike) -> jax.Array:
-    """Weighted mean of nearby rotations: the rotation closest to their weighted sum (SVD projection).
-
-    Align symmetric equivalents first (:func:`closest_equivalent`). The projection keeps det = +1, so the result is
-    always a proper rotation. With all weights zero it is the identity.
-
-    Parameters
-    ----------
-    U
-        [M, 3, 3] rotations
-    w
-        [M] weights
-
-    Returns
-    -------
-    jax.Array
-        [3, 3] the mean rotation
-    """
-    U, w = jnp.asarray(U), jnp.asarray(w)
-    total = jnp.einsum("m,mij->ij", w, U) + jnp.where(jnp.sum(w) > 0, 0.0, 1.0) * jnp.eye(3, dtype=U.dtype)
-    u, _, vt = jnp.linalg.svd(total)
-    return u @ jnp.diag(jnp.array([1.0, 1.0, jnp.sign(jnp.linalg.det(u @ vt))], U.dtype)) @ vt
 
 
 def to_fundamental_zone(U: ArrayLike, ops: ArrayLike) -> np.ndarray:

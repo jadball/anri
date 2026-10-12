@@ -18,5 +18,7 @@ API reference
     fwd
     index
     io
+    maths.rotation
+    maths.utils
     phantom
     utils

@@ -1,4 +1,4 @@
-"""Small maths helpers.
+"""Small numerical helpers: 3x3 inverses, Gaussian widths, and float64 evaluation of JAX code.
 
 ``inv3`` is written out explicitly: XLA lowers ``jnp.linalg.inv`` to a batched LAPACK/cuSOLVER call that handles
 one tiny matrix at a time. For the 3x3 matrices that Anri uses per voxel and per peak, plain arithmetic is several
@@ -6,6 +6,7 @@ times faster.
 """
 
 import math
+from contextlib import AbstractContextManager
 from typing import Any
 
 import jax
@@ -46,3 +47,19 @@ def inv3(m: jax.Array) -> jax.Array:
     adj = jnp.stack([jnp.cross(c1, c2), jnp.cross(c2, c0), jnp.cross(c0, c1)], axis=-2)
     det = jnp.sum(c0 * jnp.cross(c1, c2), axis=-1)
     return adj / det[..., None, None]
+
+
+def float64() -> AbstractContextManager:
+    """Evaluate JAX in float64 inside a ``with`` block, without changing the global setting.
+
+    Returns
+    -------
+    AbstractContextManager
+        ``jax.enable_x64(True)``, or ``jax.experimental.enable_x64()`` on older JAX
+    """
+    if hasattr(jax, "enable_x64"):
+        return jax.enable_x64(True)
+    import importlib
+
+    # only in older JAX (e.g. 0.4.30); getattr keeps the type checker, run with a newer JAX, from flagging it
+    return getattr(importlib.import_module("jax.experimental"), "enable_x64")()  # noqa: B009

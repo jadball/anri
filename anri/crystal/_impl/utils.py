@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from anri.utils import inv3
+from anri.maths.utils import inv3
 
 
 @jax.jit
