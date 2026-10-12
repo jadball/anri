@@ -1,0 +1,74 @@
+import os
+import tempfile
+import unittest
+
+import h5py
+import numpy as np
+
+import anri.crystal
+import anri.io
+import anri.maths.rotation
+import anri.render as rd
+
+PARS = {
+    "y_center": 1049.9, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1116.5, "z_size": 75.0, "tilt_z": 0.0,
+    "tilt_x": 0.0, "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1,
+    "wavelength": 12.398419843320026 / 43.0, "wedge": 0.0, "chi": 0.0,
+}  # fmt: skip
+
+
+def two_phase_map(folder):
+    """A 4 x 4 TensorMap of 2 um voxels: Fe in one half, Ni in the other."""
+    from ImageD11.sinograms.tensor_map import TensorMap
+    from ImageD11.unitcell import unitcell
+
+    lp = {0: [2.8665] * 3 + [90.0] * 3, 1: [3.524] * 3 + [90.0] * 3}
+    U = anri.maths.rotation.random_rotations(2, np.random.default_rng(3))
+    phase = np.full((4, 4), -1)
+    phase[:, :2], phase[:, 2:] = 0, 1
+    ubi = np.full((4, 4, 3, 3), np.nan)
+    for p in (0, 1):
+        ubi[phase == p] = np.linalg.inv(np.asarray(U[p]) @ anri.crystal.B_matrix(np.array(lp[p])))
+    maps = {"UBI": ubi, "phase_ids": phase}
+    tmap = TensorMap(maps={k: TensorMap.recon_order_to_map_order(v) for k, v in maps.items()}, steps=[2.0] * 3)
+    tmap.phases = {0: unitcell(lp[0], 229, name="Fe"), 1: unitcell(lp[1], 225, name="Ni")}
+    path = os.path.join(folder, "fe_ni.h5")
+    tmap.to_h5(path)
+    return path
+
+
+class TestRenderStages(unittest.TestCase):
+    def test_prepare_render_assemble(self):
+        """Two phases, rendered in two parts and assembled into an ImageD11 dataset with the provenance chain."""
+        with tempfile.TemporaryDirectory() as tmp:
+            parfile = os.path.join(tmp, "geometry.par")
+            anri.io.write_par(parfile, PARS)
+            prep = rd.stage_prepare(two_phase_map(tmp), parfile, os.path.join(tmp, "x_prepare.h5"), omega_step=2.0,
+                                    dty_step=8.0, margin=0.25, density=50.0, log=lambda m: None)  # fmt: skip
+            p = rd.load_prepare(prep)
+            self.assertEqual(p["names"], ["Fe", "Ni"])
+            self.assertEqual(p["omega"].shape, (3, 90))  # radius 4.2 + 0.25 x 8: one row either side of y0
+            self.assertEqual(p["cells"]["Ni"]["cell_lattice_[P,A,B,C,I,F,R]"], 225)
+            self.assertEqual(list(rd.parse_rows("1:", 3)), [1, 2])
+            a = rd.stage_render(prep, rows=":1", log=lambda m: None)
+            self.assertTrue(a.endswith("x_render_0000-0000.h5"))
+            with self.assertRaises(ValueError):  # row 1 and 2 missing
+                rd.stage_assemble(prep, tmp, "s", "d", log=lambda m: None)
+            b = rd.stage_render(prep, rows="1:", log=lambda m: None)
+            self.assertEqual(rd.render_parts(prep), [a, b])
+            out = rd.stage_assemble(prep, tmp, "s", "d", log=lambda m: None)
+            prov = anri.io.read_provenance(out)
+            ds = anri.io.read_dataset(prov["resolved"]["dataset_file"])
+            self.assertEqual(len(ds["ybincens"]), 3)
+            with h5py.File(prov["resolved"]["sparse_file"], "r") as h:
+                n = sum(int(h[g]["nnz"][()].sum()) for g in h)
+                self.assertEqual(sorted(h), ["1.1", "2.1", "3.1"])
+            self.assertEqual(n, prov["results"]["pixels"])
+            self.assertGreater(n, 0)
+            self.assertEqual(anri.io.chain(out), [out, prep])
+            _, _, cell = anri.io.read_pars_json(prov["resolved"]["parfile"], "Ni")
+            self.assertEqual(cell["cell_lattice_[P,A,B,C,I,F,R]"], 225)
+
+
+if __name__ == "__main__":
+    unittest.main()

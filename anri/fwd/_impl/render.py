@@ -17,6 +17,7 @@ window placement is computed from rounded centroids.
 from __future__ import annotations
 
 from functools import partial
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -940,6 +941,40 @@ def render_row(
     stats = {"n_peaks": n_peaks, "captured": captured_all}
     if len(classes) > 1:
         stats["window_frames"] = np.asarray(classes)[peak_class]
+    return frame, pixel, value, stats
+
+
+def render_phases(
+    phases: list,
+    geom: dict,
+    row: dict,
+    det_shape: tuple[int, int],
+    **kwargs: Any,  # noqa: ANN401
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+    """Render the peaks of several phases that reach one dty row, summed into one set of sparse pixels.
+
+    Each phase is rendered by :func:`render_row`; where phases light the same pixel, their intensities add.
+
+    Parameters
+    ----------
+    phases
+        [(entries, hkls, F2), ...] one per phase, as :func:`render_row` takes them
+    geom, row, det_shape
+        See :func:`render_row`
+    **kwargs
+        Passed on to :func:`render_row` (window, max_frames, batch, ...)
+
+    Returns
+    -------
+    frame, pixel, value, stats
+        As :func:`render_row`, over every phase: "n_peaks" summed, "captured" concatenated (phase by phase)
+    """
+    out = [render_row(entries, hkls, F2, geom, row, det_shape, **kwargs) for entries, hkls, F2 in phases]
+    if len(out) == 1:
+        return out[0]
+    frame, pixel, value = _merge_host(np.concatenate([o[0] for o in out]), np.concatenate([o[1] for o in out]),
+                                      np.concatenate([o[2] for o in out]), det_shape[0] * det_shape[1])  # fmt: skip
+    stats = {"n_peaks": sum(o[3]["n_peaks"] for o in out), "captured": np.concatenate([o[3]["captured"] for o in out])}
     return frame, pixel, value, stats
 
 

@@ -23,4 +23,5 @@ API reference
     maths.rotation
     maths.utils
     phantom
+    render
     utils

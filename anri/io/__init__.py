@@ -24,6 +24,7 @@ from ._impl.imaged11 import (
     write_par,
     write_pars,
     write_peaks_table,
+    write_rendered_rows,
     write_scan,
     write_zero_distortion,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "write_pars",
     "write_peaks_table",
     "write_provenance",
+    "write_rendered_rows",
     "write_results",
     "write_scan",
     "write_zero_distortion",

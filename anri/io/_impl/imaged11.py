@@ -10,8 +10,8 @@ ImageD11 itself is only imported by the functions that need it.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Iterator
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Iterable, Iterator
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import jax.numpy as jnp
@@ -19,7 +19,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 import anri.geom
-from anri.fwd._impl.render import make_row, render_row
+from anri.fwd._impl.render import make_row, render_phases
 
 if TYPE_CHECKING:
     from ImageD11.sinograms.tensor_map import TensorMap
@@ -972,20 +972,62 @@ def simulate_sparse(
     Returns
     -------
     stats: dict
-        Per row: "n_peaks" rendered, "n_pixels" written, and the minimum window "captured" fraction
+        Per row: as :func:`write_rendered_rows`
     """
-    n_rows = omega.shape[0]
-    stats = {"n_peaks": np.zeros(n_rows, int), "n_pixels": np.zeros(n_rows, int), "captured_min": np.ones(n_rows)}
     with h5py.File(path, "w-") as hout:
-        for i in range(n_rows):
-            row = make_row(omega[i], dty[i], None if transmission is None else transmission[i])
-            frame, pixel, value, rstats = render_row(
-                entries, hkls, F2, geom, row, det_shape, window=window, batch=batch, max_frames=max_frames
-            )
-            stats["n_peaks"][i] = rstats["n_peaks"]
-            if rstats["captured"].size:
-                stats["captured_min"][i] = rstats["captured"].min()
-            stats["n_pixels"][i] = write_scan(
-                hout, f"{i + 1}.1", frame, pixel, value, omega[i], dty[i], det_shape, cut, omega_motor, dty_motor
-            )
+        return write_rendered_rows(hout, [(entries, hkls, F2)], geom, omega, dty, det_shape, cut=cut,
+                                   transmission=transmission, omega_motor=omega_motor, dty_motor=dty_motor,
+                                   window=window, batch=batch, max_frames=max_frames)  # fmt: skip
+
+
+def write_rendered_rows(
+    hout: h5py.File, phases: list, geom: dict, omega: np.ndarray, dty: np.ndarray, det_shape: tuple[int, int], *,
+    rows: range | None = None, cut: float = 1, transmission: np.ndarray | None = None, omega_motor: str = "rot_center",
+    dty_motor: str = "dty", log: Callable | None = None, **render_kwargs: Any,  # noqa: ANN401
+) -> dict:  # fmt: skip
+    """Render dty rows of a scan, every phase summed, and write each as an ImageD11 scan group ("<row + 1>.1").
+
+    Parameters
+    ----------
+    hout
+        Open, writable HDF5 file
+    phases
+        [(entries, hkls, F2), ...] one per phase, see :func:`anri.fwd.render_phases`
+    geom, omega, dty, det_shape, cut, transmission, omega_motor, dty_motor
+        See :func:`simulate_sparse`
+    rows
+        The rows to render (default all)
+    log
+        Called with a line per row rendered, if given
+    **render_kwargs
+        Passed on to :func:`anri.fwd.render_row` (window, batch, max_frames, ...)
+
+    Returns
+    -------
+    stats: dict
+        Per row of the scan: "n_peaks" rendered, "n_pixels" written, the smallest fraction of a peak "captured" by its
+        window, and "n_outside", the peaks selected near the ends of the scan that fall outside its omega range
+        (captured 0, left out of captured_min). Rows not rendered: 0, 0, 1 and 0
+    """
+    import time
+
+    n_rows = omega.shape[0]
+    stats = {"n_peaks": np.zeros(n_rows, int), "n_pixels": np.zeros(n_rows, int), "captured_min": np.ones(n_rows),
+             "n_outside": np.zeros(n_rows, int)}  # fmt: skip
+    for i in range(n_rows) if rows is None else rows:
+        t0 = time.perf_counter()
+        row = make_row(omega[i], dty[i], None if transmission is None else transmission[i])
+        frame, pixel, value, rstats = render_phases(phases, geom, row, det_shape, **render_kwargs)
+        stats["n_peaks"][i] = rstats["n_peaks"]
+        cap = np.asarray(rstats["captured"])
+        stats["n_outside"][i] = int(np.sum(cap == 0))
+        if (cap > 0).any():
+            stats["captured_min"][i] = cap[cap > 0].min()
+        stats["n_pixels"][i] = write_scan(
+            hout, f"{i + 1}.1", frame, pixel, value, omega[i], dty[i], det_shape, cut, omega_motor, dty_motor
+        )
+        if log is not None:
+            log(f"row {i} (dty {float(np.mean(dty[i])):.4g}): {stats['n_peaks'][i]} peaks ({stats['n_outside'][i]} "
+                f"outside the omega range), {stats['n_pixels'][i]} pixels above {cut:g}, window capture >= "
+                f"{stats['captured_min'][i]:.4f} ({time.perf_counter() - t0:.1f} s)")  # fmt: skip
     return stats

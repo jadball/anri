@@ -740,7 +740,8 @@ def stage_populations(
     """Group each voxel's occupancy into orientation populations, and write the maps.
 
     Writes ``<out>`` (populations: fraction, mean orientation, spread, completeness; occupied voxels), and beside it
-    ``<stem>_entries.npz`` (every population as anri map entries, for the renderer) and, with ImageD11,
+    ``<stem>_entries.npz`` (every population as anri map entries, for the renderer, with the voxel size, lattice,
+    space group and phase name) and, with ImageD11,
     ``<stem>_tmap.h5`` (a TensorMap of the main population, with maps of the number of populations, their fraction,
     spread and completeness).
 
@@ -812,7 +813,8 @@ def stage_populations(
         ubi_pop = np.asarray(anri.crystal.U_B_to_UBI(U_pop[v, q], d["B"]))
         ubi_main = np.asarray(anri.crystal.U_B_to_UBI(U_pop[:, 0], d["B"]))
     np.savez(f"{stem}_entries.npz", ubi=ubi_pop, pos=pos[v].astype(np.float32), density=tot[v] * frac[v, q],
-             sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q])  # fmt: skip
+             sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q], voxel_size=YSTEP,
+             lattice=np.asarray(r["lattice"], float), space_group=r["space_group"], phase=r["phase"])  # fmt: skip
     log(f"-> {out}, {stem}_entries.npz")
     try:
         maps = {

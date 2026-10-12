@@ -40,7 +40,10 @@ def write_attrs(group: h5py.Group, values: dict) -> None:
     for k, v in values.items():
         if v is None:
             continue
-        group.attrs[k] = np.asarray(v) if isinstance(v, (list, tuple)) else v
+        if isinstance(v, (list, tuple)):
+            strings = len(v) > 0 and all(isinstance(x, str) for x in v)
+            v = np.asarray(v, dtype=h5py.string_dtype() if strings else None)
+        group.attrs[k] = v
 
 
 def read_attrs(group: h5py.Group) -> dict:
@@ -49,7 +52,8 @@ def read_attrs(group: h5py.Group) -> dict:
     for k, v in group.attrs.items():
         if isinstance(v, bytes):
             v = v.decode()
-        out[k] = v.tolist() if hasattr(v, "tolist") else v
+        v = v.tolist() if hasattr(v, "tolist") else v
+        out[k] = [x.decode() if isinstance(x, bytes) else x for x in v] if isinstance(v, list) else v
     return out
 
 

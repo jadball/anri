@@ -18,6 +18,7 @@ from ._impl.render import (
     guess_batch_size,
     make_row,
     render_peaks,
+    render_phases,
     render_row,
     select_peaks,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "propagate_cov_scan_all_grains_both",
     "propagate_cov_scan_both",
     "render_peaks",
+    "render_phases",
     "render_row",
     "select_peaks",
 ]
