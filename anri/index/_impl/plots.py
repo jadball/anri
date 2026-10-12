@@ -43,8 +43,8 @@ def plot_rings(fig: Figure, cake: dict) -> Callable:
 
     tth, prof, C, rings = cake["tth"], cake["profile"], cake["cake"], cake["rings"]
     n_all = len(rings["tth"])
-    sf = fig.subfigures(2, 1, height_ratios=[2.3, 0.9])
-    ax_p, ax_c = sf[0].subplots(2, 1, sharex=True)
+    sf_top, sf_bot = fig.subfigures(2, 1, squeeze=False, height_ratios=[2.3, 0.9]).ravel()
+    ax_p, ax_c = sf_top.subplots(2, 1, sharex=True)
     ax_p.semilogy(tth, np.maximum(prof, 0.5), lw=0.7, color="k")
     for t in rings["tth"]:
         ax_p.axvline(t, color="0.6", ls="--", lw=0.6)
@@ -55,14 +55,14 @@ def plot_rings(fig: Figure, cake: dict) -> Callable:
     ax_c.imshow(np.ma.masked_less_equal(Cb.T, 0), aspect="auto", origin="lower", cmap=_log_cmap(), norm=LogNorm(),
                 extent=(cake["lo"], cake["lo"] + len(Cb) * k * cake["step"], -180, 180), interpolation="nearest")  # fmt: skip
     ax_c.set(xlabel="2θ (°)", ylabel="η (°)", title="cake: rings should be straight; windows in cyan")
-    axz = np.atleast_1d(sf[1].subplots(1, n_all, sharex=True, sharey=True))
+    axz = np.atleast_1d(sf_bot.subplots(1, n_all, sharex=True, sharey=True))
     for r, a in enumerate(axz):
         z = np.abs(tth - rings["tth"][r]) < 0.15
         a.semilogy(tth[z] - rings["tth"][r], np.maximum(prof[z], 0.5), lw=0.8, color="k")
         a.set_title(f"{r}: {cake['hkl'][r]}", fontsize=9)
         a.tick_params(labelsize=7)
     axz[0].set_ylabel("counts")
-    sf[1].supxlabel("2θ − ring (°); orange: window, blue: measured centre; grey: ring not used", fontsize=9)
+    sf_bot.supxlabel("2θ − ring (°); orange: window, blue: measured centre; grey: ring not used", fontsize=9)
     drawn: list = []
 
     def update(n_rings: int, tth_tol: float | None = None) -> str:
