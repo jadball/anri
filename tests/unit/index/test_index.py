@@ -254,6 +254,24 @@ class TestOccupancy(unittest.TestCase):
         sq = ix.polygon_mask((10, 10), [(2, 3), (7, 3), (7, 8), (2, 8)])  # (x, y) = (column, row)
         self.assertTrue(sq[5, 4] and not sq[1, 4] and not sq[5, 9])
 
+    def test_tilted_geometry_rows(self):
+        """With wedge, chi and a beam off lab x, system puts a voxel in the rows where the renderer's beam crosses it."""
+        k, wedge, chi, y0 = jnp.array([1.0, 0.1, 0.05]), 3.0, -2.0, 0.4
+        rng = np.random.default_rng(3)
+        pos = jnp.asarray(np.column_stack([rng.uniform(-5, 5, (6, 2)), np.zeros(6)]), jnp.float32)
+        om = jnp.asarray(rng.uniform(-180, 180, (6, 1, 1)), jnp.float32)
+        dty = anri.geom.find_dty_for_beam_xy(pos[:, None, None, :], k, om, wedge, chi, y0)[:, 0, 0]
+        for v, o, d in zip(pos, om[:, 0, 0], dty):
+            across = anri.geom.beam_offsets(anri.geom.sample_to_lab(v, o, wedge, chi, d, y0), k)[0]
+            self.assertAlmostEqual(float(across), 0.0, places=4)  # the renderer's beam passes through the voxel
+        scan = {"y0": y0, "dty0": -10.0, "ystep": 1.0, "n_rows": 21, "om0": -180.0, "k_in_lab": k, "wedge": wedge,
+                "chi": chi}  # fmt: skip
+        one = jnp.ones((6, 1, 1))
+        idx, wt = ix.system(one * 10.0, om, one > 0, one, jnp.asarray([0]), pos, scan, 1.0, 1.0, 360, 360)
+        rows = np.asarray(idx) % 21
+        centre = (np.asarray(wt) * (scan["dty0"] + rows)).sum((1, 2, 3)) / np.asarray(wt).sum((1, 2, 3))
+        np.testing.assert_allclose(centre, dty, atol=1e-4)
+
     def test_coarsen_scan(self):
         """Coarse rows: the geometry of summed rows, and ddty as dty_offsets gives it for the summed rows directly."""
         n_fr, ystep = 360, 1.0

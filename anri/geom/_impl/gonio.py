@@ -6,6 +6,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 
 from .utils import beam_offsets, rot_x, rot_y, rot_z
 
@@ -176,20 +177,22 @@ def origin_lab(
 
 @jax.jit
 def find_dty_for_beam_xy(
-    v_sample: jax.Array, k_in_lab: jax.Array, omega: float, wedge: float, chi: float, y0: float
+    v_sample: jax.Array, k_in_lab: jax.Array, omega: ArrayLike, wedge: float, chi: float, y0: float
 ) -> jax.Array:
     """Find the dty value required to make the beam intersect a specific point v_sample at a given omega.
 
-    This is only valid for the scanning case (beam can be approximated as a ray).
+    This is only valid for the scanning case (beam can be approximated as a ray). The beam's horizontal line passes
+    through the lab origin along ``k_in_lab``; dty moves the sample along lab y. Broadcasts over points and omegas,
+    elementwise (the wedge and chi rotation is one matrix), so it is cheap over [voxels, predictions].
 
     Parameters
     ----------
     v_sample
-        [3] Vector in sample coordinates
+        [..., 3] Vectors in sample coordinates
     k_in_lab
         [3] Incoming wave-vector in lab frame
     omega
-        Omega motor value (degrees)
+        [...] Omega motor values (degrees), broadcast against v_sample[..., 0]
     wedge
         Wedge motor value (degrees)
     chi
@@ -199,12 +202,18 @@ def find_dty_for_beam_xy(
 
     Returns
     -------
-    dty_required: float
-        dty value that brings v_sample into beam at angle omega
+    dty_required: jax.Array
+        [...] dty values that bring v_sample into the beam at omega
     """
-    dty_required, _ = dty_and_origin_lab(v_sample, k_in_lab, omega, wedge, chi, y0)
-
-    return dty_required
+    M = rot_y(wedge) @ rot_x(chi)  # sample_to_lab is W C R(omega) v
+    a = jnp.radians(omega)
+    c, s = jnp.cos(a), jnp.sin(a)
+    x, y, z = v_sample[..., 0], v_sample[..., 1], v_sample[..., 2]
+    rx, ry = c * x - s * y, s * x + c * y  # R(omega) v
+    lab_x = M[0, 0] * rx + M[0, 1] * ry + M[0, 2] * z
+    lab_y = M[1, 0] * rx + M[1, 1] * ry + M[1, 2] * z
+    # the beam's horizontal line is at y = (k_y / k_x) x: dty moves the point there (when dty = y0, no shift)
+    return k_in_lab[1] / k_in_lab[0] * lab_x - lab_y + y0
 
 
 @jax.jit
@@ -247,14 +256,8 @@ def dty_and_origin_lab(
 
     See Also
     --------
-    find_dty_for_beam_xy : Returns the dty value alone.
+    find_dty_for_beam_xy : The dty value alone (and over many points).
     origin_lab : The scattering origin for a given dty.
     """
-    # Rotate v_sample into v_lab, ignoring y0 and dty for now (just find angles)
-    v_lab = sample_to_lab(v_sample, omega, wedge, chi, 0.0, 0.0)
-
-    # y of the beam's horizontal line at the point's lab x; dty moves the point there (when dty = y0, no shift)
-    y_ray = k_in_lab[1] / k_in_lab[0] * v_lab[0]
-    dty_required = y_ray - v_lab[1] + y0
-
+    dty_required = find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
     return dty_required, origin_lab(v_sample, k_in_lab, omega, wedge, chi, dty_required, y0)

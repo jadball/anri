@@ -421,7 +421,8 @@ def main() -> None:
     # ------------------------------------------------------------------------------------------------- 3. occupancy
     pred = ix.predictions(U_kept, B, rings, geom, args.etacut)
     pos = np.asarray(anri.geom.recon_positions(NR, YSTEP), np.float32)
-    scan = {"y0": Y0, "dty0": DTY0, "ystep": YSTEP, "n_rows": NK, "om0": OM0}
+    scan = {"y0": Y0, "dty0": DTY0, "ystep": YSTEP, "n_rows": NK, "om0": OM0,
+            "k_in_lab": geom["k_in_lab"], "wedge": geom["wedge"], "chi": geom["chi"]}  # fmt: skip
     if not args.no_frame_dty and frame_dty is not None:
         # fly and helical scans: where the beam really was, per row and omega bin
         ddty, expo = ix.dty_offsets(frame_dty, ds["omega"], yedge, G, OM0, B_O * R_O, N_O // R_O, DTY0, YSTEP,

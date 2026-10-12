@@ -402,6 +402,15 @@ def coarsen_rows(H: ArrayLike, n_rows: int, g: int) -> tuple[jax.Array, int]:
     return d.reshape(d.shape[0], -1, g).sum(-1).ravel(), -(-n_rows // g)
 
 
+def scan_beam(scan: dict) -> tuple[jax.Array, ArrayLike, ArrayLike]:
+    """Return the beam direction, wedge and chi of a scan dict: ``scan["k_in_lab"]``, ``["wedge"]``, ``["chi"]``.
+
+    Default: a beam along lab x and an untilted rotation axis.
+    """
+    k_in = jnp.asarray(scan.get("k_in_lab", (1.0, 0.0, 0.0)))
+    return k_in, scan.get("wedge", 0.0), scan.get("chi", 0.0)
+
+
 def coarsen_scan(scan: dict, g: int) -> dict:
     """Return the scan of a histogram whose rows are summed in groups of g (:func:`coarsen_rows`).
 

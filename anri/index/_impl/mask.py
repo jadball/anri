@@ -16,6 +16,10 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from anri.geom import find_dty_for_beam_xy
+
+from .data import scan_beam
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
@@ -36,19 +40,20 @@ def ramp_filter(sino: ArrayLike) -> np.ndarray:
 @jax.jit
 def backproject(
     sino: jax.Array, om_deg: jax.Array, pos: jax.Array, y0: float, dty0: float, ystep: float,
-    ddty: jax.Array | None = None,
+    ddty: jax.Array | None = None, k_in_lab: ArrayLike | None = None, wedge: float = 0.0, chi: float = 0.0,
 ) -> jax.Array:  # fmt: skip
     """Back-project a sinogram [omega, row] onto voxels at ``pos`` [Nv, 3], linearly between rows.
 
-    A voxel is in the beam at dty = y0 - (x sin(omega) + y cos(omega)), as in :func:`anri.index.system`; ``ddty``
-    [row, omega] is each row's offset from its nominal dty (fly, helical scans: :func:`anri.index.dty_offsets`).
+    A voxel is in the beam at the dty of :func:`anri.geom.find_dty_for_beam_xy` (beam ``k_in_lab``, rotation axis
+    tilted by ``wedge`` and ``chi``), as in :func:`anri.index.system`; ``ddty`` [row, omega] is each row's offset
+    from its nominal dty (fly, helical scans: :func:`anri.index.dty_offsets`).
     """
     n_k = sino.shape[1]
     dd = jnp.zeros((sino.shape[0], n_k), sino.dtype) if ddty is None else jnp.asarray(ddty, sino.dtype).T
 
     def step(acc: jax.Array, so: tuple) -> tuple:
         row, o, d = so
-        fk = (y0 - (pos[:, 0] * jnp.sin(o) + pos[:, 1] * jnp.cos(o)) - dty0) / ystep
+        fk = (find_dty_for_beam_xy(pos, k_in, o, wedge, chi, y0) - dty0) / ystep
         fk = fk - d[jnp.clip(jnp.round(fk).astype(jnp.int32), 0, n_k - 1)] / ystep
         k0 = jnp.floor(fk).astype(jnp.int32)
         t = fk - k0
@@ -58,7 +63,8 @@ def backproject(
 
         return acc + (1 - t) * at(k0) + t * at(k0 + 1), None
 
-    acc, _ = jax.lax.scan(step, jnp.zeros(pos.shape[0], jnp.float32), (sino, jnp.radians(om_deg), dd))
+    k_in = jnp.asarray((1.0, 0.0, 0.0) if k_in_lab is None else k_in_lab)  # default: along lab x
+    acc, _ = jax.lax.scan(step, jnp.zeros(pos.shape[0], jnp.float32), (sino, jnp.asarray(om_deg), dd))
     return acc / sino.shape[0]
 
 
@@ -92,8 +98,9 @@ def reconstruct(H: ArrayLike, n_rings: int, n_e: int, n_o: int, scan: dict, b_o:
     sino = np.log1p(H4).sum((0, 1))  # [omega, row]
     om = scan["om0"] + (np.arange(n_o) + 0.5) * b_o
     pos = jnp.asarray(recon_positions(nr, scan["ystep"]), jnp.float32)
+    k_in, wedge, chi = scan_beam(scan)
     rec = backproject(jnp.asarray(ramp_filter(sino), jnp.float32), jnp.asarray(om, jnp.float32), pos,
-                      scan["y0"], scan["dty0"], scan["ystep"], scan.get("ddty"))  # fmt: skip
+                      scan["y0"], scan["dty0"], scan["ystep"], scan.get("ddty"), k_in, wedge, chi)  # fmt: skip
     return np.asarray(rec).reshape(nr, nr)
 
 

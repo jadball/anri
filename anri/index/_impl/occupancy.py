@@ -21,9 +21,9 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from anri.fwd._impl.render import _chord_weight
-from anri.geom import recon_positions, wrap_omega
+from anri.geom import find_dty_for_beam_xy, recon_positions, wrap_omega
 
-from .data import coarsen_rows, coarsen_scan, eta_omega_corners, omega_bin
+from .data import coarsen_rows, coarsen_scan, eta_omega_corners, omega_bin, scan_beam
 
 
 def censored_ratio(d: jax.Array, mu: jax.Array, censor: float) -> jax.Array:
@@ -98,9 +98,9 @@ def system(
         [Nv, Q, Nj, 8] each (4 n_beam with a beam profile); unused corners have index -1
     """
     n_k = scan["n_rows"]
-    c, s = jnp.cos(jnp.radians(om)), jnp.sin(jnp.radians(om))
-    ylab = pos[:, 0, None, None] * s + pos[:, 1, None, None] * c
-    fk = (scan["y0"] - ylab - scan["dty0"]) / scan["ystep"]  # the row whose beam is centred on the voxel
+    k_in, wedge, chi = scan_beam(scan)
+    dty = find_dty_for_beam_xy(pos[:, None, None, :], k_in, om, wedge, chi, scan["y0"])
+    fk = (dty - scan["dty0"]) / scan["ystep"]  # the row whose beam is centred on the voxel
     if "ddty" in scan:  # rows not at their nominal dty (fly, helical scans): the beam's real dty in this omega bin
         io = jnp.clip(omega_bin(wrap_omega(om, scan["om0"]), scan["om0"], b_o), 0, n_o - 1)
         kh = jnp.clip(jnp.round(fk).astype(jnp.int32), 0, n_k - 1)
@@ -112,8 +112,9 @@ def system(
     else:
         k0 = jnp.round(fk).astype(jnp.int32) - n_beam // 2
         norm = scan["ystep"] / scan["voxel"] ** 2  # the chord weight integrates to voxel^2 over dty
+        psi = jnp.degrees(jnp.arctan2(k_in[1], k_in[0]))  # the beam sees the voxel turned by omega - psi
         rows = tuple(
-            (dk, norm * _chord_weight((k0 + dk - fk) * scan["ystep"], om, scan["voxel"], scan["sig_beam"],
+            (dk, norm * _chord_weight((k0 + dk - fk) * scan["ystep"], om - psi, scan["voxel"], scan["sig_beam"],
                                       scan["width_beam"]))
             for dk in range(n_beam)
         )  # fmt: skip
