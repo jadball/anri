@@ -6,15 +6,15 @@ times faster.
 """
 
 import math
+from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jax.typing import ArrayLike
 
 _FWHM_PER_SIGMA = 2.0 * math.sqrt(2.0 * math.log(2.0))  # 2.3548...
 
 
-def fwhm_to_sigma(fwhm: ArrayLike) -> ArrayLike:
+def fwhm_to_sigma(fwhm: Any) -> Any:  # noqa: ANN401 (float, NumPy or JAX)
     """Return the standard deviation of a Gaussian from its full width at half maximum (FWHM / 2.3548...).
 
     Works on Python floats, NumPy and JAX arrays alike.
@@ -22,7 +22,7 @@ def fwhm_to_sigma(fwhm: ArrayLike) -> ArrayLike:
     return fwhm / _FWHM_PER_SIGMA
 
 
-def sigma_to_fwhm(sigma: ArrayLike) -> ArrayLike:
+def sigma_to_fwhm(sigma: Any) -> Any:  # noqa: ANN401 (float, NumPy or JAX)
     """Return the full width at half maximum of a Gaussian from its standard deviation (sigma x 2.3548...)."""
     return sigma * _FWHM_PER_SIGMA
 
