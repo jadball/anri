@@ -750,7 +750,7 @@ def stage_filter(
 # --------------------------------------------------------------------------------------------------------------- 4. fit
 def stage_fit(
     filter_file: str, out: str | None = None, *, y0: float | None = None, cand: int = 64, n_iter: int = 10,
-    coarse: int = 1, beam: float = 0.0, mask: str | None = None, block_gb: float = 1.0, censor: float = 0.0,
+    coarse: int = 1, beam: float = 0.0, mask: str | None = "disc", block_gb: float = 1.0, censor: float = 0.0,
     save_model: bool = False, command: str | None = None, log: Callable = print, callback: Callable | None = None,
 ) -> str:  # fmt: skip
     """Fit each voxel's occupancy of the kept orientations.
@@ -773,8 +773,10 @@ def stage_fit(
         FWHM of the beam across dty, as dty: each voxel is spread over the rows by this Gaussian profile integrated
         over the voxel. 0: linearly over the 2 nearest rows (close to a beam of FWHM = the dty step)
     mask
-        Fit only the voxels in a sample mask: "auto" (Otsu threshold and convex hull of a quick reconstruction), or a
-        .npy file of [voxels, voxels] booleans in reconstruction order (default: every voxel)
+        Fit only the voxels in a sample mask: "disc" (the voxels the beam sees at every omega, :func:`disc_mask`),
+        "auto" (in the disc, the Otsu threshold, largest region and convex hull of a quick reconstruction), or a .npy
+        file of [voxels, voxels] booleans in reconstruction order; None fits every voxel of the square grid, also those
+        the data hardly constrain
     block_gb
         Memory for one block of voxels' system entries (GB)
     censor
@@ -795,7 +797,7 @@ def stage_fit(
     import anri.geom
     from anri.maths.utils import fwhm_to_sigma
 
-    from .mask import reconstruct, threshold_mask
+    from .mask import disc_mask, reconstruct, threshold_mask
     from .occupancy import beam_rows, fit_occupancy
     from .predict import predictions
 
@@ -831,10 +833,15 @@ def stage_fit(
         log(f"beam: FWHM {beam:g} across dty, each voxel spread over {dims[4]} rows")
     sel, rec = np.ones(NV, bool), None
     if mask:
+        if mask in ("disc", "auto"):
+            sel = disc_mask(sc, Y0, NR).ravel()
+            if not sel.any():
+                msg = f"y0 {Y0:.6g} is outside the scanned dty range: no voxel is in the beam at every omega"
+                raise ValueError(msg)
         if mask == "auto":
             rec = reconstruct(d["H"], d["n_rings"], sc["n_e"] // R_E, sc["n_o"] // R_O, scan, B_O * R_O, NR)
-            sel = threshold_mask(rec).ravel()
-        else:
+            sel &= threshold_mask(rec).ravel()
+        elif mask != "disc":
             sel = np.load(mask).astype(bool).ravel()
             if sel.size != NV:
                 msg = f"mask {mask}: {sel.size} voxels, the grid has {NR} x {NR}"

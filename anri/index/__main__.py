@@ -108,9 +108,15 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
                    "over the rows by this Gaussian profile integrated over the voxel. Default 0: linearly over the 2 "
                    "nearest rows, close to a beam of FWHM = the dty step (as fast, and maps as good there); set it for "
                    "a beam wider than the step, e.g. overfocused")  # fmt: skip
-    p.add_argument("--mask", help="fit only the voxels in a sample mask: 'auto' (Otsu threshold and convex hull of a "
-                   "quick reconstruction, as ImageD11's tomo_2_map), or a .npy file of [voxels, voxels] booleans in "
-                   "reconstruction order, e.g. drawn with anri.index.draw_mask (default: every voxel)")  # fmt: skip
+    p.add_argument(
+        "--mask",
+        default="disc",
+        help="fit only the voxels in a sample mask: 'disc' (default: the voxels "
+        "the beam sees at every omega, within the scanned dty range all round the rotation axis; those further "
+        "out are hardly constrained), 'auto' (in the disc, the Otsu threshold, largest region and convex hull "
+        "of a quick reconstruction, as ImageD11's tomo_2_map), or a .npy file of [voxels, voxels] booleans in "
+        "reconstruction order, e.g. drawn with anri.index.draw_mask",
+    )
 
 
 def _populations_options(p: argparse.ArgumentParser) -> None:

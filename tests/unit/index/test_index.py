@@ -457,6 +457,20 @@ class TestProvenance(unittest.TestCase):
             self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), v, msg=k)
 
 
+class TestDiscMask(unittest.TestCase):
+    def test_disc(self):
+        """The voxels within the scanned dty range all round the axis: a disc, smaller when y0 is off the middle."""
+        scan = {"dty0": -5.0, "ystep": 1.0, "n_rows": 11}  # rows -5..5, edges -5.5..5.5
+        nr = ix.voxel_grid(scan, 0.0)
+        m = ix.disc_mask(scan, 0.0, nr)
+        r = np.hypot(*np.asarray(anri.geom.recon_positions(nr, 1.0))[:, :2].T).reshape(nr, nr)
+        np.testing.assert_array_equal(m, r <= 5.5)
+        self.assertFalse(m[0, 0])  # a corner
+        self.assertTrue(m[nr // 2, nr // 2])
+        off = ix.disc_mask(scan, 2.0, ix.voxel_grid(scan, 2.0))
+        self.assertLess(off.sum(), m.sum())  # 3.5 from the nearer end
+
+
 class TestSelections(unittest.TestCase):
     def test_completeness(self):
         """The filter's completeness cut: at or above min_comp, the most complete first, at most keep."""

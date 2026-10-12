@@ -170,8 +170,8 @@ def plot_y0(fig: Figure, edges: dict, recon: Callable, y0: float, scan: dict) ->
     return update
 
 
-def plot_mask(fig: Figure, rec: np.ndarray) -> Callable:
-    """Draw a back-projection, its histogram, and ``update(threshold)``'s mask (as :func:`anri.index.threshold_mask`).
+def plot_mask(fig: Figure, rec: np.ndarray, disc: np.ndarray | None = None) -> Callable:
+    """Draw a back-projection, its histogram, and ``update(threshold)``'s mask (as the fit stage's ``mask="auto"``).
 
     Parameters
     ----------
@@ -179,6 +179,9 @@ def plot_mask(fig: Figure, rec: np.ndarray) -> Callable:
         A matplotlib figure
     rec
         A back-projection, e.g. :func:`anri.index.diagnostics.back_projection` at the y0 chosen
+    disc
+        The voxels the beam sees at every omega (:func:`anri.index.disc_mask`): outlined in cyan, and the mask lies
+        within it
     """
     from .mask import otsu, threshold_mask
 
@@ -187,9 +190,12 @@ def plot_mask(fig: Figure, rec: np.ndarray) -> Callable:
     ax[1].sharey(ax[0])
     vmax = np.percentile(rec, 99.5)
     ax[0].imshow(rec, origin="lower", cmap="gray", vmin=0, vmax=vmax)
-    ax[0].set(title="back-projection", xticks=[], yticks=[])
+    ax[0].set(title="back-projection" + ("; cyan: seen at every ω" if disc is not None else ""), xticks=[], yticks=[])
     im = ax[1].imshow(rec, origin="lower", cmap="gray", vmin=0, vmax=vmax)
     ax[1].set(xticks=[], yticks=[])
+    if disc is not None:
+        for a in ax[:2]:
+            a.contour(disc.astype(float), levels=[0.5], colors="c", linewidths=0.8)
     ax[2].hist(rec.ravel(), bins=200, log=True, color="0.5")
     ax[2].axvline(otsu(rec), color="k", ls=":", label="Otsu")
     v = ax[2].axvline(otsu(rec), color="tab:red", label="threshold")
@@ -197,12 +203,12 @@ def plot_mask(fig: Figure, rec: np.ndarray) -> Callable:
     ax[2].legend(fontsize=8)
 
     def update(threshold: float) -> str:
-        m = threshold_mask(rec, threshold)
+        m = threshold_mask(rec, threshold) & (True if disc is None else disc)
         im.set_data(np.where(m, rec, np.nan))
         v.set_xdata([threshold, threshold])
         ax[1].set_title(f"mask: {m.sum()} of {m.size} voxels")
         fig.canvas.draw_idle()
-        return f"mask: {m.sum()} of {m.size} voxels"
+        return f"mask: {m.sum()} of {m.size} voxels" + ("" if disc is None else f" (the disc: {disc.sum()})")
 
     return update
 

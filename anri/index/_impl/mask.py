@@ -1,8 +1,9 @@
-"""A sample mask on the indexer's voxel grid: a quick reconstruction of the histogram, then a threshold or a polygon.
+"""A sample mask on the indexer's voxel grid: the scanned disc, a threshold of a quick reconstruction, or a polygon.
 
 The reconstruction is the one ImageD11's ``tomo_2_map`` makes its whole-sample mask from: a sinogram of log
 intensities (every spot counts about the same however bright), filtered back-projection with a Hamming-windowed
-ramp. The mask is either thresholded (Otsu, then the convex hull, as ImageD11's ``threshold_mask``) or drawn by hand
+ramp. The default mask is the disc the beam sees at every omega (:func:`disc_mask`); a thresholded mask lies
+within it. The mask is either thresholded (Otsu, then the convex hull, as ImageD11's ``threshold_mask``) or drawn by hand
 (:func:`draw_mask`, as ImageD11's ``InteractiveMask``). Images are in reconstruction order, so ``mask.ravel()`` lines
 up with the voxels of :func:`anri.geom.recon_positions`.
 """
@@ -16,7 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from anri.geom import find_dty_for_beam_xy
+from anri.geom import find_dty_for_beam_xy, recon_positions
 
 from .data import scan_beam
 
@@ -150,6 +151,35 @@ def threshold_mask(image: ArrayLike, threshold: float | None = None) -> np.ndarr
     grid = np.indices(image.shape).reshape(2, -1).T
     hull = (Delaunay(pts).find_simplex(grid, tol=1e-6) >= 0).reshape(image.shape)
     return hull | above  # pixel centres on the hull's edges, and the region's own pixels
+
+
+def disc_mask(scan: dict, y0: float, nr: int) -> np.ndarray:
+    """Mask of the voxels the beam sees at every omega: within the scanned dty range all the way round the axis.
+
+    A voxel at distance r from the rotation axis is in the beam at dty = y0 - r cos(omega - phi). It stays within the
+    rows' range, from dty0 - ystep / 2 to dty0 + (n_rows - 1/2) ystep, at every omega when r is at most the distance
+    from y0 to the nearer end. The voxels further out (the corners of the square grid, and more of it when y0 is off
+    the middle of the scan) are seen at some omegas only, so the data hardly constrain them: MLEM can give them large
+    occupancies that explain almost nothing.
+
+    Parameters
+    ----------
+    scan
+        The histogram's scan ("dty0", "ystep", "n_rows")
+    y0
+        dty where the rotation axis is in the beam
+    nr
+        Voxels per side (:func:`anri.index.voxel_grid`)
+
+    Returns
+    -------
+    np.ndarray
+        [nr, nr] bool, in reconstruction order
+    """
+    lo = scan["dty0"] - 0.5 * scan["ystep"]
+    r_max = min(y0 - lo, lo + scan["n_rows"] * scan["ystep"] - y0)
+    pos = np.asarray(recon_positions(nr, scan["ystep"]))
+    return (np.hypot(pos[:, 0], pos[:, 1]) <= r_max).reshape(nr, nr)
 
 
 def polygon_mask(shape: tuple, vertices: ArrayLike) -> np.ndarray:

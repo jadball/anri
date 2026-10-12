@@ -34,7 +34,7 @@ from ._impl.data import (
     ring_table,
     ring_widths,
 )
-from ._impl.mask import backproject, draw_mask, otsu, polygon_mask, ramp_filter, reconstruct, threshold_mask
+from ._impl.mask import backproject, disc_mask, draw_mask, otsu, polygon_mask, ramp_filter, reconstruct, threshold_mask
 from ._impl.occupancy import (
     backward,
     beam_rows,
@@ -103,6 +103,7 @@ __all__ = [
     "completeness_levels",
     "completeness_of",
     "deviance",
+    "disc_mask",
     "draw_mask",
     "dty_offsets",
     "fit_occupancy",
