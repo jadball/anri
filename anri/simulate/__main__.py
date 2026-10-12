@@ -1,13 +1,13 @@
 """Simulate a scanning-3DXRD dataset from a map, as ImageD11 files.
 
-The renderer runs in three stages, each a subcommand that writes one HDF5 file the next one reads:
+A dataset is simulated in three stages, each a subcommand that writes one HDF5 file the next one reads:
 
-    python -m anri.render prepare <map> <pars> [options]                 -> <map name>_prepare.h5
-    python -m anri.render render <..._prepare.h5> [--rows a:b] [options] -> <...>_render.h5 (or _render_<a>-<b>.h5)
-    python -m anri.render assemble <..._prepare.h5> <analysisroot> <sample> <dataset>
+    python -m anri.simulate prepare <map> <pars> [options]                 -> <map name>_prepare.h5
+    python -m anri.simulate render <..._prepare.h5> [--rows a:b] [options] -> <...>_render.h5 (or _render_<a>-<b>.h5)
+    python -m anri.simulate assemble <..._prepare.h5> <analysisroot> <sample> <dataset>
                                                                          -> the ImageD11 dataset, and <...>_assemble.h5
-    python -m anri.render run <map> <pars> <analysisroot> <sample> <dataset> [options]   all three
-    python -m anri.render show <any stage file>                          how it was made
+    python -m anri.simulate run <map> <pars> <analysisroot> <sample> <dataset> [options]   all three
+    python -m anri.simulate show <any stage file>                          how it was made
 
 The map is an ImageD11 TensorMap (every phase in it) or the entries ``python -m anri.index populations`` writes.
 Rows are independent: split them between jobs with ``render --rows``, then ``assemble`` gathers every part made from
@@ -40,7 +40,7 @@ def _cif(values: list | None) -> str | dict | None:
 
 
 def _prepare_options(p: argparse.ArgumentParser) -> None:
-    from anri.render.stages import BANDWIDTH, OPTICS
+    from anri.simulate.stages import BANDWIDTH, OPTICS
 
     p.add_argument("--dataset", help="an ImageD11 DataSet to simulate: its frames' omega and dty, detector shape, y0 and "
                    "geometry replace the scan options")  # fmt: skip
@@ -83,7 +83,7 @@ def _render_options(p: argparse.ArgumentParser) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse the command line (default: ``sys.argv``)."""
-    p = argparse.ArgumentParser(prog="python -m anri.render", description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(prog="python -m anri.simulate", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="command", required=True)
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--n-cpu", type=int, default=4, help="CPU devices for JAX (default 4)")
@@ -135,15 +135,15 @@ def main() -> None:
     import anri.utils
 
     anri.utils.setup(n_cpu=args.n_cpu)
-    import anri.render as rd
+    import anri.simulate as sim
 
     cmd = args.command
-    command = "python -m anri.render " + shlex.join(sys.argv[1:])
+    command = "python -m anri.simulate " + shlex.join(sys.argv[1:])
     if cmd in ("prepare", "run"):
         out = getattr(args, "out", None) or os.path.join(
             args.outdir, os.path.splitext(os.path.basename(args.map))[0] + "_prepare.h5"
         )
-        source = rd.stages.stage_prepare(
+        source = sim.stages.stage_prepare(
             args.map, args.pars, out, dataset=args.dataset,
             remap=dict(v.split("=", 1) for v in args.remap) if args.remap else None, cif=_cif(args.cif), optics=args.optics, divergence=args.divergence,
             bandwidth=args.bandwidth, beam_fwhm=args.beam_fwhm, psf=args.psf, pol_factor=args.pol_factor, y0=args.y0,
@@ -154,11 +154,11 @@ def main() -> None:
     else:
         source = args.source
     if cmd in ("render", "run"):
-        rd.stages.stage_render(source, None if cmd == "run" else args.out, rows=getattr(args, "rows", None), cut=args.cut,
+        sim.stages.stage_render(source, None if cmd == "run" else args.out, rows=getattr(args, "rows", None), cut=args.cut,
                         window=tuple(args.window), max_frames=args.max_frames, batch=args.batch, command=command,
                         log=log)  # fmt: skip
     if cmd in ("assemble", "run"):
-        rd.stages.stage_assemble(source, args.analysisroot, args.sample, args.dataset, None if cmd == "run" else args.out,
+        sim.stages.stage_assemble(source, args.analysisroot, args.sample, args.dataset, None if cmd == "run" else args.out,
                           parts=getattr(args, "parts", None), peaks_table=args.peaks_table, command=command,
                           log=log)  # fmt: skip
     log(f"done in {time.perf_counter() - T0:.0f} s")

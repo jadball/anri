@@ -1,7 +1,7 @@
-"""The numbers behind each choice of the renderer's options, for notebooks, workflow widgets or logs.
+"""The numbers behind each choice of the simulation's options, for notebooks, workflow widgets or logs.
 
-Pure functions of a prepare stage file (read with :func:`anri.render.stages.load_prepare`) or of a rendered dataset; they draw
-nothing. The plots of :mod:`anri.render.plots` draw them.
+Pure functions of a prepare stage file (read with :func:`anri.simulate.stages.load_prepare`) or of a rendered dataset; they draw
+nothing. The plots of :mod:`anri.simulate.plots` draw them.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ def footprint(p: dict) -> dict:
     Parameters
     ----------
     p
-        From :func:`anri.render.stages.load_prepare`
+        From :func:`anri.simulate.stages.load_prepare`
 
     Returns
     -------
@@ -46,7 +46,7 @@ def ring_coverage(p: dict, n_tth: int = 300, n_eta: int = 720) -> dict:
     Parameters
     ----------
     p
-        From :func:`anri.render.stages.load_prepare`
+        From :func:`anri.simulate.stages.load_prepare`
     n_tth, n_eta
         Rings and points per ring to trace (from the sample at the origin)
 
@@ -101,11 +101,11 @@ def probe_rows(p: dict, rows: list, cut: float = 1.0, window: tuple = (3, 7, 7),
     Parameters
     ----------
     p
-        From :func:`anri.render.stages.load_prepare`
+        From :func:`anri.simulate.stages.load_prepare`
     rows
         Row indices to render (e.g. the middle row and one near the sample's edge)
     cut, window, max_frames
-        See :func:`anri.render.stages.stage_render`
+        See :func:`anri.simulate.stages.stage_render`
     densities
         The densities to evaluate (default: 1/100 to 1000 times the prepare file's, log-spaced)
     batch
@@ -283,11 +283,11 @@ def model_row(p: dict, row: int, window: tuple = (3, 7, 7), max_frames: int | No
     Parameters
     ----------
     p
-        From :func:`anri.render.stages.load_prepare` (e.g. prepared from the DataSet, so the rows and frames match)
+        From :func:`anri.simulate.stages.load_prepare` (e.g. prepared from the DataSet, so the rows and frames match)
     row
         Row of the scan
     window, max_frames
-        See :func:`anri.render.stages.stage_render`
+        See :func:`anri.simulate.stages.stage_render`
     """
     from anri.fwd.render import make_row, render_phases
 

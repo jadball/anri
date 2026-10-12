@@ -1,8 +1,8 @@
-"""Plots of the renderer's diagnostics, for choosing its options by eye (matplotlib, imported only here).
+"""Plots of the simulation's diagnostics, for choosing its options by eye (matplotlib, imported only here).
 
 As :mod:`anri.index.plots`: each ``plot_x(fig, ...)`` draws on a matplotlib figure it is given and returns
 ``update(**options) -> str``, which redraws for other values of the options it shows and returns a one-line summary;
-plots with no option to move return None. The numbers come from :mod:`anri.render.diagnostics`.
+plots with no option to move return None. The numbers come from :mod:`anri.simulate.diagnostics`.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def plot_footprint(fig: Figure, fp: dict) -> None:
     fig
         A matplotlib figure
     fp
-        From :func:`anri.render.diagnostics.footprint`
+        From :func:`anri.simulate.diagnostics.footprint`
     """
     ax = fig.subplots(1, 2)
     for name, pos in zip(fp["names"], fp["pos"]):
@@ -49,7 +49,7 @@ def plot_rings(fig: Figure, cov: dict) -> Callable:
     fig
         A matplotlib figure
     cov
-        From :func:`anri.render.diagnostics.ring_coverage`
+        From :func:`anri.simulate.diagnostics.ring_coverage`
     """
     ax = fig.subplots(2, 1, sharex=True, height_ratios=[2, 1])
     ax[0].plot(cov["tth"], cov["on_detector"], color="k")
@@ -85,7 +85,7 @@ def plot_survival(fig: Figure, probe: dict) -> Callable:
     fig
         A matplotlib figure
     probe
-        From :func:`anri.render.diagnostics.probe_rows`
+        From :func:`anri.simulate.diagnostics.probe_rows`
     """
     d, lost, kept = probe["densities"], probe["lost_below"], probe["kept_share"]
     ax = fig.subplots(1, 2)
@@ -123,7 +123,7 @@ def plot_capture(fig: Figure, probe: dict) -> None:
     fig
         A matplotlib figure
     probe
-        From :func:`anri.render.diagnostics.probe_rows`
+        From :func:`anri.simulate.diagnostics.probe_rows`
     """
     ax = fig.subplots(1, 2)
     cap = probe["captured"]
@@ -144,7 +144,7 @@ def plot_row_image(fig: Figure, img: dict, title: str = "") -> None:
     fig
         A matplotlib figure
     img
-        From :func:`anri.render.diagnostics.row_image`
+        From :func:`anri.simulate.diagnostics.row_image`
     """
     from matplotlib.colors import LogNorm
     from matplotlib.pyplot import colormaps
@@ -171,8 +171,8 @@ def plot_frame_compare(fig: Figure, images: Callable, shape: tuple) -> Callable:
         A matplotlib figure
     images
         ``images(row, frames) -> (data, model, label)``: [n_slow, n_fast] images of those frames of a row summed,
-        the model already scaled, and a line about them (e.g. :func:`anri.render.diagnostics.frames_image` of
-        :func:`~anri.render.diagnostics.observed_row` and :func:`~anri.render.diagnostics.model_row`)
+        the model already scaled, and a line about them (e.g. :func:`anri.simulate.diagnostics.frames_image` of
+        :func:`~anri.simulate.diagnostics.observed_row` and :func:`~anri.simulate.diagnostics.model_row`)
     shape
         (n_slow, n_fast)
     """

@@ -422,7 +422,7 @@ def stage_assemble(
 
 
 def run_command(assemble_file: str) -> str:
-    """Return the ``python -m anri.render run`` command that remakes an assemble stage file and the dataset.
+    """Return the ``python -m anri.simulate run`` command that remakes an assemble stage file and the dataset.
 
     Every option recorded by the prepare stage, the render parts (all rows) and the assemble stage is given, defaults
     included.
@@ -440,7 +440,7 @@ def run_command(assemble_file: str) -> str:
     prep = read_provenance(upstream(assemble_file, "prepare"))["options"]
     part = read_provenance(a["resolved"]["parts"][0])["options"]
     asm = a["options"]
-    cmd = ["python", "-m", "anri.render", "run", prep.pop("map"), prep.pop("pars"),
+    cmd = ["python", "-m", "anri.simulate", "run", prep.pop("map"), prep.pop("pars"),
            *(str(asm.pop(k)) for k in ("analysisroot", "sample", "dataset"))]  # fmt: skip
     part.pop("rows", None)
     for k, v in {**prep, **part, **asm}.items():

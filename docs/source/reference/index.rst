@@ -20,6 +20,6 @@ API reference
     crystal
     fwd
     index
-    render
+    simulate
     io
     phantom

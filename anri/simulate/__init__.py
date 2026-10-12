@@ -4,10 +4,10 @@
 and the instrument (ID11's optics, or numbers) into map entries, reflections, structure factors, beam spreads and the
 scan's motor positions. :func:`stages.stage_render` renders rows of the scan into sparse pixels
 (:func:`anri.fwd.render.render_phases`); rows split between jobs go to separate files. :func:`stages.stage_assemble`
-gathers them into an ImageD11 dataset that ``python -m anri.index`` reads. ``python -m anri.render`` runs them from the
+gathers them into an ImageD11 dataset that ``python -m anri.index`` reads. ``python -m anri.simulate`` runs them from the
 command line; :func:`anri.io.provenance.show` prints how any of the files was made, and :func:`stages.run_command` the
-command line that remakes a dataset. The numbers behind each option's choice are in :mod:`anri.render.diagnostics`,
-and their plots in :mod:`anri.render.plots`.
+command line that remakes a dataset. The numbers behind each option's choice are in :mod:`anri.simulate.diagnostics`,
+and their plots in :mod:`anri.simulate.plots`.
 """
 
 from . import diagnostics, plots, stages
