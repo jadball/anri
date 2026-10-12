@@ -34,7 +34,7 @@ except ImportError:  # JAX < 0.6, e.g. 0.4.30, the last release for Python 3.9
 
 import anri.utils
 from anri.diffract import lorentz_polarisation
-from anri.geom import beam_basis, beam_offsets, nearest_omega, sample_to_lab
+from anri.geom import beam_basis, beam_offsets, nearest_omega, sample_to_lab, skew
 
 from .base import get_centroid, get_centroid_both, hkl_to_k_omega, make_propagator
 
@@ -186,15 +186,6 @@ def _centroid(
 _propagate = make_propagator(_centroid, argnums=(4, 5, 6), has_aux=True, out_elems=_COV_ELEMS)
 
 
-_CROSS_GENERATORS = np.array(
-    [
-        [[0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]],
-        [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [-1.0, 0.0, 0.0]],
-        [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-    ]
-)  # [r]x = sum_i r_i G_i
-
-
 def _centroid_rotated(
     ubi: jax.Array, pos: jax.Array, hkl: jax.Array, etasign: ArrayLike, rotvec: jax.Array, dty: ArrayLike, geom: dict
 ) -> tuple[jax.Array, jax.Array]:
@@ -202,11 +193,8 @@ def _centroid_rotated(
 
     UB -> R UB, so UBI -> UBI R^T, with R = I + [rotvec]x: exact to first order, which is all the propagation uses.
     """
-    # [rotvec]x as a sum over generators, not a stack: under shard_map the rotation's tangent varies across devices
-    # while a zeros_like does not, and newer JAX refuses to stack the two
-    cross = jnp.tensordot(rotvec, jnp.asarray(_CROSS_GENERATORS, rotvec.dtype), 1)
     return _centroid(
-        ubi @ (jnp.eye(3, dtype=ubi.dtype) + cross).T, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty, geom
+        ubi @ (jnp.eye(3, dtype=ubi.dtype) + skew(rotvec)).T, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty, geom
     )
 
 

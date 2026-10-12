@@ -21,7 +21,7 @@ from jax.typing import ArrayLike
 if TYPE_CHECKING:
     from ImageD11.sinograms.tensor_map import TensorMap
 
-from anri.geom import recon_positions
+from anri.geom import recon_positions, rmat_from_axis_angle
 
 
 def random_rotations(n: int, rng: np.random.Generator) -> np.ndarray:
@@ -45,28 +45,12 @@ def random_rotations(n: int, rng: np.random.Generator) -> np.ndarray:
     return quat_to_mat(q / np.linalg.norm(q, axis=1, keepdims=True))
 
 
-def axis_angle(axis: ArrayLike, angle_deg: ArrayLike) -> np.ndarray:
-    """Rotation matrices about axes by angles (right-handed).
+def _axis_angle(axis: ArrayLike, angle_deg: ArrayLike) -> np.ndarray:
+    """:func:`anri.geom.rmat_from_axis_angle` on the host, in float64: [..., 3] axes, [...] angles (degrees)."""
+    from anri.crystal import float64
 
-    Parameters
-    ----------
-    axis
-        [..., 3] axes (need not be unit)
-    angle_deg
-        [...] angles in degrees
-
-    Returns
-    -------
-    np.ndarray
-        [..., 3, 3] rotation matrices
-    """
-    n = np.asarray(axis, float)
-    n = n / np.linalg.norm(n, axis=-1, keepdims=True)
-    t = np.radians(np.asarray(angle_deg, float))[..., None, None]
-    K = np.zeros(n.shape[:-1] + (3, 3))
-    K[..., 0, 1], K[..., 0, 2], K[..., 1, 2] = -n[..., 2], n[..., 1], -n[..., 0]
-    K = K - np.swapaxes(K, -1, -2)
-    return np.eye(3) + np.sin(t) * K + (1 - np.cos(t)) * K @ K
+    with float64():
+        return np.asarray(rmat_from_axis_angle(np.asarray(axis, float), np.asarray(angle_deg, float)))
 
 
 def small_rotations(n: int, sigma_deg: float, rng: np.random.Generator) -> np.ndarray:
@@ -87,7 +71,7 @@ def small_rotations(n: int, sigma_deg: float, rng: np.random.Generator) -> np.nd
         [n, 3, 3] rotation matrices
     """
     v = rng.normal(scale=sigma_deg, size=(n, 3))
-    return axis_angle(v + (np.linalg.norm(v, axis=1, keepdims=True) == 0), np.linalg.norm(v, axis=1))
+    return _axis_angle(v + (np.linalg.norm(v, axis=1, keepdims=True) == 0), np.linalg.norm(v, axis=1))
 
 
 def voronoi(xy: ArrayLike, seeds: ArrayLike) -> np.ndarray:
@@ -249,13 +233,13 @@ def polycrystal(
         normal = U_g[g] @ axis_c  # the twin plane's normal in the sample frame
         d = xy @ normal[:2] / max(np.linalg.norm(normal[:2]), 1e-6)
         t = (grain == g) & (np.mod(d, twin_period) < twin_thickness)
-        U[t] = axis_angle(normal, twin_angle_deg) @ U[t]
+        U[t] = _axis_angle(normal, twin_angle_deg) @ U[t]
         twin |= t
     rng2 = np.random.default_rng([seed, 1])  # their own stream, so the rest is unchanged
     if cell_walk_deg > 0:
         walk = brownian_field(cell_seeds, step, cell_size, cell_walk_deg, rng2)  # [n_cells, 3] degrees
         angle = np.linalg.norm(walk, axis=1)
-        U = axis_angle(walk + (angle == 0)[:, None], angle)[cell] @ U
+        U = _axis_angle(walk + (angle == 0)[:, None], angle)[cell] @ U
     if bend_grains > 0:
         order = [g for g in largest if g not in set(largest[:twin_grains].tolist())]
         for g in order[:bend_grains]:
@@ -263,7 +247,7 @@ def polycrystal(
             axis = rng2.normal(size=3)
             phi = rng2.uniform(0.0, 2 * np.pi)
             d = (xy[m] - xy[m & inside].mean(0)) @ np.array([np.cos(phi), np.sin(phi)])
-            U[m] = axis_angle(np.broadcast_to(axis, (m.sum(), 3)), bend_deg * d / radius) @ U[m]
+            U[m] = _axis_angle(np.broadcast_to(axis, (m.sum(), 3)), bend_deg * d / radius) @ U[m]
     U[~inside] = np.nan
     out_sig = {"sig_rot": np.where(inside, np.radians(cell_sig_deg), np.nan).reshape(n, n)} if cell_sig_deg > 0 else {}
     return {

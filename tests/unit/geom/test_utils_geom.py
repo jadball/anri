@@ -74,3 +74,26 @@ class TestBeamOffsets(unittest.TestCase):
         # a point on the beam's centre line is at zero height and zero distance across
         on_line = anri.geom.beam_offsets(7.0 * k_hat, k)
         np.testing.assert_allclose([on_line[0], on_line[1]], 0.0, atol=1e-12)
+
+
+class TestSkewAndRodrigues(unittest.TestCase):
+    def test_skew(self):
+        rng = np.random.default_rng(0)
+        v, u = rng.normal(size=(5, 3)), rng.normal(size=(5, 3))
+        K = anri.geom.skew(jnp.asarray(v))
+        np.testing.assert_allclose(np.einsum("nij,nj->ni", K, u), np.cross(v, u), atol=1e-12)
+        np.testing.assert_allclose(K @ K, v[:, :, None] * v[:, None, :] - (v * v).sum(1)[:, None, None] * np.eye(3),
+                                   atol=1e-12)  # fmt: skip
+
+    def test_batched_rodrigues(self):
+        R = anri.geom.rmat_from_axis_angle(jnp.array([[0.0, 0.0, 2.0], [1.0, 1.0, 1.0]]), jnp.array([90.0, 120.0]))
+        np.testing.assert_allclose(R[0] @ np.array([1.0, 0.0, 0.0]), [0.0, 1.0, 0.0], atol=1e-12)  # right-handed, z
+        np.testing.assert_allclose(R[1] @ np.array([1.0, 0.0, 0.0]), [0.0, 1.0, 0.0], atol=1e-12)  # 3-fold, <111>
+        from jax.scipy.spatial.transform import Rotation
+
+        rng = np.random.default_rng(1)
+        ax, ang = rng.normal(size=(50, 3)), rng.uniform(-180, 180, 50)
+        n = ax / np.linalg.norm(ax, axis=1, keepdims=True)
+        expected = Rotation.from_rotvec(jnp.asarray(n * ang[:, None]), degrees=True).as_matrix()
+        np.testing.assert_allclose(anri.geom.rmat_from_axis_angle(jnp.asarray(ax), jnp.asarray(ang)), expected,
+                                   atol=1e-12)  # fmt: skip

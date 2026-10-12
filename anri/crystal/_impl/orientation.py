@@ -15,11 +15,20 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from anri.geom import skew
+
 from .structure import float64
 
 
 def rod_to_mat(r: ArrayLike) -> jax.Array:
-    """Convert Rodrigues vectors ``r = tan(t / 2) n`` to rotation matrices.
+    r"""Convert Rodrigues vectors ``r = tan(t / 2) n`` to rotation matrices.
+
+    $$
+    \matr{R} = \matr{I} + \frac{2}{1 + \vec{r} \cdot \vec{r}}
+    \left([\vec{r}]_\times + \vec{r}\vec{r}^T - (\vec{r} \cdot \vec{r}) \matr{I}\right)
+    $$
+
+    with :func:`anri.geom.skew`, the second and third terms being $[\vec{r}]_\times^2$.
 
     Parameters
     ----------
@@ -33,10 +42,8 @@ def rod_to_mat(r: ArrayLike) -> jax.Array:
     """
     r = jnp.asarray(r)
     rr = jnp.sum(r * r, -1)[..., None, None]
-    x, y, z = r[..., 0], r[..., 1], r[..., 2]
-    zero = jnp.zeros_like(x)
-    K = jnp.stack([jnp.stack([zero, -z, y], -1), jnp.stack([z, zero, -x], -1), jnp.stack([-y, x, zero], -1)], -2)
-    return jnp.eye(3, dtype=r.dtype) + 2.0 / (1.0 + rr) * (K + K @ K)
+    KK = r[..., :, None] * r[..., None, :] - rr * jnp.eye(3, dtype=r.dtype)  # [r]x^2, without a matrix product
+    return jnp.eye(3, dtype=r.dtype) + 2.0 / (1.0 + rr) * (skew(r) + KK)
 
 
 def mat_to_rod(U: ArrayLike) -> np.ndarray:

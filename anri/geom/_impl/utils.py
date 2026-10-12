@@ -2,29 +2,73 @@
 
 import jax
 import jax.numpy as jnp
-from jax.scipy.spatial.transform import Rotation as jR
 
 
 @jax.jit
-def rmat_from_axis_angle(axis: jax.Array, angle: float) -> jax.Array:
-    r"""Return rotation matrix for positive right-handed rotation about axis by angle (degrees).
+def skew(v: jax.Array) -> jax.Array:
+    r"""Return the cross-product (skew-symmetric) matrix of vectors.
+
+    $$
+    [\vec{v}]_\times = \begin{pmatrix} 0 & -v_z & v_y \\ v_z & 0 & -v_x \\ -v_y & v_x & 0 \end{pmatrix},
+    \qquad [\vec{v}]_\times \vec{u} = \vec{v} \times \vec{u}
+    $$
+
+    It is antisymmetric, $[\vec{v}]_\times^T = -[\vec{v}]_\times$, and its square is
+    $[\vec{v}]_\times^2 = \vec{v}\vec{v}^T - \abs{\vec{v}}^2 \matr{I}$, which lets rotation formulas avoid a
+    matrix product. For a small rotation vector $\vec{\delta}$ (radians),
+    $\matr{R} = \matr{I} + [\vec{\delta}]_\times$ to first order.
+
+    Parameters
+    ----------
+    v
+        [..., 3] vectors
+
+    Returns
+    -------
+    jax.Array
+        [..., 3, 3] matrices
+
+    Notes
+    -----
+    The zero entries are ``0 * v_x``, not a constant, so that under ``shard_map`` every entry varies with ``v`` in the
+    same way (JAX refuses to stack values that vary across devices with ones that do not).
+    """
+    v = jnp.asarray(v)
+    x, y, z = v[..., 0], v[..., 1], v[..., 2]
+    o = 0.0 * x
+    return jnp.stack([jnp.stack([o, -z, y], -1), jnp.stack([z, o, -x], -1), jnp.stack([-y, x, o], -1)], -2)
+
+
+@jax.jit
+def rmat_from_axis_angle(axis: jax.Array, angle: jax.Array) -> jax.Array:
+    r"""Return rotation matrices for positive right-handed rotations about axes by angles (degrees).
+
+    Rodrigues' formula, with $\hat{n}$ the unit axis and $\theta$ the angle:
+
+    $$
+    \matr{R} = \cos\theta \, \matr{I} + \sin\theta \, [\hat{n}]_\times + (1 - \cos\theta) \, \hat{n}\hat{n}^T
+    $$
+
+    (:func:`skew`), equivalently $\matr{I} + \sin\theta [\hat{n}]_\times + (1 - \cos\theta) [\hat{n}]_\times^2$,
+    written without a matrix product.
 
     Parameters
     ----------
     axis
-        [3] Rotation axis vector
+        [..., 3] Rotation axis vectors (need not be unit; not zero)
     angle
-        Rotation angle in degrees
+        [...] Rotation angles in degrees, broadcast against axis[..., 0]
 
     Returns
     -------
     R: jax.Array
-        [3,3] Rotation matrix. $\matr{R} \cdot \vec{v_{\text{sample}}} = \vec{v_{\text{lab}}}$
+        [..., 3, 3] Rotation matrices. $\matr{R} \cdot \vec{v_{\text{sample}}} = \vec{v_{\text{lab}}}$
     """
-    #  normalise axis
-    axis = axis / jnp.linalg.norm(axis)
-    R = jR.from_rotvec(angle * axis, degrees=True).as_matrix()
-    return R
+    axis = jnp.asarray(axis)
+    n = axis / jnp.linalg.norm(axis, axis=-1, keepdims=True)
+    t = jnp.radians(jnp.asarray(angle, axis.dtype))[..., None, None]
+    c, s = jnp.cos(t), jnp.sin(t)
+    return c * jnp.eye(3, dtype=axis.dtype) + s * skew(n) + (1.0 - c) * (n[..., :, None] * n[..., None, :])
 
 
 @jax.jit

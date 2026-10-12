@@ -14,11 +14,6 @@ def cubic_ops():
 
 
 class TestRotations(unittest.TestCase):
-    def test_axis_angle(self):
-        R = anri.phantom.axis_angle([[0.0, 0.0, 2.0], [1.0, 1.0, 1.0]], [90.0, 120.0])
-        np.testing.assert_allclose(R[0] @ [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], atol=1e-12)  # right-handed about z
-        np.testing.assert_allclose(R[1] @ [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], atol=1e-12)  # 3-fold about <111>
-
     def test_small_rotations(self):
         R = anri.phantom.small_rotations(20000, 0.5, np.random.default_rng(0))
         angle = np.degrees(np.arccos(np.clip((np.trace(R, axis1=1, axis2=2) - 1) / 2, -1, 1)))
