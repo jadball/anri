@@ -1,7 +1,10 @@
 import unittest
 
+import jax.numpy as jnp
 import numpy as np
 
+import anri.crystal
+import anri.geom
 from anri.crystal import (
     B_matrix,
     cubochoric_quaternions,
@@ -126,6 +129,22 @@ class TestGrids(unittest.TestCase):
             ratio = len(U) * len(S) / n_all
             self.assertGreaterEqual(ratio, 0.99)
             self.assertLess(ratio, 1.3)  # plus the shell
+
+
+class TestRotationHelpers(unittest.TestCase):
+    def test_rotation_angle_small_and_large(self):
+        # arccos of the trace loses small angles in float32; the angle must not
+        for deg in (1e-4, 1e-2, 1.0, 90.0, 179.0):
+            R = jnp.asarray(anri.geom.rmat_from_axis_angle(jnp.array([0.3, -0.5, 0.8]), deg), jnp.float32)
+            self.assertAlmostEqual(float(np.degrees(anri.crystal.rotation_angle(R))) / deg, 1.0, delta=1e-3)
+
+    def test_mean_rotation_is_proper(self):
+        U = random_rotations(5)
+        M = np.asarray(anri.crystal.mean_rotation(U, np.ones(5)))
+        self.assertAlmostEqual(float(np.linalg.det(M)), 1.0, places=6)
+        np.testing.assert_allclose(M @ M.T, np.eye(3), atol=1e-6)
+        np.testing.assert_allclose(anri.crystal.mean_rotation(U[:1], np.ones(1)), U[0], atol=1e-6)
+        np.testing.assert_allclose(anri.crystal.mean_rotation(U, np.zeros(5)), np.eye(3), atol=1e-12)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from .structure import float64
+
 
 def rod_to_mat(r: ArrayLike) -> jax.Array:
     """Convert Rodrigues vectors ``r = tan(t / 2) n`` to rotation matrices.
@@ -198,6 +200,77 @@ def laue_rotations(sym_ops: ArrayLike, B: ArrayLike) -> np.ndarray:
     return np.concatenate([S[is_identity], S[~is_identity]])
 
 
+def rotation_angle(R: ArrayLike) -> jax.Array:
+    """Rotation angle (radians) of rotation matrices, accurate at every angle.
+
+    From the axial part (sin) and the trace (cos) together, ``atan2(|axial|, (trace - 1) / 2)``: ``arccos`` of the
+    trace alone loses small angles (in float32, any angle below ~0.03 degrees).
+
+    Parameters
+    ----------
+    R
+        [..., 3, 3] rotation matrices
+
+    Returns
+    -------
+    jax.Array
+        [...] angles in [0, pi]
+    """
+    R = jnp.asarray(R)
+    axial = 0.5 * jnp.stack([R[..., 2, 1] - R[..., 1, 2], R[..., 0, 2] - R[..., 2, 0], R[..., 1, 0] - R[..., 0, 1]], -1)
+    return jnp.arctan2(jnp.linalg.norm(axial, axis=-1), 0.5 * (jnp.trace(R, axis1=-2, axis2=-1) - 1.0))
+
+
+def closest_equivalent(U_ref: ArrayLike, U: ArrayLike, ops: ArrayLike) -> tuple[jax.Array, jax.Array]:
+    """Return each orientation's symmetric equivalent ``U S`` closest to a reference, and the angle between them.
+
+    Parameters
+    ----------
+    U_ref
+        [..., 3, 3] reference orientations (broadcast against U)
+    U
+        [..., 3, 3] orientations
+    ops
+        [n, 3, 3] Laue-group rotations, from :func:`laue_rotations`
+
+    Returns
+    -------
+    U_S: jax.Array
+        [..., 3, 3] the equivalents
+    angle: jax.Array
+        [...] their misorientation from U_ref (radians), from :func:`rotation_angle`
+    """
+    U_ref, U, ops = jnp.asarray(U_ref), jnp.asarray(U), jnp.asarray(ops)
+    sym = U[..., None, :, :] @ ops  # [..., n, 3, 3]
+    tr = jnp.einsum("...ij,...sij->...s", U_ref, sym)  # trace(U_ref^T U S): largest for the smallest angle
+    best = jnp.take_along_axis(sym, jnp.argmax(tr, -1)[..., None, None, None], -3)[..., 0, :, :]
+    return best, rotation_angle(jnp.swapaxes(U_ref, -1, -2) @ best)
+
+
+def mean_rotation(U: ArrayLike, w: ArrayLike) -> jax.Array:
+    """Weighted mean of nearby rotations: the rotation closest to their weighted sum (SVD projection).
+
+    Align symmetric equivalents first (:func:`closest_equivalent`). The projection keeps det = +1, so the result is
+    always a proper rotation. With all weights zero it is the identity.
+
+    Parameters
+    ----------
+    U
+        [M, 3, 3] rotations
+    w
+        [M] weights
+
+    Returns
+    -------
+    jax.Array
+        [3, 3] the mean rotation
+    """
+    U, w = jnp.asarray(U), jnp.asarray(w)
+    total = jnp.einsum("m,mij->ij", w, U) + jnp.where(jnp.sum(w) > 0, 0.0, 1.0) * jnp.eye(3, dtype=U.dtype)
+    u, _, vt = jnp.linalg.svd(total)
+    return u @ jnp.diag(jnp.array([1.0, 1.0, jnp.sign(jnp.linalg.det(u @ vt))], U.dtype)) @ vt
+
+
 def to_fundamental_zone(U: ArrayLike, ops: ArrayLike) -> np.ndarray:
     """Replace each orientation by its equivalent ``U S`` with the smallest rotation angle.
 
@@ -213,9 +286,8 @@ def to_fundamental_zone(U: ArrayLike, ops: ArrayLike) -> np.ndarray:
     np.ndarray
         [N, 3, 3] orientations in the fundamental zone around the identity
     """
-    cands = np.asarray(U)[:, None] @ np.asarray(ops)[None]
-    best = np.argmax(np.trace(cands, axis1=-2, axis2=-1), 1)
-    return cands[np.arange(len(cands)), best]
+    with float64():
+        return np.asarray(closest_equivalent(np.eye(3), U, ops)[0])
 
 
 def disorientation(Ua: ArrayLike, Ub: ArrayLike, ops: ArrayLike) -> np.ndarray:
@@ -233,9 +305,8 @@ def disorientation(Ua: ArrayLike, Ub: ArrayLike, ops: ArrayLike) -> np.ndarray:
     np.ndarray
         [N] angles in degrees
     """
-    d = np.swapaxes(np.asarray(Ua), -1, -2)[:, None] @ np.asarray(Ub)[:, None] @ np.asarray(ops)[None]
-    tr = np.clip((np.trace(d, axis1=-2, axis2=-1) - 1) / 2, -1, 1)
-    return np.degrees(np.arccos(tr.max(1)))
+    with float64():
+        return np.degrees(np.asarray(closest_equivalent(Ua, Ub, ops)[1]))
 
 
 # ----------------------------------------------------------------------------------------------- grids

@@ -9,6 +9,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from anri.crystal import closest_equivalent, mean_rotation, rotation_angle
+
 
 @partial(jax.jit, static_argnames=("m", "p"))
 def _populations(
@@ -20,21 +22,17 @@ def _populations(
         Um = U_list[cv[i]]  # [m, 3, 3]
         valid = fm > eps * total
         assigned = jnp.full(m, -1)
-        sym = Um[:, None] @ ops[None]  # [m, S, 3, 3]: the same lattice
         out = []
         for q in range(p):
             free = valid & (assigned < 0)
             seed = jnp.argmax(free)  # the most occupied free candidate (they are sorted)
-            tr = jnp.einsum("ij,msij->ms", Um[seed], sym)  # trace(U_seed^T U S)
-            aligned = sym[jnp.arange(m), jnp.argmax(tr, 1)]  # each candidate's equivalent closest to the seed
-            ang = jnp.arccos(jnp.clip((tr.max(1) - 1) / 2, -1.0, 1.0))
+            aligned, ang = closest_equivalent(Um[seed], Um, ops)  # each candidate's equivalent closest to the seed
             member = free & free[seed] & (ang <= radius)
             assigned = jnp.where(member, q, assigned)
             w = jnp.where(member, fm, 0.0)
             sw = jnp.sum(w)
-            u, _, vt = jnp.linalg.svd(jnp.einsum("m,mij->ij", w, aligned) + jnp.where(sw > 0, 0.0, 1.0) * jnp.eye(3))
-            mean = u @ jnp.diag(jnp.array([1.0, 1.0, jnp.sign(jnp.linalg.det(u @ vt))])) @ vt
-            a = jnp.arccos(jnp.clip((jnp.einsum("ij,mij->m", mean, aligned) - 1) / 2, -1.0, 1.0))
+            mean = mean_rotation(aligned, w)
+            a = rotation_angle(mean.T @ aligned)
             out.append((sw / total, mean, jnp.sqrt(jnp.sum(w * a**2) / jnp.maximum(sw, 1e-30)), jnp.sum(member)))
         return tuple(jnp.stack(x) for x in zip(*out))
 

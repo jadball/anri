@@ -1,16 +1,19 @@
 """Crystallography-related utilities and functions."""
 
 from ._impl.orientation import (
+    closest_equivalent,
     cubic_grid_misorientation,
     cubochoric_quaternions,
     disorientation,
     laue_rotations,
     mat_to_quat,
     mat_to_rod,
+    mean_rotation,
     orientation_grid,
     quat_mul,
     quat_to_mat,
     rod_to_mat,
+    rotation_angle,
     to_fundamental_zone,
 )
 from ._impl.structure import (
@@ -43,6 +46,7 @@ __all__ = [
     "UBI_to_mt",
     "U_B_to_UBI",
     "allowed_hkls",
+    "closest_equivalent",
     "cubic_grid_misorientation",
     "cubochoric_quaternions",
     "disorientation",
@@ -54,6 +58,7 @@ __all__ = [
     "lpars_to_mt",
     "mat_to_quat",
     "mat_to_rod",
+    "mean_rotation",
     "metric_to_volume",
     "mt_to_lpars",
     "mt_to_rmt",
@@ -64,6 +69,7 @@ __all__ = [
     "rings",
     "rmt_to_mt",
     "rod_to_mat",
+    "rotation_angle",
     "space_group",
     "structure_factors",
     "symmetry_matrices",
