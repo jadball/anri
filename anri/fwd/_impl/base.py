@@ -14,6 +14,25 @@ from anri.geom import beam_basis, lab_to_sample, origin_lab, raytrace_to_det, sa
 from anri.utils import inv3
 
 
+def _ewald_setup(
+    ubi: jax.Array, hkl: jax.Array, wavelength: float, k_in_lab: jax.Array, ky: float, kz: float, wedge: float,
+    chi: float,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:  # fmt: skip
+    """Compute the part of the Ewald solution shared by both omega branches.
+
+    Returns Q in the sample frame, the beam direction after divergence (``k_in_lab``, not normalised) and normalised
+    to 1 / wavelength, and :func:`anri.diffract.omega_solns_core`'s (asin_term, phi, valid).
+    """
+    q_sample = inv3(ubi) @ hkl
+    # perturb k_in_lab by divergence
+    k_hat, e_h, e_v = beam_basis(k_in_lab)
+    k_in_lab = k_hat + ky * e_h + kz * e_v
+    k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
+    k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
+    asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample_norm)
+    return q_sample, k_in_lab, k_in_lab_norm, asin_term, phi, valid
+
+
 @jax.jit
 def hkl_to_k_omega(
     ubi: jax.Array,  # grain stuff
@@ -25,7 +44,7 @@ def hkl_to_k_omega(
     kz: float,  # gonio stuff
     wedge: float,
     chi: float,
-) -> tuple[jax.Array, jax.Array, float, bool]:
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     r"""Forward-project a reciprocal space vector (h,k,l) with basis vectors (a*, b*, c*) into k-vectors and omega angles.
 
     This just chains together various transforms from :func:`anri.diffract` and :func:`anri.geom`.
@@ -64,21 +83,11 @@ def hkl_to_k_omega(
     valid: bool
         Boolean indicating if a valid solution exists
     """
-    q_sample = inv3(ubi) @ hkl
-
-    # perturb k_in_lab by divergence
-    k_hat, e_h, e_v = beam_basis(k_in_lab)
-    k_in_lab = k_hat + ky * e_h + kz * e_v
-    k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
-    k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
-
-    asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample_norm)
+    q_sample, k_in_lab, k_in_lab_norm, asin_term, phi, valid = _ewald_setup(
+        ubi, hkl, wavelength, k_in_lab, ky, kz, wedge, chi
+    )
     omega = omega_from_core(asin_term, phi, etasign)
-
-    q_lab = sample_to_lab(q_sample, omega, wedge, chi, 0.0, 0.0)
-
-    k_out_lab = q_lab_to_k_out(q_lab, k_in_lab_norm)
-
+    k_out_lab = q_lab_to_k_out(sample_to_lab(q_sample, omega, wedge, chi, 0.0, 0.0), k_in_lab_norm)
     return k_in_lab, k_out_lab, omega, valid
 
 
@@ -139,15 +148,9 @@ def hkl_to_k_omega_both(
     --------
     hkl_to_k_omega : Single-solution version, taking an ``etasign`` argument.
     """
-    q_sample = inv3(ubi) @ hkl
-
-    # perturb k_in_lab by divergence
-    k_hat, e_h, e_v = beam_basis(k_in_lab)
-    k_in_lab = k_hat + ky * e_h + kz * e_v
-    k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
-    k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
-
-    asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample_norm)
+    q_sample, k_in_lab, k_in_lab_norm, asin_term, phi, valid = _ewald_setup(
+        ubi, hkl, wavelength, k_in_lab, ky, kz, wedge, chi
+    )
     omegas = jnp.stack([omega_from_core(asin_term, phi, 1.0), omega_from_core(asin_term, phi, -1.0)])
 
     k_outs = jnp.stack(
