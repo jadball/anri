@@ -355,20 +355,29 @@ def backward(
     return jax.lax.map(one, (cand.reshape(-1, vb, k), pos.reshape(-1, vb, 3))).reshape(-1, k)
 
 
+@jax.jit
+def _squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """SQUAREM's extrapolation from f and two MLEM steps f1, f2 (r = f1 - f and v = f2 - 2 f1 + f fused, not stored)."""
+    nr = jnp.sqrt(jnp.sum((f1 - f) ** 2))
+    nv = jnp.sqrt(jnp.sum((f2 - 2.0 * f1 + f) ** 2))
+    a = jnp.minimum(-nr / jnp.maximum(nv, 1e-30), -1.0)  # never shorter than plain MLEM
+    # not below 1e-3 of f2: MLEM multiplies, so an occupancy at 0 could never come back
+    return jnp.maximum(f - 2.0 * a * (f1 - f) + a * a * (f2 - 2.0 * f1 + f), 1e-3 * f2), a
+
+
 def mlem(
     d: jax.Array, cand: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array, scan: dict, dims: tuple,
-    f0: jax.Array, n_iter: int, vb: int, log: Callable = print, censor: float = 0.0, accel: bool = False,
+    f0: jax.Array, n_iter: int, vb: int, log: Callable = print, censor: float = 0.0, callback: Callable | None = None,
 ) -> jax.Array:  # fmt: skip
-    """Fit occupancies by MLEM: ``f <- f A^T(d / A f) / A^T 1``, n_iter times, logging the Poisson deviance.
+    """Fit occupancies by MLEM (``f <- f A^T(d / A f) / A^T 1``), accelerated by SQUAREM, logging the deviance.
 
-    Empty bins are censored above ``censor`` (counts per bin, :func:`censored_ratio`); 0 for plain MLEM.
-
-    ``accel``: SQUAREM (Varadhan & Roland 2008, Scand. J. Stat. 35, 335). Two MLEM steps f1, f2 from f; then
-    ``f - 2 a r + a^2 v`` with ``r = f1 - f``, ``v = f2 - 2 f1 + f`` and ``a = -norm(r) / norm(v)`` (at most -1:
-    never shorter than plain MLEM), kept above 1e-3 f2 (MLEM multiplies: an occupancy at 0 could never come back),
-    and one more MLEM step. If that fits worse than f1, f2's step is kept instead, so the deviance never rises. Thin
-    features (twins one or two voxels thick) converge in far fewer steps. ``n_iter`` counts MLEM steps either way (3
-    per SQUAREM step), so the cost is the same.
+    Each iteration is a SQUAREM step (Varadhan & Roland 2008, Scand. J. Stat. 35, 335): two MLEM updates f1, f2
+    from f; the point ``f - 2 a r + a^2 v`` with ``r = f1 - f``, ``v = f2 - 2 f1 + f`` and ``a = -norm(r) / norm(v)``
+    (at most -1: never shorter than plain MLEM), kept above 1e-3 f2 (MLEM multiplies: an occupancy at 0 could never
+    come back); and one more MLEM update from there. If the point fits worse than f1, f2 is kept instead, so the
+    deviance never rises. An iteration costs 3 MLEM updates and goes about as far as 10 or more: thin features (twins
+    one or two voxels thick) converge long after the deviance flattens. Empty bins are censored above ``censor``
+    (counts per bin, :func:`censored_ratio`); 0 for plain Poisson.
 
     Parameters
     ----------
@@ -379,9 +388,14 @@ def mlem(
     f0
         [Nv, K] starting occupancies
     n_iter
-        Iterations
+        SQUAREM iterations (3 MLEM updates each)
     log
         Progress messages
+    censor
+        Empty bins censored above this many counts per bin
+    callback
+        Called as ``callback(iteration, f, deviance)`` after each iteration (1, 2, ...), with the deviance before its
+        last MLEM update, e.g. to record the fit's progress
 
     Returns
     -------
@@ -391,17 +405,26 @@ def mlem(
     n_cells = d.shape[0]
     norm = jnp.maximum(backward(jnp.ones(n_cells, d.dtype), cand, pred, ring_j, pos, scan, dims, vb), 1e-30)
 
-    def step(f: jax.Array) -> tuple:  # one MLEM step, and the model of the occupancies it started from
+    def step(f: jax.Array) -> tuple:  # one MLEM update, and the deviance of the occupancies it started from
         Af = forward(f, cand, pred, ring_j, pos, scan, dims, n_cells, vb)
-        return f * backward(censored_ratio(d, Af, censor), cand, pred, ring_j, pos, scan, dims, vb) / norm, Af
+        f_new = f * backward(censored_ratio(d, Af, censor), cand, pred, ring_j, pos, scan, dims, vb) / norm
+        return f_new, float(deviance(d, Af, censor))
 
     f = f0
-    if not accel:
-        for it in range(n_iter):
-            f, Af = step(f)
-            if it % 5 == 0 or it == n_iter - 1:
-                log(f"  MLEM {it}: deviance {float(deviance(d, Af, censor)):.4g}")
-        return f
+    for it in range(1, n_iter + 1):
+        f1, _ = step(f)
+        f2, dev1 = step(f1)
+        fx, a = _squarem_point(f, f1, f2)
+        del f1  # at most 4 copies of the occupancies at once
+        fn, devx = step(fx)
+        del fx
+        f, dev = (fn, devx) if devx <= dev1 else (f2, dev1)  # never worse than plain MLEM
+        del fn, f2
+        if callback is not None:
+            callback(it, f, dev)
+        if it % 5 == 0 or it in (1, n_iter):
+            log(f"  MLEM {it} (SQUAREM step {float(-a):.1f}): deviance {dev:.4g}")
+    return f
     it = 0
     while it < n_iter:
         f1, _ = step(f)
@@ -518,7 +541,6 @@ def fit_occupancy(
     log: Callable = print,
     return_model: bool = False,
     censor: float = 0.0,
-    accel: bool = False,
 ) -> tuple:
     """Fit sparse occupancies: candidates per voxel, then MLEM.
 
@@ -542,7 +564,7 @@ def fit_occupancy(
     k
         Candidates per voxel
     n_iter
-        MLEM iterations
+        MLEM iterations (SQUAREM, :func:`mlem`)
     coarse
         Coarse-to-fine factor (1: off)
     block_bytes
@@ -553,8 +575,6 @@ def fit_occupancy(
         Also return the fitted histogram ``A f``, e.g. to compare with the data row by row
     censor
         Empty bins censored above this many counts per bin in the MLEM (:func:`censored_ratio`); 0: plain MLEM
-    accel
-        SQUAREM-accelerated MLEM (:func:`mlem`)
     log
         Progress messages
 
@@ -598,15 +618,13 @@ def fit_occupancy(
             f"coarse: {n_c} x {n_c} voxels of {coarse * ystep:g} x {pred[0].shape[0]} orientations, the top {k} per voxel"
         )
         f_c, cand_c = candidates(H_c, pred, ring_j, pos_cp, scan_c, dims, k, vb_all, qc=qc, log=log)
-        f_c = mlem(
-            H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log, censor=censor, accel=accel
-        )
+        f_c = mlem(H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log, censor=censor)
         cand_in = inherit_candidates(pos_p, pos_c, f_c[: n_c * n_c], cand_c[: n_c * n_c], 2 * k)
         log(f"fine: {nv} voxels x {2 * k} orientations inherited from the coarse neighbourhood")
         f0, cand = candidates_from(H, cand_in, pred, ring_j, pos_p, scan, dims, k, max(vb // 2, 1), log=log)
     log(f"candidates: {time.perf_counter() - t0:.1f} s")
     t0 = time.perf_counter()
-    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor, accel=accel)
+    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor)
     log(f"MLEM {n_iter} iterations: {time.perf_counter() - t0:.1f} s")
     if return_model:
         mu = forward(f, cand, pred, ring_j, pos_p, scan, dims, H.shape[0], vb)

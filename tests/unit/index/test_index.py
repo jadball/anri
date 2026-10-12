@@ -204,7 +204,7 @@ class TestOccupancy(unittest.TestCase):
             self.assertAlmostEqual(float(jnp.sum(wt)), total, places=5)
 
     def test_squarem(self):
-        """SQUAREM reaches a deviance at least as low as plain MLEM for the same number of MLEM steps."""
+        """mlem (SQUAREM): the deviance never rises, and it fits at least as well as plain MLEM with the same updates."""
         c, B, _ = iron()
         rings = ix.ring_table(*c, PARS["wavelength"], 2)
         pred = ix.predictions(rotations(16, 2), B, rings, geometry(), 0.2)
@@ -218,11 +218,19 @@ class TestOccupancy(unittest.TestCase):
         f_true = jnp.asarray(rng.uniform(size=(32, 4)) * (rng.uniform(size=(32, 4)) > 0.5), jnp.float32)
         d = ix.forward(f_true, cand, pred, ring_j, pos, scan, dims, n_cells, 8)
         f0 = jnp.ones((32, 4), jnp.float32)
-        devs = {}
-        for accel in (False, True):
-            f = ix.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 30, 8, log=lambda m: None, accel=accel)
-            devs[accel] = float(ix.deviance(d, ix.forward(f, cand, pred, ring_j, pos, scan, dims, n_cells, 8), 0.0))
-        self.assertLessEqual(devs[True], devs[False] * 1.0001)
+        devs = []
+        f = ix.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 10, 8, log=lambda m: None,
+                    callback=lambda it, f_, dev: devs.append(dev))  # fmt: skip
+        self.assertEqual(len(devs), 10)
+        self.assertTrue(np.all(np.diff(devs) <= 1e-6 * devs[0]))
+        dev_sq = float(ix.deviance(d, ix.forward(f, cand, pred, ring_j, pos, scan, dims, n_cells, 8), 0.0))
+        norm = ix.backward(jnp.ones(n_cells), cand, pred, ring_j, pos, scan, dims, 8)
+        fp = f0
+        for _ in range(30):  # plain MLEM, as many updates
+            Af = ix.forward(fp, cand, pred, ring_j, pos, scan, dims, n_cells, 8)
+            fp = fp * ix.backward(ix.censored_ratio(d, Af, 0.0), cand, pred, ring_j, pos, scan, dims, 8) / norm
+        dev_plain = float(ix.deviance(d, ix.forward(fp, cand, pred, ring_j, pos, scan, dims, n_cells, 8), 0.0))
+        self.assertLessEqual(dev_sq, dev_plain * 1.0001)
 
     def test_censored_ratio(self):
         d = jnp.asarray([4.0, 0.0, 0.0, 0.0])
@@ -327,7 +335,7 @@ class TestEndToEnd(unittest.TestCase):
         vox = np.asarray(anri.geom.recon_positions(nr, 1.0), np.float32)
         scan = {"y0": 0.0, "dty0": float(ds["ybincens"][0]), "ystep": 1.0, "n_rows": nk, "om0": om0}
         f, cand = ix.fit_occupancy(
-            H, pred, rings["ring_j"], vox, scan, (1.0, 1.0, 360, 180), k=16, n_iter=10, log=lambda m: None
+            H, pred, rings["ring_j"], vox, scan, (1.0, 1.0, 360, 180), k=16, n_iter=2, log=lambda m: None
         )
         frac, U_pop, _, _ = ix.populations(f, cand, U_kept, ops, 1.8 * 5.0)
         # voxels well inside each grain find it as their main population, to within the grid's spacing

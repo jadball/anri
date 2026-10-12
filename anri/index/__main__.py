@@ -175,8 +175,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--iter",
         type=int,
-        default=50,
-        help="MLEM iterations (default 50: thin features such as twins converge long after the deviance flattens)",
+        default=10,
+        help="MLEM iterations, SQUAREM-accelerated (3 MLEM updates each; default 10: thin features such as twins "
+        "converge long after the deviance flattens, while fewer keep the populations' means a little closer to the truth "
+        "between grid points)",
     )
     p.add_argument("--cand", type=int, default=64, help="candidate orientations per voxel (default 64)")
     p.add_argument("--coarse", type=int, default=1, help="first fit voxels this many times larger, then give each voxel "
@@ -205,8 +207,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-frame-dty", action="store_true", help="ignore dty's motion within each row (fly and helical "
                    "scans): by default each frame's dty is the DataSet's for its row plus the motion read from the "
                    "sparse file (anri.io.read_frame_dty), and the model puts each voxel in the rows that really saw it")  # fmt: skip
-    p.add_argument("--accel", action="store_true", help="SQUAREM-accelerated MLEM in the occupancy fit: thin features "
-                   "(twins) converge in fewer iterations, at the same cost per iteration")  # fmt: skip
     p.add_argument("--censor", type=float, default=0.0, help="counts per histogram bin below which an empty bin "
                    "(every pixel below the segmentation cut) counts as agreeing with the model, in both MLEMs and "
                    "the pruning (default 0: empty bins are zeros)")  # fmt: skip
@@ -442,7 +442,7 @@ def main() -> None:
         log(f"mask ({args.mask}): {mask.sum()} of {NV} voxels fitted")
     f_m, cand_m, model = ix.fit_occupancy(H, pred, rings["ring_j"], pos[mask], scan, dims, args.cand, args.iter,
                                              args.coarse, args.block_gb * 1e9, log=log, return_model=True,
-                                         censor=args.censor, accel=args.accel)  # fmt: skip
+                                         censor=args.censor)  # fmt: skip
     f = np.zeros((NV, f_m.shape[1]), f_m.dtype)
     cand = np.zeros((NV, cand_m.shape[1]), cand_m.dtype)
     f[mask], cand[mask] = f_m, cand_m
