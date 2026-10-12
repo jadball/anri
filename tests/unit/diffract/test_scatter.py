@@ -302,3 +302,18 @@ class TestOmegaSolnsBoth(unittest.TestCase):
             np.testing.assert_array_equal(valid, valid_single)
             np.testing.assert_allclose(omega[valid], expected[valid])
         self.assertTrue(valid.any() and not valid.all())
+
+
+class TestAnyBeam(unittest.TestCase):
+    def test_round_trip_tilted_beam(self):
+        rng = np.random.default_rng(0)
+        k_in = jnp.array([1.0, 0.2, -0.1])
+        tth, eta = jnp.asarray(rng.uniform(1, 60, 20)), jnp.asarray(rng.uniform(-179, 179, 20))
+        k_out = vmap(diffract.tth_eta_to_k_out, in_axes=(0, 0, None, None))(tth, eta, 0.3, k_in)
+        t2, e2 = diffract.k_out_to_tth_eta(k_out, k_in)
+        np.testing.assert_allclose(t2, tth, atol=1e-6)
+        np.testing.assert_allclose(e2, eta, atol=1e-6)
+        # eta of Q = k_out - k_in is eta of k_out, for any beam
+        q = k_out - k_in / jnp.linalg.norm(k_in) / 0.3
+        _, e3 = vmap(diffract.q_lab_to_tth_eta, in_axes=(0, None, None))(q, 0.3, k_in)
+        np.testing.assert_allclose(e3, eta, atol=1e-6)
