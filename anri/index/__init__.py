@@ -14,11 +14,14 @@ The steps, in order (``python -m anri.index`` runs them on an ImageD11 dataset):
 The same steps as five stages that each write one HDF5 file with its provenance, for the command line, notebooks and
 workflow systems: :func:`stage_histogram` (step 1), :func:`stage_search` (completeness), :func:`stage_filter`
 (likelihood or completeness), :func:`stage_fit` (step 4) and :func:`stage_populations` (step 5). :func:`show`
-prints how any stage file was made, back to the dataset (:func:`read_provenance` and :func:`upstream` read the
-chain). :func:`open_dataset` opens a dataset as the histogram stage does.
+prints how any stage file was made, back to the dataset, and :func:`run_command` the command line that remakes it
+(:func:`read_provenance` and :func:`upstream` read the chain). :func:`open_dataset` opens a dataset as the histogram
+stage does. The numbers behind each option's choice are in :mod:`anri.index.diagnostics`, and their plots in
+:mod:`anri.index.plots`.
 """
 
 from ._impl.data import (
+    cake,
     coarsen_rows,
     coarsen_scan,
     dty_offsets,
@@ -26,10 +29,10 @@ from ._impl.data import (
     histogram_pixels,
     lit_table,
     pixel_angles,
+    pixel_cake,
     ring_profile,
     ring_table,
     ring_widths,
-    tth_profile,
 )
 from ._impl.mask import backproject, draw_mask, otsu, polygon_mask, ramp_filter, reconstruct, threshold_mask
 from ._impl.occupancy import (
@@ -53,11 +56,14 @@ from ._impl.predict import (
     GRID_STEPS,
     choose_grid,
     completeness,
+    completeness_levels,
     completeness_of,
+    grid_chance,
     match_tolerances,
     predict,
     predictions,
     prune,
+    select_by_completeness,
 )
 from ._impl.stages import (
     lit_map,
@@ -65,8 +71,10 @@ from ._impl.stages import (
     open_dataset,
     read_provenance,
     row_intensities,
+    run_command,
     sample_groups,
     select_by_likelihood,
+    select_occupied,
     select_populations,
     show,
     stage_filter,
@@ -84,6 +92,7 @@ __all__ = [
     "backward",
     "beam_rows",
     "block_voxels",
+    "cake",
     "candidates",
     "candidates_from",
     "censored_ratio",
@@ -91,12 +100,14 @@ __all__ = [
     "coarsen_rows",
     "coarsen_scan",
     "completeness",
+    "completeness_levels",
     "completeness_of",
     "deviance",
     "draw_mask",
     "dty_offsets",
     "fit_occupancy",
     "forward",
+    "grid_chance",
     "histogram",
     "histogram_pixels",
     "inherit_candidates",
@@ -110,6 +121,7 @@ __all__ = [
     "otsu",
     "pad_voxels",
     "pixel_angles",
+    "pixel_cake",
     "polygon_mask",
     "populations",
     "predict",
@@ -122,8 +134,11 @@ __all__ = [
     "ring_table",
     "ring_widths",
     "row_intensities",
+    "run_command",
     "sample_groups",
+    "select_by_completeness",
     "select_by_likelihood",
+    "select_occupied",
     "select_populations",
     "show",
     "stage_filter",
@@ -133,7 +148,6 @@ __all__ = [
     "stage_search",
     "system",
     "threshold_mask",
-    "tth_profile",
     "upstream",
     "voxel_grid",
 ]

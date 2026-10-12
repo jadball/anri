@@ -197,6 +197,33 @@ def completeness_of(
     return np.concatenate(out)
 
 
+def grid_chance(
+    step: float, ops: ArrayLike, B: ArrayLike, rings: dict, geom: dict, lit: dict, rng: np.random.Generator,
+    n_sample: int = 1 << 14,
+) -> tuple[float, int, float]:  # fmt: skip
+    """Return a grid step's chance completeness: the median completeness over a random sample of its orientations.
+
+    Parameters
+    ----------
+    step
+        Grid step (degrees), see :func:`anri.crystal.orientation_grid`
+    ops, B, rings, geom, lit
+        See :func:`choose_grid`
+    rng
+        Random generator for the sample (:func:`choose_grid` draws every step's from one, in order)
+    n_sample
+        Orientations in the sample
+
+    Returns
+    -------
+    chance, n, delta
+        The chance completeness, the grid's number of orientations and its worst-case distance from the truth
+    """
+    U, delta = orientation_grid(step, ops)
+    sample = U[rng.choice(len(U), min(len(U), n_sample), replace=False)]
+    return float(np.median(completeness_of(sample, delta, B, rings, geom, lit))), len(U), delta
+
+
 def choose_grid(
     ops: ArrayLike,
     B: ArrayLike,
@@ -238,13 +265,8 @@ def choose_grid(
     """
     rng = np.random.default_rng(seed)
     for step in steps:
-        U, delta = orientation_grid(step, ops)
-        c = float(
-            np.median(
-                completeness_of(U[rng.choice(len(U), min(len(U), n_sample), replace=False)], delta, B, rings, geom, lit)
-            )
-        )
-        log(f"  grid {step} deg ({len(U)} orientations): chance completeness {c:.2f}")
+        c, n, _ = grid_chance(step, ops, B, rings, geom, lit, rng, n_sample)
+        log(f"  grid {step} deg ({n} orientations): chance completeness {c:.2f}")
         if c <= max_chance:
             return step
     log(f"  no grid step reaches chance completeness <= {max_chance}: using the finest, {steps[-1]} deg. The lit map is "
@@ -281,11 +303,23 @@ def prune(
         "chance", "min_comp", "n_above" (orientations above the threshold) and "capped" (whether keep bit)
     """
     comp = completeness_of(U, delta, B, rings, geom, lit)
+    chance, halfway = completeness_levels(comp)
+    thr = min_comp if min_comp is not None else halfway
+    kept = select_by_completeness(comp, thr, keep)
+    n_above = int(np.sum(comp >= thr))
+    return kept, comp, {"chance": chance, "min_comp": thr, "n_above": n_above, "capped": n_above > keep}
+
+
+def completeness_levels(comp: np.ndarray) -> tuple[float, float]:
+    """Return the chance level of a grid's completeness (its median) and halfway from it to the maximum."""
     chance = float(np.median(comp))
-    thr = min_comp if min_comp is not None else chance + 0.5 * (float(comp.max()) - chance)
-    above = np.flatnonzero(comp >= thr)
-    kept = above[np.argsort(comp[above])[::-1]][:keep]
-    return kept, comp, {"chance": chance, "min_comp": thr, "n_above": len(above), "capped": len(above) > keep}
+    return chance, chance + 0.5 * (float(np.max(comp)) - chance)
+
+
+def select_by_completeness(comp: np.ndarray, min_comp: float, keep: int) -> np.ndarray:
+    """Return the indices of the orientations at or above min_comp, the most complete first, at most keep."""
+    above = np.flatnonzero(comp >= min_comp)
+    return above[np.argsort(comp[above])[::-1]][:keep]
 
 
 def predictions(U: ArrayLike, B: ArrayLike, rings: dict, geom: dict, etacut: float, qc: int = 16) -> tuple:

@@ -17,6 +17,8 @@ API reference
     geom
     fwd
     index
+    index.diagnostics
+    index.plots
     io
     maths.rotation
     maths.utils

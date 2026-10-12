@@ -101,9 +101,9 @@ def pixel_angles(slow: jax.Array, fast: jax.Array, omega: jax.Array, geom: dict)
     return jnp.stack([tth, eta, omega], 1)
 
 
-@partial(jax.jit, static_argnames=("n",))
-def tth_profile(x: jax.Array, val: jax.Array, lo: float, step: float, n: int) -> jax.Array:
-    """Sum pixel intensities in 2theta bins.
+@partial(jax.jit, static_argnames=("n_t", "n_eta"))
+def cake(x: jax.Array, val: jax.Array, lo: float, step: float, n_t: int, n_eta: int = 1) -> jax.Array:
+    """Sum pixel intensities in (2theta, eta) bins: a cake. With n_eta = 1, the 2theta profile.
 
     Parameters
     ----------
@@ -111,17 +111,53 @@ def tth_profile(x: jax.Array, val: jax.Array, lo: float, step: float, n: int) ->
         [N, 3] (2theta, eta, omega) from :func:`pixel_angles`
     val
         [N] intensities
-    lo, step, n
-        Bins: n of width step from lo (degrees)
+    lo, step, n_t
+        2theta bins: n_t of width step from lo (degrees)
+    n_eta
+        eta bins over 360 degrees from -180
 
     Returns
     -------
     jax.Array
-        [n] intensity per bin
+        [n_t, n_eta] intensity per bin
     """
-    i = jnp.floor((x[:, 0] - lo) / step).astype(jnp.int32)
-    ok = (i >= 0) & (i < n)
-    return jax.ops.segment_sum(jnp.where(ok, val, 0.0), jnp.where(ok, i, n), n + 1)[:-1]
+    it = jnp.floor((x[:, 0] - lo) / step).astype(jnp.int32)
+    ie = jnp.floor((x[:, 1] + 180.0) * n_eta / 360.0).astype(jnp.int32) % n_eta
+    ok = (it >= 0) & (it < n_t)
+    idx = jnp.where(ok, it * n_eta + ie, n_t * n_eta)
+    return jax.ops.segment_sum(jnp.where(ok, val, 0.0), idx, n_t * n_eta + 1)[:-1].reshape(n_t, n_eta)
+
+
+def pixel_cake(
+    chunks: Iterable, geom: dict, lo: float, step: float, n_t: int, chunk: int, n_eta: int = 1
+) -> np.ndarray:
+    """Sum a stream of pixels into a (2theta, eta) cake (:func:`cake`), a chunk at a time.
+
+    Parameters
+    ----------
+    chunks
+        Iterable of (slow, fast, omega, row, value) NumPy arrays, e.g. a few scans of :func:`anri.io.stream_sparse`
+    geom
+        Geometry dict, see :func:`pixel_angles`
+    lo, step, n_t, n_eta
+        The bins, see :func:`cake`
+    chunk
+        Pixels per call (every call is padded to it, so the jitted functions compile once)
+
+    Returns
+    -------
+    np.ndarray
+        [n_t, n_eta] intensity per bin
+    """
+    total = jnp.zeros((n_t, n_eta), jnp.float32)
+    for slow, fast, omega, _, value in chunks:
+        m = len(value)
+
+        def pad(a: ArrayLike, m: int = m) -> jax.Array:
+            return jnp.asarray(np.pad(np.asarray(a, np.float32), (0, chunk - m)))
+
+        total = total + cake(pixel_angles(pad(slow), pad(fast), pad(omega), geom), pad(value), lo, step, n_t, n_eta)
+    return np.asarray(total)
 
 
 def ring_widths(
@@ -138,7 +174,7 @@ def ring_widths(
     Parameters
     ----------
     prof
-        Intensity per 2theta bin, from :func:`tth_profile`
+        Intensity per 2theta bin, e.g. :func:`pixel_cake` with one eta bin
     lo, step
         The bins
     ring_tth
@@ -343,15 +379,7 @@ def ring_profile(chunks: Iterable, geom: dict, ring_tth: ArrayLike, chunk: int, 
     ring_tth = np.asarray(ring_tth, float)
     lo = float(ring_tth[0]) - 0.5
     n = int(np.ceil((float(ring_tth[-1]) + 0.5 - lo) / step))
-    prof = jnp.zeros(n, jnp.float32)
-    for slow, fast, omega, _, value in chunks:
-        m = len(value)
-
-        def pad(a: ArrayLike, m: int = m) -> jax.Array:
-            return jnp.asarray(np.pad(np.asarray(a, np.float32), (0, chunk - m)))
-
-        prof = prof + tth_profile(pixel_angles(pad(slow), pad(fast), pad(omega), geom), pad(value), lo, step, n)
-    return ring_widths(np.asarray(prof), lo, step, ring_tth)
+    return ring_widths(pixel_cake(chunks, geom, lo, step, n, chunk)[:, 0], lo, step, ring_tth)
 
 
 @jax.jit

@@ -299,7 +299,9 @@ class TestPopulations(unittest.TestCase):
     def test_parent_twin_and_decoy(self):
         _, _, ops = iron()
         U0 = rotations(1, 4)[0].astype(float)
-        twin = anri.maths.rotation.quat_to_mat(np.r_[np.cos(np.radians(30)), np.sin(np.radians(30)) * np.ones(3) / np.sqrt(3)])
+        twin = anri.maths.rotation.quat_to_mat(
+            np.r_[np.cos(np.radians(30)), np.sin(np.radians(30)) * np.ones(3) / np.sqrt(3)]
+        )
         small = [anri.maths.rotation.quat_to_mat(np.r_[np.cos(np.radians(a / 2)), np.sin(np.radians(a / 2)) * np.array(v)])
                  for a, v in ((0.8, [1, 0, 0]), (0.8, [0, 1, 0]), (0.8, [0, 0, -1]))]  # fmt: skip
         U_list = np.stack([U0, *(s @ U0 for s in small), twin @ U0, rotations(1, 5)[0]])  # parent x 4, twin, decoy
@@ -419,6 +421,51 @@ class TestProvenance(unittest.TestCase):
                 write_provenance(h, "search", os.path.join(moved, "x_histogram.h5"), {}, {})
             with self.assertRaises(ValueError):
                 ix.upstream(os.path.join(moved, "x_populations.h5"), "histogram")
+
+    def test_run_command(self):
+        """run_command gives every option recorded along the chain, and the command line parses each one back."""
+        import inspect
+        import shlex
+
+        import h5py
+
+        from anri.index.__main__ import parse_args
+        from anri.index._impl.stages import STAGES, write_provenance
+
+        values = {"analysisroot": "/data/a b", "sample": "s", "dataset": "d", "tth_tol": 0.02, "frame_dty": False,
+                  "grid": 1.5, "min_comp": 0.3, "y0": -1.25, "mask": "auto"}  # fmt: skip
+        recorded = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            source = None
+            for stage in STAGES:
+                params = inspect.signature(getattr(ix, f"stage_{stage}")).parameters
+                opts = {k: values.get(k, p.default) for k, p in params.items()
+                        if k in values or (p.kind == p.KEYWORD_ONLY and k not in ("command", "log", "callback", "check"))}  # fmt: skip
+                recorded.update(opts)
+                path = os.path.join(tmp, f"x_{stage}.h5")
+                with h5py.File(path, "w") as h:
+                    write_provenance(h, stage, source, opts, {})
+                source = path
+            args = parse_args(shlex.split(ix.run_command(source))[3:])
+        self.assertEqual(args.command, "run")
+        for k, v in recorded.items():
+            if k == "save_model":  # not an option of the command line
+                continue
+            if k == "frame_dty":
+                self.assertEqual(args.no_frame_dty, not v)
+                continue
+            self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), v, msg=k)
+
+
+class TestSelections(unittest.TestCase):
+    def test_completeness(self):
+        """The filter's completeness cut: at or above min_comp, the most complete first, at most keep."""
+        comp = np.array([0.1, 0.5, 0.3, 0.5, 0.9, 0.2, 0.1])
+        chance, halfway = ix.completeness_levels(comp)
+        np.testing.assert_allclose((chance, halfway), (0.3, 0.6))  # median, and halfway to 0.9
+        np.testing.assert_array_equal(ix.select_by_completeness(comp, 0.3, 3)[:1], [4])
+        self.assertEqual(set(ix.select_by_completeness(comp, 0.3, 10)), {1, 2, 3, 4})
+        self.assertEqual(len(ix.select_by_completeness(comp, 0.3, 2)), 2)
 
 
 if __name__ == "__main__":

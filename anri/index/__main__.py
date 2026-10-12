@@ -63,9 +63,6 @@ def _search_options(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--lit", type=float, default=1.0, help="lit threshold, x the median non-empty bin (default 1)")
     p.add_argument("--etacut", type=float, default=0.2, help="use reflections with |sin eta| above this (default 0.2)")
-    p.add_argument("--min-comp", type=float, help="completeness needed: with --prune completeness, default halfway "
-                   "between the grid's median (the chance level) and its maximum; with --prune likelihood, default the "
-                   "chance level (raising it drops decoys, and small grains, which have lower completeness)")  # fmt: skip
 
 
 def _keep_option(p: argparse.ArgumentParser) -> None:
@@ -84,6 +81,9 @@ def _filter_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--prune", choices=("likelihood", "completeness"), default="likelihood",
                    help="keep orientations by the likelihood ratio of a global orientation fit (default; intensity-aware), "
                    "or by completeness alone")  # fmt: skip
+    p.add_argument("--min-comp", type=float, help="completeness needed: with --prune completeness, default halfway "
+                   "between the grid's median (the chance level) and its maximum; with --prune likelihood, default the "
+                   "chance level (raising it drops decoys, and small grains, which have lower completeness)")  # fmt: skip
     p.add_argument("--min-lr", type=float, default=25.0, help="likelihood ratio needed to keep an orientation (default 25, "
                    "about 5 sigma)")  # fmt: skip
 
@@ -120,8 +120,8 @@ def _populations_options(p: argparse.ArgumentParser) -> None:
                    "voxel's occupancy (default 0.1)")  # fmt: skip
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse the command line."""
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the command line (default: ``sys.argv``)."""
     p = argparse.ArgumentParser(prog="python -m anri.index", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="command", required=True)
     dataset = argparse.ArgumentParser(add_help=False)
@@ -138,7 +138,6 @@ def parse_args() -> argparse.Namespace:
     s = sub.add_parser("search", parents=[common], help="completeness of every orientation of a grid")
     s.add_argument("source", help="a histogram stage file")
     _search_options(s)
-    _keep_option(s)
     s.add_argument("--out", help="output file (default: the source's name with _search)")
 
     f = sub.add_parser("filter", parents=[common], help="choose the orientations for the map")
@@ -171,7 +170,7 @@ def parse_args() -> argparse.Namespace:
 
     w = sub.add_parser("show", help="how a stage file was made, all the way back to the dataset")
     w.add_argument("file")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def main() -> None:
@@ -203,11 +202,10 @@ def main() -> None:
     out = None if cmd == "run" else args.out
     if cmd in ("search", "run"):
         source = ix.stage_search(source, out, grid=args.grid, max_chance=args.max_chance, lit=args.lit,
-                                 etacut=args.etacut, min_comp=args.min_comp, keep=args.keep, command=command,
-                                 log=log)  # fmt: skip
+                                 etacut=args.etacut, command=command, log=log)  # fmt: skip
     if cmd in ("filter", "run"):
-        source = ix.stage_filter(source, out, prune=args.prune, min_lr=args.min_lr, keep=args.keep,
-                                 censor=args.censor, command=command, log=log)  # fmt: skip
+        source = ix.stage_filter(source, out, prune=args.prune, min_comp=args.min_comp, min_lr=args.min_lr,
+                                 keep=args.keep, censor=args.censor, command=command, log=log)  # fmt: skip
     if cmd in ("fit", "run"):
         source = ix.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.iter, coarse=args.coarse,
                               beam=args.beam, mask=args.mask, block_gb=args.block_gb, censor=args.censor,

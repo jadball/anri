@@ -195,6 +195,35 @@ def show(path: str) -> str:
     return "\n".join(lines)
 
 
+def run_command(path: str) -> str:
+    """Return the ``python -m anri.index run`` command that remakes a stage file and those before it.
+
+    Every option recorded along the chain is given, defaults included, so that the command runs the same on another
+    dataset (change the dataset's three arguments). Options the command line cannot take (save_model) are left out;
+    where two stages recorded different values of one option (censor, in filter and fit), the later stage's is given.
+
+    Parameters
+    ----------
+    path
+        Any stage file
+    """
+    import shlex
+
+    prov = read_provenance(path)
+    opts = dict(prov["options"])
+    while "source" in prov:
+        path = upstream(path, STAGES[STAGES.index(prov["stage"]) - 1])
+        prov = read_provenance(path)
+        opts = {**prov["options"], **opts}
+    cmd = ["python", "-m", "anri.index", "run", *(str(opts.pop(k)) for k in ("analysisroot", "sample", "dataset"))]
+    for k, v in opts.items():
+        if k == "frame_dty":  # on by default; the command line can only turn it off
+            cmd += [] if v else ["--no-frame-dty"]
+        elif k != "save_model" and v is not False:
+            cmd += ["--" + {"n_iter": "iter"}.get(k, k).replace("_", "-")] + ([] if v is True else [str(v)])
+    return shlex.join(cmd)
+
+
 def _out(source: str, stage: str, out: str | None) -> str:
     """Return a stage's default output: the source's name with its stage replaced, beside it."""
     if out is not None:
@@ -406,6 +435,21 @@ def select_by_likelihood(fitted: np.ndarray, lr: np.ndarray, min_lr: float, keep
     return fitted[above[np.argsort(lr[above])[::-1]][:keep]]
 
 
+def select_occupied(tot: np.ndarray, mask: np.ndarray, occupied: float) -> np.ndarray:
+    """Return the voxels in the mask above occupied x the 99th percentile of the total occupancy in the mask.
+
+    Parameters
+    ----------
+    tot
+        [Nv] each voxel's total occupancy
+    mask
+        [Nv] the voxels fitted
+    occupied
+        See :func:`stage_populations`
+    """
+    return mask & (tot > occupied * np.percentile(tot[mask], 99))
+
+
 def select_populations(tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, occupied: float,
                        min_frac: float) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
     """Return the occupied voxels and the populations reported in them.
@@ -427,7 +471,7 @@ def select_populations(tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, occu
         [Nv] voxels in the mask above occupied x the 99th percentile of the total occupancy in the mask; [Nv, P]
         populations holding at least min_frac in occupied voxels (the main one always)
     """
-    occ = mask & (tot > occupied * np.percentile(tot[mask], 99))
+    occ = select_occupied(tot, mask, occupied)
     present = (frac >= min_frac) & occ[:, None]
     present[:, 0] = occ  # the main population always
     return occ, present
@@ -565,10 +609,11 @@ def stage_histogram(
 # ------------------------------------------------------------------------------------------------------------ 2. search
 def stage_search(
     histogram_file: str, out: str | None = None, *, grid: float | None = None, max_chance: float = 0.5,
-    lit: float = 1.0, etacut: float = 0.2, min_comp: float | None = None, keep: int = 100000,
-    command: str | None = None, log: Callable = print,
+    lit: float = 1.0, etacut: float = 0.2, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Score every orientation of a grid over the fundamental zone by its completeness in the lit map.
+
+    The cut on completeness is the filter's (:func:`stage_filter`), chosen from what this stage writes.
 
     Parameters
     ----------
@@ -585,11 +630,6 @@ def stage_search(
         Lit threshold, x the median non-empty bin
     etacut
         Use reflections with ``|sin eta|`` above this (here and in the later stages)
-    min_comp
-        Completeness needed: default halfway between the grid's median (the chance level) and its maximum (for
-        prune="completeness"); the likelihood filter fits everything above it, default the chance level
-    keep
-        At most this many orientations, the most complete first
     command, log
         See :func:`stage_histogram`
 
@@ -600,35 +640,34 @@ def stage_search(
     """
     import anri.crystal
 
-    from .predict import choose_grid, prune
+    from .predict import choose_grid, completeness_levels, completeness_of
 
-    options = {"grid": grid, "max_chance": max_chance, "lit": lit, "etacut": etacut, "min_comp": min_comp, "keep": keep}
+    options = {"grid": grid, "max_chance": max_chance, "lit": lit, "etacut": etacut}
     d = load_histogram(histogram_file)
     lm = lit_map(d["H_lit"], d["scan"], d["n_rings"], lit, etacut)
     step = grid if grid is not None else choose_grid(d["ops"], d["B"], d["rings"], d["geom"], lm, max_chance, log=log)
     U_grid, delta = anri.crystal.orientation_grid(step, d["ops"])
     t1 = time.perf_counter()
-    kept, comp, info = prune(U_grid, delta, d["B"], d["rings"], d["geom"], lm, min_comp, keep)
+    comp = completeness_of(U_grid, delta, d["B"], d["rings"], d["geom"], lm)
+    chance, halfway = completeness_levels(comp)
     log(f"grid {step} deg{'' if grid is not None else ' (auto)'}: {len(U_grid)} orientations, up to {delta:.2f} deg "
-        f"from the truth; completeness {time.perf_counter() - t1:.1f} s: median (chance) {info['chance']:.2f}, 99th "
-        f"{np.percentile(comp, 99):.2f}, max {comp.max():.2f}; {info['n_above']} at >= {info['min_comp']:.2f}")  # fmt: skip
+        f"from the truth; completeness {time.perf_counter() - t1:.1f} s: median (chance) {chance:.2f}, 99th "
+        f"{np.percentile(comp, 99):.2f}, max {comp.max():.2f}, halfway {halfway:.2f}")  # fmt: skip
     out = _out(histogram_file, "search", out)
     with h5py.File(out, "w") as h:
         write_provenance(h, "search", histogram_file, options, {"grid_step": step, "grid_auto": grid is None,
                                                                  "grid_worst_case_deg": delta}, command)  # fmt: skip
         h["U_grid"] = np.asarray(U_grid)
         h["completeness"] = np.asarray(comp)
-        h["kept"] = np.asarray(kept)  # by completeness: above min_comp, the most complete first, at most keep
-    write_results(out, {"orientations": len(U_grid), "chance_completeness": info["chance"],
-                        "completeness_cut": info["min_comp"], "n_above": info["n_above"], "capped": info["capped"]})  # fmt: skip
+    write_results(out, {"orientations": len(U_grid), "chance_completeness": chance, "completeness_halfway": halfway})
     log(f"-> {out}")
     return out
 
 
 # ------------------------------------------------------------------------------------------------------------ 3. filter
 def stage_filter(
-    search_file: str, out: str | None = None, *, prune: str = "likelihood", min_lr: float = 25.0, keep: int = 100000,
-    censor: float = 0.0, command: str | None = None, log: Callable = print,
+    search_file: str, out: str | None = None, *, prune: str = "likelihood", min_comp: float | None = None,
+    min_lr: float = 25.0, keep: int = 100000, censor: float = 0.0, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Choose the orientations for the fit.
 
@@ -642,13 +681,16 @@ def stage_filter(
     out
         Output file (default: the input's name with ``_filter``)
     prune
-        "likelihood": every orientation above the search's min_comp (default: chance), kept by the likelihood ratio of
-        a global orientation fit to the row-summed data (intensity-aware); or "completeness": the search's own
-        selection
+        "likelihood": every orientation above min_comp, kept by the likelihood ratio of a global orientation fit to
+        the row-summed data (intensity-aware); or "completeness": every orientation at or above min_comp
+    min_comp
+        Completeness needed. Default: for prune="likelihood" the chance level (the grid's median completeness;
+        raising it drops decoys, and small grains, whose completeness is lower); for prune="completeness" halfway from
+        the chance level to the grid's maximum
     min_lr
         Likelihood ratio needed to keep an orientation (about 5 sigma at 25)
     keep
-        At most this many orientations, the most likely first
+        At most this many orientations, the most likely (or most complete) first
     censor
         Counts per histogram bin below which an empty bin agrees with the model (0: empty bins are zeros)
     command, log
@@ -660,19 +702,19 @@ def stage_filter(
         The file written
     """
     from .orientations import orientation_mlem
+    from .predict import select_by_completeness
 
-    options = {"prune": prune, "min_lr": min_lr, "keep": keep, "censor": censor}
+    options = {"prune": prune, "min_comp": min_comp, "min_lr": min_lr, "keep": keep, "censor": censor}
     s_prov = read_provenance(search_file)
     hist_file = upstream(search_file, "histogram")
     d = load_histogram(hist_file)
     with h5py.File(search_file, "r") as h:
-        U_grid, comp, kept_c = h["U_grid"][()], h["completeness"][()], h["kept"][()]
+        U_grid, comp = h["U_grid"][()], h["completeness"][()]
     so, sr = s_prov["options"], s_prov["results"]
-    min_comp_used = sr["completeness_cut"]
     fitted = lr = None
-    if prune == "likelihood":  # everything above chance, judged by a global orientation fit to the row-summed data
+    if prune == "likelihood":  # everything above min_comp, judged by a global orientation fit to the row-summed data
         t1 = time.perf_counter()
-        min_comp_used = so.get("min_comp", sr["chance_completeness"])
+        min_comp_used = sr["chance_completeness"] if min_comp is None else min_comp
         fitted = np.flatnonzero(comp > min_comp_used)
         sc = d["scan"]
         data = d["H"].reshape(-1, sc["n_rows"]).sum(1)
@@ -684,7 +726,10 @@ def stage_filter(
         log(f"orientation fit of the {len(fitted)} above chance ({time.perf_counter() - t1:.0f} s): {n_above} with "
             f"likelihood ratio > {min_lr:g}" + (f", the top {keep} kept" if n_above > keep else ", all kept"))  # fmt: skip
     elif prune == "completeness":
-        kept = kept_c
+        min_comp_used = sr["completeness_halfway"] if min_comp is None else min_comp
+        kept = select_by_completeness(comp, min_comp_used, keep)
+        log(f"{int(np.sum(comp >= min_comp_used))} orientations at completeness >= {min_comp_used:.2f}; "
+            f"{len(kept)} kept")  # fmt: skip
     else:
         msg = f"prune must be 'likelihood' or 'completeness', not {prune!r}"
         raise ValueError(msg)
@@ -706,7 +751,7 @@ def stage_filter(
 def stage_fit(
     filter_file: str, out: str | None = None, *, y0: float | None = None, cand: int = 64, n_iter: int = 10,
     coarse: int = 1, beam: float = 0.0, mask: str | None = None, block_gb: float = 1.0, censor: float = 0.0,
-    command: str | None = None, log: Callable = print, callback: Callable | None = None,
+    save_model: bool = False, command: str | None = None, log: Callable = print, callback: Callable | None = None,
 ) -> str:  # fmt: skip
     """Fit each voxel's occupancy of the kept orientations.
 
@@ -734,6 +779,8 @@ def stage_fit(
         Memory for one block of voxels' system entries (GB)
     censor
         See :func:`stage_filter`
+    save_model
+        Also save the fitted histogram ("model", as large as the data), e.g. to compare it with the data bin by bin
     command, log
         See :func:`stage_histogram`
     callback
@@ -753,7 +800,7 @@ def stage_fit(
     from .predict import predictions
 
     options = {"y0": y0, "cand": cand, "n_iter": n_iter, "coarse": coarse, "beam": beam, "mask": mask,
-               "block_gb": block_gb, "censor": censor}  # fmt: skip
+               "block_gb": block_gb, "censor": censor, "save_model": save_model}  # fmt: skip
     search_file = upstream(filter_file, "search")
     hist_file = upstream(search_file, "histogram")
     d = load_histogram(hist_file)
@@ -811,6 +858,8 @@ def stage_fit(
                "row_data": d_row, "row_model": m_row}  # fmt: skip
     if rec is not None:
         results["recon"] = rec  # the reconstruction the automatic mask was thresholded from
+    if save_model:
+        results["model"] = np.asarray(model)
     with h5py.File(out, "w") as h:
         write_provenance(h, "fit", filter_file, options, {"y0": Y0, "voxels": NR, "voxel_size": YSTEP}, command)
         for k, v in results.items():
