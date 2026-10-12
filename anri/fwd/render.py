@@ -8,7 +8,7 @@ through it with :func:`anri.fwd.peak.make_propagator`.
 The beam is described by its profile across it, horizontally and vertically: each a flat top of some width,
 blurred by a Gaussian (a pure Gaussian with zero width). A pencil beam is narrow both ways, a line beam wide one
 way, a box beam wide both ways. Voxels are either columns (2D maps: the beam's vertical profile integrates out)
-or cubes (3D maps). See :func:`beam_weight`.
+or cubes (3D maps). See :func:`anri.geom.beam.beam_weight`.
 
 Pixel values are differentiable with respect to the map. Which pixels a peak touches is not:
 window placement is computed from rounded centroids.
@@ -34,10 +34,10 @@ except ImportError:  # JAX < 0.6, e.g. 0.4.30, the last release for Python 3.9
 
 import anri.utils
 from anri.diffract.factors import lorentz_polarisation
-from anri.geom.beam import beam_basis, beam_offsets
+from anri.geom.beam import beam_offsets, beam_weight
 from anri.geom.gonio import nearest_omega, sample_to_lab
 from anri.maths.rotation import skew
-from anri.maths.utils import bin_fractions, ramp_integral, ramp_integral2, truncated_moments
+from anri.maths.utils import bin_fractions, truncated_moments
 
 from .peak import get_centroid, get_centroid_both, hkl_to_k_omega, make_propagator
 
@@ -49,82 +49,6 @@ _COV_ELEMS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))
 
 # Added to the variances so that a peak with no instrumental broadening still renders (pixels, pixels, degrees).
 _VAR_FLOOR = (1e-4, 1e-4, 1e-8)
-
-
-def _smoothed(order: int, x: ArrayLike, width: ArrayLike, sigma: ArrayLike) -> jax.Array:
-    """Antiderivative ``order`` of the beam profile: a flat top of ``width`` blurred by a Gaussian of ``sigma``.
-
-    Order 1 is the profile's cumulative distribution, order 2 its integral. The profile integrates to 1. For a
-    width much smaller than sigma it is the Gaussian's (the difference quotient below would lose precision).
-    """
-    x, width, sigma = jnp.asarray(x), jnp.asarray(width), jnp.asarray(sigma)
-    gauss = width < 0.01 * sigma
-    w = jnp.where(gauss, 1.0, width)  # double-where: no NaN gradients from either branch
-    if order == 1:
-        flat_top = (ramp_integral(x + w / 2, sigma) - ramp_integral(x - w / 2, sigma)) / w
-        return jnp.where(gauss, ndtr(x / sigma), flat_top)
-    flat_top = (ramp_integral2(x + w / 2, sigma) - ramp_integral2(x - w / 2, sigma)) / w
-    return jnp.where(gauss, ramp_integral(x, sigma), flat_top)
-
-
-def _chord_weight(
-    u: ArrayLike, omega: ArrayLike, voxel_size: ArrayLike, sigma: ArrayLike, width: ArrayLike
-) -> jax.Array:
-    """Beam profile integrated over a square voxel, per unit height, for a beam along lab x.
-
-    The voxel is a square of side ``voxel_size`` rotated by ``omega`` (degrees) and ``u`` across the beam's centre
-    (lab y). Its chord along the beam, as a function of lab y, is a trapezoid of area ``voxel_size**2``.
-    """
-    c = jnp.abs(jnp.cos(jnp.radians(omega)))
-    s = jnp.abs(jnp.sin(jnp.radians(omega)))
-    a = 0.5 * voxel_size * (c + s)  # half-width of the trapezoid at its base
-    b = 0.5 * voxel_size * jnp.abs(c - s)  # half-width at its top
-    height = voxel_size**2 / (a + b)
-
-    # Near omega = 0, 90, ... the trapezoid becomes a rectangle and (a - b) -> 0.
-    # Double-where so neither branch produces NaN gradients.
-    is_box = (a - b) < 1e-6 * voxel_size
-    ab = jnp.where(is_box, 1.0, a - b)
-    s2 = partial(_smoothed, 2, width=width, sigma=sigma)
-    trapezoid = height / ab * (s2(u + a) - s2(u + b) - s2(u - b) + s2(u - a))
-    box = height * (_smoothed(1, u + a, width, sigma) - _smoothed(1, u - a, width, sigma))
-    return jnp.where(is_box, box, trapezoid)
-
-
-def beam_weight(pos_lab: jax.Array, omega: ArrayLike, geom: dict) -> jax.Array:
-    """How much of a voxel the beam illuminates: its profile integrated over the voxel.
-
-    The beam's profile across it, horizontally (``geom["width_beam"]``, ``geom["sig_beam"]``) and vertically
-    (``geom["width_beam_v"]``, ``geom["sig_beam_v"]``), is a flat top of that width blurred by a Gaussian of that
-    standard deviation, and integrates to 1: a wider beam spreads the same flux. A voxel is a square of side
-    ``geom["voxel_size"]`` in the sample xy plane, rotated by ``omega``, centred at ``pos_lab``, and either:
-
-    - a column (2D map, ``geom["voxel_3d"]`` false): the whole vertical profile crosses it, so it integrates out;
-      a beam tilted by ``alpha`` out of the horizontal plane travels ``1 / cos(alpha)`` further through it.
-    - a cube (3D map): the vertical profile is integrated over the cube's height, measured vertically. For a
-      tilted beam this treats the horizontal and vertical directions separately, which is exact only when it is
-      horizontal.
-
-    A beam at ``psi`` from lab x in the horizontal plane sees the voxel rotated by ``omega - psi``.
-
-    Parameters
-    ----------
-    pos_lab
-        [3] Lab position of the voxel's centre (in that frame, with its dty)
-    omega
-        Omega angle (degrees)
-    geom
-        Geometry dict, see :func:`render_row`
-    """
-    k = beam_basis(geom["k_in_lab"])[0]
-    u, dz, _, cos_alpha = beam_offsets(pos_lab, geom["k_in_lab"])
-    size = geom["voxel_size"]
-    psi = jnp.degrees(jnp.arctan2(k[1], k[0]))
-    w = _chord_weight(u, omega - psi, size, geom["sig_beam"], geom["width_beam"]) / cos_alpha
-    sig_v = jnp.where(geom["voxel_3d"], geom["sig_beam_v"], 1.0) / cos_alpha  # unused for columns
-    width_v = geom["width_beam_v"] / cos_alpha
-    v = _smoothed(1, dz + size / 2, width_v, sig_v) - _smoothed(1, dz - size / 2, width_v, sig_v)
-    return w * jnp.where(geom["voxel_3d"], v, 1.0)
 
 
 def _centroid(

@@ -20,7 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from anri.fwd.render import _chord_weight
+from anri.geom.beam import chord_weight
 from anri.geom.gonio import find_dty_for_beam_xy, wrap_omega
 from anri.geom.scan import recon_positions
 
@@ -69,7 +69,7 @@ def system(
 
     - ``n_beam = 0``: linearly over the 2 nearest rows.
     - ``n_beam > 0``: over the n_beam rows nearest to the voxel, each weighted by the beam's profile across dty
-      integrated over the voxel's chord at that omega (as :func:`anri.fwd.render.beam_weight`, for a beam along lab x):
+      integrated over the voxel's chord at that omega (as :func:`anri.geom.beam.beam_weight`, for a beam along lab x):
       a Gaussian of ``scan["sig_beam"]`` blurring a flat top of ``scan["width_beam"]``, over a square voxel of
       side ``scan["voxel"]``. The weights are scaled to sum to about 1 over the rows. Each weight is evaluated at
       the prediction's omega, so a voxel off the rotation axis moves across the beam with omega.
@@ -115,7 +115,7 @@ def system(
         norm = scan["ystep"] / scan["voxel"] ** 2  # the chord weight integrates to voxel^2 over dty
         psi = jnp.degrees(jnp.arctan2(k_in[1], k_in[0]))  # the beam sees the voxel turned by omega - psi
         rows = tuple(
-            (dk, norm * _chord_weight((k0 + dk - fk) * scan["ystep"], om - psi, scan["voxel"], scan["sig_beam"],
+            (dk, norm * chord_weight((k0 + dk - fk) * scan["ystep"], om - psi, scan["voxel"], scan["sig_beam"],
                                       scan["width_beam"]))
             for dk in range(n_beam)
         )  # fmt: skip

@@ -140,7 +140,7 @@ def geom_from_pars(
     sig_beam, width_beam
         The beam's profile across it, horizontally: a flat top of ``width_beam`` (default 0: a Gaussian) blurred by a
         Gaussian of standard deviation ``sig_beam`` (same units as dty; must be > 0), see
-        :func:`anri.fwd.render.beam_weight`. A pencil beam is narrow, a box or horizontal line beam wider than the sample.
+        :func:`anri.geom.beam.beam_weight`. A pencil beam is narrow, a box or horizontal line beam wider than the sample.
     voxel_size
         Side length of the voxels (same units as dty)
     pol_factor

@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The beam profile is in `anri.geom.beam`, beside `beam_basis` and `beam_offsets`: `beam_weight` (was `anri.fwd.render.beam_weight`) and `chord_weight`, public now, which the indexer's system uses instead of a private function of the renderer.
 - The Gaussian interval maths the renderer integrates peaks with is in `anri.maths.utils`: `bin_fractions`, `truncated_moments`, and `ramp_integral` and `ramp_integral2` (the antiderivatives of the Gaussian CDF, public now).
 - `anri.render` is `anri.simulate` (`python -m anri.simulate prepare|render|assemble|run|show`): it simulates a dataset, and `anri.fwd.render` is the renderer it uses. Stage files and their names are unchanged; files made before record `python -m anri.render` in their command.
 - Modules renamed for what they hold: `anri.fwd.base` is `anri.fwd.peak`, `anri.crystal.utils` is `anri.crystal.lattice`, `anri.geom.utils` is `anri.geom.beam` and `anri.index.predict` is `anri.index.search`. `anri.index.populations.populations` is `anri.index.populations.group` and `anri.index.orientations.orientation_mlem` is `anri.index.orientations.fit`.
