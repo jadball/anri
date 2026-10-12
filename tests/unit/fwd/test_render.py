@@ -27,6 +27,10 @@ from anri.geom.gonio import sample_to_lab
 
 jax.config.update("jax_enable_x64", True)
 
+# Peaks per render call. render_row pads a call to at least 1024 peaks per device so that real scans compile few
+# shapes; these tests render a few hundred peaks per row, so a small batch renders them without that padding.
+BATCH = 256
+
 
 class TestIntensityFactors(unittest.TestCase):
     def test_id11(self):
@@ -121,7 +125,7 @@ class TestSinglePeak(unittest.TestCase):
         for dty in np.arange(-7.0, 8.0):
             row = make_row(omega, np.full_like(omega, dty))
             frame, pixel, value, stats = render_row(
-                entries, hkl[None], np.ones(1), geom, row, det_shape, window=(9, 17, 17), min_value=0.0
+                entries, hkl[None], np.ones(1), geom, row, det_shape, window=(9, 17, 17), min_value=0.0, batch=BATCH
             )
             if stats["n_peaks"] == 0:
                 continue
@@ -190,7 +194,15 @@ class TestPointSpread(unittest.TestCase):
         errors = {}
         for psf in (0.0, 0.7):
             _, pixel, value, _ = render_row(
-                one, hkl[None], np.ones(1), {**sharp, "sig_psf": psf}, row, det_shape, window=(5, 9, 9), min_value=0.0
+                one,
+                hkl[None],
+                np.ones(1),
+                {**sharp, "sig_psf": psf},
+                row,
+                det_shape,
+                window=(5, 9, 9),
+                min_value=0.0,
+                batch=BATCH,
             )
             s, f = pixel // det_shape[1], pixel % det_shape[1]
             measured = np.array([(s * value).sum(), (f * value).sum()]) / value.sum()
@@ -209,7 +221,15 @@ class TestOmegaSpread(unittest.TestCase):
         moments = {}
         for sig in (0.0, 0.05):
             frame, _, value, _ = render_row(
-                one, hkl[None], np.ones(1), {**geom, "sig_omega": sig}, row, det_shape, window=(61, 7, 7), min_value=0.0
+                one,
+                hkl[None],
+                np.ones(1),
+                {**geom, "sig_omega": sig},
+                row,
+                det_shape,
+                window=(61, 7, 7),
+                min_value=0.0,
+                batch=BATCH,
             )
             w = np.bincount(frame, weights=value, minlength=omega.size)
             mean = (w * omega).sum() / w.sum()
@@ -249,7 +269,7 @@ class TestOrientationSpread(unittest.TestCase):
         res = []
         for ent in (base, one, cloud):
             frame, pixel, value, stats = render_row(ent, hkl[None], np.ones(1), geom, row, det_shape, window=win,
-                                                    min_value=0.0)  # fmt: skip
+                                                    min_value=0.0, batch=BATCH)  # fmt: skip
             self.assertGreater(stats["captured"].min(), 0.999)
             res.append(self._moments(frame, pixel, value, omega, det_shape[1]))
         (_, c0), (m1, c1), (m2, c2) = res
@@ -297,9 +317,9 @@ class TestOrientationSpread(unittest.TestCase):
         omega = (np.floor(omega_c / 0.05) + np.arange(-5, 6)) * 0.05 + 0.025
         row = make_row(omega, np.zeros_like(omega))
         base = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
-        a = render_row(base, hkl[None], np.ones(1), geom, row, det_shape, window=(5, 7, 7), min_value=0.0)
+        a = render_row(base, hkl[None], np.ones(1), geom, row, det_shape, window=(5, 7, 7), min_value=0.0, batch=BATCH)
         b = render_row({**base, "sig_rot": np.zeros(1)}, hkl[None], np.ones(1), geom, row, det_shape, window=(5, 7, 7),
-                       min_value=0.0)  # fmt: skip
+                       min_value=0.0, batch=BATCH)  # fmt: skip
         for x, y in zip(a[:3], b[:3]):
             np.testing.assert_allclose(x, y, rtol=1e-12, atol=1e-12)
 
@@ -314,10 +334,10 @@ class TestWindowClasses(unittest.TestCase):
         broad = {**geom, "sig_omega": 0.2}  # 4 frames
         win = (3, 21, 21)  # this peak is a few pixels wide on the detector: wide enough in pixels for all of it
         _, _, value_3, stats_3 = render_row(
-            one, hkl[None], np.ones(1), broad, row, det_shape, window=win, min_value=0.0
+            one, hkl[None], np.ones(1), broad, row, det_shape, window=win, min_value=0.0, batch=BATCH
         )
         _, _, value_31, stats_31 = render_row(
-            one, hkl[None], np.ones(1), broad, row, det_shape, window=win, min_value=0.0, max_frames=31
+            one, hkl[None], np.ones(1), broad, row, det_shape, window=win, min_value=0.0, max_frames=31, batch=BATCH
         )
         self.assertLess(stats_3["captured"].max(), 0.5)
         self.assertGreater(stats_31["captured"].min(), 0.999)
@@ -533,7 +553,7 @@ class TestEmptyRow(unittest.TestCase):
         _, det_shape, geom, entries, hkl, _ = _single_peak_setup()
         omega = np.arange(0.0, 10.0, 0.25) + 0.125
         row = make_row(omega, np.full_like(omega, 1000.0))  # the beam misses the grain
-        frame, pixel, value, stats = render_row(entries, hkl[None], np.ones(1), geom, row, det_shape)
+        frame, pixel, value, stats = render_row(entries, hkl[None], np.ones(1), geom, row, det_shape, batch=BATCH)
         self.assertEqual((frame.size, pixel.size, value.size, stats["n_peaks"], stats["captured"].size), (0,) * 5)
 
 
@@ -571,7 +591,7 @@ class TestBoxBeam(unittest.TestCase):
         omega = np.arange(float(c[2]) - 2.0, float(c[2]) + 2.0, 0.25) + 0.125
         row = make_row(omega, np.zeros_like(omega))
         _, pixel, value, stats = render_row(
-            entries, hkl[None], np.ones(1), geom, row, det_shape, window=(3, 9, 9), min_value=0.0
+            entries, hkl[None], np.ones(1), geom, row, det_shape, window=(3, 9, 9), min_value=0.0, batch=BATCH
         )
         self.assertEqual(stats["n_peaks"], len(pos))  # every voxel is in the beam
         self.assertGreater(stats["captured"].min(), 0.999)
