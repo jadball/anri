@@ -33,7 +33,7 @@ except ImportError:  # JAX < 0.6, e.g. 0.4.30, the last release for Python 3.9
     from jax.experimental.shard_map import shard_map
 
 import anri.utils
-from anri.geom import beam_basis, beam_offsets, sample_to_lab
+from anri.geom import beam_basis, beam_offsets, nearest_omega, sample_to_lab
 
 from .base import get_centroid, get_centroid_both, hkl_to_k_omega, make_propagator
 
@@ -266,11 +266,6 @@ def _peak_factors(ubi: jax.Array, hkl: jax.Array, etasign: ArrayLike, geom: dict
     return lorentz(k_in, k_out, rot_axis) * polarisation(k_in, k_out, geom["pol_factor"])
 
 
-def _wrap_omega(omega: jax.Array, omega_mid: jax.Array) -> jax.Array:
-    """Shift omega by a multiple of 360 degrees to be closest to omega_mid."""
-    return omega + 360.0 * jnp.round((omega_mid - omega) / 360.0)
-
-
 @partial(jax.jit, static_argnames=("det_shape",))
 def select_peaks(
     ubi: jax.Array,
@@ -325,7 +320,7 @@ def select_peaks(
         ubi, pos, hkls
     )
     sc, fc, om = centroids[..., 0], centroids[..., 1], centroids[..., 2]
-    om = _wrap_omega(om, 0.5 * (row["omega_min"] + row["omega_max"]))
+    om = nearest_omega(om, 0.5 * (row["omega_min"] + row["omega_max"]))
     keep = (
         valid[..., None]
         & (sc > -margin[0]) & (sc < det_shape[0] - 1 + margin[0])
@@ -468,7 +463,7 @@ def _window_cells(
     mu_s, mu_f, mu_o = mu
     ss, ff, oo, sf, so, fo = shape
     omega_peak = mu_o  # before wrapping
-    mu_o = _wrap_omega(mu_o, 0.5 * (row["omega_min"] + row["omega_max"]))
+    mu_o = nearest_omega(mu_o, 0.5 * (row["omega_min"] + row["omega_max"]))
 
     # Window origin: no gradient through which cells a peak touches
     if org is None:
@@ -1044,7 +1039,7 @@ def check_render(
             sample(ubi[e[i]], pos[e[i]], hkls_j[h[i]], 1.0 - 2.0 * b[i], wavelength, spreads[:, 1], spreads[:, 2])
         )
         x += rng.standard_normal((n_samples, 3)) * sd_extra
-        x[:, 2] += 360.0 * np.round((omega_mid - x[:, 2]) / 360.0)
+        x[:, 2] = nearest_omega(x[:, 2], omega_mid)
         jo = sorted_index[frame[i, 0, 0, 0]]
         in_frame = np.searchsorted(edges_all[jo : jo + wo + 1], x[:, 2]) - 1  # which window frame each sample is in
         mc = np.zeros((wo, ws, wf))

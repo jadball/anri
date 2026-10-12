@@ -17,6 +17,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
+from anri.geom import wrap_omega
+
 from .occupancy import censored_ratio, deviance
 from .predict import lorentz_polarisation, predict
 
@@ -30,7 +32,7 @@ def _system(
     eta, om, ok = predict(U, B, hkls, geom)
     w = lorentz_polarisation(U, B, hkls, geom) * F2[None]
     use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut)
-    om_w = jnp.mod(om - om0, 360.0) + om0
+    om_w = wrap_omega(om, om0)
     fe, fo = (eta + 180.0) / b_e - 0.5, (om_w - om0) / b_o - 0.5
     e0, o0 = jnp.floor(fe).astype(jnp.int32), jnp.floor(fo).astype(jnp.int32)
     te, to = fe - e0, fo - o0

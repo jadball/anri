@@ -9,7 +9,15 @@ from ._impl.detector import (
     lab_to_det,
     raytrace_to_det,
 )
-from ._impl.gonio import dty_and_origin_lab, find_dty_for_beam_xy, lab_to_sample, origin_lab, sample_to_lab
+from ._impl.gonio import (
+    dty_and_origin_lab,
+    find_dty_for_beam_xy,
+    lab_to_sample,
+    nearest_omega,
+    origin_lab,
+    sample_to_lab,
+    wrap_omega,
+)
 from ._impl.scan import (
     dty_to_row,
     recon_positions,
@@ -34,6 +42,7 @@ __all__ = [
     "find_dty_for_beam_xy",
     "lab_to_det",
     "lab_to_sample",
+    "nearest_omega",
     "origin_lab",
     "raytrace_to_det",
     "recon_positions",
@@ -47,4 +56,5 @@ __all__ = [
     "step_grid_from_ybincens",
     "step_to_recon",
     "step_to_sample",
+    "wrap_omega",
 ]

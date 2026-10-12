@@ -1,5 +1,9 @@
 """Functions to convert between goniometer and laboratory frames."""
 
+from __future__ import annotations
+
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 
@@ -102,6 +106,22 @@ def lab_to_sample(v_lab: jax.Array, omega: float, wedge: float, chi: float, dty:
     v_sample = R.T @ (C.T @ (W.T @ (v_lab - v_dty)))
 
     return v_sample
+
+
+def wrap_omega(omega: Any, om0: Any) -> Any:  # noqa: ANN401 (NumPy or JAX)
+    """Return omega shifted by whole turns into [om0, om0 + 360) degrees.
+
+    Plain arithmetic, so it works on NumPy and JAX arrays alike.
+    """
+    return (omega - om0) % 360.0 + om0
+
+
+def nearest_omega(omega: Any, omega_ref: Any) -> Any:  # noqa: ANN401 (NumPy or JAX)
+    """Return omega shifted by whole turns to be within 180 degrees of omega_ref (degrees).
+
+    Plain arithmetic, so it works on NumPy and JAX arrays alike.
+    """
+    return omega + 360.0 * (((omega_ref - omega) / 360.0 + 0.5) // 1.0)
 
 
 @jax.jit

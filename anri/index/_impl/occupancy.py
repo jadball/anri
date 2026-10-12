@@ -21,6 +21,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from anri.fwd._impl.render import _chord_weight
+from anri.geom import wrap_omega
 
 from .data import coarsen_rows
 
@@ -97,7 +98,7 @@ def system(
         [Nv, Q, Nj, 8] each (4 n_beam with a beam profile); unused corners have index -1
     """
     n_k = scan["n_rows"]
-    om_w = jnp.mod(om - scan["om0"], 360.0) + scan["om0"]
+    om_w = wrap_omega(om, scan["om0"])
     fe = (eta + 180.0) / b_e - 0.5
     fo = (om_w - scan["om0"]) / b_o - 0.5
     e0, o0 = jnp.floor(fe).astype(jnp.int32), jnp.floor(fo).astype(jnp.int32)

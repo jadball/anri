@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 from anri.crystal import float64, reflections, rings, structure_factors
 from anri.diffract import ds_to_tth
-from anri.geom import beam_basis, dty_to_row
+from anri.geom import beam_basis, dty_to_row, wrap_omega
 
 
 def ring_table(
@@ -410,7 +410,7 @@ def dty_offsets(
     n_rows = -(-(len(edges) - 1) // gridstep)
     bd = np.broadcast_to(np.nanmean(fd, 1, keepdims=True), fd.shape) if bin_dty is None else np.asarray(bin_dty, float)
     kk = dty_to_row(bd, edges, gridstep)  # each frame's row
-    o = np.floor((np.mod(om - om0, 360.0)) / b_o).astype(int)
+    o = np.floor((wrap_omega(om, om0) - om0) / b_o).astype(int)  # the omega bins of system
     ok = (kk >= 0) & (o >= 0) & (o < n_o) & np.isfinite(fd)
     idx = kk[ok] * n_o + o[ok]
     s = np.bincount(idx, weights=fd[ok] - (dty0 + kk[ok] * ystep), minlength=n_rows * n_o)

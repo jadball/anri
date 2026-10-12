@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 
 from anri.crystal import orientation_grid
 from anri.fwd import hkl_to_k_omega, lorentz, polarisation
-from anri.geom import sample_to_lab
+from anri.geom import sample_to_lab, wrap_omega
 
 from .data import _tth_eta
 
@@ -164,7 +164,7 @@ def completeness(
     completeness, n_valid: jax.Array
         [Nq] each
     """
-    om_w = jnp.mod(om - om0, 360.0) + om0
+    om_w = wrap_omega(om, om0)
     ie = jnp.floor((eta + 180.0) / b_e).astype(jnp.int32) % n_e
     io = jnp.floor((om_w - om0) / b_o).astype(jnp.int32)
     de = jnp.minimum(jnp.ceil(tol_e / b_e).astype(jnp.int32), n_e - 1)
