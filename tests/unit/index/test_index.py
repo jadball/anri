@@ -380,31 +380,45 @@ class TestEndToEnd(unittest.TestCase):
             self.assertGreater(np.median(frac[sel, 0]), 0.5)
 
 
-class TestParamsToml(unittest.TestCase):
-    def test_round_trip(self):
-        import importlib
-        import sys
+class TestProvenance(unittest.TestCase):
+    def test_chain(self):
+        """Each stage file points back to its source by path and id; show prints the chain, first stage first."""
+        import shutil
 
-        tomllib = importlib.import_module("tomllib" if sys.version_info >= (3, 11) else "tomli")  # tomli: the backport
+        import h5py
 
-        from anri.index.__main__ import write_toml
+        from anri.index._impl.stages import STAGES, write_provenance
 
-        tables = {"run": {"command": 'python -m anri.index a "b c"', "flag": True},
-                  "options": {"grid": 1.0, "cand": 64, "y0": None, "path": "C:\\data\\x"},
-                  "resolved": {"lattice": np.array([2.87, 2.87, 2.87]), "sg": np.int64(229), "tol": [0.07, np.float32(0.5)]}}  # fmt: skip
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "p.toml")
-            write_toml(path, tables)
-            with open(path, "rb") as fh:
-                back = tomllib.load(fh)
-        self.assertEqual(back["run"]["command"], tables["run"]["command"])
-        self.assertIs(back["run"]["flag"], True)
-        self.assertEqual(back["options"]["cand"], 64)
-        self.assertEqual(back["options"]["path"], "C:\\data\\x")
-        self.assertNotIn("y0", back["options"])  # TOML has no null
-        self.assertEqual(back["resolved"]["lattice"], [2.87, 2.87, 2.87])
-        self.assertEqual(back["resolved"]["sg"], 229)
-        self.assertEqual(back["resolved"]["tol"], [0.07, 0.5])
+        with tempfile.TemporaryDirectory() as tmp:
+            paths, source = [], None
+            for stage in STAGES:
+                paths.append(os.path.join(tmp, f"x_{stage}.h5"))
+                with h5py.File(paths[-1], "w") as h:
+                    write_provenance(h, stage, source, {"cand": 64, "y0": None, "path": "C:\\data\\x"},
+                                     {"lattice": [2.87, 2.87, 2.87], "flag": True})  # fmt: skip
+                source = paths[-1]
+            self.assertEqual(ix.upstream(paths[3], "histogram"), paths[0])
+            prov = ix.read_provenance(paths[2])
+            self.assertEqual((prov["stage"], prov["options"]["cand"], prov["options"]["path"]),
+                             ("filter", 64, "C:\\data\\x"))  # fmt: skip
+            self.assertNotIn("y0", prov["options"])  # None is left out: HDF5 has no null
+            self.assertEqual(prov["resolved"]["lattice"], [2.87, 2.87, 2.87])
+            self.assertIs(prov["resolved"]["flag"], True)
+            text = ix.show(paths[3])
+            self.assertLess(text.index("[histogram]"), text.index("[search]"))
+            self.assertLess(text.index("[filter]"), text.index("[map]"))
+            # moved together to another folder: the sources are found beside each other
+            moved = os.path.join(tmp, "moved")
+            os.mkdir(moved)
+            for p in paths:
+                shutil.move(p, moved)
+            self.assertEqual(ix.upstream(os.path.join(moved, "x_map.h5"), "histogram"),
+                             os.path.join(moved, "x_histogram.h5"))  # fmt: skip
+            # a remade search is not the one the filter and map were made from
+            with h5py.File(os.path.join(moved, "x_search.h5"), "w") as h:
+                write_provenance(h, "search", os.path.join(moved, "x_histogram.h5"), {}, {})
+            with self.assertRaises(ValueError):
+                ix.upstream(os.path.join(moved, "x_map.h5"), "histogram")
 
 
 if __name__ == "__main__":

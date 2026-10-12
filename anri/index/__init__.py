@@ -10,6 +10,11 @@ The steps, in order (``python -m anri.index`` runs them on an ImageD11 dataset):
    (:func:`match_tolerances`), then kept by the likelihood ratio of a global, intensity-aware orientation fit.
 4. :func:`fit_occupancy`: sparse occupancy of the kept orientations per voxel by MLEM, every voxel fitted jointly.
 5. :func:`populations`: each voxel's occupancy grouped into orientation populations with fractions and spreads.
+
+The same steps as four stages that each write one HDF5 file with its provenance, for the command line, notebooks and
+workflow systems: :func:`stage_histogram` (step 1), :func:`stage_search` (completeness), :func:`stage_filter`
+(likelihood or completeness) and :func:`stage_map` (steps 4 and 5). :func:`show` prints how any stage file was made,
+back to the dataset (:func:`read_provenance` and :func:`upstream` read the chain).
 """
 
 from ._impl.data import (
@@ -53,6 +58,16 @@ from ._impl.predict import (
     predictions,
     prune,
 )
+from ._impl.stages import (
+    load_histogram,
+    read_provenance,
+    show,
+    stage_filter,
+    stage_histogram,
+    stage_map,
+    stage_search,
+    upstream,
+)
 
 __all__ = [
     "GRID_STEPS",
@@ -77,6 +92,7 @@ __all__ = [
     "histogram_pixels",
     "inherit_candidates",
     "lit_table",
+    "load_histogram",
     "match_tolerances",
     "mlem",
     "orientation_mlem",
@@ -89,11 +105,18 @@ __all__ = [
     "predictions",
     "prune",
     "ramp_filter",
+    "read_provenance",
     "reconstruct",
     "ring_profile",
     "ring_table",
     "ring_widths",
+    "show",
+    "stage_filter",
+    "stage_histogram",
+    "stage_map",
+    "stage_search",
     "system",
     "threshold_mask",
     "tth_profile",
+    "upstream",
 ]
