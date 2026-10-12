@@ -9,8 +9,8 @@ import anri.phantom
 
 
 def cubic_ops():
-    return anri.crystal.laue_rotations(
-        anri.crystal.symmetry_matrices(225), anri.crystal.B_matrix([3.6] * 3 + [90.0] * 3)
+    return anri.crystal.orientation.laue_rotations(
+        anri.crystal.structure.symmetry_matrices(225), anri.crystal.structure.B_matrix([3.6] * 3 + [90.0] * 3)
     )
 
 
@@ -41,14 +41,14 @@ class TestPolycrystal(unittest.TestCase):
         parent = np.flatnonzero((grain == g) & ~twin)
         twins = np.flatnonzero(twin)
         m = min(len(parent), len(twins))
-        mis = anri.crystal.disorientation(U[parent[:m]], U[twins[:m]], ops)
+        mis = anri.crystal.orientation.disorientation(U[parent[:m]], U[twins[:m]], ops)
         np.testing.assert_allclose(mis, 60.0, atol=3.0)  # Sigma3, give or take two cells' rotations
         # two voxels of one cell share an orientation; different cells of one grain are a little apart
         same = [np.flatnonzero((cell == c) & (grain == g) & ~twin)[:2] for c in np.unique(cell[(grain == g) & ~twin])]
         pairs = np.array([p for p in same if len(p) == 2])
         np.testing.assert_allclose(U[pairs[:, 0]], U[pairs[:, 1]], atol=1e-12)
         cells = np.array([p[0] for p in same])
-        spread = anri.crystal.disorientation(U[cells[:-1]], U[cells[1:]], ops)
+        spread = anri.crystal.orientation.disorientation(U[cells[:-1]], U[cells[1:]], ops)
         self.assertTrue(0.05 < np.median(spread) < 2.0)
 
 
@@ -97,7 +97,7 @@ class TestDeformation(unittest.TestCase):
         self.assertEqual(tm.shape, (1, 41, 41))
         mis = tm.misorientation[0][tm.phase_ids[0] == 0]
         self.assertTrue(np.all(np.isfinite(mis)) and 0.0 < np.median(mis) < 2.0)
-        e = anri.io.entries_from_tensormap(tm)
+        e = anri.io.imaged11.entries_from_tensormap(tm)
         np.testing.assert_allclose(e["sig_rot"], np.radians(0.05))
 
 

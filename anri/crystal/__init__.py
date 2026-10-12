@@ -1,61 +1,10 @@
-"""Crystallography-related utilities and functions."""
+"""Crystallography: lattices, structures and reflections, and orientations with crystal symmetry.
 
-from ._impl.orientation import (
-    closest_equivalent,
-    cubic_grid_misorientation,
-    cubochoric_quaternions,
-    disorientation,
-    laue_rotations,
-    orientation_grid,
-    to_fundamental_zone,
-)
-from ._impl.structure import (
-    B_matrix,
-    lattice_parameters,
-    reflections,
-    rings,
-    space_group,
-    structure_factors,
-    symmetry_matrices,
-)
-from ._impl.utils import (
-    B_to_rmt,
-    U_B_to_UBI,
-    UBI_to_mt,
-    allowed_hkls,
-    lpars_rlpars_to_B,
-    lpars_to_B,
-    lpars_to_mt,
-    metric_to_volume,
-    mt_to_lpars,
-    mt_to_rmt,
-    rmt_to_mt,
-)
+- :mod:`anri.crystal.lattice`: lattice parameters, metric tensors, B and UB matrices, allowed hkls
+- :mod:`anri.crystal.structure`: crystal structures: lattice, space group, reflections, rings and structure factors
+- :mod:`anri.crystal.orientation`: Laue-group symmetry, disorientations, fundamental zones and orientation grids
+"""
 
-__all__ = [
-    "B_matrix",
-    "B_to_rmt",
-    "UBI_to_mt",
-    "U_B_to_UBI",
-    "allowed_hkls",
-    "closest_equivalent",
-    "cubic_grid_misorientation",
-    "cubochoric_quaternions",
-    "disorientation",
-    "lattice_parameters",
-    "laue_rotations",
-    "lpars_rlpars_to_B",
-    "lpars_to_B",
-    "lpars_to_mt",
-    "metric_to_volume",
-    "mt_to_lpars",
-    "mt_to_rmt",
-    "orientation_grid",
-    "reflections",
-    "rings",
-    "rmt_to_mt",
-    "space_group",
-    "structure_factors",
-    "symmetry_matrices",
-    "to_fundamental_zone",
-]
+from . import lattice, orientation, structure
+
+__all__ = ["lattice", "orientation", "structure"]

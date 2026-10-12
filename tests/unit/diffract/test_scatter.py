@@ -6,7 +6,8 @@ import numpy as np
 from jax import vmap
 
 from anri import diffract
-from anri.geom import det_to_lab, detector_transforms, lab_to_sample
+from anri.geom.detector import det_to_lab, detector_transforms
+from anri.geom.gonio import lab_to_sample
 
 jax.config.update("jax_enable_x64", True)
 
@@ -16,7 +17,7 @@ class TestScaleNormK(unittest.TestCase):
         k_vec = jnp.array([2.0, 0.0, 0.0])
         wavelength = 0.1
         expected = jnp.array([10.0, 0.0, 0.0])
-        result = diffract.scale_norm_k(k_vec, wavelength)
+        result = diffract.scatter.scale_norm_k(k_vec, wavelength)
         np.testing.assert_allclose(result, expected)
 
 
@@ -28,12 +29,12 @@ class TestKToQLab(unittest.TestCase):
 
     def test_k_to_q_lab(self):
         expected = self.q
-        result = diffract.k_to_q_lab(self.k_in, self.k_out)
+        result = diffract.scatter.k_to_q_lab(self.k_in, self.k_out)
         np.testing.assert_allclose(result, expected)
 
     def test_q_lab_to_k_out(self):
         expected = self.k_out
-        result = diffract.q_lab_to_k_out(self.q, self.k_in)
+        result = diffract.scatter.q_lab_to_k_out(self.q, self.k_in)
         np.testing.assert_allclose(result, expected)
 
 
@@ -44,7 +45,7 @@ class TestPeakLabToKOut(unittest.TestCase):
         # k_out should be 1,0,0
         wavelength = 0.5
         expected = (1 / wavelength) * jnp.array([1.0, 0.0, 0.0])
-        result = diffract.peak_lab_to_k_out(peak_lab, origin_lab, wavelength)
+        result = diffract.scatter.peak_lab_to_k_out(peak_lab, origin_lab, wavelength)
         np.testing.assert_allclose(result, expected)
 
 
@@ -60,9 +61,9 @@ class TestQLabToTthEta(unittest.TestCase):
         # compute q_lab from tth, eta with ImageD11:
         self.q_lab_id11 = compute_k_vectors(self.tth, self.eta, self.wavelength).T
         # vectorize our functions for testing
-        self.q_lab_to_tth_eta_vec = vmap(diffract.q_lab_to_tth_eta, in_axes=(0, None))
-        self.tth_eta_to_k_out_vec = vmap(diffract.tth_eta_to_k_out, in_axes=(0, 0, None))
-        self.k_to_q_lab_vec = vmap(diffract.k_to_q_lab, in_axes=(0, 0))
+        self.q_lab_to_tth_eta_vec = vmap(diffract.scatter.q_lab_to_tth_eta, in_axes=(0, None))
+        self.tth_eta_to_k_out_vec = vmap(diffract.scatter.tth_eta_to_k_out, in_axes=(0, 0, None))
+        self.k_to_q_lab_vec = vmap(diffract.scatter.k_to_q_lab, in_axes=(0, 0))
 
     def test_q_lab_to_tth_eta_id11(self):
         # when we convert our ImageD11 q_lab back to tth, eta we should recover the original values
@@ -130,7 +131,7 @@ class TestOmegaSolns(unittest.TestCase):
 
         self.q_sample = UB @ hkls.T
 
-        self.omega_solns_vec = vmap(diffract.omega_solns, in_axes=(1, None, None))
+        self.omega_solns_vec = vmap(diffract.scatter.omega_solns, in_axes=(1, None, None))
 
     def test_omega_solns_id11_nochi_nowedge(self):
         chi = 0.0
@@ -232,7 +233,7 @@ class TestDetToQSample(unittest.TestCase):
         cf.updateGeometry()
 
         # incident wavevector, normalised
-        k_in = diffract.scale_norm_k(np.array([1.0, 0, 0]), pars.get("wavelength"))
+        k_in = diffract.scatter.scale_norm_k(np.array([1.0, 0, 0]), pars.get("wavelength"))
 
         det_trans, beam_cen_shift, x_distance_shift = detector_transforms(
             pars.get("y_center"),
@@ -260,12 +261,12 @@ class TestDetToQSample(unittest.TestCase):
 
         # q_lab - just subtract diffraction origins then normalise and scale by 1/wavelength
         peak_lab_to_k_out_vec = vmap(
-            diffract.peak_lab_to_k_out,
+            diffract.scatter.peak_lab_to_k_out,
             in_axes=(0, None, None),
         )
         k_out_me = peak_lab_to_k_out_vec(v_lab_me, jnp.array([0.0, 0.0, 0.0]), pars.get("wavelength"))
         k_to_q_lab_vec = vmap(
-            diffract.k_to_q_lab,
+            diffract.scatter.k_to_q_lab,
             in_axes=(None, 0),  # constant k_in
         )
         q_lab_me = k_to_q_lab_vec(k_in, k_out_me)
@@ -292,9 +293,9 @@ class TestDetToQSample(unittest.TestCase):
 class TestOmegaSolnsBoth(unittest.TestCase):
     def test_matches_single_solutions(self):
         rng = np.random.default_rng(0)
-        k_in = diffract.scale_norm_k(jnp.array([1.0, 0.0, 0.0]), 0.3)
-        both = vmap(diffract.omega_solns_both, in_axes=(0, None))
-        single = vmap(diffract.omega_solns, in_axes=(0, None, None))
+        k_in = diffract.scatter.scale_norm_k(jnp.array([1.0, 0.0, 0.0]), 0.3)
+        both = vmap(diffract.scatter.omega_solns_both, in_axes=(0, None))
+        single = vmap(diffract.scatter.omega_solns, in_axes=(0, None, None))
         q = jnp.asarray(rng.normal(size=(200, 3)))
         omega1, omega2, valid = both(q, k_in)
         for omega, etasign in ((omega1, 1.0), (omega2, -1.0)):
@@ -309,11 +310,11 @@ class TestAnyBeam(unittest.TestCase):
         rng = np.random.default_rng(0)
         k_in = jnp.array([1.0, 0.2, -0.1])
         tth, eta = jnp.asarray(rng.uniform(1, 60, 20)), jnp.asarray(rng.uniform(-179, 179, 20))
-        k_out = vmap(diffract.tth_eta_to_k_out, in_axes=(0, 0, None, None))(tth, eta, 0.3, k_in)
-        t2, e2 = diffract.k_out_to_tth_eta(k_out, k_in)
+        k_out = vmap(diffract.scatter.tth_eta_to_k_out, in_axes=(0, 0, None, None))(tth, eta, 0.3, k_in)
+        t2, e2 = diffract.scatter.k_out_to_tth_eta(k_out, k_in)
         np.testing.assert_allclose(t2, tth, atol=1e-6)
         np.testing.assert_allclose(e2, eta, atol=1e-6)
         # eta of Q = k_out - k_in is eta of k_out, for any beam
         q = k_out - k_in / jnp.linalg.norm(k_in) / 0.3
-        _, e3 = vmap(diffract.q_lab_to_tth_eta, in_axes=(0, None, None))(q, 0.3, k_in)
+        _, e3 = vmap(diffract.scatter.q_lab_to_tth_eta, in_axes=(0, None, None))(q, 0.3, k_in)
         np.testing.assert_allclose(e3, eta, atol=1e-6)

@@ -56,7 +56,7 @@ class TestAM316L(unittest.TestCase):
         np.testing.assert_allclose(self.tmap.B[self.mask][:, 0, 0], 1 / a, rtol=1e-6)  # no 2pi
 
     def test_entries(self):
-        from anri.io import entries_from_tensormap
+        from anri.io.imaged11 import entries_from_tensormap
 
         e = entries_from_tensormap(self.tmap)
         self.assertEqual(len(e["pos"]), 7845)

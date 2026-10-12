@@ -48,44 +48,45 @@ class TestLattice(unittest.TestCase):
                 uc = unitcell_id11(lp, "P")
             except np.linalg.LinAlgError:
                 continue
-            np.testing.assert_allclose(anri.crystal.B_matrix(lp), uc.B, rtol=1e-7, atol=1e-10)
+            np.testing.assert_allclose(anri.crystal.structure.B_matrix(lp), uc.B, rtol=1e-7, atol=1e-10)
             with anri.maths.utils.float64():
-                mt = np.asarray(anri.crystal.lpars_to_mt(lp))
-                rmt = np.asarray(anri.crystal.mt_to_rmt(mt))
+                mt = np.asarray(anri.crystal.lattice.lpars_to_mt(lp))
+                rmt = np.asarray(anri.crystal.lattice.mt_to_rmt(mt))
                 np.testing.assert_allclose(mt, uc.g, rtol=1e-7, atol=1e-10)
                 np.testing.assert_allclose(rmt, uc.gi, rtol=1e-7, atol=1e-10)
                 np.testing.assert_allclose(
-                    anri.crystal.mt_to_lpars(rmt), [uc.astar, uc.bstar, uc.cstar, uc.alphas, uc.betas, uc.gammas]
+                    anri.crystal.lattice.mt_to_lpars(rmt),
+                    [uc.astar, uc.bstar, uc.cstar, uc.alphas, uc.betas, uc.gammas],
                 )
-                np.testing.assert_allclose(anri.crystal.metric_to_volume(mt), cellvolume(lp))
+                np.testing.assert_allclose(anri.crystal.lattice.metric_to_volume(mt), cellvolume(lp))
 
     def test_float64(self):
         """The B matrix is float64 (the JAX definition evaluated in float64), whatever JAX's global setting."""
-        B = anri.crystal.B_matrix([3.1, 3.2, 5.1, 90.0, 95.0, 120.0])
+        B = anri.crystal.structure.B_matrix([3.1, 3.2, 5.1, 90.0, 95.0, 120.0])
         self.assertEqual(B.dtype, np.float64)
         with anri.maths.utils.float64():
-            ref = np.asarray(anri.crystal.lpars_to_B(np.array([3.1, 3.2, 5.1, 90.0, 95.0, 120.0])))
+            ref = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([3.1, 3.2, 5.1, 90.0, 95.0, 120.0])))
         np.testing.assert_array_equal(B, ref)
 
 
 class TestSpaceGroup(unittest.TestCase):
     def test_number_name_and_matrices(self):
-        self.assertEqual(anri.crystal.space_group("Fm-3m"), 225)
-        self.assertEqual(anri.crystal.space_group(read_cif("Fe.cif")), 229)
-        S = anri.crystal.symmetry_matrices(225)
+        self.assertEqual(anri.crystal.structure.space_group("Fm-3m"), 225)
+        self.assertEqual(anri.crystal.structure.space_group(read_cif("Fe.cif")), 229)
+        S = anri.crystal.structure.symmetry_matrices(225)
         self.assertEqual(S.shape, (192, 4, 4))  # 48 point operations x 4 F-centring translations
         R = S[:, :3, :3]
         np.testing.assert_allclose(R @ R.transpose(0, 2, 1), np.broadcast_to(np.eye(3), R.shape), atol=1e-12)
         np.testing.assert_allclose(S[:, 3], np.broadcast_to([0, 0, 0, 1], (192, 4)))
 
     def test_lattice_parameters(self):
-        np.testing.assert_allclose(anri.crystal.lattice_parameters(read_cif("Ti.cif"))[3:], [90, 90, 120])
+        np.testing.assert_allclose(anri.crystal.structure.lattice_parameters(read_cif("Ti.cif"))[3:], [90, 90, 120])
 
 
 class TestReflections(unittest.TestCase):
     def test_bcc_absences_and_order(self):
         a, wl = 2.8665, 0.3
-        r = anri.crystal.reflections([a, a, a, 90, 90, 90], 229, wl, 1.0)
+        r = anri.crystal.structure.reflections([a, a, a, 90, 90, 90], 229, wl, 1.0)
         self.assertEqual(r["hkl"].dtype.kind, "i")
         self.assertTrue(np.all(r["hkl"].sum(1) % 2 == 0))  # I-centring: h + k + l even
         self.assertTrue(np.all(np.diff(r["ds"]) >= -1e-12))
@@ -103,10 +104,10 @@ class TestReflections(unittest.TestCase):
         from ImageD11.unitcell import unitcell as unitcell_id11
 
         xtl = read_cif("Fe.cif")
-        lp, sg = anri.crystal.lattice_parameters(xtl), anri.crystal.space_group(xtl)
+        lp, sg = anri.crystal.structure.lattice_parameters(xtl), anri.crystal.structure.space_group(xtl)
         dsmax, wl = 1.2, 0.18
-        r = anri.crystal.reflections(lp, sg, wl, dsmax)
-        ring, ring_ds = anri.crystal.rings(r["ds"])
+        r = anri.crystal.structure.reflections(lp, sg, wl, dsmax)
+        ring, ring_ds = anri.crystal.structure.rings(r["ds"])
         uc = unitcell_id11(lp, sg)
         uc.makerings(dsmax, tol=1e-4)
         np.testing.assert_allclose(ring_ds, uc.ringds, rtol=1e-6)
@@ -114,20 +115,20 @@ class TestReflections(unittest.TestCase):
             self.assertEqual(sorted(map(tuple, r["hkl"][ring == i].tolist())), sorted(uc.ringhkls[ds]))
 
     def test_rings_do_not_chain(self):
-        ring, ring_ds = anri.crystal.rings([1.0, 1.00005, 1.0001, 1.00015, 1.0002], tol=1e-4)
+        ring, ring_ds = anri.crystal.structure.rings([1.0, 1.00005, 1.0001, 1.00015, 1.0002], tol=1e-4)
         np.testing.assert_array_equal(ring, [0, 0, 0, 1, 1])  # a ring is within tol of its first member
         np.testing.assert_allclose(ring_ds, [1.0, 1.00015])
         with self.assertRaises(ValueError):
-            anri.crystal.rings([1.0, 0.5])
+            anri.crystal.structure.rings([1.0, 0.5])
 
 
 class TestStructureFactors(unittest.TestCase):
     def test_special_positions_and_warning(self):
         xtl = read_cif("Si.cif")
-        lp, sg, wl = anri.crystal.lattice_parameters(xtl), anri.crystal.space_group(xtl), 0.3
-        r = anri.crystal.reflections(lp, sg, wl, 1.0)
+        lp, sg, wl = anri.crystal.structure.lattice_parameters(xtl), anri.crystal.structure.space_group(xtl), 0.3
+        r = anri.crystal.structure.reflections(lp, sg, wl, 1.0)
         with self.assertWarns(UserWarning):  # this CIF has no thermal factors
-            F2 = anri.crystal.structure_factors(xtl, r["hkl"], wl)
+            F2 = anri.crystal.structure.structure_factors(xtl, r["hkl"], wl)
         # {222} of diamond is allowed by the space group but zero from the atom positions
         zero = F2 < 1e-6 * F2.max()
         self.assertTrue(zero.any())
@@ -140,7 +141,7 @@ class TestStructureFactors(unittest.TestCase):
         built = DansCrystal()  # built in code, with a non-zero U_iso
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            anri.crystal.structure_factors(built, np.array([[1, 0, 0], [1, 1, 0]]), 0.3)
+            anri.crystal.structure.structure_factors(built, np.array([[1, 0, 0], [1, 1, 0]]), 0.3)
 
 
 if __name__ == "__main__":

@@ -183,6 +183,10 @@ it. The layers, each importing only from those above it:
 5. `anri.crystal`: lattices, symmetry, structure factors, and orientations *with* crystal symmetry.
 6. Methods: `anri.fwd`, `anri.index`.
 
+Modules are the public API, used by their full path (`anri.geom.gonio.sample_to_lab`). A package's `__init__`
+imports its modules and lists them in `__all__`, and re-exports nothing else. Names private to a module start with an
+underscore.
+
 `anri.io` and `anri.phantom` sit at the edges. When unifying copies, prove the outputs unchanged with a before/after
 comparison, and explain every difference that remains.
 

@@ -7,9 +7,13 @@ import numpy as np
 import anri.crystal
 import anri.geom
 import anri.maths.rotation
-from anri.diffract import lorentz, polarisation
-from anri.fwd import (
-    beam_weight,
+from anri.diffract.factors import lorentz, polarisation
+from anri.fwd.render import (
+    _centroid,
+    _compact,
+    _free_memory,
+    _merge,
+    _merge_host,
     check_render,
     guess_batch_size,
     make_row,
@@ -17,144 +21,11 @@ from anri.fwd import (
     render_row,
     select_peaks,
 )
-from anri.fwd._impl.render import _centroid, _compact, _free_memory, _merge, _merge_host
-from anri.fwd._impl.scan import get_centroid_scan
-from anri.geom import sample_to_lab
+from anri.fwd.scan import get_centroid_scan
+from anri.geom.beam import beam_weight
+from anri.geom.gonio import sample_to_lab
 
 jax.config.update("jax_enable_x64", True)
-
-
-def _trapezoid(y: np.ndarray, x: np.ndarray) -> float:
-    """Trapezoid rule (np.trapezoid needs numpy >= 2)."""
-    return float(np.sum(0.5 * (y[1:] + y[:-1]) * np.diff(x)))
-
-
-def _geom(sig, width=0.0, size=1.2, k=(1.0, 0.0, 0.0), sig_v=0.0, width_v=0.0, cube=False):
-    """The beam_weight part of a geometry dict."""
-    return {"k_in_lab": jnp.asarray(k), "sig_beam": sig, "width_beam": width, "sig_beam_v": sig_v,
-            "width_beam_v": width_v, "voxel_3d": cube, "voxel_size": size}  # fmt: skip
-
-
-def _weight(delta, omega, geom, z=0.0):
-    """beam_weight of a voxel at lab (0, delta, z): delta along lab y from the beam's centre line."""
-    return beam_weight(jnp.array([0.0, delta, z]), omega, geom)
-
-
-class TestTailMass(unittest.TestCase):
-    def test_upper_tail_float32(self):
-        # Phi(b) - Phi(a) cancels in float32 far in the upper tail; the mass must stay accurate and never negative
-        from scipy.stats import norm as sp_norm
-
-        from anri.fwd._impl.render import bin_fractions, truncated_moments
-
-        lo = np.array([3.0, 5.0, 6.0, -5.1, -0.1], np.float32)
-        hi = lo + np.float32(0.1)
-        expect = sp_norm.cdf(hi.astype(float)) - sp_norm.cdf(lo.astype(float))
-        f = jnp.float32
-        for got in (bin_fractions(f(lo), f(hi), f(0.0), f(1.0)), truncated_moments(f(lo), f(hi), f(0.0), f(1.0))[0]):
-            self.assertEqual(got.dtype, jnp.float32)
-            np.testing.assert_allclose(np.asarray(got, float), expect, rtol=1e-3)
-            self.assertTrue(np.all(np.asarray(got) >= 0))
-
-
-class TestBeamWeight(unittest.TestCase):
-    def test_area(self):
-        # a column's weight integrated over its distance from the beam is its area, for any beam: the profile
-        # integrates to 1
-        delta = np.linspace(-20, 20, 40001)
-        for omega in [0.0, 10.0, 45.0, 90.0, 123.4]:
-            for sig, width in [(0.05, 0.0), (0.5, 0.0), (3.0, 0.0), (0.05, 2.0), (0.5, 6.0)]:
-                g = _geom(sig, width, size=2.0)
-                w = jax.vmap(_weight, in_axes=(0, None, None))(jnp.asarray(delta), omega, g)
-                np.testing.assert_allclose(_trapezoid(np.asarray(w), delta), 4.0, rtol=1e-6)
-
-    def test_convolution(self):
-        # compare with a brute-force convolution of the chord length with the profile, Gaussian and flat-top
-        from scipy.special import ndtr
-
-        size, omega = 1.5, 30.0
-        u = np.linspace(-6, 6, 12001)
-        c, s = np.abs(np.cos(np.radians(omega))), np.abs(np.sin(np.radians(omega)))
-        a, b = 0.5 * size * (c + s), 0.5 * size * abs(c - s)
-        chord = np.clip((a - np.abs(u)) / (a - b), 0, 1) * size / max(c, s)
-        for sig, width in [(0.4, 0.0), (0.1, 2.0), (0.4, 1.0)]:
-            for d in [-1.0, 0.0, 0.3, 1.2]:
-                if width == 0:
-                    p = np.exp(-0.5 * ((d - u) / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
-                else:
-                    p = (ndtr((d - u + width / 2) / sig) - ndtr((d - u - width / 2) / sig)) / width
-                np.testing.assert_allclose(
-                    _weight(d, omega, _geom(sig, width, size)), _trapezoid(chord * p, u), rtol=1e-4
-                )
-
-    def test_continuous(self):
-        # the rectangle branch at omega = 0 joins the trapezoid, and the Gaussian limit joins the flat top
-        w = [_weight(0.3, om, _geom(0.4, size=1.0)) for om in (0.0, 1e-3, 1e-1)]
-        np.testing.assert_allclose(w[0], w[1], rtol=1e-5)
-        np.testing.assert_allclose(w[0], w[2], rtol=1e-3)
-        w = [_weight(0.3, 30.0, _geom(0.4, width)) for width in (0.0, 0.0039, 0.0041)]  # switch at 0.01 sigma
-        np.testing.assert_allclose(w[0], w[1], rtol=1e-6)
-        np.testing.assert_allclose(w[0], w[2], rtol=1e-5)
-
-
-def _brute_force_weight(delta, omega, size, sig_h, k_in, sig_v=None, width_h=0.0, cube_z=None, n=400, nz=600):
-    """Integrate the beam profile over a square voxel rotated by omega, shifted by delta along lab y.
-
-    The beam passes through the origin along k_in, across it horizontally a flat top of width_h blurred by a
-    Gaussian of sig_h. With sig_v, it is also Gaussian vertically, and the voxel is a column, integrated over height
-    on a grid; with cube_z too, the voxel is a cube centred at that height.
-    """
-    from scipy.special import ndtr
-
-    k = np.asarray(k_in, float) / np.linalg.norm(k_in)
-    e_h = np.cross([0.0, 0.0, 1.0], k)
-    e_h /= np.linalg.norm(e_h)
-    e_v = np.cross(k, e_h)
-    t = (np.arange(n) + 0.5) / n * size - size / 2
-    s, u = np.meshgrid(t, t, indexing="ij")
-    c, sn = np.cos(np.radians(omega)), np.sin(np.radians(omega))
-    x, y = c * s - sn * u, sn * s + c * u + delta  # voxel rotated by +omega about z, then moved by delta along y
-    area = (size / n) ** 2
-
-    def profile(d, sig, width=0.0):
-        if width == 0:
-            return np.exp(-0.5 * (d / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
-        return (ndtr((d + width / 2) / sig) - ndtr((d - width / 2) / sig)) / width
-
-    p_h = profile(x * e_h[0] + y * e_h[1], sig_h, width_h)
-    if sig_v is None:
-        return np.sum(p_h) * area
-    if cube_z is None:
-        zmax = 8 * (sig_v + size) / e_v[2]
-        z = (np.arange(nz) + 0.5) / nz * 2 * zmax - zmax
-    else:
-        z = cube_z + (np.arange(nz) + 0.5) / nz * size - size / 2
-    p_v = profile(x[..., None] * e_v[0] + y[..., None] * e_v[1] + z * e_v[2], sig_v)
-    return np.sum(p_h[..., None] * p_v) * area * (z[1] - z[0])
-
-
-class TestBeamWeightGeometry(unittest.TestCase):
-    def test_horizontal_beam(self):
-        # a beam at psi from lab x in the horizontal plane, Gaussian and flat-top
-        for psi, omega, delta, width in ((20.0, 30.0, 0.3, 0.0), (-35.0, 70.0, -0.5, 0.0), (10.0, 0.0, 0.0, 1.5)):
-            k = [np.cos(np.radians(psi)), np.sin(np.radians(psi)), 0.0]
-            expected = _brute_force_weight(delta, omega, 1.2, 0.4, k, width_h=width)
-            np.testing.assert_allclose(_weight(delta, omega, _geom(0.4, width, k=k)), expected, rtol=2e-4)
-
-    def test_tilted_pencil(self):
-        # a column, tilted beam: the pencil's vertical profile integrates out
-        for alpha, psi, omega, delta in ((25.0, 0.0, 30.0, 0.2), (40.0, 15.0, 50.0, -0.4)):
-            a, p = np.radians(alpha), np.radians(psi)
-            k = [np.cos(a) * np.cos(p), np.cos(a) * np.sin(p), np.sin(a)]
-            expected = _brute_force_weight(delta, omega, 1.2, 0.4, k, sig_v=0.3, n=200)
-            np.testing.assert_allclose(_weight(delta, omega, _geom(0.4, k=k)), expected, rtol=1e-3)
-
-    def test_cube(self):
-        # a cube (3D map), horizontal beam: the vertical profile over the cube's height
-        for omega, delta, z in ((30.0, 0.3, 0.0), (10.0, -0.2, 0.5), (60.0, 0.1, -1.0)):
-            expected = _brute_force_weight(delta, omega, 1.2, 0.4, [1, 0, 0], sig_v=0.3, cube_z=z, n=200, nz=400)
-            g = _geom(0.4, sig_v=0.3, cube=True)
-            np.testing.assert_allclose(_weight(delta, omega, g, z=z), expected, rtol=1e-3)
 
 
 class TestIntensityFactors(unittest.TestCase):
@@ -183,11 +54,11 @@ def _single_peak_setup():
         "wavelength": 12.398419843320026 / 43.0, "wedge": 0.0, "chi": 0.0,
     }  # fmt: skip
     det_shape = (2162, 2068)
-    det_trans, shift, xshift = anri.geom.detector_transforms(
+    det_trans, shift, xshift = anri.geom.detector.detector_transforms(
         *(pars[k] for k in ("y_center", "y_size", "tilt_y", "z_center", "z_size", "tilt_z", "tilt_x", "distance")),
         *(pars[k] for k in ("o11", "o12", "o21", "o22")),
     )
-    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(det_trans, shift, xshift)
+    s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector.detector_basis_vectors_lab(det_trans, shift, xshift)
     voxel = 1.0
     geom = {
         "wavelength": pars["wavelength"], "k_in_lab": jnp.array([1.0, 0.0, 0.0]),
@@ -200,7 +71,7 @@ def _single_peak_setup():
     }  # fmt: skip
 
     U = np.asarray(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0))
-    B = np.asarray(anri.crystal.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+    B = np.asarray(anri.crystal.lattice.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
     ubi = np.linalg.inv(U @ B)
     i, j = np.mgrid[0:10, 0:10]
     pos = np.stack([(i.ravel() - 4.5) * voxel, (j.ravel() - 4.5) * voxel, np.zeros(100)], 1)
@@ -211,7 +82,7 @@ def _single_peak_setup():
     hkls = np.array([h for h in np.ndindex(3, 3, 3) if sorted(np.abs(np.array(h) - 1)) == [0, 1, 1]]) - 1
     args = (1.0, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, 0.0, 0.0, 0.0, s_step_lab, f_step_lab, det_origin_lab)
     cen, valid = centroid_fn(ubi, jnp.zeros(3), jnp.asarray(hkls, float), *args)
-    xyz = jax.vmap(anri.geom.det_to_lab, in_axes=(0, 0, None, None, None))(
+    xyz = jax.vmap(anri.geom.detector.det_to_lab, in_axes=(0, 0, None, None, None))(
         cen[:, 0], cen[:, 1], det_trans, shift, xshift
     )
     eta = np.degrees(np.arctan2(-xyz[:, 1], xyz[:, 2]))
@@ -465,7 +336,7 @@ class TestLargeBatch(unittest.TestCase):
 
         from ImageD11.sinograms.tensor_map import TensorMap
 
-        from anri.io import entries_from_tensormap, geom_from_pars
+        from anri.io.imaged11 import entries_from_tensormap, geom_from_pars
 
         data = os.path.join(os.path.dirname(__file__), "..", "..", "data")
         tmap = TensorMap.from_h5(os.path.join(data, "phantoms", "quartz_flyxdm", "quartz_flyxdm_tmap.h5"))
@@ -474,8 +345,10 @@ class TestLargeBatch(unittest.TestCase):
         import Dans_Diffraction
 
         xtl = Dans_Diffraction.Crystal(os.path.join(data, "cif", "SiO2.cif"))
-        refl = anri.crystal.reflections(anri.crystal.lattice_parameters(xtl), anri.crystal.space_group(xtl), wl, 1.0)
-        F2 = anri.crystal.structure_factors(xtl, refl["hkl"], wl)
+        refl = anri.crystal.structure.reflections(
+            anri.crystal.structure.lattice_parameters(xtl), anri.crystal.structure.space_group(xtl), wl, 1.0
+        )
+        F2 = anri.crystal.structure.structure_factors(xtl, refl["hkl"], wl)
         strong = F2 > 0.01  # as the old rings_table kept them
         hkls = jnp.asarray(refl["hkl"][strong], dtype=float)
         F2 = jnp.asarray(F2[strong], dtype=float)
@@ -571,9 +444,9 @@ class TestGuessBatchSize(unittest.TestCase):
         # GPUs: free device memory, without the host copy of the output that CPU devices share memory with
         from unittest import mock
 
-        with mock.patch("anri.fwd._impl.render._free_memory", return_value=(2**30, True)):
+        with mock.patch("anri.fwd.render._free_memory", return_value=(2**30, True)):
             host = self.guess()
-        with mock.patch("anri.fwd._impl.render._free_memory", return_value=(2**30, False)):
+        with mock.patch("anri.fwd.render._free_memory", return_value=(2**30, False)):
             device = self.guess()
         self.assertGreaterEqual(device, host)
 
@@ -584,12 +457,12 @@ class TestGuessBatchSize(unittest.TestCase):
         fake = mock.MagicMock()
         analysis = fake.lower.return_value.compile.return_value.memory_analysis
         analysis.return_value = None  # none at all
-        with mock.patch("anri.fwd._impl.render._render_sharded", fake), self.assertRaises(RuntimeError):
+        with mock.patch("anri.fwd.render._render_sharded", fake), self.assertRaises(RuntimeError):
             guess_batch_size(*args)
         sizes = mock.MagicMock(temp_size_in_bytes=1000, argument_size_in_bytes=0, output_size_in_bytes=0)
         sizes.alias_size_in_bytes = 0
         analysis.return_value = sizes  # the same for any batch
-        with mock.patch("anri.fwd._impl.render._render_sharded", fake), self.assertRaises(RuntimeError):
+        with mock.patch("anri.fwd.render._render_sharded", fake), self.assertRaises(RuntimeError):
             guess_batch_size(*args)
 
     def test_free_memory(self):
@@ -668,8 +541,8 @@ class TestBoxBeam(unittest.TestCase):
     def test_dct_spot(self):
         """A cube of voxels in a box beam bigger than it, near-field detector: every voxel is lit equally, and the
         spot is the cube projected along the diffracted beam."""
-        from anri.fwd._impl.render import _peak_cov
-        from anri.io import geom_from_pars
+        from anri.fwd.render import _peak_cov
+        from anri.io.imaged11 import geom_from_pars
 
         wl = 0.2845704100778472
         pars = {
@@ -682,7 +555,7 @@ class TestBoxBeam(unittest.TestCase):
             width_beam=1000.0, sig_beam_v=0.5, width_beam_v=1000.0, voxel_3d=True,
         )  # fmt: skip
         g = jax.tree.map(jnp.asarray, geom)
-        B = anri.crystal.lpars_to_B(jnp.array([2.8665, 2.8665, 2.8665, 90.0, 90.0, 90.0]))
+        B = anri.crystal.lattice.lpars_to_B(jnp.array([2.8665, 2.8665, 2.8665, 90.0, 90.0, 90.0]))
         ubi = jnp.linalg.inv(
             anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0) @ B
         )

@@ -7,7 +7,7 @@ import jax
 import numpy as np
 
 import anri.io
-from anri.io import (
+from anri.io.imaged11 import (
     beam_from_pars,
     detector_from_pars,
     entries_from_tensormap,
@@ -75,10 +75,10 @@ class TestDataset(unittest.TestCase):
             with h5py.File(dsfile, "r") as f:
                 self.assertEqual(f.attrs["y0"], 0.25)
             # the paths it records, moved elsewhere
-            moved = anri.io.read_dataset(dsfile, remap={tmp: "/elsewhere"})
+            moved = anri.io.imaged11.read_dataset(dsfile, remap={tmp: "/elsewhere"})
             self.assertEqual(moved["sparsefile"], os.path.join("/elsewhere", "s_sparse.h5"))
             # one scan's frames read back
-            px = anri.io.read_sparse_frames(sparse, "2.1::[1:4]", range(2))
+            px = anri.io.imaged11.read_sparse_frames(sparse, "2.1::[1:4]", range(2))
             self.assertEqual((px["shape"], len(px["row"])), ((4, 4), 0))
 
 
@@ -86,9 +86,9 @@ class TestGeometry(unittest.TestCase):
     def test_par_or_pars_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             geo = {"distance": 150e3, "wavelength": 0.28}
-            parfile = anri.io.write_pars(tmp, geo, {"Fe": {"cell__a": 2.87}, "Au": {"cell__a": 4.08}})
-            self.assertEqual(anri.io.read_geometry(parfile)["distance"], 150e3)  # two phases: no phase needed
-            self.assertEqual(anri.io.read_geometry(os.path.join(tmp, "geometry.par"))["wavelength"], 0.28)
+            parfile = anri.io.imaged11.write_pars(tmp, geo, {"Fe": {"cell__a": 2.87}, "Au": {"cell__a": 4.08}})
+            self.assertEqual(anri.io.imaged11.read_geometry(parfile)["distance"], 150e3)  # two phases: no phase needed
+            self.assertEqual(anri.io.imaged11.read_geometry(os.path.join(tmp, "geometry.par"))["wavelength"], 0.28)
 
 
 class TestSpatial(unittest.TestCase):
@@ -96,7 +96,7 @@ class TestSpatial(unittest.TestCase):
         """A DataSet's e2dx/e2dy maps (read_dataset -> read_spatial) move each pixel as ImageD11 moves its peaks."""
         from fabio.edfimage import EdfImage
 
-        from anri.io import read_dataset, read_spatial, stream_sparse
+        from anri.io.imaged11 import read_dataset, read_spatial, stream_sparse
 
         det_shape = (20, 30)
         dx = np.fromfunction(lambda s, f: 0.01 * f, det_shape, dtype=np.float32)  # along fast
@@ -127,7 +127,7 @@ class TestSpatial(unittest.TestCase):
         """dx, dy from a pyFAI detector file, as ImageD11's get_e2dx_from_h5."""
         from ImageD11.blobcorrector import get_e2dx_from_h5
 
-        from anri.io import read_spatial
+        from anri.io.imaged11 import read_spatial
 
         rng = np.random.default_rng(0)
         n_s, n_f, ps = 6, 5, 75e-6
@@ -194,7 +194,7 @@ class TestSimulateSparse(unittest.TestCase):
             "tilt_x": 0.0, "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1, "wavelength": 0.2883,
         }  # fmt: skip
         geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0)
-        B = np.asarray(anri.crystal.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+        B = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
         entries = {"ubi": np.linalg.inv(B)[None], "pos": np.zeros((1, 3)), "density": np.ones(1)}
         omega, dty = motor_grid((0.0, 10.0), 0.25, (100.0, 101.0), 1.0)  # the beam never reaches the voxel
         with tempfile.TemporaryDirectory() as tmp:
@@ -220,7 +220,7 @@ class TestSimulateSparse(unittest.TestCase):
         U = np.asarray(
             anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0)
         )
-        B = np.asarray(anri.crystal.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+        B = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
         i, j = np.mgrid[0:4, 0:4]
         pos = np.stack([i.ravel() - 1.5, j.ravel() - 1.5, np.zeros(16)], 1)
         entries = {"ubi": np.repeat(np.linalg.inv(U @ B)[None], 16, 0), "pos": pos, "density": np.full(16, 50.0)}
@@ -254,7 +254,7 @@ class TestSimulateSparse(unittest.TestCase):
         cell = {"cell__a": a, "cell__b": a, "cell__c": a, "cell_alpha": 90.0, "cell_beta": 90.0, "cell_gamma": 90.0}
         cell["cell_lattice_[P,A,B,C,I,F,R]"] = 229
         geom = geom_from_pars(pars, 0.0, pars["wavelength"] * 1e-3, 1e-3, 1e-3, sig_beam=0.5, voxel_size=1.0)
-        B = np.asarray(anri.crystal.lpars_to_B(np.array([a, a, a, 90.0, 90.0, 90.0])))
+        B = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([a, a, a, 90.0, 90.0, 90.0])))
         U = np.asarray(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0))
         entries = {"ubi": np.linalg.inv(U @ B)[None], "pos": np.zeros((1, 3)), "density": np.full(1, 100.0)}
         hkls = np.array([[1.0, 1.0, 0.0], [-1.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
@@ -323,11 +323,13 @@ class TestGeomFromPars(unittest.TestCase):
         }  # fmt: skip
         det = detector_from_pars(pars)
         for sc, fc in ((1500.3, 700.8), (12.0, 2000.5)):
-            xyz = anri.geom.det_to_lab(sc, fc, det["det_trans"], det["beam_cen_shift"], det["x_distance_shift"])
+            xyz = anri.geom.detector.det_to_lab(
+                sc, fc, det["det_trans"], det["beam_cen_shift"], det["x_distance_shift"]
+            )
             np.testing.assert_allclose(
                 xyz, transform.compute_xyz_lab(np.array([[sc], [fc]]), **pars).ravel(), atol=1e-6
             )
-            back = anri.geom.raytrace_to_det(
+            back = anri.geom.detector.raytrace_to_det(
                 xyz / jnp.linalg.norm(xyz), jnp.zeros(3), det["s_step_lab"], det["f_step_lab"], det["det_origin_lab"]
             )
             np.testing.assert_allclose(back, (sc, fc), atol=1e-8)
@@ -339,7 +341,7 @@ class TestGeomFromPars(unittest.TestCase):
 
         import anri.crystal
         import anri.geom
-        from anri.fwd._impl.scan import get_centroid_scan
+        from anri.fwd.scan import get_centroid_scan
 
         pars = {
             "y_center": 1049.9, "y_size": 75.0, "tilt_y": -2e-3,
@@ -352,7 +354,7 @@ class TestGeomFromPars(unittest.TestCase):
         U = np.asarray(
             anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0)
         )
-        B = np.asarray(anri.crystal.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+        B = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
         ubi = np.linalg.inv(U @ B)
         checked = 0
         for hkl in ([1.0, 1.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 1.0], [-1.0, 2.0, 1.0], [3.0, 1.0, 0.0]):
@@ -378,7 +380,7 @@ class TestGeomFromPars(unittest.TestCase):
 
 class TestPrefetch(unittest.TestCase):
     def test_order_errors_and_early_stop(self):
-        from anri.io import prefetch
+        from anri.io.imaged11 import prefetch
 
         self.assertEqual(list(prefetch(range(100), depth=3)), list(range(100)))
 
@@ -397,7 +399,7 @@ class TestPrefetch(unittest.TestCase):
 
 class TestStreamMonitor(unittest.TestCase):
     def test_normalised_frame_by_frame(self):
-        from anri.io import stream_sparse
+        from anri.io.imaged11 import stream_sparse
 
         det_shape = (20, 30)
         omega, dty = np.arange(4) + 0.5, np.full(4, 0.0)
@@ -423,7 +425,7 @@ class TestStreamMonitor(unittest.TestCase):
         """A fly scan in one sparse group, which the DataSet slices into rotations ("1.1::[0:3]"): omega and dty come
         from the DataSet (here dty constant per rotation, as ImageD11 can make it), not from the group's drifting
         readings; frames the DataSet does not cover are dropped."""
-        from anri.io import stream_sparse
+        from anri.io.imaged11 import stream_sparse
 
         omega, dty = np.arange(7) + 0.5, np.array([-0.2, 0.1, 0.3, 0.6, 0.7, 0.9, 0.95])  # drifting readings
         with tempfile.TemporaryDirectory() as tmp:
@@ -442,7 +444,7 @@ class TestStreamMonitor(unittest.TestCase):
 
     def test_monitor_from_the_master_file(self):
         """A counter the sparse file lacks is read from the master file's scan of the same name, cut to the frames."""
-        from anri.io import read_monitor, stream_sparse
+        from anri.io.imaged11 import read_monitor, stream_sparse
 
         det_shape = (20, 30)
         omega, dty = np.arange(3) + 0.5, np.full(3, 0.0)
