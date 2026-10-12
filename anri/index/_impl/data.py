@@ -15,7 +15,8 @@ import numpy as np
 from Dans_Diffraction.classes_crystal import Crystal as DansCrystal
 from jax.typing import ArrayLike
 
-from anri.crystal import reflections, rings, structure_factors
+from anri.crystal import float64, reflections, rings, structure_factors
+from anri.diffract import ds_to_tth
 from anri.geom import beam_basis, dty_to_row
 
 
@@ -65,7 +66,8 @@ def ring_table(
     if structure is not None:
         F2 = structure_factors(structure, hkls, wavelength)
         F2 = F2 / max(F2.mean(), 1e-30)
-    ring_tth = np.degrees(2 * np.arcsin(ring_ds[:n_rings] * wavelength / 2))
+    with float64():
+        ring_tth = np.asarray(ds_to_tth(ring_ds[:n_rings], wavelength))
     return {
         "hkls": hkls.astype(np.float32),
         "F2": F2.astype(np.float32),

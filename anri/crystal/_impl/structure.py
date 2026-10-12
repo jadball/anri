@@ -20,6 +20,8 @@ from Dans_Diffraction.classes_crystal import Symmetry as DansSymmetry
 from Dans_Diffraction.functions_crystallography import find_spacegroup
 from jax.typing import ArrayLike
 
+from anri.diffract import ds_to_tth
+
 from .utils import allowed_hkls, lpars_to_B
 
 
@@ -150,7 +152,8 @@ def reflections(
     hkl, ds = hkl[keep], ds[keep]
     order = np.lexsort((hkl[:, 2], hkl[:, 1], hkl[:, 0], np.round(ds, 10)))
     hkl, ds = hkl[order], ds[order]
-    tth = np.degrees(2 * np.arcsin(np.clip(ds * wavelength / 2, 0.0, 1.0)))
+    with float64():
+        tth = np.asarray(ds_to_tth(np.minimum(ds, 2.0 / wavelength), wavelength))  # at most 180 degrees
     return {"hkl": hkl, "ds": ds, "tth": tth}
 
 
