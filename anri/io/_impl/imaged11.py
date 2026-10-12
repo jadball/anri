@@ -665,8 +665,8 @@ def tensormap_from_recon(
 def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0) -> dict:
     """Map entries for one phase of a 2D ImageD11 TensorMap, at sample-frame positions.
 
-    Uses ImageD11's own map -> reconstruction -> sample conventions, so a simulation from this map lines
-    up with what ImageD11 reconstructs. Density comes from an optional "density" map (e.g. for pores),
+    Uses ImageD11's map -> reconstruction -> sample conventions (:func:`anri.geom.recon_to_sample`), so a
+    simulation from this map lines up with what ImageD11 reconstructs. Density comes from an optional "density" map (e.g. for pores),
     and is 1 where the map has none. An optional "sig_rot" map (radians) gives each entry an intrinsic orientation
     spread, see :func:`anri.fwd.render_row`.
 
@@ -684,8 +684,9 @@ def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0)
     entries: dict
         "ubi" [N, 3, 3], "pos" [N, 3] and "density" [N]; "sig_rot" [N] if the map has it
     """
-    from ImageD11.sinograms.geometry import recon_to_sample
     from ImageD11.sinograms.tensor_map import TensorMap
+
+    from anri.crystal import float64
 
     _, ny, nx = tmap.shape
     ystep = float(tmap.steps[1])
@@ -695,7 +696,8 @@ def entries_from_tensormap(tmap: TensorMap, phase_id: int = 0, z_layer: int = 0)
     phase = TensorMap.map_order_to_recon_order(tmap.phase_ids, z_layer)  # (nx, ny)
     ubi = TensorMap.map_order_to_recon_order(tmap.UBI, z_layer)
     ri, rj = np.nonzero(phase == phase_id)
-    sx, sy = recon_to_sample(ri, rj, (nx, ny), ystep)
+    with float64():  # positions set the parallax: keep them exact
+        sx, sy = (np.asarray(v) for v in anri.geom.recon_to_sample(ri, rj, (nx, ny), ystep))
     if "density" in tmap.maps:
         density = TensorMap.map_order_to_recon_order(tmap["density"], z_layer)[ri, rj].astype(float)
     else:

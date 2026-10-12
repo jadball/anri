@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `anri.geom.recon_to_sample`: reconstruction indices to sample positions (`recon_to_step`, then `step_to_sample`), used by `recon_positions` and `anri.io.entries_from_tensormap` (which called ImageD11's). `anri.index.fit_occupancy(coarse=...)` builds its coarse grid with `recon_positions` instead of its own meshgrid: the same positions, in ImageD11's order. Fine voxels midway between coarse voxels have no unique 9 nearest, so which equally near neighbours they inherit candidates from can change, and coarse runs differ slightly.
 - `anri.crystal.U_B_to_UBI`: the one (U B)^-1, used by the indexer's predictions and results and by `anri.phantom.tensormap` (each inverted U @ B itself). The indexer's predictions now use the explicit 3x3 inverse (`anri.utils.inv3`); results agree to float32 rounding.
 - `anri.geom.wrap_omega` (into [om0, om0 + 360)) and `nearest_omega` (the turn nearest a reference): the indexer's histogram binning, `dty_offsets` and the renderer each wrapped omega inline. `dty_offsets` now bins omega exactly as `anri.index.system` does, so its offsets always line up with the histogram's omega bins.
 - `anri.geom.dty_to_row`: the one frame-to-row assignment, used by `anri.io.stream_sparse` and `anri.index.dty_offsets` (which had separate copies that had to agree).

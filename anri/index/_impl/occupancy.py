@@ -21,7 +21,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from anri.fwd._impl.render import _chord_weight
-from anri.geom import wrap_omega
+from anri.geom import recon_positions, wrap_omega
 
 from .data import coarsen_rows
 
@@ -597,9 +597,7 @@ def fit_occupancy(
             scan_c["width_beam"] = scan["width_beam"] + (coarse - 1) * ystep
         extent = float(np.abs(np.asarray(pos)[:, :2]).max())
         n_c = 2 * int(np.ceil(extent / (coarse * ystep))) + 3
-        gc = (np.arange(n_c) - (n_c - 1) / 2) * coarse * ystep
-        xx, yy = np.meshgrid(gc, gc, indexing="ij")
-        pos_c = np.stack([xx.ravel(), yy.ravel(), np.zeros(n_c * n_c)], 1).astype(np.float32)
+        pos_c = np.asarray(recon_positions(n_c, coarse * ystep), np.float32)
         pos_cp = pad_voxels(pos_c, vbp)
         log(
             f"coarse: {n_c} x {n_c} voxels of {coarse * ystep:g} x {pred[0].shape[0]} orientations, the top {k} per voxel"

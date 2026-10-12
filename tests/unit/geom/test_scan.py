@@ -28,6 +28,10 @@ class TestStepGrid(unittest.TestCase):
         np.testing.assert_allclose(
             np.stack(anri.geom.step_to_sample(si, sj, 0.75)), np.stack(g.step_to_sample(si, sj, 0.75))
         )
+        np.testing.assert_allclose(
+            np.stack(anri.geom.recon_to_sample(ri, rj, recon_shape, 0.75)),
+            np.stack(g.recon_to_sample(ri, rj, recon_shape, 0.75)),
+        )
 
 
 class TestDtyToRow(unittest.TestCase):

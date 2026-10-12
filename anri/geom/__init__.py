@@ -21,6 +21,7 @@ from ._impl.gonio import (
 from ._impl.scan import (
     dty_to_row,
     recon_positions,
+    recon_to_sample,
     recon_to_step,
     sino_shift_and_pad,
     step_grid_from_ybincens,
@@ -46,6 +47,7 @@ __all__ = [
     "origin_lab",
     "raytrace_to_det",
     "recon_positions",
+    "recon_to_sample",
     "recon_to_step",
     "rmat_from_axis_angle",
     "rot_x",

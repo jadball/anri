@@ -184,11 +184,34 @@ def step_to_sample(
     return sx, sy
 
 
+@jax.jit
+def recon_to_sample(
+    ri: float | jax.Array, rj: float | jax.Array, recon_shape: tuple[int, int], ystep: float
+) -> tuple[float | jax.Array, float | jax.Array]:
+    """Convert reconstruction space (origin in corner) to sample space: :func:`recon_to_step`, then :func:`step_to_sample`.
+
+    Parameters
+    ----------
+    ri, rj
+        Recon space - i and j directions
+    recon_shape
+        [2] Shape of the reconstruction array
+    ystep
+        Y translation step size between bin centres
+
+    Returns
+    -------
+    sx, sy: jax.Array
+        Sample space - x and y directions
+    """
+    si, sj = recon_to_step(ri, rj, recon_shape)
+    return step_to_sample(si, sj, ystep)
+
+
 def recon_positions(n: int, step: float) -> jax.Array:
     """Sample-frame positions of every voxel of an n x n reconstruction grid, in reconstruction order.
 
-    The grid is centred on the rotation axis, as ImageD11 reconstructs (see :func:`recon_to_step` and
-    :func:`step_to_sample`).
+    The grid is centred on the rotation axis, as ImageD11 reconstructs (see :func:`recon_to_sample`).
 
     Parameters
     ----------
@@ -203,8 +226,7 @@ def recon_positions(n: int, step: float) -> jax.Array:
         [n * n, 3] positions (x, y, 0), voxel (ri, rj) at row ri * n + rj
     """
     ri, rj = jnp.meshgrid(jnp.arange(n), jnp.arange(n), indexing="ij")
-    si, sj = recon_to_step(ri, rj, (n, n))
-    sx, sy = step_to_sample(si, sj, step)
+    sx, sy = recon_to_sample(ri, rj, (n, n), step)
     return jnp.stack([sx.ravel(), sy.ravel(), jnp.zeros(n * n)], 1)
 
 
