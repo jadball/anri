@@ -425,20 +425,6 @@ def mlem(
         if it % 5 == 0 or it in (1, n_iter):
             log(f"  MLEM {it} (SQUAREM step {float(-a):.1f}): deviance {dev:.4g}")
     return f
-    it = 0
-    while it < n_iter:
-        f1, _ = step(f)
-        f2, A1 = step(f1)
-        r, v = f1 - f, f2 - 2.0 * f1 + f
-        a = jnp.minimum(-jnp.sqrt(jnp.sum(r * r)) / jnp.maximum(jnp.sqrt(jnp.sum(v * v)), 1e-30), -1.0)
-        # not below 1e-3 of f2: MLEM multiplies, so an occupancy set to 0 could never come back
-        fx = jnp.maximum(f - 2.0 * a * r + a * a * v, 1e-3 * f2)
-        fn, Ax = step(fx)
-        dev1, devx = deviance(d, A1, censor), deviance(d, Ax, censor)
-        f = jnp.where(devx <= dev1, fn, f2)  # never worse than plain MLEM
-        it += 3
-        log(f"  MLEM {it} (SQUAREM, step {float(-a):.1f}): deviance {float(jnp.minimum(devx, dev1)):.4g}")
-    return f
 
 
 @partial(jax.jit, static_argnames=("k2",))
