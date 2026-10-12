@@ -215,3 +215,111 @@ def row_image(sparse_file: str, row: int, omega_motor: str = "rot_center") -> di
     np.add.at(image, (r, c), v)
     frame = np.repeat(np.arange(len(nnz)), nnz)
     return {"image": image, "per_frame": np.bincount(frame, weights=v, minlength=len(nnz)), "omega": omega}
+
+
+# ------------------------------------------------------------------------------------- measured frames against the model
+def _corrected(row: np.ndarray, col: np.ndarray, shape: tuple, spatial: tuple | None) -> np.ndarray:
+    """Pixel index (slow x n_fast + fast) of each pixel moved by the detector distortion, to the nearest pixel."""
+    r, c = row.astype(np.float64), col.astype(np.float64)
+    if spatial is not None:
+        dx, dy = spatial
+        r, c = r + dy[row, col], c + dx[row, col]
+    r = np.clip(np.rint(r), 0, shape[0] - 1).astype(np.int64)
+    c = np.clip(np.rint(c), 0, shape[1] - 1).astype(np.int64)
+    return r * shape[1] + c
+
+
+def observed_row(ds: dict, row: int, spatial: tuple | None = None) -> dict:
+    """Return every measured pixel of one row of a DataSet (its sparse file), where an ideal detector would see it.
+
+    Parameters
+    ----------
+    ds
+        From :func:`anri.io.read_dataset`
+    row
+        Row of the DataSet (its scan ``ds["scans"][row]``)
+    spatial
+        The detector distortion (:func:`anri.io.read_spatial`), or None
+
+    Returns
+    -------
+    dict
+        "frame" (within the row), "pixel" (slow x n_fast + fast), "value", "shape"
+    """
+    from anri.io import read_sparse_frames
+
+    px = read_sparse_frames(ds["sparsefile"], ds["scans"][row])
+    return {"frame": px["frame"], "pixel": _corrected(px["row"], px["col"], px["shape"], spatial),
+            "value": px["intensity"].astype(np.float64), "shape": px["shape"]}  # fmt: skip
+
+
+def raw_image(
+    ds: dict, row: int, frames: range, spatial: tuple | None = None, detector: str | None = None
+) -> np.ndarray:
+    """Return raw detector frames of one row of a DataSet (its master file) summed, where an ideal detector would see them.
+
+    Parameters
+    ----------
+    ds, row, spatial
+        See :func:`observed_row`
+    frames
+        Frames of the row
+    detector
+        The detector's name in the master file (default: the DataSet's)
+    """
+    from anri.io import read_raw_frames
+
+    img = read_raw_frames(ds["masterfile"], ds["scans"][row], frames, detector or ds["detector"])
+    if spatial is None:
+        return img
+    r, c = np.nonzero(img)
+    out = np.zeros(img.size)
+    np.add.at(out, _corrected(r, c, img.shape, spatial), img[r, c])
+    return out.reshape(img.shape)
+
+
+def model_row(p: dict, row: int, window: tuple = (3, 7, 7), max_frames: int | None = 31) -> dict:
+    """Return one rendered row, every phase summed: "frame", "pixel", "value" (before any cut), "shape".
+
+    Parameters
+    ----------
+    p
+        From :func:`anri.render.load_prepare` (e.g. prepared from the DataSet, so the rows and frames match)
+    row
+        Row of the scan
+    window, max_frames
+        See :func:`anri.render.stage_render`
+    """
+    from anri.fwd import make_row, render_phases
+
+    frame, pixel, value, _ = render_phases(p["phases"], p["geom"], make_row(p["omega"][row], p["dty"][row]),
+                                           p["det_shape"], window=tuple(window), max_frames=max_frames)  # fmt: skip
+    return {"frame": np.asarray(frame), "pixel": np.asarray(pixel).astype(np.int64), "value": np.asarray(value),
+            "shape": tuple(p["det_shape"])}  # fmt: skip
+
+
+def row_scale(obs: dict, model: dict, cut: float = 1.0, n_iter: int = 5) -> float:
+    """Return the factor that best scales a model row onto a measured one (least squares, censored at the cut).
+
+    Measured pixels below the segmentation cut are missing from the data, not zero, so the fit uses the pixels the
+    data hold and those the scaled model puts above the cut; the set is updated a few times.
+    """
+    npix = obs["shape"][0] * obs["shape"][1]
+    ko = obs["frame"].astype(np.int64) * npix + obs["pixel"]
+    km = model["frame"].astype(np.int64) * npix + model["pixel"]
+    keys, inv = np.unique(np.concatenate([ko, km]), return_inverse=True)
+    o, m = np.zeros(keys.size), np.zeros(keys.size)
+    np.add.at(o, inv[: ko.size], obs["value"])
+    np.add.at(m, inv[ko.size :], model["value"])
+    s = o.sum() / max(m.sum(), 1e-30)
+    for _ in range(n_iter):
+        use = (o > 0) | (s * m > cut)
+        s = float((o[use] * m[use]).sum() / max((m[use] ** 2).sum(), 1e-30))
+    return s
+
+
+def frames_image(px: dict, frames: range) -> np.ndarray:
+    """Return the pixels of some frames of a row (:func:`observed_row` or :func:`model_row`) summed into an image."""
+    ns, nf = px["shape"]
+    sel = (px["frame"] >= frames.start) & (px["frame"] < frames.stop)
+    return np.bincount(px["pixel"][sel], weights=px["value"][sel], minlength=ns * nf).reshape(ns, nf)

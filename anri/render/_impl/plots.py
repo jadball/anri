@@ -156,3 +156,53 @@ def plot_row_image(fig: Figure, img: dict, title: str = "") -> None:
     ax[0].set(title=title or "summed over the frames", xlabel="fast", ylabel="slow")
     ax[1].plot(img["omega"], img["per_frame"], lw=0.7)
     ax[1].set(xlabel="ω (°)", ylabel="counts", title="per frame")
+
+
+def plot_frame_compare(fig: Figure, images: Callable, shape: tuple) -> Callable:
+    """Draw measured frames, the model's and both overlaid; ``update(row, frame, frames)`` picks the frames.
+
+    The panels share their axes (zoom one, all follow) and one log colour scale. In the overlay, the data are red and
+    the model cyan: where they agree the spots are white, data the model misses are red, model the data lack cyan.
+
+    Parameters
+    ----------
+    fig
+        A matplotlib figure
+    images
+        ``images(row, frames) -> (data, model, label)``: [n_slow, n_fast] images of those frames of a row summed,
+        the model already scaled, and a line about them (e.g. :func:`anri.render.diagnostics.frames_image` of
+        :func:`~anri.render.diagnostics.observed_row` and :func:`~anri.render.diagnostics.model_row`)
+    shape
+        (n_slow, n_fast)
+    """
+    from matplotlib.colors import LogNorm
+    from matplotlib.pyplot import colormaps
+
+    ax = fig.subplots(1, 3, sharex=True, sharey=True)
+    cmap = colormaps["magma"].with_extremes(bad="black")
+    z = np.ma.masked_all(shape)
+    ims = [a.imshow(z, cmap=cmap, norm=LogNorm(1, 10), interpolation="nearest") for a in ax[:2]]
+    rgb = ax[2].imshow(np.zeros((*shape, 3)), interpolation="nearest")
+    for a, t in zip(ax, ("data", "model", "data (red) and model (cyan)")):
+        a.set(title=t, xlabel="fast")
+    ax[0].set_ylabel("slow")
+    fig.colorbar(ims[1], ax=ax[1], shrink=0.7)
+
+    def update(row: int, frame: int, frames: int = 1) -> str:
+        sel = range(max(frame - frames // 2, 0), frame - frames // 2 + frames)
+        data, model, label = images(row, sel)
+        pos = np.concatenate([data[data > 0], model[model > 0]])
+        top = max(float(np.percentile(pos, 99.9)) if pos.size else 2.0, 2.0)  # a few saturated pixels set no scale
+        for im, x in zip(ims, (data, model)):
+            im.set_data(np.ma.masked_less_equal(x, 0))
+            im.set_norm(LogNorm(1, top))
+
+        def unit(x: np.ndarray) -> np.ndarray:
+            return np.clip(np.log1p(np.maximum(x, 0)) / np.log1p(top), 0, 1)
+
+        d, m = unit(data), unit(model)
+        rgb.set_data(np.stack([d, m, m], -1))
+        fig.canvas.draw_idle()
+        return f"row {row}, frames {sel.start}..{sel.stop - 1}: {label}"
+
+    return update

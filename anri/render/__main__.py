@@ -42,6 +42,10 @@ def _cif(values: list | None) -> str | dict | None:
 def _prepare_options(p: argparse.ArgumentParser) -> None:
     from anri.render import BANDWIDTH, OPTICS
 
+    p.add_argument("--dataset", help="an ImageD11 DataSet to simulate: its frames' omega and dty, detector shape, y0 and "
+                   "geometry replace the scan options")  # fmt: skip
+    p.add_argument("--remap", nargs="+", metavar="OLD=NEW",
+                   help="rewrite the path prefixes the DataSet records, e.g. where the data are mounted elsewhere")  # fmt: skip
     p.add_argument("--cif", action="append", help="CIF for the structure factors: PATH for a single phase, or "
                    "NAME=PATH per phase (repeat it); phases without one get |F|^2 = 1")  # fmt: skip
     p.add_argument("--optics", choices=sorted(OPTICS), default="al-crl", help="ID11's focusing optics, which set the "
@@ -53,7 +57,7 @@ def _prepare_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--beam-fwhm", type=float, help="FWHM of the beam across dty (default: the dty step)")
     p.add_argument("--psf", type=float, default=0.5, help="detector point spread, sigma in pixels (default 0.5)")
     p.add_argument("--pol-factor", type=float, default=1.0, help="degree of horizontal polarisation (default 1)")
-    p.add_argument("--y0", type=float, default=0.0, help="dty where the rotation axis is in the beam (default 0)")
+    p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: --dataset's, else 0)")
     p.add_argument("--omega-range", type=float, nargs=2, default=(0.0, 180.0), help="rotation, deg (default 0 180)")
     p.add_argument("--omega-step", type=float, default=0.05, help="frame width, deg (default 0.05)")
     p.add_argument("--dty-step", type=float, help="between rows (default: the map's voxel size)")
@@ -85,7 +89,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     common.add_argument("--n-cpu", type=int, default=4, help="CPU devices for JAX (default 4)")
     inputs = argparse.ArgumentParser(add_help=False)
     inputs.add_argument("map", help="an ImageD11 TensorMap (.h5) or python -m anri.index's _entries.npz")
-    inputs.add_argument("pars", help="ImageD11 geometry: a .par file or pars.json")
+    inputs.add_argument("pars", nargs="?", help="ImageD11 geometry: a .par file or pars.json (default: --dataset's)")
     dataset = argparse.ArgumentParser(add_help=False)
     for a in ("analysisroot", "sample", "dataset"):
         dataset.add_argument(a)
@@ -140,7 +144,8 @@ def main() -> None:
             args.outdir, os.path.splitext(os.path.basename(args.map))[0] + "_prepare.h5"
         )
         source = rd.stage_prepare(
-            args.map, args.pars, out, cif=_cif(args.cif), optics=args.optics, divergence=args.divergence,
+            args.map, args.pars, out, dataset=args.dataset,
+            remap=dict(v.split("=", 1) for v in args.remap) if args.remap else None, cif=_cif(args.cif), optics=args.optics, divergence=args.divergence,
             bandwidth=args.bandwidth, beam_fwhm=args.beam_fwhm, psf=args.psf, pol_factor=args.pol_factor, y0=args.y0,
             omega_range=tuple(args.omega_range), omega_step=args.omega_step, dty_step=args.dty_step,
             margin=args.margin, density=args.density, det_shape=tuple(args.det_shape), tth_max=args.tth_max,

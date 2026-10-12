@@ -57,7 +57,7 @@ Anri currently uses the FABLE geometry definitions for detector space.
 Forward Modeling
 ================
 
-There's a very basic demonstration of how to perform a forward model with Anri, a walk through the renderer that simulates whole scanning 3DXRD datasets, a DCT scan rendered with it, and the stages of ``python -m anri.render`` with a plot for each option, simulating the AM316L phantom as an ImageD11 dataset (the last two are stored runs: they need a GPU, so they are not re-executed when the docs are built).
+There's a very basic demonstration of how to perform a forward model with Anri, a walk through the renderer that simulates whole scanning 3DXRD datasets, a DCT scan rendered with it, and the stages of ``python -m anri.render`` with a plot for each option, simulating the AM316L phantom as an ImageD11 dataset (the last two are stored runs: they need a GPU, so they are not re-executed when the docs are built). The last notebook compares a measured dataset's frames, row by row and frame by frame, with a map's forward model; it needs your own data, so it is stored without outputs.
 
 .. nbgallery::
     
@@ -66,6 +66,7 @@ There's a very basic demonstration of how to perform a forward model with Anri, 
     renderer
     dct
     rendering_parameters
+    compare_frames
 
 Indexing
 ========

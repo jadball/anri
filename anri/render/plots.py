@@ -3,6 +3,7 @@
 from ._impl.plots import (
     plot_capture,
     plot_footprint,
+    plot_frame_compare,
     plot_rings,
     plot_row_image,
     plot_survival,
@@ -11,6 +12,7 @@ from ._impl.plots import (
 __all__ = [
     "plot_capture",
     "plot_footprint",
+    "plot_frame_compare",
     "plot_rings",
     "plot_row_image",
     "plot_survival",

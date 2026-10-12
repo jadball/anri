@@ -101,9 +101,10 @@ def _tth_max(pars: dict, det_shape: tuple[int, int], margin_px: float = 10.0) ->
 
 # ------------------------------------------------------------------------------------------------------- 1. prepare
 def stage_prepare(
-    map_file: str, pars_file: str, out: str, *, cif: str | dict | None = None, optics: str = "al-crl",
-    divergence: float | None = None, bandwidth: float = BANDWIDTH, beam_fwhm: float | None = None, psf: float = 0.5,
-    pol_factor: float = 1.0, y0: float = 0.0, omega_range: tuple = (0.0, 180.0), omega_step: float = 0.05,
+    map_file: str, pars_file: str | None, out: str, *, dataset: str | None = None, remap: dict | None = None,
+    cif: str | dict | None = None, optics: str = "al-crl", divergence: float | None = None,
+    bandwidth: float = BANDWIDTH, beam_fwhm: float | None = None, psf: float = 0.5, pol_factor: float = 1.0,
+    y0: float | None = None, omega_range: tuple = (0.0, 180.0), omega_step: float = 0.05,
     dty_step: float | None = None, margin: float = 3.0, density: float = 1.0, det_shape: tuple = EIGER_4M,
     tth_max: float | None = None, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
@@ -114,9 +115,15 @@ def stage_prepare(
     map_file
         See :func:`read_map`
     pars_file
-        ImageD11 geometry: a ``.par`` file, or a ``pars.json``
+        ImageD11 geometry: a ``.par`` file, or a ``pars.json`` (None: the dataset's)
     out
         Output file
+    dataset
+        An ImageD11 DataSet to simulate: its scan (every frame's omega and dty, with dty's motion within each row read
+        from the sparse file), its detector's shape and, unless given, its y0 and geometry replace omega_range,
+        omega_step, dty_step, margin and det_shape
+    remap
+        ``{old prefix: new prefix}`` for the paths the DataSet records (:func:`anri.io.read_dataset`)
     cif
         CIF for the structure factors: one path for a single phase, or {phase name: path}; phases without one get
         ``|F|^2`` = 1
@@ -133,7 +140,8 @@ def stage_prepare(
     pol_factor
         Degree of horizontal polarisation
     y0
-        dty where the rotation axis is in the beam
+        dty where the rotation axis is in the beam (default: the dataset's, else 0); a map from the indexer is centred
+        on the y0 it was fitted with
     omega_range, omega_step
         The rotation (degrees) and the frame width
     dty_step
@@ -155,14 +163,27 @@ def stage_prepare(
     import Dans_Diffraction
 
     from anri.crystal import reflections, structure_factors
-    from anri.io import motor_grid, read_par, read_pars_json
+    from anri.io import motor_grid, read_dataset, read_frame_dty, read_geometry
     from anri.maths.utils import fwhm_to_sigma
 
+    ds = None
+    if dataset is not None:
+        ds = read_dataset(dataset, remap)
+        pars_file = pars_file or ds["parfile"]
+        y0 = ds["y0"] if y0 is None else y0
+        with h5py.File(ds["sparsefile"], "r") as h:
+            g = h[ds["scans"][0].partition("::")[0]]
+            det_shape = (int(g.attrs["shape0"]), int(g.attrs["shape1"]))
+    if pars_file is None:
+        msg = "give pars_file, or a dataset whose parfile to use"
+        raise ValueError(msg)
+    y0 = 0.0 if y0 is None else y0
     options = {"map": os.path.abspath(map_file), "pars": os.path.abspath(pars_file), "optics": optics,
                "divergence": divergence, "bandwidth": bandwidth, "beam_fwhm": beam_fwhm, "psf": psf,
                "pol_factor": pol_factor, "y0": y0, "omega_range": list(omega_range), "omega_step": omega_step,
                "dty_step": dty_step, "margin": margin, "density": density, "det_shape": list(det_shape),
-               "tth_max": tth_max}  # fmt: skip
+               "tth_max": tth_max, "dataset": None if dataset is None else os.path.abspath(dataset),
+               "remap": None if not remap else [f"{k}={v}" for k, v in remap.items()]}  # fmt: skip
     if isinstance(cif, str):
         options["cif"] = os.path.abspath(cif)
     elif cif:
@@ -170,17 +191,24 @@ def stage_prepare(
     if divergence is None and optics not in OPTICS:
         msg = f"optics must be one of {sorted(OPTICS)}, not {optics!r} (or give divergence)"
         raise ValueError(msg)
-    pars = read_pars_json(pars_file)[0] if pars_file.endswith(".json") else read_par(pars_file)
+    pars = read_geometry(pars_file)
     wl = float(pars["wavelength"])
     phases, voxel = read_map(map_file)
-    ystep = voxel if dty_step is None else dty_step
+    if dty_step is not None:
+        ystep = dty_step
+    else:
+        ystep = voxel if ds is None else float(np.median(np.diff(ds["ybincens"])))
     fwhm = ystep if beam_fwhm is None else beam_fwhm
     div = OPTICS[optics] if divergence is None else divergence
     tth = _tth_max(pars, det_shape) if tth_max is None else tth_max
     dsmax = 2 * np.sin(np.radians(tth / 2)) / wl
     radius = max(float(np.linalg.norm(p["entries"]["pos"][:, :2], axis=1).max()) for p in phases)
-    n_side = int(np.ceil((radius + margin * fwhm) / ystep))
-    omega, dty = motor_grid(tuple(omega_range), omega_step, (y0 - n_side * ystep, y0 + n_side * ystep), ystep)
+    if ds is None:
+        n_side = int(np.ceil((radius + margin * fwhm) / ystep))
+        omega, dty = motor_grid(tuple(omega_range), omega_step, (y0 - n_side * ystep, y0 + n_side * ystep), ystep)
+    else:  # the dataset's own frames
+        omega, dty = np.asarray(ds["omega"], float), read_frame_dty(ds)
+        omega_step = float(np.median(np.diff(omega[0])))
     log(f"map {map_file}: {len(phases)} phase(s), voxel {voxel:g}, sample radius {radius:.4g}; scan {omega.shape[0]} "
         f"rows of {ystep:g} x {omega.shape[1]} frames of {omega_step:g} deg; beam FWHM {fwhm:g}, convergence {div:g} "
         f"rad ({optics if divergence is None else 'given'}), bandwidth {bandwidth:g} FWHM; 2theta up to {tth:.2f} "

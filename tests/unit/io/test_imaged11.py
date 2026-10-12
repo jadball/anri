@@ -6,6 +6,7 @@ import h5py
 import jax
 import numpy as np
 
+import anri.io
 from anri.io import (
     beam_from_pars,
     detector_from_pars,
@@ -73,6 +74,21 @@ class TestDataset(unittest.TestCase):
             np.testing.assert_allclose(ds.ybincens, dty[:, 0])
             with h5py.File(dsfile, "r") as f:
                 self.assertEqual(f.attrs["y0"], 0.25)
+            # the paths it records, moved elsewhere
+            moved = anri.io.read_dataset(dsfile, remap={tmp: "/elsewhere"})
+            self.assertEqual(moved["sparsefile"], os.path.join("/elsewhere", "s_sparse.h5"))
+            # one scan's frames read back
+            px = anri.io.read_sparse_frames(sparse, "2.1::[1:4]", range(2))
+            self.assertEqual((px["shape"], len(px["row"])), ((4, 4), 0))
+
+
+class TestGeometry(unittest.TestCase):
+    def test_par_or_pars_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            geo = {"distance": 150e3, "wavelength": 0.28}
+            parfile = anri.io.write_pars(tmp, geo, {"Fe": {"cell__a": 2.87}, "Au": {"cell__a": 4.08}})
+            self.assertEqual(anri.io.read_geometry(parfile)["distance"], 150e3)  # two phases: no phase needed
+            self.assertEqual(anri.io.read_geometry(os.path.join(tmp, "geometry.par"))["wavelength"], 0.28)
 
 
 class TestSpatial(unittest.TestCase):

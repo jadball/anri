@@ -213,13 +213,16 @@ def read_par(path: str) -> dict:
     return out
 
 
-def read_dataset(dsfile: str) -> dict:
+def read_dataset(dsfile: str, remap: dict | None = None) -> dict:
     """Read the scan layout of an ImageD11 DataSet file, without ImageD11.
 
     Parameters
     ----------
     dsfile
         ``<sample>_<dset>_dataset.h5``
+    remap
+        ``{old prefix: new prefix}`` for the paths the DataSet records, e.g. when the data were moved or are mounted
+        elsewhere on this machine
 
     Returns
     -------
@@ -245,6 +248,9 @@ def read_dataset(dsfile: str) -> dict:
             return ""
         if path and not os.path.isabs(path):
             path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(dsfile)), path))
+        for old, new in (remap or {}).items():
+            if path.startswith(old):
+                path = os.path.expanduser(new) + path[len(old) :]
         return path
 
     out.update(
@@ -302,6 +308,19 @@ def read_pars_json(parfile: str, phase: str | None = None) -> tuple[dict, str, d
             raise ValueError(msg)
         phase = next(iter(phases))
     return read_par(path(pj["geometry"]["file"])), phase, read_par(path(phases[phase]["file"]))
+
+
+def read_geometry(parfile: str) -> dict:
+    """Read the detector and beam geometry from an ImageD11 ``.par`` file or ``pars.json`` (any number of phases)."""
+    if not parfile.endswith(".json"):
+        return read_par(parfile)
+    import json
+
+    with open(parfile) as f:
+        name = json.load(f)["geometry"]["file"]
+    pdir = os.path.dirname(os.path.abspath(parfile))
+    path = os.path.join(pdir, name)
+    return read_par(path if os.path.exists(path) else os.path.join(pdir, os.path.basename(name)))
 
 
 def read_monitor(sparsefile: str, groups: list, name: str, masterfile: str | None = None) -> dict:
@@ -431,6 +450,67 @@ def _frame_positions(
         return np.broadcast_to(np.asarray(gr[f"measurement/{motor}"][()], float), (n,)).copy()
     msg = f"{path}:{name} has no {motor}, and the DataSet has no positions for it; pass the DataSet's and its scans"
     raise KeyError(msg)
+
+
+def read_sparse_frames(sparsefile: str, scan: str, frames: range | None = None) -> dict:
+    """Read the sparse pixels of frames of one DataSet scan: a sparse group ("1.1") or a slice of one ("1.1::[0:1440]").
+
+    Parameters
+    ----------
+    sparsefile
+        ImageD11 sparse pixels file
+    scan
+        The scan's name, as the DataSet's ``scans``
+    frames
+        Frames of the scan (default all), numbered from the scan's first
+
+    Returns
+    -------
+    dict
+        "frame" (within the scan), "row", "col" and "intensity" of every pixel, and "shape" (n_slow, n_fast)
+    """
+    name, _, rest = scan.partition("::[")
+    first = int(rest.rstrip("]").split(":")[0]) if rest else 0
+    with h5py.File(sparsefile, "r") as h:
+        g = h[name]
+        nnz = g["nnz"][()]
+        end = len(nnz) if not rest or not rest.rstrip("]").split(":")[1] else int(rest.rstrip("]").split(":")[1])
+        frames = range(end - first) if frames is None else frames
+        a, b = first + frames.start, min(first + frames.stop, end)
+        starts = np.concatenate([[0], np.cumsum(nnz, dtype=np.int64)])
+        s0, s1 = int(starts[a]), int(starts[b])
+        return {"frame": np.repeat(np.arange(a, b) - first, nnz[a:b]), "row": g["row"][s0:s1], "col": g["col"][s0:s1],
+                "intensity": g["intensity"][s0:s1], "shape": (int(g.attrs["shape0"]), int(g.attrs["shape1"]))}  # fmt: skip
+
+
+def read_raw_frames(masterfile: str, scan: str, frames: range, detector: str = "eiger") -> np.ndarray:
+    """Read raw detector frames of one DataSet scan from the experiment's master file, summed.
+
+    Parameters
+    ----------
+    masterfile
+        The raw data's master file (the DataSet's ``masterfile``)
+    scan
+        The scan's name, as the DataSet's ``scans`` ("1.1" or "1.1::[0:1440]")
+    frames
+        Frames of the scan, numbered from the scan's first
+    detector
+        The detector's name in the scan's ``measurement`` group
+
+    Returns
+    -------
+    np.ndarray
+        [n_slow, n_fast] float64, the frames summed; pixels at the integer type's largest value (dead pixels, module
+        gaps) count as 0
+    """
+    name, _, rest = scan.partition("::[")
+    first = int(rest.rstrip("]").split(":")[0]) if rest else 0
+    with h5py.File(masterfile, "r") as h:
+        d = h[f"{name}/measurement/{detector}"]
+        x = d[first + frames.start : first + frames.stop]
+    if np.issubdtype(x.dtype, np.integer):  # dead pixels and module gaps hold the type's largest value
+        x = np.where(x == np.iinfo(x.dtype).max, 0, x)
+    return x.astype(np.float64).sum(0)
 
 
 def read_frame_dty(ds: dict, sparsefile: str | None = None) -> np.ndarray:

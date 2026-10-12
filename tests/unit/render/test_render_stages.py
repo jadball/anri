@@ -45,7 +45,8 @@ class TestRenderStages(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             parfile = os.path.join(tmp, "geometry.par")
             anri.io.write_par(parfile, PARS)
-            prep = rd.stage_prepare(two_phase_map(tmp), parfile, os.path.join(tmp, "x_prepare.h5"), omega_step=2.0,
+            map_file = two_phase_map(tmp)
+            prep = rd.stage_prepare(map_file, parfile, os.path.join(tmp, "x_prepare.h5"), omega_step=2.0,
                                     dty_step=8.0, margin=0.25, density=50.0, log=lambda m: None)  # fmt: skip
             p = rd.load_prepare(prep)
             self.assertEqual(p["names"], ["Fe", "Ni"])
@@ -91,6 +92,19 @@ class TestRenderStages(unittest.TestCase):
             self.assertTrue((pr["kept_share"] <= 1 + 1e-9).all() and (np.diff(pr["kept_share"], axis=1) >= 0).all())
             cov = dg.ring_coverage(p, n_tth=50, n_eta=90)
             self.assertEqual(cov["on_detector"][0], 1.0)  # the innermost ring is wholly on the detector
+            # the map prepared from the dataset it made, rendered again, matches that dataset's measured row
+            dsfile = prov["resolved"]["dataset_file"]
+            again = rd.load_prepare(rd.stage_prepare(map_file, None, os.path.join(tmp, "y_prepare.h5"),
+                                                     dataset=dsfile, density=50.0, log=lambda m: None))  # fmt: skip
+            np.testing.assert_array_equal(again["omega"], p["omega"])
+            ds = anri.io.read_dataset(dsfile)
+            obs, mod = dg.observed_row(ds, 1), dg.model_row(again, 1)
+            self.assertAlmostEqual(dg.row_scale(obs, mod), 1.0, delta=0.02)
+            npix = 2162 * 2068
+            k_obs = obs["frame"].astype(np.int64) * npix + obs["pixel"]
+            k_mod = mod["frame"].astype(np.int64) * npix + mod["pixel"]
+            self.assertTrue(np.isin(k_obs, k_mod).all())  # every measured pixel is one the model lights
+            self.assertEqual(dg.frames_image(obs, range(90)).sum(), obs["value"].sum())
 
 
 if __name__ == "__main__":
