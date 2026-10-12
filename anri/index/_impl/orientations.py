@@ -17,8 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from anri.geom import wrap_omega
-
+from .data import eta_omega_corners
 from .occupancy import censored_ratio, deviance
 from .predict import predict
 
@@ -32,17 +31,11 @@ def _system(
     eta, om, ok, lp = predict(U, B, hkls, geom)
     w = lp * F2[None]
     use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut)
-    om_w = wrap_omega(om, om0)
-    fe, fo = (eta + 180.0) / b_e - 0.5, (om_w - om0) / b_o - 0.5
-    e0, o0 = jnp.floor(fe).astype(jnp.int32), jnp.floor(fo).astype(jnp.int32)
-    te, to = fe - e0, fo - o0
     idx, wt = [], []
-    for de, we in ((0, 1.0 - te), (1, te)):
-        for do, wo in ((0, 1.0 - to), (1, to)):
-            ie, io = (e0 + de) % n_e, o0 + do
-            good = use & (io >= 0) & (io < n_o)
-            idx.append(jnp.where(good, (ring_j[None] * n_e + ie) * n_o + io, -1))
-            wt.append(jnp.where(good, w * we * wo, 0.0))
+    for ie, io, we, wo, inside in eta_omega_corners(eta, om, om0, b_e, b_o, n_e, n_o):
+        good = use & inside
+        idx.append(jnp.where(good, (ring_j[None] * n_e + ie) * n_o + io, -1))
+        wt.append(jnp.where(good, w * we * wo, 0.0))
     return jnp.stack(idx, -1), jnp.stack(wt, -1)
 
 

@@ -180,6 +180,44 @@ def ring_widths(
     return off, hw
 
 
+def eta_bin(eta: jax.Array, b_e: float, n_e: int) -> jax.Array:
+    """Return the histogram's eta bin of each angle (degrees): bins of b_e, periodic over 360 degrees from -180."""
+    return jnp.floor((eta + 180.0) / b_e).astype(jnp.int32) % n_e
+
+
+def omega_bin(om: jax.Array, om0: ArrayLike, b_o: float) -> jax.Array:
+    """Return the histogram's omega bin of each angle (degrees): bins of b_o from om0, int32, possibly outside [0, n_o).
+
+    Not wrapped here: wrap with :func:`anri.geom.wrap_omega` first where that is wanted.
+    """
+    return jnp.floor((om - om0) / b_o).astype(jnp.int32)
+
+
+def eta_omega_corners(
+    eta: jax.Array, om: jax.Array, om0: ArrayLike, b_e: float, b_o: float, n_e: int, n_o: int
+) -> list:
+    """Return the 2 x 2 (eta, omega) bins around each angle and their bilinear weights (bin centres on the grid).
+
+    Omega is wrapped into [om0, om0 + 360) (:func:`anri.geom.wrap_omega`) first.
+
+    Returns
+    -------
+    list
+        Four (ie, io, w_eta, w_omega, inside) tuples: bin indices, the weights along eta and omega (multiply them in),
+        and whether io is in [0, n_o)
+    """
+    fe = (eta + 180.0) / b_e - 0.5
+    fo = (wrap_omega(om, om0) - om0) / b_o - 0.5
+    e0, o0 = jnp.floor(fe).astype(jnp.int32), jnp.floor(fo).astype(jnp.int32)
+    te, to = fe - e0, fo - o0
+    corners = []
+    for de, we in ((0, 1.0 - te), (1, te)):
+        for do, wo in ((0, 1.0 - to), (1, to)):
+            io = o0 + do
+            corners.append(((e0 + de) % n_e, io, we, wo, (io >= 0) & (io < n_o)))
+    return corners
+
+
 @partial(jax.jit, static_argnames=("n_ring", "n_e", "n_o", "n_k"))
 def histogram(
     x: jax.Array,
@@ -223,8 +261,7 @@ def histogram(
     i = jnp.clip(jnp.searchsorted(ring_tth, x[:, 0]), 1, max(n_ring - 1, 1))
     ring = jnp.where(jnp.abs(x[:, 0] - ring_tth[i - 1]) < jnp.abs(x[:, 0] - ring_tth[i % n_ring]), i - 1, i % n_ring)
     ok = jnp.abs(x[:, 0] - ring_tth[ring]) < jnp.broadcast_to(tth_tol, ring_tth.shape)[ring]
-    ie = jnp.floor((x[:, 1] + 180.0) / b_e).astype(jnp.int32) % n_e
-    io = jnp.floor((x[:, 2] - om0) / b_o).astype(jnp.int32)
+    ie, io = eta_bin(x[:, 1], b_e, n_e), omega_bin(x[:, 2], om0, b_o)
     ok = ok & (io >= 0) & (io < n_o) & (row >= 0) & (row < n_k)
     idx = jnp.where(ok, ((ring * n_e + ie) * n_o + io) * n_k + row, n_ring * n_e * n_o * n_k)
     return jax.ops.segment_sum(jnp.where(ok, val, 0.0), idx, n_ring * n_e * n_o * n_k + 1)[:-1]
@@ -410,7 +447,8 @@ def dty_offsets(
     n_rows = -(-(len(edges) - 1) // gridstep)
     bd = np.broadcast_to(np.nanmean(fd, 1, keepdims=True), fd.shape) if bin_dty is None else np.asarray(bin_dty, float)
     kk = dty_to_row(bd, edges, gridstep)  # each frame's row
-    o = np.floor((wrap_omega(om, om0) - om0) / b_o).astype(int)  # the omega bins of system
+    with float64():  # the omega bins of system
+        o = np.asarray(omega_bin(wrap_omega(om, om0), om0, b_o)).astype(int)
     ok = (kk >= 0) & (o >= 0) & (o < n_o) & np.isfinite(fd)
     idx = kk[ok] * n_o + o[ok]
     s = np.bincount(idx, weights=fd[ok] - (dty0 + kk[ok] * ystep), minlength=n_rows * n_o)

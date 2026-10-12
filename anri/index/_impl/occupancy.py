@@ -23,7 +23,7 @@ from jax.typing import ArrayLike
 from anri.fwd._impl.render import _chord_weight
 from anri.geom import recon_positions, wrap_omega
 
-from .data import coarsen_rows
+from .data import coarsen_rows, eta_omega_corners, omega_bin
 
 
 def censored_ratio(d: jax.Array, mu: jax.Array, censor: float) -> jax.Array:
@@ -98,16 +98,11 @@ def system(
         [Nv, Q, Nj, 8] each (4 n_beam with a beam profile); unused corners have index -1
     """
     n_k = scan["n_rows"]
-    om_w = wrap_omega(om, scan["om0"])
-    fe = (eta + 180.0) / b_e - 0.5
-    fo = (om_w - scan["om0"]) / b_o - 0.5
-    e0, o0 = jnp.floor(fe).astype(jnp.int32), jnp.floor(fo).astype(jnp.int32)
-    te, to = fe - e0, fo - o0
     c, s = jnp.cos(jnp.radians(om)), jnp.sin(jnp.radians(om))
     ylab = pos[:, 0, None, None] * s + pos[:, 1, None, None] * c
     fk = (scan["y0"] - ylab - scan["dty0"]) / scan["ystep"]  # the row whose beam is centred on the voxel
     if "ddty" in scan:  # rows not at their nominal dty (fly, helical scans): the beam's real dty in this omega bin
-        io = jnp.clip(jnp.floor((om_w - scan["om0"]) / b_o).astype(jnp.int32), 0, n_o - 1)
+        io = jnp.clip(omega_bin(wrap_omega(om, scan["om0"]), scan["om0"], b_o), 0, n_o - 1)
         kh = jnp.clip(jnp.round(fk).astype(jnp.int32), 0, n_k - 1)
         fk = fk - scan["ddty"][kh, io] / scan["ystep"]
     if n_beam == 0:
@@ -123,16 +118,15 @@ def system(
             for dk in range(n_beam)
         )  # fmt: skip
     idx, wt = [], []
-    for de, we in ((0, 1.0 - te), (1, te)):
-        for do, wo in ((0, 1.0 - to), (1, to)):
-            for dk, wk in rows:
-                ie, io, kk = (e0 + de) % n_e, o0 + do, k0 + dk
-                good = use & (io >= 0) & (io < n_o) & (kk >= 0) & (kk < n_k)
-                if "exposure" in scan:  # frames in this (row, omega bin), relative to a full one
-                    wk = wk * scan["exposure"][jnp.clip(kk, 0, n_k - 1), jnp.clip(io, 0, n_o - 1)]
-                cell = ((ring_j[None, None, :] * n_e + ie) * n_o + io) * n_k + kk
-                idx.append(jnp.where(good, cell, -1))
-                wt.append(jnp.where(good, w * we * wo * wk, 0.0))
+    for ie, io, we, wo, inside in eta_omega_corners(eta, om, scan["om0"], b_e, b_o, n_e, n_o):
+        for dk, wk in rows:
+            kk = k0 + dk
+            good = use & inside & (kk >= 0) & (kk < n_k)
+            if "exposure" in scan:  # frames in this (row, omega bin), relative to a full one
+                wk = wk * scan["exposure"][jnp.clip(kk, 0, n_k - 1), jnp.clip(io, 0, n_o - 1)]
+            cell = ((ring_j[None, None, :] * n_e + ie) * n_o + io) * n_k + kk
+            idx.append(jnp.where(good, cell, -1))
+            wt.append(jnp.where(good, w * we * wo * wk, 0.0))
     return jnp.stack(idx, -1), jnp.stack(wt, -1)
 
 

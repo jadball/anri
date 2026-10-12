@@ -21,7 +21,7 @@ from anri.diffract import lorentz_polarisation
 from anri.fwd import hkl_to_k_omega
 from anri.geom import wrap_omega
 
-from .data import _tth_eta
+from .data import _tth_eta, eta_bin, omega_bin
 
 GRID_STEPS = (3.0, 2.5, 2.0, 1.5, 1.0)  # tried by choose_grid, coarsest first
 
@@ -140,9 +140,7 @@ def completeness(
     completeness, n_valid: jax.Array
         [Nq] each
     """
-    om_w = wrap_omega(om, om0)
-    ie = jnp.floor((eta + 180.0) / b_e).astype(jnp.int32) % n_e
-    io = jnp.floor((om_w - om0) / b_o).astype(jnp.int32)
+    ie, io = eta_bin(eta, b_e, n_e), omega_bin(wrap_omega(om, om0), om0, b_o)
     de = jnp.minimum(jnp.ceil(tol_e / b_e).astype(jnp.int32), n_e - 1)
     do = jnp.ceil(tol_o / b_o).astype(jnp.int32)
     inside = ok & (io >= 0) & (io < n_o)
