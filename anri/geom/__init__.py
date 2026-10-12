@@ -11,6 +11,7 @@ from ._impl.detector import (
 )
 from ._impl.gonio import dty_and_origin_lab, find_dty_for_beam_xy, lab_to_sample, origin_lab, sample_to_lab
 from ._impl.scan import (
+    dty_to_row,
     recon_positions,
     recon_to_step,
     sino_shift_and_pad,
@@ -29,6 +30,7 @@ __all__ = [
     "detector_rotation_matrix",
     "detector_transforms",
     "dty_and_origin_lab",
+    "dty_to_row",
     "find_dty_for_beam_xy",
     "lab_to_det",
     "lab_to_sample",

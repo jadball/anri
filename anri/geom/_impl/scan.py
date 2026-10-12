@@ -236,3 +236,27 @@ def sino_shift_and_pad(y0: float, ny: int, ymin: float, ystep: float) -> tuple[f
     if (ny + pad) % 2 == 0:  # keep the reconstruction odd-sized
         pad += 1
     return shift, pad
+
+
+def dty_to_row(dty: np.ndarray, ybinedges: np.ndarray, gridstep: int = 1) -> np.ndarray:
+    """Return the scan row each dty falls in: its bin of ``ybinedges``, with rows summed in groups of ``gridstep``.
+
+    Parameters
+    ----------
+    dty
+        dty values (any shape), e.g. each frame's
+    ybinedges
+        [n_rows + 1] dty bin edges of the rows (the DataSet's ``ybinedges``)
+    gridstep
+        Rows summed in groups of this: row k of the result is bins k gridstep ... (k + 1) gridstep - 1
+
+    Returns
+    -------
+    row: np.ndarray
+        Row index per dty (shape of ``dty``); -1 outside the edges or where dty is not finite. Bins are
+        (lo, hi]: a dty exactly on an edge is in the row below it.
+    """
+    dty = np.asarray(dty, float)
+    edges = np.asarray(ybinedges, float)
+    k = np.searchsorted(edges, np.where(np.isfinite(dty), dty, np.inf)) - 1
+    return np.where((k >= 0) & (k < len(edges) - 1), k // gridstep, -1)

@@ -535,7 +535,6 @@ def stream_sparse(
         (slow, fast, omega, row, value): NumPy arrays of at most ``chunk`` pixels
     """
     ybinedges = np.asarray(ybinedges)
-    n_rows = len(ybinedges) - 1
     if groups is None:
         with h5py.File(sparsefile, "r") as h:
             groups = list(h.keys())
@@ -550,8 +549,7 @@ def stream_sparse(
             om_f = _frame_positions(gr, name, omega_motor, dataset_omega, slices, sparsefile)
             dty_f = _frame_positions(gr, name, dty_motor, dataset_dty, slices, sparsefile)
             ok = np.isfinite(om_f) & np.isfinite(dty_f)
-            k_f = np.searchsorted(ybinedges, np.where(ok, dty_f, np.inf)) - 1
-            k_f = np.where(ok & (k_f >= 0) & (k_f < n_rows), k_f // gridstep, -1).astype(np.int32)
+            k_f = np.where(ok, anri.geom.dty_to_row(dty_f, ybinedges, gridstep), -1).astype(np.int32)
             om_f = np.where(ok, om_f, 0.0).astype(np.float32)
             scale = np.ones(len(nnz), np.float32)
             if monitor is not None:

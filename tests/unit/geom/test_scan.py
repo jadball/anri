@@ -28,3 +28,13 @@ class TestStepGrid(unittest.TestCase):
         np.testing.assert_allclose(
             np.stack(anri.geom.step_to_sample(si, sj, 0.75)), np.stack(g.step_to_sample(si, sj, 0.75))
         )
+
+
+class TestDtyToRow(unittest.TestCase):
+    def test_rows(self):
+        edges = np.array([-1.5, -0.5, 0.5, 1.5, 2.5])  # 4 rows
+        dty = np.array([-2.0, -1.5, -0.6, 0.0, 0.49, 0.5, 2.4, 2.5, np.nan, np.inf])
+        # bins are (lo, hi]: a dty on an edge is in the row below it
+        np.testing.assert_array_equal(anri.geom.dty_to_row(dty, edges), [-1, -1, 0, 1, 1, 1, 3, 3, -1, -1])
+        np.testing.assert_array_equal(anri.geom.dty_to_row(dty, edges, 2), [-1, -1, 0, 0, 0, 0, 1, 1, -1, -1])
+        self.assertEqual(anri.geom.dty_to_row(np.zeros((2, 3)), edges).shape, (2, 3))

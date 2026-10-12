@@ -16,7 +16,7 @@ from Dans_Diffraction.classes_crystal import Crystal as DansCrystal
 from jax.typing import ArrayLike
 
 from anri.crystal import reflections, rings, structure_factors
-from anri.geom import beam_basis
+from anri.geom import beam_basis, dty_to_row
 
 
 def ring_table(
@@ -407,8 +407,7 @@ def dty_offsets(
     edges = np.asarray(ybinedges, float)
     n_rows = -(-(len(edges) - 1) // gridstep)
     bd = np.broadcast_to(np.nanmean(fd, 1, keepdims=True), fd.shape) if bin_dty is None else np.asarray(bin_dty, float)
-    kk = np.searchsorted(edges, np.where(np.isfinite(bd), bd, np.inf)) - 1  # each frame's row
-    kk = np.where((kk >= 0) & (kk < len(edges) - 1), kk // gridstep, -1)
+    kk = dty_to_row(bd, edges, gridstep)  # each frame's row
     o = np.floor((np.mod(om - om0, 360.0)) / b_o).astype(int)
     ok = (kk >= 0) & (o >= 0) & (o < n_o) & np.isfinite(fd)
     idx = kk[ok] * n_o + o[ok]
