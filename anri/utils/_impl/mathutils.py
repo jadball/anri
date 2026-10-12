@@ -1,11 +1,30 @@
-"""Small linear-algebra helpers written out explicitly.
+"""Small maths helpers.
 
-XLA lowers ``jnp.linalg.inv`` to a batched LAPACK/cuSOLVER call that handles one tiny matrix at a time.
-For the 3x3 matrices that Anri uses per voxel and per peak, plain arithmetic is several times faster.
+``inv3`` is written out explicitly: XLA lowers ``jnp.linalg.inv`` to a batched LAPACK/cuSOLVER call that handles
+one tiny matrix at a time. For the 3x3 matrices that Anri uses per voxel and per peak, plain arithmetic is several
+times faster.
 """
+
+import math
 
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
+
+_FWHM_PER_SIGMA = 2.0 * math.sqrt(2.0 * math.log(2.0))  # 2.3548...
+
+
+def fwhm_to_sigma(fwhm: ArrayLike) -> ArrayLike:
+    """Return the standard deviation of a Gaussian from its full width at half maximum (FWHM / 2.3548...).
+
+    Works on Python floats, NumPy and JAX arrays alike.
+    """
+    return fwhm / _FWHM_PER_SIGMA
+
+
+def sigma_to_fwhm(sigma: ArrayLike) -> ArrayLike:
+    """Return the full width at half maximum of a Gaussian from its standard deviation (sigma x 2.3548...)."""
+    return sigma * _FWHM_PER_SIGMA
 
 
 @jax.jit

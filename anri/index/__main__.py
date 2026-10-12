@@ -271,7 +271,10 @@ def main() -> None:
     N_E, N_O = round(360 / B_E), round(float(oedge[-1] - oedge[0]) / B_O)
     N_O -= N_O % R_O
     WL = geo["wavelength"]
-    geom = anri.io.geom_from_pars(geo, Y0, WL * 2e-3 / 2.355, 1.5e-4, 1.5e-4, sig_beam=YSTEP / 2.355, voxel_size=YSTEP)
+    fwhm_to_sigma = anri.utils.fwhm_to_sigma
+    geom = anri.io.geom_from_pars(
+        geo, Y0, fwhm_to_sigma(WL * 2e-3), 1.5e-4, 1.5e-4, sig_beam=fwhm_to_sigma(YSTEP), voxel_size=YSTEP
+    )
     geom = {
         k: jnp.asarray(v, jnp.float32) if np.issubdtype(np.asarray(v).dtype, np.floating) else v
         for k, v in geom.items()
@@ -427,7 +430,7 @@ def main() -> None:
                 f"{uneven * 100:.1f}% with more or fewer than usual; the model scales by it")  # fmt: skip
     dims = (B_E * R_E, B_O * R_O, N_E // R_E, N_O // R_O)
     if BEAM > 0:  # the beam's profile across dty, over voxels of YSTEP; summed rows widen its flat top
-        scan.update({"sig_beam": BEAM / (2 * np.sqrt(2 * np.log(2))), "width_beam": (G - 1) * ystep0, "voxel": YSTEP})
+        scan.update({"sig_beam": fwhm_to_sigma(BEAM), "width_beam": (G - 1) * ystep0, "voxel": YSTEP})
         dims = (*dims, ix.beam_rows(scan))
         log(f"beam: FWHM {BEAM:g} across dty, each voxel spread over {dims[4]} rows")
     mask, rec = np.ones(NV, bool), None
