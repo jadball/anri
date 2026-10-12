@@ -389,7 +389,6 @@ class TestOrientationSpread(unittest.TestCase):
         self.assertAlmostEqual(d1[0, 0] / d2[0, 0], 1.0, delta=0.2)  # Monte Carlo, 400 samples: ~7% statistical
         self.assertLess(np.linalg.norm(d1 - d2) / np.linalg.norm(d2), 0.2)
 
-
     def test_off_axis_rows(self):
         """Off the rotation axis, the spread's parts diffract at different omegas, where the voxel sits at different
         places across the beam: the intensity per dty row must match the sub-entries'."""
@@ -406,7 +405,11 @@ class TestOrientationSpread(unittest.TestCase):
         rv = rng.normal(size=(100, 3)) * sig
         rv = np.concatenate([rv, -rv])
         R = Rotation.from_rotvec(rv).as_matrix()
-        cloud = {"ubi": ubi[0] @ np.swapaxes(R, -1, -2), "pos": np.repeat(pos, 200, 0), "density": np.full(200, 1 / 200)}
+        cloud = {
+            "ubi": ubi[0] @ np.swapaxes(R, -1, -2),
+            "pos": np.repeat(pos, 200, 0),
+            "density": np.full(200, 1 / 200),
+        }
         y_c = -r * np.sin(np.radians(omega_c))
         dtys = np.round(y_c / 0.25) * 0.25 + np.arange(-6, 7) * 0.25
         totals = []
@@ -680,7 +683,9 @@ class TestBoxBeam(unittest.TestCase):
         )  # fmt: skip
         g = jax.tree.map(jnp.asarray, geom)
         B = anri.crystal.lpars_to_B(jnp.array([2.8665, 2.8665, 2.8665, 90.0, 90.0, 90.0]))
-        ubi = jnp.linalg.inv(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0) @ B)
+        ubi = jnp.linalg.inv(
+            anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0) @ B
+        )
         i, j, k = np.mgrid[0:6, 0:6, 0:6]
         pos = (np.stack([i.ravel(), j.ravel(), k.ravel()], 1) - 2.5).astype(float)
         entries = {"ubi": np.repeat(np.asarray(ubi)[None], len(pos), 0), "pos": pos, "density": np.ones(len(pos))}

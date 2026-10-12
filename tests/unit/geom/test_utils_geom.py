@@ -44,4 +44,3 @@ class TestBeamOffsets(unittest.TestCase):
         # a point on the beam's centre line is at zero height and zero distance across
         on_line = anri.geom.beam_offsets(7.0 * k_hat, k)
         np.testing.assert_allclose([on_line[0], on_line[1]], 0.0, atol=1e-12)
-

@@ -55,7 +55,9 @@ class TestSkewAndRodrigues(unittest.TestCase):
                                    atol=1e-12)  # fmt: skip
 
     def test_batched_rodrigues(self):
-        R = anri.maths.rotation.rmat_from_axis_angle(jnp.array([[0.0, 0.0, 2.0], [1.0, 1.0, 1.0]]), jnp.array([90.0, 120.0]))
+        R = anri.maths.rotation.rmat_from_axis_angle(
+            jnp.array([[0.0, 0.0, 2.0], [1.0, 1.0, 1.0]]), jnp.array([90.0, 120.0])
+        )
         np.testing.assert_allclose(R[0] @ np.array([1.0, 0.0, 0.0]), [0.0, 1.0, 0.0], atol=1e-12)  # right-handed, z
         np.testing.assert_allclose(R[1] @ np.array([1.0, 0.0, 0.0]), [0.0, 1.0, 0.0], atol=1e-12)  # 3-fold, <111>
         from jax.scipy.spatial.transform import Rotation

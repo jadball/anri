@@ -300,7 +300,9 @@ class TestRaytraceToDet(unittest.TestCase):
         del pars_for_det["no_bins"]
         del pars_for_det["wavelength"]
         det_trans, beam_cen_shift, x_distance_shift = anri.geom.detector_transforms(**pars_for_det)
-        s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(det_trans, beam_cen_shift, x_distance_shift)
+        s_step_lab, f_step_lab, det_origin_lab = anri.geom.detector_basis_vectors_lab(
+            det_trans, beam_cen_shift, x_distance_shift
+        )
 
         # vectorize our function
         raytrace_to_det_vec = vmap(anri.geom.raytrace_to_det, in_axes=(0, None, None, None, None))

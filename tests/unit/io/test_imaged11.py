@@ -201,7 +201,9 @@ class TestSimulateSparse(unittest.TestCase):
             "wavelength": 12.398419843320026 / 43.0, "wedge": 0.0, "chi": 0.0,
         }  # fmt: skip
         geom = geom_from_pars(pars, 0.0, pars["wavelength"] * 1e-3, 1e-3, 1e-3, sig_beam=0.5, voxel_size=1.0)
-        U = np.asarray(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0))
+        U = np.asarray(
+            anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0)
+        )
         B = np.asarray(anri.crystal.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
         i, j = np.mgrid[0:4, 0:4]
         pos = np.stack([i.ravel() - 1.5, j.ravel() - 1.5, np.zeros(16)], 1)
@@ -331,7 +333,9 @@ class TestGeomFromPars(unittest.TestCase):
         }  # fmt: skip
         geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0)
         self.assertEqual(geom["wedge"], -2.5)
-        U = np.asarray(anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0))
+        U = np.asarray(
+            anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0)
+        )
         B = np.asarray(anri.crystal.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
         ubi = np.linalg.inv(U @ B)
         checked = 0
