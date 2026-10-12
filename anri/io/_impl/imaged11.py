@@ -1005,9 +1005,9 @@ def write_rendered_rows(
     Returns
     -------
     stats: dict
-        Per row of the scan: "n_peaks" rendered, "n_pixels" written, the smallest fraction of a peak "captured" by its
-        window, and "n_outside", the peaks selected near the ends of the scan that fall outside its omega range
-        (captured 0, left out of captured_min). Rows not rendered: 0, 0, 1 and 0
+        Per row of the scan: "n_peaks" rendered, "n_pixels" written, "captured_min", the smallest share of a peak
+        within the scan's omega range that its window holds, and "n_outside", the peaks selected beyond the ends of
+        the scan, centred outside its omega range (left out of captured_min). Rows not rendered: 0, 0, 1 and 0
     """
     import time
 
@@ -1019,10 +1019,10 @@ def write_rendered_rows(
         row = make_row(omega[i], dty[i], None if transmission is None else transmission[i])
         frame, pixel, value, rstats = render_phases(phases, geom, row, det_shape, **render_kwargs)
         stats["n_peaks"][i] = rstats["n_peaks"]
-        cap = np.asarray(rstats["captured"])
-        stats["n_outside"][i] = int(np.sum(cap == 0))
-        if (cap > 0).any():
-            stats["captured_min"][i] = cap[cap > 0].min()
+        inside = np.asarray(rstats["in_range"]) >= 0.5
+        stats["n_outside"][i] = int(np.sum(~inside))
+        if inside.any():
+            stats["captured_min"][i] = (np.asarray(rstats["captured"])[inside] / rstats["in_range"][inside]).min()
         stats["n_pixels"][i] = write_scan(
             hout, f"{i + 1}.1", frame, pixel, value, omega[i], dty[i], det_shape, cut, omega_motor, dty_motor
         )

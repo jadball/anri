@@ -352,7 +352,7 @@ def render_peaks(
     captured: jax.Array
         [B] fraction of each peak's Gaussian that fell inside its window (before the dty weight)
     """
-    fr, px, val, cap, _ = _render_peaks(
+    fr, px, val, cap, _, _ = _render_peaks(
         entry, hkl_idx, branch, entries, hkls, F2, geom, row, window, det_shape, origins
     )
     return fr, px, val, cap
@@ -377,7 +377,7 @@ def window_origins(
     tuple
         First frame [B] (sorted-omega order), and each frame's first slow and fast pixel [B, n_frames]
     """
-    return _render_peaks(entry, hkl_idx, branch, entries, hkls, F2, geom, row, window, det_shape, None)[4]
+    return _render_peaks(entry, hkl_idx, branch, entries, hkls, F2, geom, row, window, det_shape, None)[5]
 
 
 def _peak_shape(
@@ -424,7 +424,8 @@ def _window_cells(
     tuple
         frac [wo, ws, wf] (fraction of the Gaussian in each cell), inside [wo, ws, wf] (cells on the detector and in
         the row), fclip [wo] (sorted frame of each window frame, clipped), rows [wo, ws], cols [wo, wf], om_fr [wo]
-        (mean omega of the mass in each frame, unwrapped) and the origin (jo, i0, j0)
+        (mean omega of the mass in each frame, unwrapped), in_range (the share of the peak's omega profile within the
+        scan's omega range) and the origin (jo, i0, j0)
     """
     wo, ws, wf = window
     ns, nf = det_shape
@@ -490,7 +491,9 @@ def _window_cells(
         & (cols >= 0)[:, None, :] & (cols < nf)[:, None, :]
     )  # fmt: skip
 
-    return frac, inside, fclip, rows, cols, omega_peak + d_o, (jo, i0, j0)
+    sd_o = jnp.sqrt(oo)
+    in_range = ndtr((row["omega_edges"][-1] - mu_o) / sd_o) - ndtr((row["omega_edges"][0] - mu_o) / sd_o)
+    return frac, inside, fclip, rows, cols, omega_peak + d_o, in_range, (jo, i0, j0)
 
 
 def _frame_weights(pos: jax.Array, om_fr: jax.Array, fclip: jax.Array, row: dict, geom: dict) -> jax.Array:
@@ -521,7 +524,7 @@ def _render_peaks(
     det_shape: tuple[int, int],
     origins: tuple | None,
 ) -> tuple:
-    """:func:`render_peaks`, also returning the window origins used."""
+    """:func:`render_peaks`, also returning each peak's share of its omega profile in the scan and the window origins."""
     nf = det_shape[1]
 
     def one(e: jax.Array, h: jax.Array, br: jax.Array, org: tuple | None) -> tuple:
@@ -529,7 +532,7 @@ def _render_peaks(
         etasign = 1.0 - 2.0 * br
         sig = entries["sig_rot"][e] if "sig_rot" in entries else None
         mu, shape, valid = _peak_shape(ubi, pos, hkl, etasign, sig, row, geom)
-        frac, inside, fclip, rows, cols, om_fr, origin = _window_cells(mu, shape, org, row, window, det_shape)
+        frac, inside, fclip, rows, cols, om_fr, in_range, origin = _window_cells(mu, shape, org, row, window, det_shape)
         per_frame = _frame_weights(pos, om_fr, fclip, row, geom)
         amp = entries["density"][e] * F2[h] * _peak_factors(ubi, hkl, etasign, geom)
         value = amp * per_frame[:, None, None] * frac
@@ -538,7 +541,10 @@ def _render_peaks(
         frame_out = jnp.where(use, row["order"][fclip][:, None, None], -1)
         pixel = rows[:, :, None] * nf + cols[:, None, :]
         pixel_out = jnp.where(use, pixel, 0)
-        return frame_out.ravel(), pixel_out.ravel(), value.ravel(), jnp.sum(frac), origin
+        frames = origin[0] + jnp.arange(window[0])
+        real = (frames >= 0) & (frames < row["omega_sorted"].shape[0])
+        captured = jnp.sum(jnp.where(real[:, None, None], frac, 0.0))  # frames past the scan's ends are clipped copies
+        return frame_out.ravel(), pixel_out.ravel(), value.ravel(), captured, in_range, origin
 
     return jax.vmap(one, in_axes=(0, 0, 0, None if origins is None else 0))(entry, hkl_idx, branch, origins)
 
@@ -694,7 +700,7 @@ def _render_sharded(
     window: tuple[int, int, int],
     det_shape: tuple[int, int],
     mesh: Mesh,
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
     """:func:`render_peaks` then :func:`_merge` (GPUs) or :func:`_compact` (CPUs), split across the devices of ``mesh``.
 
     Pixels shared between devices or batches (and on CPUs, all duplicates) are merged on the host.
@@ -712,14 +718,14 @@ def _render_sharded(
         g: dict,
         r: dict,
         mv: jax.Array,
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-        frame, pixel, value, captured = render_peaks(e, h, b, ent, hk, f2, g, r, window, det_shape)
+    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+        frame, pixel, value, captured, in_range, _ = _render_peaks(e, h, b, ent, hk, f2, g, r, window, det_shape, None)
         value = jnp.where(lv[:, None], value, 0.0)
         frame, pixel, value, count = reduce(frame, pixel, value, mv)
-        return frame, pixel, value, count[None], captured
+        return frame, pixel, value, count[None], captured, in_range
 
     specs = (P("d"),) * 4 + (P(),) * 6
-    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 5)(
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 6)(
         entry, hkl_idx, branch, live, entries, hkls, F2, geom, row, min_value
     )
 
@@ -848,7 +854,10 @@ def render_row(
     frame, pixel, value: np.ndarray
         Sparse pixels sorted by (frame, pixel), with duplicates summed
     stats: dict
-        "n_peaks" rendered and their "captured" window fractions
+        "n_peaks" rendered; per peak, "captured" (the fraction of its Gaussian in its window, over the scan's frames)
+        and "in_range" (the fraction of its omega profile within the scan's omega range: below 0.5 for the peaks
+        selected beyond the ends of the scan); "window_frames" with max_frames. ``captured / in_range`` is the share
+        of what the scan sees that the window holds
     """
     mesh = anri.utils.mesh() if mesh is None else mesh
     nd = mesh.size
@@ -878,7 +887,7 @@ def render_row(
     n_peaks = e.size
     if n_peaks == 0:
         empty = np.zeros(0, np.int32)
-        return empty, empty, np.zeros(0), {"n_peaks": 0, "captured": np.zeros(0)}
+        return empty, empty, np.zeros(0), {"n_peaks": 0, "captured": np.zeros(0), "in_range": np.zeros(0)}
 
     # Window size class of each peak: the fewest frames that hold +-3.5 sigma of it in omega
     peak_class = np.zeros(n_peaks, np.int32)
@@ -908,7 +917,7 @@ def render_row(
     # and XLA:GPU takes up to a minute for very small batches. Padding peaks are marked not live.
     min_value_j = jnp.asarray(min_value, dtype=dtype)
     frames, pixels, values = [], [], []
-    captured_all = np.zeros(n_peaks)
+    captured_all, in_range_all = np.zeros(n_peaks), np.zeros(n_peaks)
     for k, wo_k in enumerate(classes):
         sel = np.flatnonzero(peak_class == k)
         if sel.size == 0:
@@ -925,7 +934,7 @@ def render_row(
             pad = batch_k - (stop - start)
             idx = [np.pad(x[sel[start:stop]], (0, pad)) for x in (e, h, b)]
             live = np.arange(batch_k) < stop - start
-            fr, px, val, count, cap = _render_sharded(
+            fr, px, val, count, cap, inr = _render_sharded(
                 *idx, live, entries, hkls_j, F2_j, geom, row_j, min_value_j, window_k, det_shape, mesh
             )
             count = np.asarray(count)
@@ -933,12 +942,13 @@ def render_row(
             pixels.append(_valid_from_shards(px, count, per_shard))
             values.append(_valid_from_shards(val, count, per_shard))
             captured_all[sel[start:stop]] = np.asarray(cap)[: stop - start]
+            in_range_all[sel[start:stop]] = np.asarray(inr)[: stop - start]
 
     # 3. Merge batches and devices: sort by (frame, pixel) and sum duplicates
     frame, pixel, value = _merge_host(
         np.concatenate(frames), np.concatenate(pixels), np.concatenate(values), det_shape[0] * det_shape[1]
     )
-    stats = {"n_peaks": n_peaks, "captured": captured_all}
+    stats = {"n_peaks": n_peaks, "captured": captured_all, "in_range": in_range_all}
     if len(classes) > 1:
         stats["window_frames"] = np.asarray(classes)[peak_class]
     return frame, pixel, value, stats
@@ -967,14 +977,19 @@ def render_phases(
     Returns
     -------
     frame, pixel, value, stats
-        As :func:`render_row`, over every phase: "n_peaks" summed, "captured" concatenated (phase by phase)
+        As :func:`render_row`, over every phase: "n_peaks" summed, "captured", "in_range" (and "window_frames")
+        concatenated, phase by phase
     """
     out = [render_row(entries, hkls, F2, geom, row, det_shape, **kwargs) for entries, hkls, F2 in phases]
     if len(out) == 1:
         return out[0]
     frame, pixel, value = _merge_host(np.concatenate([o[0] for o in out]), np.concatenate([o[1] for o in out]),
                                       np.concatenate([o[2] for o in out]), det_shape[0] * det_shape[1])  # fmt: skip
-    stats = {"n_peaks": sum(o[3]["n_peaks"] for o in out), "captured": np.concatenate([o[3]["captured"] for o in out])}
+    stats = {"n_peaks": sum(o[3]["n_peaks"] for o in out)}
+    for k in ("captured", "in_range"):
+        stats[k] = np.concatenate([o[3][k] for o in out])
+    if all("window_frames" in o[3] for o in out):
+        stats["window_frames"] = np.concatenate([o[3]["window_frames"] for o in out])
     return frame, pixel, value, stats
 
 
