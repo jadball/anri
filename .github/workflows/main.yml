@@ -122,7 +122,19 @@ jobs:
           conda info
           conda list
 
+      # Compiled XLA programs, kept between runs: most of the tests' time is compiling (see conftest.py). Each run
+      # saves the cache it ends with; bump CACHE_PREFIX to start from an empty one.
+      - name: Cache compiled JAX programs
+        if: matrix.task.name == 'Test'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/jax-cache
+          key: jax-${{ env.CACHE_PREFIX }}-${{ runner.os }}-py${{ matrix.python-version }}-${{ github.sha }}
+          restore-keys: jax-${{ env.CACHE_PREFIX }}-${{ runner.os }}-py${{ matrix.python-version }}-
+
       - name: ${{ matrix.task.name }}
+        env:
+          JAX_COMPILATION_CACHE_DIR: ${{ runner.temp }}/jax-cache
         run: |
           ${{ matrix.task.run }}
       

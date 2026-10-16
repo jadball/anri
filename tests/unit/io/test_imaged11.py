@@ -24,6 +24,10 @@ from anri.io.imaged11 import (
 
 jax.config.update("jax_enable_x64", True)
 
+# Peaks per render call. render_row pads a call to at least 1024 peaks per device so that real scans compile few
+# shapes; these tests render a few hundred peaks per row, so a small batch renders them without that padding.
+BATCH = 256
+
 QUARTZ_FLYXDM_H5 = os.path.join(
     os.path.dirname(__file__), "..", "..", "data", "phantoms", "quartz_flyxdm", "quartz_flyxdm_tmap.h5"
 )
@@ -199,7 +203,7 @@ class TestSimulateSparse(unittest.TestCase):
         omega, dty = motor_grid((0.0, 10.0), 0.25, (100.0, 101.0), 1.0)  # the beam never reaches the voxel
         with tempfile.TemporaryDirectory() as tmp:
             stats = simulate_sparse(os.path.join(tmp, "sparse.h5"), entries, np.array([[1.0, 1.0, 0.0]]), np.ones(1),
-                                    geom, omega, dty, (2162, 2068))  # fmt: skip
+                                    geom, omega, dty, (2162, 2068), batch=BATCH)  # fmt: skip
         np.testing.assert_array_equal(stats["n_peaks"], 0)
         np.testing.assert_array_equal(stats["n_pixels"], 0)
         np.testing.assert_array_equal(stats["captured_min"], 1.0)
@@ -228,7 +232,9 @@ class TestSimulateSparse(unittest.TestCase):
         omega, dty = motor_grid((0.0, 180.0), 0.25, (-3.0, 3.0), 1.0)
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "sparse.h5")
-            stats = simulate_sparse(path, entries, hkls, np.ones(3), geom, omega, dty, (2162, 2068), window=(5, 17, 17))
+            stats = simulate_sparse(
+                path, entries, hkls, np.ones(3), geom, omega, dty, (2162, 2068), window=(5, 17, 17), batch=BATCH
+            )
             self.assertGreater(stats["n_pixels"].sum(), 0)
             with h5py.File(path, "r") as f:
                 self.assertEqual(sorted(f, key=float), [f"{k}.1" for k in range(1, 8)])
@@ -261,7 +267,9 @@ class TestSimulateSparse(unittest.TestCase):
         omega, dty = motor_grid((0.0, 180.0), 0.25, (-1.0, 1.0), 1.0)
         with tempfile.TemporaryDirectory() as tmp:
             sparse = os.path.join(tmp, "sparse.h5")
-            simulate_sparse(sparse, entries, hkls, np.ones(3), geom, omega, dty, (2162, 2068), window=(5, 17, 17))
+            simulate_sparse(
+                sparse, entries, hkls, np.ones(3), geom, omega, dty, (2162, 2068), window=(5, 17, 17), batch=BATCH
+            )
             parfile = write_pars(os.path.join(tmp, "pars"), pars, {"Fe": cell})
             e2dx, e2dy = write_zero_distortion(os.path.join(tmp, "pars"), (2162, 2068))
             dsfile = write_dataset(sparse, tmp, "fe", "sim", y0=0.0, parfile=parfile, e2dxfile=e2dx, e2dyfile=e2dy)
