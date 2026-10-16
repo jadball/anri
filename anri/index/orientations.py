@@ -18,7 +18,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from .data import eta_omega_corners
-from .occupancy import censored_ratio, deviance
+from .occupancy import censored_ratio, deviance, squarem_point
 from .search import predict
 
 
@@ -105,6 +105,11 @@ def fit(
 ) -> tuple:
     """Fit one occupancy per orientation to a row-summed histogram by MLEM, and score each orientation.
 
+    MLEM is accelerated by SQUAREM, as the voxel fit (:func:`anri.index.occupancy.mlem`): each iteration is two MLEM
+    updates, an extrapolation and one more update, never fitting worse than plain MLEM. Decoys that borrow intensity
+    from real grains fade slowly under plain MLEM; on AP1_1, 20 plain updates left them with likelihood ratios down to
+    -5e5 (removing them would have improved the fit), 20 SQUAREM iterations -6e3, in 20 s against 12 s.
+
     The predictions of each orientation are computed afresh in every pass, so memory stays at a chunk of qc
     orientations whatever the number of orientations.
 
@@ -126,7 +131,7 @@ def fit(
     etacut
         Reflections with ``|sin eta|`` at or below this are not used
     n_iter
-        MLEM iterations
+        SQUAREM iterations (3 MLEM updates each)
     qc
         Orientations per chunk
     log
@@ -159,12 +164,20 @@ def fit(
     args = (jnp.asarray(B, jnp.float32), jnp.asarray(rings["hkls"]), jnp.asarray(F2, jnp.float32),
             jnp.asarray(rings["ring_j"]), geom, etacut)  # fmt: skip
     norm = jnp.maximum(_backward(jnp.ones_like(d), Up, *args, bins), 1e-30)
-    g = live
-    for it in range(n_iter):
+
+    def step(g: jax.Array) -> tuple:  # one MLEM update, and the deviance of the occupancies it started from
         mu = _forward(g, Up, *args, bins, d.shape[0])
-        g = g * _backward(censored_ratio(d, mu, censor), Up, *args, bins) / norm
-        if it % 5 == 0 or it == n_iter - 1:
-            log(f"  orientation MLEM {it}: deviance {float(deviance(d, mu, censor)):.4g}")
+        return g * _backward(censored_ratio(d, mu, censor), Up, *args, bins) / norm, float(deviance(d, mu, censor))
+
+    g = live
+    for it in range(1, n_iter + 1):
+        g1, _ = step(g)
+        g2, dev1 = step(g1)
+        gx, a = squarem_point(g, g1, g2)
+        gn, devx = step(gx)
+        g, dev = (gn, devx) if devx <= dev1 else (g2, dev1)  # never worse than plain MLEM
+        if it % 5 == 0 or it in (1, n_iter):
+            log(f"  orientation MLEM {it} (SQUAREM step {float(-a):.1f}): deviance {dev:.4g}")
     mu = _forward(g, Up, *args, bins, d.shape[0])
     lr = _likelihood_ratio(d, mu, g, Up, *args, bins, censor)
     if return_model:

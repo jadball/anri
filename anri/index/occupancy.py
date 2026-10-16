@@ -353,7 +353,7 @@ def backward(
 
 
 @jax.jit
-def _squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array) -> tuple[jax.Array, jax.Array]:
+def squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array) -> tuple[jax.Array, jax.Array]:
     """SQUAREM's extrapolation from f and two MLEM steps f1, f2 (r = f1 - f and v = f2 - 2 f1 + f fused, not stored)."""
     nr = jnp.sqrt(jnp.sum((f1 - f) ** 2))
     nv = jnp.sqrt(jnp.sum((f2 - 2.0 * f1 + f) ** 2))
@@ -411,7 +411,7 @@ def mlem(
     for it in range(1, n_iter + 1):
         f1, _ = step(f)
         f2, dev1 = step(f1)
-        fx, a = _squarem_point(f, f1, f2)
+        fx, a = squarem_point(f, f1, f2)
         del f1  # at most 4 copies of the occupancies at once
         fn, devx = step(fx)
         del fx
