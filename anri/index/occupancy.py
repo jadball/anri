@@ -353,7 +353,7 @@ def backward(
 
 
 @jax.jit
-def squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array) -> tuple[jax.Array, jax.Array]:
+def _squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array) -> tuple[jax.Array, jax.Array]:
     """SQUAREM's extrapolation from f and two MLEM steps f1, f2 (r = f1 - f and v = f2 - 2 f1 + f fused, not stored)."""
     nr = jnp.sqrt(jnp.sum((f1 - f) ** 2))
     nv = jnp.sqrt(jnp.sum((f2 - 2.0 * f1 + f) ** 2))
@@ -362,19 +362,66 @@ def squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array) -> tuple[jax.Array
     return jnp.maximum(f - 2.0 * a * (f1 - f) + a * a * (f2 - 2.0 * f1 + f), 1e-3 * f2), a
 
 
-def mlem(
-    d: jax.Array, cand: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array, scan: dict, dims: tuple,
-    f0: jax.Array, n_iter: int, vb: int, log: Callable = print, censor: float = 0.0, callback: Callable | None = None,
+def squarem(
+    step: Callable, f: jax.Array, n_iter: int, log: Callable = print, label: str = "MLEM",
+    callback: Callable | None = None,
 ) -> jax.Array:  # fmt: skip
-    """Fit occupancies by MLEM (``f <- f A^T(d / A f) / A^T 1``), accelerated by SQUAREM, logging the deviance.
+    """Iterate an MLEM update ``step``, accelerated by SQUAREM, logging the deviance.
 
     Each iteration is a SQUAREM step (Varadhan & Roland 2008, Scand. J. Stat. 35, 335): two MLEM updates f1, f2
     from f; the point ``f - 2 a r + a^2 v`` with ``r = f1 - f``, ``v = f2 - 2 f1 + f`` and ``a = -norm(r) / norm(v)``
     (at most -1: never shorter than plain MLEM), kept above 1e-3 f2 (MLEM multiplies: an occupancy at 0 could never
     come back); and one more MLEM update from there. If the point fits worse than f1, f2 is kept instead, so the
-    deviance never rises. An iteration costs 3 MLEM updates and goes about as far as 10 or more: thin features (twins
-    one or two voxels thick) converge long after the deviance flattens. Empty bins are censored above ``censor``
-    (counts per bin, :func:`censored_ratio`); 0 for plain Poisson.
+    deviance never rises. An iteration costs 3 MLEM updates and goes about as far as 10 or more. It holds at most four
+    copies of f at once. Used by the voxel fit (:func:`mlem`) and the global orientation fit
+    (:func:`anri.index.orientations.fit`).
+
+    Parameters
+    ----------
+    step
+        One MLEM update: ``step(f) -> (f_new, deviance of f)``
+    f
+        Starting occupancies (any shape)
+    n_iter
+        SQUAREM iterations (3 MLEM updates each)
+    log
+        Progress messages, every 5 iterations and the first and last
+    label
+        Name of the fit in the messages
+    callback
+        Called as ``callback(iteration, f, deviance)`` after each iteration (1, 2, ...), with the deviance before its
+        last MLEM update, e.g. to record the fit's progress
+
+    Returns
+    -------
+    jax.Array
+        The occupancies
+    """
+    for it in range(1, n_iter + 1):
+        f1, _ = step(f)
+        f2, dev1 = step(f1)
+        fx, a = _squarem_point(f, f1, f2)
+        del f1  # at most 4 copies of the occupancies at once
+        fn, devx = step(fx)
+        del fx
+        f, dev = (fn, devx) if devx <= dev1 else (f2, dev1)  # never worse than plain MLEM
+        del fn, f2
+        if callback is not None:
+            callback(it, f, dev)
+        if it % 5 == 0 or it in (1, n_iter):
+            log(f"  {label} {it} (SQUAREM step {float(-a):.1f}): deviance {dev:.4g}")
+    return f
+
+
+def mlem(
+    d: jax.Array, cand: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array, scan: dict, dims: tuple,
+    f0: jax.Array, n_iter: int, vb: int, log: Callable = print, censor: float = 0.0, callback: Callable | None = None,
+) -> jax.Array:  # fmt: skip
+    """Fit occupancies by MLEM (``f <- f A^T(d / A f) / A^T 1``), accelerated by SQUAREM (:func:`squarem`).
+
+    An iteration costs 3 MLEM updates and goes about as far as 10 or more: thin features (twins one or two voxels
+    thick) converge long after the deviance flattens. Empty bins are censored above ``censor`` (counts per bin,
+    :func:`censored_ratio`); 0 for plain Poisson.
 
     Parameters
     ----------
@@ -391,8 +438,7 @@ def mlem(
     censor
         Empty bins censored above this many counts per bin
     callback
-        Called as ``callback(iteration, f, deviance)`` after each iteration (1, 2, ...), with the deviance before its
-        last MLEM update, e.g. to record the fit's progress
+        See :func:`squarem`
 
     Returns
     -------
@@ -407,21 +453,7 @@ def mlem(
         f_new = f * backward(censored_ratio(d, Af, censor), cand, pred, ring_j, pos, scan, dims, vb) / norm
         return f_new, float(deviance(d, Af, censor))
 
-    f = f0
-    for it in range(1, n_iter + 1):
-        f1, _ = step(f)
-        f2, dev1 = step(f1)
-        fx, a = squarem_point(f, f1, f2)
-        del f1  # at most 4 copies of the occupancies at once
-        fn, devx = step(fx)
-        del fx
-        f, dev = (fn, devx) if devx <= dev1 else (f2, dev1)  # never worse than plain MLEM
-        del fn, f2
-        if callback is not None:
-            callback(it, f, dev)
-        if it % 5 == 0 or it in (1, n_iter):
-            log(f"  MLEM {it} (SQUAREM step {float(-a):.1f}): deviance {dev:.4g}")
-    return f
+    return squarem(step, f0, n_iter, log, callback=callback)
 
 
 @partial(jax.jit, static_argnames=("k2",))
