@@ -1,0 +1,23 @@
+# fcc iron (austenite, e.g. 316L): Fe on 0,0,0 in Fm-3m. Written by hand for structure factors in anri.index;
+# a from the Tognan AM 316L pars.json (3.5966 A), U_iso 0.0063 A^2 (B ~ 0.5 A^2) assumed, not measured.
+data_Fe_fcc
+_symmetry_space_group_name_H-M   'F m -3 m'
+_symmetry_Int_Tables_number      225
+_cell_length_a   3.5966
+_cell_length_b   3.5966
+_cell_length_c   3.5966
+_cell_angle_alpha   90
+_cell_angle_beta    90
+_cell_angle_gamma   90
+loop_
+_symmetry_equiv_pos_as_xyz
+  'x, y, z'
+loop_
+ _atom_site_label
+ _atom_site_type_symbol
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+ _atom_site_U_iso_or_equiv
+  Fe1  Fe  0  0  0  1  0.0063
