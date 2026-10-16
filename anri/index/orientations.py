@@ -78,9 +78,12 @@ def _likelihood_ratio(
         dd = jnp.where(idx >= 0, d[jnp.clip(idx, 0)], 0.0)
         ga = gc[:, None, None] * wt
         rest = jnp.maximum(m - ga, 1e-6 * jnp.maximum(m, 1e-30))
+        # log(m / rest) as log1p((m - rest) / rest): in float32, m / rest of a weak orientation rounds to 1 + a few
+        # ulps, and times counts of 1e6 that is noise of order 1 in the ratio (which then changed from run to run)
+        x = jnp.where(m - ga > 1e-6 * m, ga, m - rest) / jnp.maximum(rest, 1e-30)
         # empty bins: only the model above the censoring level costs likelihood (censor = 0: all of it, -ga)
         empty = jnp.where(censor > 0, jnp.maximum(rest - censor, 0.0) - jnp.maximum(m - censor, 0.0), -ga)
-        term = jnp.where((idx >= 0) & (m > 0), jnp.where(dd > 0, dd * jnp.log(m / rest) - ga, empty), 0.0)
+        term = jnp.where((idx >= 0) & (m > 0), jnp.where(dd > 0, dd * jnp.log1p(x) - ga, empty), 0.0)
         return 2 * jnp.sum(term, (1, 2))
 
     return jax.lax.map(one, (g, U))

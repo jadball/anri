@@ -546,6 +546,39 @@ class TestOrientationFit(unittest.TestCase):
         self.assertGreater(lr[[17, 123]].min(), 25.0)
         np.testing.assert_allclose(g[[17, 123]], [100.0, 25.0], rtol=0.1)
 
+    def test_likelihood_ratio_precise_at_large_counts(self):
+        """With ~1e6 counts per bin, weak orientations' likelihood ratios match float64 at the same fit.
+
+        Those near a min_lr cut matter: log(m / rest) in float32 made them noisy (0.02-0.04 here, up to ~5 on
+        AP1_1). The true orientations' ratios (~1e9, set by the floor on rest where they are alone) are not checked.
+        """
+        from anri.index.orientations import _forward, _system
+
+        c, B, _ = iron()
+        rings = ix.data.ring_table(*c, PARS["wavelength"], 3)
+        geom = geometry()
+        U = rotations(64, 9)
+        bins = (1.0, 1.0, 360, 180, 0.0)
+        g_true = np.zeros(64, np.float32)
+        g_true[[5, 40]] = [1e6, 3e5]
+        F2 = jnp.ones(2 * len(rings["hkls"]), jnp.float32)
+        args = (jnp.asarray(B), jnp.asarray(rings["hkls"]), F2, jnp.asarray(rings["ring_j"]), geom, 0.2)
+        d = _forward(
+            jnp.asarray(g_true.reshape(-1, 8)), jnp.asarray(U.reshape(-1, 8, 3, 3)), *args, bins, 3 * 360 * 180
+        )
+        d = np.asarray(d)
+        g, lr, mu = ix.orientations.fit(d, U, B, rings, geom, bins, 0.2, n_iter=5, qc=8, log=lambda m: None,
+                                        return_model=True)  # fmt: skip
+        idx, wt = (np.asarray(a) for a in _system(jnp.asarray(U), *args, bins))
+        mu64, d64 = np.asarray(mu, np.float64), d.astype(np.float64)
+        for q in np.flatnonzero(g_true == 0):
+            ok = (idx[q] >= 0) & (mu64[np.clip(idx[q], 0, None)] > 0)
+            m, dd = mu64[idx[q][ok]], d64[idx[q][ok]]
+            ga = float(g[q]) * wt[q][ok].astype(np.float64)
+            rest = np.maximum(m - ga, 1e-6 * m)
+            ref = 2 * np.sum(np.where(dd > 0, dd * np.log(m / rest) - ga, -ga))
+            self.assertLess(abs(lr[q] - ref), 1e-3, f"orientation {q}")
+
 
 class TestInherit(unittest.TestCase):
     def test_neighbourhood_candidates(self):
