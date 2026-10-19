@@ -126,7 +126,7 @@ jobs:
       # saves the cache it ends with; bump CACHE_PREFIX to start from an empty one.
       - name: Cache compiled JAX programs
         if: matrix.task.name == 'Test'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/jax-cache
           key: jax-${{ env.CACHE_PREFIX }}-${{ runner.os }}-py${{ matrix.python-version }}-${{ github.sha }}
