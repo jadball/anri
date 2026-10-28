@@ -74,6 +74,9 @@ def _histogram_options(p: argparse.ArgumentParser) -> None:
         help="detector counts at which a pixel saturated (e.g. 65535): bins "
         "holding one are lower bounds in the fit (default: none)",
     )
+    p.add_argument("--detector-mask", help="detector mask, non-zero for masked pixels, as ImageD11's segmenter reads "
+                   "it (default: the DataSet's maskfile): predictions are scaled by the measured share of their "
+                   "(ring, eta) bin, so reflections on module gaps or off the detector are not taken as missing")  # fmt: skip
     p.add_argument(
         "--grid-pad",
         type=float,
@@ -248,7 +251,7 @@ def main() -> None:
         source = ix.stages.stage_histogram(
             args.analysisroot, args.sample, args.dataset, out, phase=args.phase, parfile=args.parfile,
             rings=args.rings, ring_merge=args.ring_merge, cif=args.cif, tth_tol=args.tth_tol, monitor=args.monitor, dty_source=args.dty_source,
-            frame_dty=not args.no_frame_dty, gridstep=args.gridstep, grid_pad=args.grid_pad, saturation=args.saturation, check=args.check, command=command, log=log,
+            frame_dty=not args.no_frame_dty, gridstep=args.gridstep, grid_pad=args.grid_pad, saturation=args.saturation, detector_mask=args.detector_mask, check=args.check, command=command, log=log,
         )  # fmt: skip
         if args.check or cmd == "histogram":
             return

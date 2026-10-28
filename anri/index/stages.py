@@ -188,7 +188,8 @@ def open_dataset(
         "ds" (the DataSet, :func:`anri.io.imaged11.read_dataset`), "dsfile", "sparsefile", "parfile", "geo" (ImageD11
         parameters), "phase", "lattice", "space_group", "ops" (Laue-group rotations), "geom" (:func:`_geometry`),
         "scan" (the histogram's rows and omega bins), "groups" (the sparse file's scans), "chunk" (pixels per chunk),
-        "frame_dty" (each frame's dty, or None), "spatial_correction" (where the distortion maps came from), and
+        "frame_dty" (each frame's dty, or None), "spatial_correction" (where the distortion maps came from),
+        "spatial" (the maps, or None), "detector_shape" ((n_slow, n_fast) from the sparse file, or None), and
         "stream": ``stream(groups)`` yields the pixels of those scans a chunk at a time, read ahead in a thread
     """
     import anri.io
@@ -233,6 +234,8 @@ def open_dataset(
     with h5py.File(sparsefile, "r") as h:
         groups = list(h.keys())
         n_max = max(int(h[g]["nnz"][()].sum()) for g in groups)
+        a = h[groups[0]].attrs
+        det_shape = (int(a["shape0"]), int(a["shape1"])) if "shape0" in a and "shape1" in a else None
     chunk = int(min(1 << 24, 1 << max(10, int(np.ceil(np.log2(max(n_max, 1)))))))
     spatial = anri.io.imaged11.read_spatial(ds)  # the DataSet's detector distortion maps, if it names any
     spatial_src = ds["detectorh5"] or (f"{ds['e2dxfile']}, {ds['e2dyfile']}" if spatial is not None else "")
@@ -269,7 +272,8 @@ def open_dataset(
     return {"ds": ds, "dsfile": dsfile, "sparsefile": sparsefile, "parfile": parfile, "geo": geo, "phase": phase,
             "lattice": lpars, "space_group": sg, "ops": ops, "geom": geom, "scan": scan, "groups": groups,
             "chunk": chunk, "frame_dty": fdty, "dty_source": dty_source, "gridstep": gridstep,
-            "spatial_correction": spatial_src, "stream": stream}  # fmt: skip
+            "spatial_correction": spatial_src, "spatial": spatial, "detector_shape": det_shape,
+            "stream": stream}  # fmt: skip
 
 
 def sample_groups(groups: list, n: int = 9) -> list:
@@ -361,7 +365,7 @@ def stage_histogram(
     parfile: str | None = None, rings: int | list[int] = 6, ring_merge: float = 1e-4, cif: str | None = None,
     tth_tol: float | None = None,
     monitor: str | None = None, dty_source: str = "dataset", frame_dty: bool = True, gridstep: int = 1,
-    grid_pad: float = 0.0, saturation: float | None = None,
+    grid_pad: float = 0.0, saturation: float | None = None, detector_mask: str | None = None,
     check: bool = False, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Bin an ImageD11 dataset's sparse pixels into the indexer's histograms (see :func:`open_dataset`).
@@ -398,6 +402,11 @@ def stage_histogram(
     saturation
         Detector counts at which a pixel saturated (e.g. 65535 for a 16-bit Eiger): the bins holding such a pixel
         are recorded, and the fit takes their data as a lower bound (:func:`anri.index.occupancy.censored_ratio`)
+    detector_mask
+        Detector mask as ImageD11's segmenter reads it (non-zero: masked; :func:`anri.io.imaged11.read_mask`).
+        Default: the DataSet's maskfile. The measured share of each (ring, eta bin), off the detector's edges and
+        masked pixels, is recorded ("coverage"); the later stages scale predictions by it, so that a reflection on a
+        module gap is not taken as missing
     check
         Only resolve and log the setup, write nothing, return ""
     command
@@ -412,12 +421,14 @@ def stage_histogram(
     """
     import jax.numpy as jnp
 
-    from .data import dty_offsets, histogram_pixels, ring_profile, ring_table
+    import anri.io
+
+    from .data import detector_coverage, dty_offsets, histogram_pixels, ring_profile, ring_table
 
     options = {"analysisroot": analysisroot, "sample": sample, "dataset": dataset, "phase": phase, "parfile": parfile,
                "rings": rings, "ring_merge": ring_merge, "cif": cif, "tth_tol": tth_tol, "monitor": monitor, "dty_source": dty_source,
                "frame_dty": frame_dty, "gridstep": gridstep, "grid_pad": grid_pad,
-               "saturation": saturation}  # fmt: skip
+               "saturation": saturation, "detector_mask": detector_mask}  # fmt: skip
     d = open_dataset(analysisroot, sample, dataset, phase=phase, parfile=parfile, monitor=monitor,
                      dty_source=dty_source, gridstep=gridstep, saturation=saturation, log=log)  # fmt: skip
     sc, geom, stream, ds = d["scan"], d["geom"], d["stream"], d["ds"]
@@ -432,6 +443,12 @@ def stage_histogram(
     idx, tth = ", ".join(str(i) for i in ring_t["index"]), ", ".join(f"{v:.3f}" for v in ring_t["tth"])
     log(f"{len(ring_t['hkls'])} hkls in {n_rings} rings (indices {idx}) at 2theta {tth}")
     log(f"memory: data {n_rings * (n_e // R_E) * (n_o // R_O) * NK * 4 / 1e9:.2f} GB (x ~4 in MLEM)")
+    mask_file = detector_mask or ds["maskfile"]
+    if mask_file and not os.path.exists(mask_file):
+        msg = f"detector mask {mask_file} not found" + ("" if detector_mask else " (the DataSet's): give detector_mask")
+        raise FileNotFoundError(msg)
+    if not mask_file:
+        log("detector mask: none given and the DataSet names none; only the detector's edges are modelled")
     if check:
         return ""
 
@@ -446,6 +463,23 @@ def stage_histogram(
     ring_t["tth_tol"] = tol
     log(f"ring widths from {len(sample_)} groups ({time.perf_counter() - t1:.0f} s): offset / half-width (95%) / "
         "tolerance, deg: " + "; ".join(f"{o:+.3f} / {w:.3f} / {t:.3f}" for o, w, t in zip(ring_off, ring_hw, tol)))  # fmt: skip
+
+    t1 = time.perf_counter()
+    good = anri.io.imaged11.read_mask(mask_file) if mask_file else None
+    shape = good.shape if good is not None else d["detector_shape"]
+    if good is not None and d["detector_shape"] is not None and good.shape != d["detector_shape"]:
+        msg = f"detector mask {mask_file}: shape {good.shape}, frames {d['detector_shape']}"
+        raise ValueError(msg)
+    if shape is not None:
+        good = np.ones(shape, bool) if good is None else good
+        cov = detector_coverage(good, geom, ring_t["tth"], tol, B_E, n_e, d["spatial"])
+        ring_t["coverage"] = cov.astype(np.float32)
+        away = np.abs(np.sin(np.radians((np.arange(n_e) + 0.5) * B_E - 180.0))) > 0.2  # away from the rotation axis
+        log(f"detector coverage ({mask_file or 'no mask'}; {time.perf_counter() - t1:.0f} s): measured share of each "
+            "ring (|sin eta| > 0.2): " + ", ".join(f"{c:.2f}" for c in cov[:, away].mean(1))
+            + f"; eta bins below half measured: {np.mean(cov[:, away] < 0.5) * 100:.1f}%")  # fmt: skip
+    else:
+        log("detector coverage: not recorded (no mask and no detector shape in the sparse file)")
 
     t1 = time.perf_counter()
     hists = histogram_pixels(  # one pass: the lit histogram (rows summed, fine bins), and the fit data (per row)
@@ -493,7 +527,8 @@ def stage_histogram(
                 "phase": d["phase"], "lattice": list(d["lattice"]), "space_group": d["space_group"],
                 "wavelength": d["geo"]["wavelength"], "y0_dataset": ds["y0"], "voxel_size": sc["ystep"],
                 "omega_step": sc["omega_step"], "rings_tth_deg": list(ring_t["tth"]), "tth_tol_deg": list(tol),
-                "n_hkls": len(ring_t["hkls"]), "spatial_correction": d["spatial_correction"]}  # fmt: skip
+                "n_hkls": len(ring_t["hkls"]), "spatial_correction": d["spatial_correction"],
+                "detector_mask": mask_file}  # fmt: skip
     with h5py.File(out, "w") as h:
         write_provenance(h, "histogram", None, options, resolved, command)
         write_attrs(h.create_group("geometry"), d["geo"])
@@ -714,9 +749,12 @@ def stage_fit(
         The file written: occupancies ("f", "cand") of every voxel, the mask, the voxels' positions, and per dty row
         the data and fitted intensity
     """
+    import jax.numpy as jnp
+
     import anri.geom
     from anri.maths.utils import fwhm_to_sigma
 
+    from .data import coarsen_coverage
     from .mask import disc_mask, load_mask, support_mask
     from .occupancy import beam_rows, fit_occupancy
     from .search import predictions
@@ -749,6 +787,8 @@ def stage_fit(
         if k in sc:
             scan[k] = sc[k]
     dims = (B_E * R_E, B_O * R_O, sc["n_e"] // R_E, sc["n_o"] // R_O)
+    if rings.get("coverage") is not None:  # the measured share of each (ring, eta bin): masks and detector edges
+        scan["coverage"] = jnp.asarray(coarsen_coverage(rings["coverage"], dims[2]), jnp.float32)
     if beam > 0:  # the beam's profile across dty, over voxels of YSTEP; summed rows widen its flat top
         scan.update({"sig_beam": fwhm_to_sigma(beam), "width_beam": sc["width_beam"], "voxel": sc["voxel"]})
         dims = (*dims, beam_rows(scan))

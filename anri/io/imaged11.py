@@ -228,8 +228,8 @@ def read_dataset(dsfile: str, remap: dict | None = None) -> dict:
     -------
     dict
         "y0" (None if absent), "ybincens", "ybinedges", "obinedges", "dtymotor", "omegamotor", "parfile",
-        "sparsefile", "masterfile" and the detector distortion files "e2dxfile", "e2dyfile", "detectorh5" and
-        "splinefile" (made absolute: a relative path is relative to the DataSet's folder; "" if absent), "detector"; "dty" and "omega" [scans, frames] (None if absent): each frame's motor positions as ImageD11 has binned
+        "sparsefile", "masterfile", the detector distortion files "e2dxfile", "e2dyfile", "detectorh5" and
+        "splinefile", and the segmenter's detector mask "maskfile" (made absolute: a relative path is relative to the DataSet's folder; "" if absent), "detector"; "dty" and "omega" [scans, frames] (None if absent): each frame's motor positions as ImageD11 has binned
         them, the sinogram's rows; and "scans" (None if absent): each row's sparse group, or slice of one
         ("1.1::[0:1440]")
     """
@@ -241,6 +241,9 @@ def read_dataset(dsfile: str, remap: dict | None = None) -> dict:
         out["scans"] = (
             [x.decode() if isinstance(x, bytes) else str(x) for x in h["scans"][()]] if "scans" in h else None
         )
+        seg = dict(h["lima_segmenter"].attrs) if "lima_segmenter" in h else {}
+    if "maskfile" not in attrs and "maskfile" in seg:  # the segmenter's detector mask
+        attrs["maskfile"] = seg["maskfile"]
 
     def absolute(key: str) -> str:
         path = str(attrs.get(key, ""))
@@ -261,12 +264,31 @@ def read_dataset(dsfile: str, remap: dict | None = None) -> dict:
         e2dyfile=absolute("e2dyfile"),
         detectorh5=absolute("detectorh5"),
         splinefile=absolute("splinefile"),
+        maskfile=absolute("maskfile"),
         detector=str(attrs.get("detector", "")),
         y0=float(attrs["y0"]) if "y0" in attrs else None,
         dtymotor=str(attrs["dtymotor"]),
         omegamotor=str(attrs["omegamotor"]),
     )
     return out
+
+
+def read_mask(path: str) -> np.ndarray:
+    """Read a detector mask as ImageD11's segmenter uses it: any image fabio reads, non-zero for a masked pixel.
+
+    Parameters
+    ----------
+    path
+        The mask file (e.g. a DataSet's "maskfile", :func:`read_dataset`)
+
+    Returns
+    -------
+    np.ndarray
+        [n_slow, n_fast] bool, True where the pixel is measured
+    """
+    import fabio
+
+    return np.asarray(fabio.open(path).data) == 0
 
 
 def read_pars_json(parfile: str, phase: str | None = None) -> tuple[dict, str, dict]:

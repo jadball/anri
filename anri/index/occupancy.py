@@ -99,7 +99,8 @@ def system(
     scan
         "y0", "dty0", "ystep", "n_rows" and "om0": the rows are at dty = dty0 + k ystep; optionally "ddty" [n_rows,
         n_o], each row's offset from that per omega bin (fly, helical scans: :func:`anri.index.data.dty_offsets`), and
-        "exposure" [n_rows, n_o], each (row, omega bin)'s frames relative to a full one; with a beam profile also
+        "exposure" [n_rows, n_o], each (row, omega bin)'s frames relative to a full one; "coverage" [n_rings, n_e],
+        the measured share of each (ring, eta bin) (:func:`anri.index.data.detector_coverage`); with a beam profile also
         "sig_beam", "width_beam" and "voxel" (:func:`beam_rows`)
     b_e, b_o, n_e, n_o
         Bin widths and counts of the histogram in eta and omega
@@ -142,6 +143,8 @@ def system(
         )  # fmt: skip
     idx, wt = [], []
     for ie, io, we, wo, inside in eta_omega_corners(eta, om, scan["om0"], b_e, b_o, n_e, n_o):
+        if "coverage" in scan:  # the share of the bin's detector area that is measured
+            we = we * scan["coverage"][ring_j[None, None, :], ie]
         for dk, wk in rows:
             kk = k0 + dk
             good = use & inside & (kk >= 0) & (kk < n_k)

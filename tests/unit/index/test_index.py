@@ -647,7 +647,7 @@ class TestOrientationFit(unittest.TestCase):
         g_true = np.zeros(200, np.float32)
         g_true[[17, 123]] = [100.0, 25.0]
         F2 = jnp.ones(2 * len(rings["hkls"]), jnp.float32)
-        args = (jnp.asarray(B), jnp.asarray(rings["hkls"]), F2, jnp.asarray(rings["ring_j"]), geom, 0.2)
+        args = (jnp.asarray(B), jnp.asarray(rings["hkls"]), F2, jnp.asarray(rings["ring_j"]), geom, 0.2, None)
         d = _forward(
             jnp.asarray(g_true.reshape(-1, 8)), jnp.asarray(U.reshape(-1, 8, 3, 3)), *args, bins, 3 * 360 * 180
         )
@@ -672,7 +672,7 @@ class TestOrientationFit(unittest.TestCase):
         g_true = np.zeros(64, np.float32)
         g_true[[5, 40]] = [1e6, 3e5]
         F2 = jnp.ones(2 * len(rings["hkls"]), jnp.float32)
-        args = (jnp.asarray(B), jnp.asarray(rings["hkls"]), F2, jnp.asarray(rings["ring_j"]), geom, 0.2)
+        args = (jnp.asarray(B), jnp.asarray(rings["hkls"]), F2, jnp.asarray(rings["ring_j"]), geom, 0.2, None)
         d = _forward(
             jnp.asarray(g_true.reshape(-1, 8)), jnp.asarray(U.reshape(-1, 8, 3, 3)), *args, bins, 3 * 360 * 180
         )
@@ -688,6 +688,41 @@ class TestOrientationFit(unittest.TestCase):
             rest = np.maximum(m - ga, 1e-6 * m)
             ref = 2 * np.sum(np.where(dd > 0, dd * np.log(m / rest) - ga, -ga))
             self.assertLess(abs(lr[q] - ref), 1e-3, f"orientation {q}")
+
+
+class TestDetectorCoverage(unittest.TestCase):
+    def test_masked_half(self):
+        """A full detector covers each ring; with half its columns masked each ring is half covered, bins 0 or 1."""
+        geom = geometry()
+        tth = np.degrees(np.arctan(np.array([300.0, 600.0]) * 75.0 / PARS["distance"]))  # rings of 300, 600 pixels
+        good = np.ones((2200, 2100), bool)
+        cov = ix.data.detector_coverage(good, geom, tth, np.full(2, 0.05), 1.0, 360, sub=1)
+        np.testing.assert_allclose(cov, 1.0)
+        good[:, : int(PARS["y_center"])] = False
+        cov = ix.data.detector_coverage(good, geom, tth, np.full(2, 0.05), 1.0, 360, sub=1)
+        np.testing.assert_allclose(cov.mean(1), 0.5, atol=0.02)
+        self.assertLessEqual(np.sum((cov > 0.01) & (cov < 0.99)), 8)  # only the bins the mask's edge crosses
+        np.testing.assert_allclose(ix.data.coarsen_coverage(cov, 180), cov.reshape(2, 180, 2).mean(2))
+
+    def test_scales_the_system(self):
+        """Coverage 1 changes nothing; coverage 0 on a ring removes its predictions' weight."""
+        from anri.index.orientations import _system
+
+        c, B, _ = iron()
+        rings = ix.data.ring_table(*c, PARS["wavelength"], 3)
+        F2 = jnp.ones(2 * len(rings["hkls"]), jnp.float32)
+        args = (jnp.asarray(B), jnp.asarray(rings["hkls"]), F2, jnp.asarray(rings["ring_j"]), geometry(), 0.2)
+        bins = (1.0, 1.0, 360, 180, 0.0)
+        U = jnp.asarray(rotations(4, 3))
+        _, w0 = _system(U, *args, None, bins)
+        _, w1 = _system(U, *args, jnp.ones((3, 360), jnp.float32), bins)
+        np.testing.assert_allclose(np.asarray(w1), np.asarray(w0))
+        cov = np.ones((3, 360), np.float32)
+        cov[1] = 0.0
+        _, w2 = _system(U, *args, jnp.asarray(cov), bins)
+        on1 = np.asarray(rings["ring_j"]) == 1
+        self.assertEqual(float(np.abs(np.asarray(w2)[:, on1]).max()), 0.0)
+        np.testing.assert_allclose(np.asarray(w2)[:, ~on1], np.asarray(w0)[:, ~on1])
 
 
 class TestInherit(unittest.TestCase):

@@ -17,36 +17,48 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from .data import eta_omega_corners
+from .data import coarsen_coverage, eta_omega_corners
 from .occupancy import censored_ratio, deviance, squarem
 from .search import predict
 
 
 def _system(
     U: jax.Array, B: jax.Array, hkls: jax.Array, F2: jax.Array, ring_j: jax.Array, geom: dict, etacut: float,
-    bins: tuple,
+    cov: jax.Array | None, bins: tuple,
 ) -> tuple[jax.Array, jax.Array]:  # fmt: skip
-    """(cell index, weight) [Q, Nj, 4] of orientations U [Q, 3, 3] in a row-summed (ring, eta, omega) histogram."""
+    """(cell index, weight) [Q, Nj, 4] of orientations U [Q, 3, 3] in a row-summed (ring, eta, omega) histogram.
+
+    cov: [n_rings, n_e] measured share of each (ring, eta bin) (:func:`anri.index.data.detector_coverage`), or None.
+    """
     b_e, b_o, n_e, n_o, om0 = bins
     eta, om, ok, lp = predict(U, B, hkls, geom)
     w = lp * F2[None]
     use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut)
     idx, wt = [], []
     for ie, io, we, wo, inside in eta_omega_corners(eta, om, om0, b_e, b_o, n_e, n_o):
+        if cov is not None:
+            we = we * cov[ring_j[None], ie]
         good = use & inside
         idx.append(jnp.where(good, (ring_j[None] * n_e + ie) * n_o + io, -1))
         wt.append(jnp.where(good, w * we * wo, 0.0))
     return jnp.stack(idx, -1), jnp.stack(wt, -1)
 
 
+def _coverage(rings: dict, n_e: int) -> jax.Array | None:
+    """Return the rings' detector coverage in n_e eta bins, or None without one."""
+    if rings.get("coverage") is None:
+        return None
+    return jnp.asarray(coarsen_coverage(rings["coverage"], n_e), jnp.float32)
+
+
 @partial(jax.jit, static_argnames=("bins", "n_cells"))
 def _forward(
     g: jax.Array, U: jax.Array, B: jax.Array, hkls: jax.Array, F2: jax.Array, ring_j: jax.Array, geom: dict,
-    etacut: float, bins: tuple, n_cells: int,
+    etacut: float, cov: jax.Array | None, bins: tuple, n_cells: int,
 ) -> jax.Array:  # fmt: skip
     def step(acc: jax.Array, ch: tuple) -> tuple:
         gc, uc = ch
-        idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, bins)
+        idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, cov, bins)
         c = (gc[:, None, None] * wt).ravel().astype(acc.dtype)
         return acc + jax.ops.segment_sum(c, jnp.where(idx >= 0, idx, n_cells).ravel(), n_cells + 1)[:-1], None
 
@@ -57,10 +69,10 @@ def _forward(
 @partial(jax.jit, static_argnames=("bins",))
 def _backward(
     r: jax.Array, U: jax.Array, B: jax.Array, hkls: jax.Array, F2: jax.Array, ring_j: jax.Array, geom: dict,
-    etacut: float, bins: tuple,
+    etacut: float, cov: jax.Array | None, bins: tuple,
 ) -> jax.Array:  # fmt: skip
     def one(uc: jax.Array) -> jax.Array:
-        idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, bins)
+        idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, cov, bins)
         return jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (1, 2))
 
     return jax.lax.map(one, U)
@@ -69,11 +81,11 @@ def _backward(
 @partial(jax.jit, static_argnames=("bins",))
 def _likelihood_ratio(
     d: jax.Array, mu: jax.Array, g: jax.Array, U: jax.Array, B: jax.Array, hkls: jax.Array, F2: jax.Array,
-    ring_j: jax.Array, geom: dict, etacut: float, bins: tuple, censor: float,
+    ring_j: jax.Array, geom: dict, etacut: float, cov: jax.Array | None, bins: tuple, censor: float,
 ) -> jax.Array:  # fmt: skip
     def one(ch: tuple) -> jax.Array:
         gc, uc = ch
-        idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, bins)
+        idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, cov, bins)
         m = jnp.where(idx >= 0, mu[jnp.clip(idx, 0)], 0.0)
         dd = jnp.where(idx >= 0, d[jnp.clip(idx, 0)], 0.0)
         ga = gc[:, None, None] * wt
@@ -122,7 +134,8 @@ def fit(
     B
         [3, 3] B matrix
     rings
-        From :func:`anri.index.data.ring_table` ("hkls", "ring_j" and, optionally, "F2")
+        From :func:`anri.index.data.ring_table` ("hkls", "ring_j" and, optionally, "F2" and the measured share of
+        each (ring, eta bin), "coverage" from the histogram stage, averaged here into the histogram's eta bins)
     geom
         Geometry dict, see :func:`anri.index.search.predict`
     bins
@@ -162,7 +175,7 @@ def fit(
     d = jnp.asarray(d, jnp.float32)
     F2 = np.repeat(rings.get("F2", np.ones(len(rings["hkls"]))), 2)
     args = (jnp.asarray(B, jnp.float32), jnp.asarray(rings["hkls"]), jnp.asarray(F2, jnp.float32),
-            jnp.asarray(rings["ring_j"]), geom, etacut)  # fmt: skip
+            jnp.asarray(rings["ring_j"]), geom, etacut, _coverage(rings, bins[2]))  # fmt: skip
     norm = jnp.maximum(_backward(jnp.ones_like(d), Up, *args, bins), 1e-30)
 
     def step(g: jax.Array) -> tuple:  # one MLEM update, and the deviance of the occupancies it started from

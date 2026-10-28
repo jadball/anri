@@ -23,7 +23,7 @@ from anri.diffract.scatter import k_out_to_tth_eta
 from anri.fwd.peak import hkl_to_k_omega
 from anri.geom.gonio import wrap_omega
 
-from .data import eta_bin, omega_bin
+from .data import coarsen_coverage, eta_bin, omega_bin
 
 GRID_STEPS = (3.0, 2.5, 2.0, 1.5, 1.0)  # tried by choose_grid, coarsest first
 
@@ -119,8 +119,11 @@ def completeness(
     b_o: float,
     n_e: int,
     n_o: int,
+    cov: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
     """Fraction of each orientation's valid predictions with a lit bin within its own tolerance box.
+
+    Predictions where less than half of the detector is measured (``cov``) are not counted: they could not be lit.
 
     Parameters
     ----------
@@ -136,6 +139,8 @@ def completeness(
         The lit map's first omega bin edge and bin widths
     n_e, n_o
         The lit map's numbers of eta and omega bins
+    cov
+        [n_rings, n_e] measured share of each (ring, eta bin) (:func:`anri.index.data.detector_coverage`), or None
 
     Returns
     -------
@@ -146,6 +151,8 @@ def completeness(
     de = jnp.minimum(jnp.ceil(tol_e / b_e).astype(jnp.int32), n_e - 1)
     do = jnp.ceil(tol_o / b_o).astype(jnp.int32)
     inside = ok & (io >= 0) & (io < n_o)
+    if cov is not None:
+        inside = inside & (cov[ring_j[None, :], ie] >= 0.5)
     e0, e1 = ie + n_e - de, ie + n_e + de + 1
     o0, o1 = jnp.clip(io - do, 0, n_o), jnp.clip(io + do + 1, 0, n_o)
     r = ring_j[None, :]
@@ -168,7 +175,8 @@ def completeness_of(
     B
         [3, 3] B matrix
     rings
-        From :func:`anri.index.data.ring_table`, plus "hw" [Nr] measured half-widths (degrees)
+        From :func:`anri.index.data.ring_table`, plus "hw" [Nr] measured half-widths (degrees) and, optionally,
+        "coverage" (the histogram stage's measured share of each (ring, eta bin))
     geom
         Geometry dict
     lit
@@ -185,6 +193,8 @@ def completeness_of(
     b_e, b_o, n_e, n_o = lit["bins"]
     hkls, ring_j = jnp.asarray(rings["hkls"]), jnp.asarray(rings["ring_j"])
     tth, hw = jnp.asarray(rings["tth"], jnp.float32), jnp.asarray(rings["hw"], jnp.float32)
+    cov = rings.get("coverage")
+    cov = None if cov is None else jnp.asarray(coarsen_coverage(cov, n_e), jnp.float32)
     U = np.asarray(U, np.float32)
     out = []
     for s0 in range(0, len(U), chunk):
@@ -194,7 +204,7 @@ def completeness_of(
         eta, om, ok, _ = predict(jnp.asarray(u), jnp.asarray(B, jnp.float32), hkls, geom)
         te, to = match_tolerances(eta, ring_j, tth, hw, delta, lit["frame_step"])
         ok = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > lit["etacut"])
-        c, _ = completeness(lit["table"], eta, om, ok, ring_j, te, to, lit["om0"], b_e, b_o, n_e, n_o)
+        c, _ = completeness(lit["table"], eta, om, ok, ring_j, te, to, lit["om0"], b_e, b_o, n_e, n_o, cov)
         out.append(np.asarray(c)[:m])
     return np.concatenate(out)
 

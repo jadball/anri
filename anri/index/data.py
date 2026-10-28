@@ -227,6 +227,66 @@ def ring_widths(
     return off, hw
 
 
+def detector_coverage(
+    good: ArrayLike, geom: dict, ring_tth: ArrayLike, ring_tol: ArrayLike, b_e: float, n_e: int,
+    spatial: tuple | None = None, sub: int = 4, rows: int = 64,
+) -> np.ndarray:  # fmt: skip
+    """Fraction of each ring's detector area that is measured, per eta bin: 0 off the detector and in masked pixels.
+
+    Each pixel is sampled at sub x sub points (as the data, after detector distortion), and every point within a
+    ring's 2theta tolerance counts towards that ring's eta bin; the coverage is the share of them on measured pixels.
+    A reflection predicted there is seen with this fraction of its intensity on average.
+
+    Parameters
+    ----------
+    good
+        [n_slow, n_fast] True where a pixel is measured (:func:`anri.io.imaged11.read_mask`; all True for no mask)
+    geom
+        Geometry dict, see :func:`pixel_angles`
+    ring_tth, ring_tol
+        [Nr] each: the rings' 2theta and tolerance (degrees), as the histograms bin them
+    b_e, n_e
+        The eta bins
+    spatial
+        Detector distortion (dx, dy) as :func:`anri.io.imaged11.read_spatial`, or None
+    sub
+        Sample points per pixel along each axis
+    rows
+        Detector rows per pass
+
+    Returns
+    -------
+    np.ndarray
+        [Nr, n_e] coverage in [0, 1]
+    """
+    good = np.asarray(good, bool)
+    ring_tth, ring_tol = np.asarray(ring_tth, float), np.asarray(ring_tol, float)
+    n_r, (n_s, n_f) = len(ring_tth), good.shape
+    num, den = np.zeros(n_r * n_e), np.zeros(n_r * n_e)
+    offs = (np.arange(sub) + 0.5) / sub - 0.5
+    for s0 in range(0, n_s, rows):
+        s, f = np.mgrid[s0 : min(s0 + rows, n_s), 0:n_f]
+        g = good[s, f].ravel().astype(float)
+        ps, pf = s.ravel().astype(np.float32), f.ravel().astype(np.float32)
+        if spatial is not None:  # where the pixel really is, as the data (anri.io.imaged11.stream_sparse)
+            ps, pf = ps + spatial[1][s, f].ravel(), pf + spatial[0][s, f].ravel()
+        for a in offs:
+            for b in offs:
+                x = np.asarray(pixel_angles(jnp.asarray(ps + a), jnp.asarray(pf + b), jnp.zeros(len(ps)), geom))
+                ie = np.floor((x[:, 1] + 180.0) / b_e).astype(np.int64) % n_e
+                for r in range(n_r):
+                    m = np.abs(x[:, 0] - ring_tth[r]) < ring_tol[r]
+                    num += np.bincount(r * n_e + ie[m], g[m], n_r * n_e)
+                    den += np.bincount(r * n_e + ie[m], None, n_r * n_e)
+    return np.where(den > 0, num / np.maximum(den, 1), 0.0).reshape(n_r, n_e)
+
+
+def coarsen_coverage(cov: ArrayLike, n_e: int) -> np.ndarray:
+    """Average a [Nr, m n_e] coverage (:func:`detector_coverage`) into n_e eta bins."""
+    cov = np.asarray(cov)
+    return cov.reshape(cov.shape[0], n_e, -1).mean(2)
+
+
 def eta_bin(eta: jax.Array, b_e: float, n_e: int) -> jax.Array:
     """Return the histogram's eta bin of each angle (degrees): bins of b_e, periodic over 360 degrees from -180."""
     return jnp.floor((eta + 180.0) / b_e).astype(jnp.int32) % n_e
