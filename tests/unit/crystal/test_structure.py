@@ -146,3 +146,12 @@ class TestStructureFactors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAttenuation(unittest.TestCase):
+    def test_against_nist(self):
+        """mu / rho of iron and silicon (total, with coherent scattering) as NIST XCOM tabulates it."""
+        for name, energy, mu_rho in (("Fe.cif", 50.0, 1.958), ("Fe.cif", 80.0, 0.5952), ("Si.cif", 50.0, 0.4385)):
+            st = read_cif(name)
+            mu = anri.crystal.structure.attenuation(st, energy)  # 1 / micrometre
+            self.assertAlmostEqual(mu * 1e4 / st.Properties.density(), mu_rho, delta=0.002 * mu_rho)

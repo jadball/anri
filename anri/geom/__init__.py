@@ -4,8 +4,9 @@
 - :mod:`anri.geom.detector`: detector frames
 - :mod:`anri.geom.scan`: scanning-3DXRD grids: reconstruction, step and sample positions, dty rows
 - :mod:`anri.geom.beam`: beam directions and offsets
+- :mod:`anri.geom.paths`: paths through the sample to its edge, for absorption
 """
 
-from . import beam, detector, gonio, scan
+from . import beam, detector, gonio, paths, scan
 
-__all__ = ["beam", "detector", "gonio", "scan"]
+__all__ = ["beam", "detector", "gonio", "paths", "scan"]

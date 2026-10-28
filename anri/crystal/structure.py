@@ -172,6 +172,28 @@ def rings(ds: ArrayLike, tol: float = 1e-4) -> tuple[np.ndarray, np.ndarray]:
     return ring, np.asarray(ring_ds)
 
 
+def attenuation(structure: DansCrystal, energy_kev: float) -> float:
+    """Linear X-ray attenuation coefficient of a crystal structure, from its composition and density.
+
+    The structure's atoms and cell give the composition and density; each element's total mass attenuation
+    (photoelectric, Compton and Rayleigh) comes from Dans_Diffraction's tables (``Crystal.Properties.absorption``),
+    which reproduce NIST XCOM (e.g. iron at 50 keV: 1.958 cm^2/g).
+
+    Parameters
+    ----------
+    structure
+        e.g. ``Dans_Diffraction.Crystal("Ag2S.cif")``
+    energy_kev
+        Photon energy (keV); 12.398 / wavelength (angstrom)
+
+    Returns
+    -------
+    float
+        mu (1 / micrometre, the unit of the voxel positions): the intensity falls as exp(-mu L) along a path L
+    """
+    return float(np.asarray(structure.Properties.absorption(energy_kev)).ravel()[0])
+
+
 def structure_factors(structure: DansCrystal, hkl: ArrayLike, wavelength: float) -> np.ndarray:
     """Compute ``|F|^2`` of reflections of a structure, with Debye-Waller factors and anomalous dispersion.
 
