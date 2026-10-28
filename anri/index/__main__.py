@@ -33,12 +33,30 @@ def log(msg: str) -> None:
     print(f"[{time.perf_counter() - T0:7.1f} s] {msg}", flush=True)
 
 
+def _rings(s: str) -> int | list[int]:
+    """--rings: a number (the first rings) or comma-separated ring indices."""
+    return [int(v) for v in s.split(",") if v.strip()] if "," in s else int(s)
+
+
 def _histogram_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--phase", help="phase name in pars.json (default: the only one)")
     p.add_argument(
         "--parfile", help="pars.json (default: the DataSet's parfile, else pars/pars.json beside PROCESSED_DATA)"
     )
-    p.add_argument("--rings", type=int, default=6, help="number of rings used (default 6)")
+    p.add_argument(
+        "--rings",
+        type=_rings,
+        default=6,
+        help="number of rings used, the first ones (default 6); "
+        "or which rings, as comma-separated indices from the lowest 2theta (0 first), e.g. 9,10,11",
+    )
+    p.add_argument(
+        "--ring-merge",
+        type=float,
+        default=1e-4,
+        help="reflections within this in d* (1/angstrom) "
+        "are one ring (default 1e-4): merge rings the data cannot separate",
+    )
     p.add_argument("--cif", help="CIF of the phase, for structure factors (default: |F|^2 = 1)")
     p.add_argument("--tth-tol", type=float, help="2theta tolerance of the rings (deg; default: measured per ring)")
     p.add_argument("--monitor", help="normalise intensities by this counter in each scan's measurement, frame by frame, "
@@ -50,6 +68,19 @@ def _histogram_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-frame-dty", action="store_true", help="ignore dty's motion within each row (fly and helical "
                    "scans): by default each frame's dty is the DataSet's for its row plus the motion read from the "
                    "sparse file (anri.io.imaged11.read_frame_dty), and the model puts each voxel in the rows that really saw it")  # fmt: skip
+    p.add_argument(
+        "--saturation",
+        type=float,
+        help="detector counts at which a pixel saturated (e.g. 65535): bins "
+        "holding one are lower bounds in the fit (default: none)",
+    )
+    p.add_argument(
+        "--grid-pad",
+        type=float,
+        default=0.0,
+        help="widen the voxel grid by this on every side (sample "
+        "units, e.g. um), for a sample reaching past the scanned range; fixed here for every later stage",
+    )
     p.add_argument("--gridstep", type=int, default=1, help="voxel = gridstep x dty step; data rows are summed in groups "
                    "of gridstep to match (default 1)")  # fmt: skip
     p.add_argument("--check", action="store_true", help="print the resolved paths and parameters, then stop")
@@ -112,10 +143,28 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
         "--mask",
         default="disc",
         help="fit only the voxels in a sample mask: 'disc' (default: the voxels "
-        "the beam sees at every omega, within the scanned dty range all round the rotation axis; those further "
-        "out are hardly constrained), 'auto' (in the disc, the Otsu threshold, largest region and convex hull "
-        "of a quick reconstruction, as ImageD11's tomo_2_map), or a .npy file of [voxels, voxels] booleans in "
-        "reconstruction order, e.g. drawn with anri.index.mask.draw_mask",
+        "the beam sees at every omega, within the scanned dty range all round the rotation axis, grown by --pad), "
+        "'auto' (the sample's support in the projections: voxels whose row is lit at every omega it is scanned at, "
+        "largest region, convex hull; also outside the disc), or a .npy file of [voxels, voxels] booleans in "
+        "reconstruction order, e.g. drawn with anri.index.mask.draw_mask or an ImageD11 mask on the same grid",
+    )
+    p.add_argument(
+        "--pad",
+        type=float,
+        default=0.0,
+        help="grow the disc mask by this (sample units, e.g. um): for a "
+        "sample a little larger than the disc, whose outer part would otherwise pile onto the disc's edge",
+    )
+    p.add_argument(
+        "--mu",
+        type=float,
+        help="linear attenuation coefficient (1 / sample units, e.g. 1/um) for absorption along the incoming and "
+        "diffracted paths through the mask (default: from the histogram stage's --cif)",
+    )
+    p.add_argument(
+        "--no-absorption",
+        action="store_true",
+        help="do not model absorption, even with a CIF",
     )
 
 
@@ -198,8 +247,8 @@ def main() -> None:
         out = getattr(args, "out", None) or os.path.join(args.outdir, f"{args.sample}_{args.dataset}_histogram.h5")
         source = ix.stages.stage_histogram(
             args.analysisroot, args.sample, args.dataset, out, phase=args.phase, parfile=args.parfile,
-            rings=args.rings, cif=args.cif, tth_tol=args.tth_tol, monitor=args.monitor, dty_source=args.dty_source,
-            frame_dty=not args.no_frame_dty, gridstep=args.gridstep, check=args.check, command=command, log=log,
+            rings=args.rings, ring_merge=args.ring_merge, cif=args.cif, tth_tol=args.tth_tol, monitor=args.monitor, dty_source=args.dty_source,
+            frame_dty=not args.no_frame_dty, gridstep=args.gridstep, grid_pad=args.grid_pad, saturation=args.saturation, check=args.check, command=command, log=log,
         )  # fmt: skip
         if args.check or cmd == "histogram":
             return
@@ -214,7 +263,7 @@ def main() -> None:
                                  keep=args.keep, censor=args.censor, command=command, log=log)  # fmt: skip
     if cmd in ("fit", "run"):
         source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.iter, coarse=args.coarse,
-                              beam=args.beam, mask=args.mask, block_gb=args.block_gb, censor=args.censor,
+                              beam=args.beam, mask=args.mask, pad=args.pad, absorption=not args.no_absorption, mu=args.mu, block_gb=args.block_gb, censor=args.censor,
                               command=command, log=log)  # fmt: skip
     if cmd in ("populations", "run"):
         ix.stages.stage_populations(

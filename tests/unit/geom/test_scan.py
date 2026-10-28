@@ -42,3 +42,18 @@ class TestDtyToRow(unittest.TestCase):
         np.testing.assert_array_equal(anri.geom.scan.dty_to_row(dty, edges), [-1, -1, 0, 1, 1, 1, 3, 3, -1, -1])
         np.testing.assert_array_equal(anri.geom.scan.dty_to_row(dty, edges, 2), [-1, -1, 0, 0, 0, 0, 1, 1, -1, -1])
         self.assertEqual(anri.geom.scan.dty_to_row(np.zeros((2, 3)), edges).shape, (2, 3))
+
+
+class TestRegrid(unittest.TestCase):
+    def test_round_trip(self):
+        """Grids centred on the axis share their middle voxels: pad then crop gives the array back."""
+        n, step = 11, 2.0
+        a = np.arange(n * n, dtype=float).reshape(n, n)
+        big = anri.geom.scan.regrid(a, 15)
+        np.testing.assert_array_equal(big[2:-2, 2:-2], a)
+        np.testing.assert_array_equal(anri.geom.scan.regrid(big, n), a)
+        p_small = np.asarray(anri.geom.scan.recon_positions(n, step)).reshape(n, n, 3)
+        p_big = np.asarray(anri.geom.scan.recon_positions(15, step)).reshape(15, 15, 3)
+        np.testing.assert_allclose(anri.geom.scan.regrid(p_big, n), p_small)  # the same positions
+        with self.assertRaises(ValueError):
+            anri.geom.scan.regrid(a, 12)  # odd onto even: not centred alike

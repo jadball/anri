@@ -26,16 +26,18 @@ def ring_table(
     lattice_parameters: ArrayLike,
     space_group: int,
     wavelength: float,
-    n_rings: int,
+    n_rings: int | Iterable[int],
     structure: DansCrystal | None = None,
+    merge: float = 1e-4,
 ) -> dict:
-    """List the reflections of a crystal's first rings, with their structure factors.
+    """List the reflections of a crystal's rings, with their structure factors.
 
-    Systematic absences are removed (:func:`anri.crystal.structure.reflections`). Each reflection has two predictions, one per
-    omega solution, indexed ``j = 2 h + branch``. With a structure (``Dans_Diffraction.Crystal``, e.g. from a CIF),
-    each reflection gets its ``|F|^2`` (:func:`anri.crystal.structure.structure_factors`), scaled to a mean of 1; without one,
-    ``|F|^2 = 1``. The lattice parameters given set the reflections and 2theta, so a refined lattice can be used with
-    a CIF's atoms.
+    Reflections within ``merge`` in d* are one ring (:func:`anri.crystal.structure.rings`): rings closer than the data
+    can separate should be merged, not split between two rings. Systematic absences are removed
+    (:func:`anri.crystal.structure.reflections`). Each reflection has two predictions, one per omega solution, indexed
+    ``j = 2 h + branch``. With a structure (``Dans_Diffraction.Crystal``, e.g. from a CIF), each reflection gets its
+    ``|F|^2`` (:func:`anri.crystal.structure.structure_factors`), scaled to a mean of 1; without one, ``|F|^2 = 1``. The
+    lattice parameters given set the reflections and 2theta, so a refined lattice can be used with a CIF's atoms.
 
     Parameters
     ----------
@@ -46,35 +48,48 @@ def ring_table(
     wavelength
         In angstrom
     n_rings
-        How many rings, from the lowest 2theta
+        How many rings, from the lowest 2theta; or which rings, as indices from the lowest 2theta (0 first). For low
+        symmetry, pick strong rings well apart from their neighbours
     structure
         Optional: the same phase with its atoms, for ``|F|^2``
+    merge
+        Largest d* difference within a ring (1 / angstrom)
 
     Returns
     -------
     dict
-        "hkls" [Nh, 3], "F2" [Nh], "ring_j" [2 Nh] (ring of each prediction), "tth" [n_rings] (degrees)
+        "hkls" [Nh, 3], "F2" [Nh], "ring_j" [2 Nh] (ring of each prediction, 0 to Nr - 1 in the order of "index"),
+        "tth" [Nr] (degrees), "index" [Nr] (each ring's index among all rings), "tth_all" (degrees) and "ds_all"
+        (1 / angstrom) of every ring up to the last one used, so that widths can be measured between true neighbours
     """
+    index = np.arange(n_rings) if isinstance(n_rings, (int, np.integer)) else np.unique(np.asarray(list(n_rings), int))
+    if len(index) == 0 or index[0] < 0:
+        raise ValueError(f"rings must be a positive number or indices >= 0, not {n_rings}")
     dsmax = 0.5
-    while True:  # enough d* range for the first n_rings rings
+    while True:  # enough d* range for the last ring used
         refl = reflections(lattice_parameters, space_group, wavelength, dsmax)
-        ring, ring_ds = rings(refl["ds"])
-        if len(ring_ds) > n_rings or dsmax >= 2 / wavelength:
+        ring, ring_ds = rings(refl["ds"], merge)
+        if len(ring_ds) > index[-1] + 1 or dsmax >= 2 / wavelength:
             break
         dsmax *= 1.5
-    sel = ring < n_rings
+    if index[-1] >= len(ring_ds):
+        raise ValueError(f"ring {index[-1]} asked for, but there are only {len(ring_ds)} rings")
+    sel = np.isin(ring, index)
     hkls = refl["hkl"][sel]
     F2 = np.ones(len(hkls))
     if structure is not None:
         F2 = structure_factors(structure, hkls, wavelength)
         F2 = F2 / max(F2.mean(), 1e-30)
     with float64():
-        ring_tth = np.asarray(ds_to_tth(ring_ds[:n_rings], wavelength))
+        tth_all = np.asarray(ds_to_tth(ring_ds[: index[-1] + 1], wavelength))
     return {
         "hkls": hkls.astype(np.float32),
         "F2": F2.astype(np.float32),
-        "ring_j": np.repeat(ring[sel], 2).astype(np.int32),
-        "tth": ring_tth.astype(np.float32),
+        "ring_j": np.repeat(np.searchsorted(index, ring[sel]), 2).astype(np.int32),
+        "tth": tth_all[index].astype(np.float32),
+        "index": index.astype(np.int32),
+        "tth_all": tth_all.astype(np.float32),
+        "ds_all": ring_ds[: index[-1] + 1].astype(np.float32),
     }
 
 
@@ -151,7 +166,8 @@ def pixel_cake(
         [n_t, n_eta] intensity per bin
     """
     total = jnp.zeros((n_t, n_eta), jnp.float32)
-    for slow, fast, omega, _, value in chunks:
+    for item in chunks:
+        slow, fast, omega, _, value = item[:5]
         m = len(value)
 
         def pad(a: ArrayLike, m: int = m) -> jax.Array:
@@ -306,6 +322,7 @@ def histogram_pixels(
     om0: float,
     histograms: list,
     chunk: int,
+    saturated_into: int | None = None,
 ) -> list:
     """Stream pixels into one or more histograms in a single pass over the data.
 
@@ -328,18 +345,26 @@ def histogram_pixels(
         number of rows (1 sums them all)
     chunk
         Pixels per call (chunks are padded to it, so one compile)
+    saturated_into
+        With chunks that flag saturated pixels (``stream_sparse(saturation=...)``): also count them, in the layout
+        of this entry of ``histograms``
 
     Returns
     -------
     list
-        One flat histogram [n_rings * n_e * n_o * n_rows] per entry of ``histograms``
+        One flat histogram [n_rings * n_e * n_o * n_rows] per entry of ``histograms``, and with ``saturated_into``
+        the saturated pixels per bin last
     """
     ring_tth = jnp.asarray(ring_tth, jnp.float32)
     tth_tol = jnp.asarray(tth_tol, jnp.float32)
     n_ring = ring_tth.shape[0]
     out = [jnp.zeros(n_ring * b[2] * b[3] * n, jnp.float32) for b, n in histograms]
+    if saturated_into is not None:
+        (b_s, n_s), sat = histograms[saturated_into], None
+        sat = jnp.zeros(n_ring * b_s[2] * b_s[3] * n_s, jnp.float32)
     zeros = jnp.zeros(chunk, jnp.int32)
-    for slow, fast, omega, row, value in chunks:
+    for item in chunks:
+        slow, fast, omega, row, value = item[:5]
         m = len(value)
 
         def pad(a: ArrayLike, dt: type = np.float32, fill: float = 0, m: int = m) -> jax.Array:
@@ -353,7 +378,10 @@ def histogram_pixels(
         for i, ((b_e, b_o, n_e, n_o), n_rows) in enumerate(histograms):
             r = rows if n_rows > 1 else jnp.where(rows >= 0, zeros, -1)
             out[i] = out[i] + histogram(x, v, r, ring_tth, tth_tol, om0, b_e, b_o, n_ring, n_e, n_o, n_rows)
-    return out
+        if saturated_into is not None and len(item) > 5:
+            r = rows if n_s > 1 else jnp.where(rows >= 0, zeros, -1)
+            sat = sat + histogram(x, pad(item[5]), r, ring_tth, tth_tol, om0, *b_s[:2], n_ring, *b_s[2:], n_s)
+    return out if saturated_into is None else [*out, sat]
 
 
 def ring_profile(chunks: Iterable, geom: dict, ring_tth: ArrayLike, chunk: int, step: float = 0.002) -> tuple:

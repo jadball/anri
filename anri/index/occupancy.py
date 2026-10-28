@@ -20,32 +20,42 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from anri.geom.beam import chord_weight
+from anri.geom.beam import beam_basis, chord_weight
 from anri.geom.gonio import find_dty_for_beam_xy, wrap_omega
+from anri.geom.paths import edge_distances, ray_directions, transmission
 from anri.geom.scan import recon_positions
 
 from .data import coarsen_rows, coarsen_scan, eta_omega_corners, omega_bin, scan_beam
 
 
-def censored_ratio(d: jax.Array, mu: jax.Array, censor: float) -> jax.Array:
-    """Compute the MLEM ratio d / mu, with empty bins taken as censored.
+def censored_ratio(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | None = None) -> jax.Array:
+    """Compute the MLEM ratio d / mu, with empty bins taken as censored, and saturated bins as at least their data.
 
     A bin with no data had every pixel below the segmentation cut. Where the model predicts less than ``censor``
     there, the data cannot rule it out: the bin counts as agreeing (ratio 1). Where it predicts more, it counts as
-    ``censor / 2``. ``censor = 0``: empty bins are zeros (ratio 0), plain MLEM.
+    ``censor / 2``. ``censor = 0``: empty bins are zeros (ratio 0), plain MLEM. A bin holding a saturated pixel
+    (``saturated``: their indices) recorded at most its true counts: where the model predicts at least the data
+    there, it agrees (ratio 1); where it predicts less, the data pull it up as usual.
     """
     mus = jnp.maximum(mu, 1e-30)
-    return jnp.where(mu > 0, jnp.where(d > 0, d, jnp.where(mu < censor, mu, 0.5 * censor)) / mus, 0.0)
+    r = jnp.where(mu > 0, jnp.where(d > 0, d, jnp.where(mu < censor, mu, 0.5 * censor)) / mus, 0.0)
+    if saturated is not None:
+        r = r.at[saturated].set(jnp.where(mu[saturated] >= d[saturated], 1.0, r[saturated]))
+    return r
 
 
-def deviance(d: jax.Array, mu: jax.Array, censor: float) -> jax.Array:
+def deviance(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | None = None) -> jax.Array:
     """Poisson deviance of observed bins, plus 2 x (mu - censor) for empty bins the model predicts above ``censor``.
 
-    ``censor = 0``: the plain Poisson deviance.
+    ``censor = 0``: the plain Poisson deviance. Saturated bins (``saturated``: their indices) where the model predicts
+    at least the data add nothing (see :func:`censored_ratio`).
     """
     mus = jnp.maximum(mu, 1e-30)
     obs = jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / mus) - d + mu, 0.0)
-    return 2.0 * jnp.sum(obs + jnp.where(d > 0, 0.0, jnp.maximum(mu - censor, 0.0)))
+    total = jnp.sum(obs + jnp.where(d > 0, 0.0, jnp.maximum(mu - censor, 0.0)))
+    if saturated is not None:
+        total = total - jnp.sum(jnp.where(mu[saturated] >= d[saturated], obs[saturated], 0.0))
+    return 2.0 * total
 
 
 def system(
@@ -82,7 +92,10 @@ def system(
     ring_j
         [Nj] ring of each prediction
     pos
-        [Nv, 3] voxel positions in the sample frame
+        [Nv, 3] voxel positions in the sample frame; or [Nv, 3 + n_phi], each followed by its distances to the
+        sample's edge (:func:`anri.geom.paths.edge_distances`): every weight is then scaled by the transmission along
+        the incoming and the diffracted paths (:func:`anri.geom.paths.transmission`), with ``scan["mu"]`` and
+        ``scan["ring_tth"]``
     scan
         "y0", "dty0", "ystep", "n_rows" and "om0": the rows are at dty = dty0 + k ystep; optionally "ddty" [n_rows,
         n_o], each row's offset from that per omega bin (fly, helical scans: :func:`anri.index.data.dty_offsets`), and
@@ -100,6 +113,14 @@ def system(
     """
     n_k = scan["n_rows"]
     k_in, wedge, chi = scan_beam(scan)
+    if pos.shape[1] > 3:  # absorption: each voxel's edge distances follow its position
+        k, e_h, e_v = beam_basis(k_in)
+        tth = jnp.radians(jnp.asarray(scan["ring_tth"]))[ring_j][..., None]
+        er = jnp.radians(eta)[..., None]
+        k_out = jnp.cos(tth) * k + jnp.sin(tth) * (-jnp.sin(er) * e_h + jnp.cos(er) * e_v)  # [1 or Nv, Q, Nj, 3]
+        d_in, d_out = ray_directions(k_in, k_out, om, wedge, chi)
+        w = w * transmission(pos[:, 3:], d_in, d_out, scan["mu"])
+        pos = pos[:, :3]
     dty = find_dty_for_beam_xy(pos[:, None, None, :], k_in, om, wedge, chi, scan["y0"])
     fk = (dty - scan["dty0"]) / scan["ystep"]  # the row whose beam is centred on the voxel
     if "ddty" in scan:  # rows not at their nominal dty (fly, helical scans): the beam's real dty in this omega bin
@@ -180,17 +201,17 @@ def pad_voxels(pos: ArrayLike, vb: int) -> jax.Array:
     Parameters
     ----------
     pos
-        [Nv, 3] positions
+        [Nv, C] positions (C = 3, or 3 + n_phi with edge distances, see :func:`system`)
     vb
         Block size
 
     Returns
     -------
     jax.Array
-        [ceil(Nv / vb) vb, 3] positions
+        [ceil(Nv / vb) vb, C] positions
     """
     pos = jnp.asarray(pos, jnp.float32)
-    return jnp.concatenate([pos, jnp.full((-pos.shape[0] % vb, 3), 1e6, pos.dtype)])
+    return jnp.concatenate([pos, jnp.full((-pos.shape[0] % vb, pos.shape[1]), 1e6, pos.dtype)])
 
 
 def _chunks(a: jax.Array, qc: int) -> jax.Array:
@@ -264,7 +285,7 @@ def candidates(
         [Nv, k] first-update occupancies and orientation indices
     """
     n_cells = d.shape[0]
-    blocks = pos.reshape(-1, vb, 3)
+    blocks = pos.reshape(-1, vb, pos.shape[-1])
     t0 = time.perf_counter()
     a1 = jnp.zeros(n_cells, jnp.float32)
     for b in blocks:
@@ -316,7 +337,7 @@ def forward(
             :-1
         ], None
 
-    xs = (f.reshape(-1, vb, k), cand.reshape(-1, vb, k), pos.reshape(-1, vb, 3))
+    xs = (f.reshape(-1, vb, k), cand.reshape(-1, vb, k), pos.reshape(-1, vb, pos.shape[-1]))
     acc, _ = jax.lax.scan(step, jnp.zeros(n_cells, f.dtype), xs)
     return acc
 
@@ -349,7 +370,7 @@ def backward(
         idx, wt = system(e, o, u, w, ring_j, pb, scan, *dims)
         return jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (2, 3))
 
-    return jax.lax.map(one, (cand.reshape(-1, vb, k), pos.reshape(-1, vb, 3))).reshape(-1, k)
+    return jax.lax.map(one, (cand.reshape(-1, vb, k), pos.reshape(-1, vb, pos.shape[-1]))).reshape(-1, k)
 
 
 @jax.jit
@@ -416,6 +437,7 @@ def squarem(
 def mlem(
     d: jax.Array, cand: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array, scan: dict, dims: tuple,
     f0: jax.Array, n_iter: int, vb: int, log: Callable = print, censor: float = 0.0, callback: Callable | None = None,
+    saturated: jax.Array | None = None,
 ) -> jax.Array:  # fmt: skip
     """Fit occupancies by MLEM (``f <- f A^T(d / A f) / A^T 1``), accelerated by SQUAREM (:func:`squarem`).
 
@@ -439,6 +461,8 @@ def mlem(
         Empty bins censored above this many counts per bin
     callback
         See :func:`squarem`
+    saturated
+        Indices of the bins holding a saturated pixel, censored from above (:func:`censored_ratio`)
 
     Returns
     -------
@@ -450,8 +474,8 @@ def mlem(
 
     def step(f: jax.Array) -> tuple:  # one MLEM update, and the deviance of the occupancies it started from
         Af = forward(f, cand, pred, ring_j, pos, scan, dims, n_cells, vb)
-        f_new = f * backward(censored_ratio(d, Af, censor), cand, pred, ring_j, pos, scan, dims, vb) / norm
-        return f_new, float(deviance(d, Af, censor))
+        f_new = f * backward(censored_ratio(d, Af, censor, saturated), cand, pred, ring_j, pos, scan, dims, vb) / norm
+        return f_new, float(deviance(d, Af, censor, saturated))
 
     return squarem(step, f0, n_iter, log, callback=callback)
 
@@ -557,6 +581,8 @@ def fit_occupancy(
     return_model: bool = False,
     censor: float = 0.0,
     callback: Callable | None = None,
+    absorb: tuple | None = None,
+    saturated: ArrayLike | None = None,
 ) -> tuple:
     """Fit sparse occupancies: candidates per voxel, then MLEM.
 
@@ -594,6 +620,12 @@ def fit_occupancy(
     callback
         Passed to the final :func:`mlem`: ``callback(iteration, f, deviance)`` after each iteration, f over the fitted
         voxels padded to whole blocks (the first ``len(pos)`` are the voxels)
+    absorb
+        ``(sample_map, step)``: model absorption along the incoming and diffracted paths through the sample, a [n, n]
+        map of the fraction of each voxel it fills (reconstruction order, voxels of ``step``), with ``scan["mu"]``
+        (1 / the units of step) and ``scan["ring_tth"]`` (degrees). The occupancies are then free of absorption
+    saturated
+        Indices of the bins holding a saturated pixel, censored from above in the MLEM (:func:`censored_ratio`)
     log
         Progress messages
 
@@ -606,6 +638,21 @@ def fit_occupancy(
     """
     H, ring_j, pos = jnp.asarray(H), jnp.asarray(ring_j), np.asarray(pos, np.float32)
     nv = len(pos)
+    sat = None if saturated is None or np.size(saturated) == 0 else jnp.asarray(saturated, jnp.int32)
+
+    def with_edges(p: np.ndarray) -> np.ndarray:  # positions followed by their edge distances (see system)
+        if absorb is None:
+            return p
+        D = edge_distances(jnp.asarray(absorb[0], jnp.float32), absorb[1], jnp.asarray(p[:, :2]))
+        return np.concatenate([p, np.asarray(D)], 1)
+
+    t0 = time.perf_counter()
+    pos = with_edges(pos)
+    if absorb is not None:
+        log(
+            f"absorption: mu {float(scan['mu']):.3g}; paths to the sample's edge for {nv} voxels x {pos.shape[1] - 3} "
+            f"directions: {time.perf_counter() - t0:.1f} s"
+        )
     n_j = pred[0].shape[1]
     n_corners = 4 * dims[4] if len(dims) > 4 and dims[4] > 0 else 8
     vb_all, vb = block_voxels(qc, n_j, block_bytes, n_corners), block_voxels(k, n_j, block_bytes, n_corners)
@@ -622,16 +669,19 @@ def fit_occupancy(
         extent = float(np.abs(np.asarray(pos)[:, :2]).max())
         n_c = 2 * int(np.ceil(extent / step_c)) + 3
         pos_c = np.asarray(recon_positions(n_c, step_c), np.float32)
-        pos_cp = pad_voxels(pos_c, vbp)
+        pos_cp = pad_voxels(with_edges(pos_c), vbp)
         log(f"coarse: {n_c} x {n_c} voxels of {step_c:g} x {pred[0].shape[0]} orientations, the top {k} per voxel")
         f_c, cand_c = candidates(H_c, pred, ring_j, pos_cp, scan_c, dims, k, vb_all, qc=qc, log=log)
-        f_c = mlem(H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log, censor=censor)
-        cand_in = inherit_candidates(pos_p, pos_c, f_c[: n_c * n_c], cand_c[: n_c * n_c], 2 * k)
+        f_c = mlem(
+            H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log, censor=censor
+        )  # rows summed: no saturation index
+        cand_in = inherit_candidates(pos_p[:, :3], pos_c, f_c[: n_c * n_c], cand_c[: n_c * n_c], 2 * k)
         log(f"fine: {nv} voxels x {2 * k} orientations inherited from the coarse neighbourhood")
         f0, cand = candidates_from(H, cand_in, pred, ring_j, pos_p, scan, dims, k, max(vb // 2, 1), log=log)
     log(f"candidates: {time.perf_counter() - t0:.1f} s")
     t0 = time.perf_counter()
-    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor, callback=callback)
+    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor, callback=callback,
+             saturated=sat)  # fmt: skip
     log(f"MLEM {n_iter} iterations: {time.perf_counter() - t0:.1f} s")
     if return_model:
         mu = forward(f, cand, pred, ring_j, pos_p, scan, dims, H.shape[0], vb)

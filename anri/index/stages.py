@@ -67,9 +67,11 @@ def run_command(path: str) -> str:
         opts.update(read_provenance(p)["options"])
     cmd = ["python", "-m", "anri.index", "run", *(str(opts.pop(k)) for k in ("analysisroot", "sample", "dataset"))]
     for k, v in opts.items():
-        if k == "frame_dty":  # on by default; the command line can only turn it off
-            cmd += [] if v else ["--no-frame-dty"]
+        if k in ("frame_dty", "absorption"):  # on by default; the command line can only turn them off
+            cmd += [] if v else ["--no-" + k.replace("_", "-")]
         elif k != "save_model" and v is not False:
+            if isinstance(v, (list, tuple, np.ndarray)):  # e.g. ring indices: comma-separated
+                v = ",".join(str(int(x)) for x in np.ravel(v))
             cmd += ["--" + {"n_iter": "iter"}.get(k, k).replace("_", "-")] + ([] if v is True else [str(v)])
     return shlex.join(cmd)
 
@@ -130,12 +132,17 @@ def lit_map(H_lit: np.ndarray, scan: dict, n_rings: int, lit: float, etacut: flo
             "frame_step": scan["omega_step"], "etacut": etacut}  # fmt: skip
 
 
-def voxel_grid(scan: dict, y0: float) -> int:
-    """Return NR: the indexer's voxel grid is NR x NR, centred on the rotation axis, as ImageD11 pads its recons."""
+def voxel_grid(scan: dict, y0: float, grid_pad: float = 0.0) -> int:
+    """Return NR: the indexer's voxel grid is NR x NR, centred on the rotation axis, as ImageD11 pads its recons.
+
+    ``grid_pad`` (sample units) adds voxels on every side, for a sample reaching past the scanned dty range: its
+    outer part is in the beam over part of the rotation only, but it exists, and would otherwise pile its intensity
+    onto the grid's edge. An ImageD11 mask on the unpadded grid lines up with the padded one's middle.
+    """
     import anri.geom
 
     _, pad = anri.geom.scan.sino_shift_and_pad(y0, scan["n_rows"], scan["dty0"], scan["ystep"])
-    return scan["n_rows"] + pad
+    return scan["n_rows"] + pad + 2 * int(np.ceil(grid_pad / scan["ystep"] - 1e-9))
 
 
 def load_histogram(path: str) -> dict:
@@ -153,16 +160,19 @@ def load_histogram(path: str) -> dict:
                 scan[k] = jnp.asarray(h["scan"][k][()], jnp.float32)
         H = jnp.asarray(h["H"][()])
         H_lit = jnp.asarray(h["H_lit"][()])
+        grid = read_attrs(h["grid"]) if "grid" in h else None  # files from before the grid record: None
+        saturated = h["H_saturated"][()] if "H_saturated" in h else None
     geom = _geometry(geo, r.get("y0_dataset", 0.0), r["voxel_size"])
     scan.update({"k_in_lab": geom["k_in_lab"], "wedge": geom["wedge"], "chi": geom["chi"]})
     B, B64, ops = _lattice(np.asarray(r["lattice"]), r["space_group"])
     return {"prov": prov, "geom": geom, "rings": rings, "scan": scan, "H": H, "H_lit": H_lit, "B": B, "B64": B64,
-            "ops": ops, "n_rings": len(rings["tth"])}  # fmt: skip
+            "ops": ops, "n_rings": len(rings["tth"]), "grid": grid, "saturated": saturated}  # fmt: skip
 
 
 def open_dataset(
     analysisroot: str, sample: str, dataset: str, *, phase: str | None = None, parfile: str | None = None,
-    monitor: str | None = None, dty_source: str = "dataset", gridstep: int = 1, log: Callable = print,
+    monitor: str | None = None, dty_source: str = "dataset", gridstep: int = 1, saturation: float | None = None,
+    log: Callable = print,
 ) -> dict:  # fmt: skip
     """Open an ImageD11 dataset as the indexer reads it: its files, phase, geometry, rows, and a pixel stream.
 
@@ -245,7 +255,7 @@ def open_dataset(
     def stream(groups_: list) -> Iterator[tuple]:  # read the next chunk while this one is binned
         return anri.io.imaged11.prefetch(anri.io.imaged11.stream_sparse(
             sparsefile, yedge, ds["omegamotor"], ds["dtymotor"], chunk, groups_, gridstep, bin_dty, ds["scans"],
-            monitor, monitor_ref, ds["masterfile"], ds["omega"], spatial,
+            monitor, monitor_ref, ds["masterfile"], ds["omega"], spatial, saturation,
         ))  # fmt: skip
 
     log(f"dataset {dsfile}; sparse pixels {sparsefile}")
@@ -296,6 +306,28 @@ def select_occupied(tot: np.ndarray, mask: np.ndarray, occupied: float) -> np.nd
     return mask & (tot > occupied * np.percentile(tot[mask], 99))
 
 
+def occupancy_weighted(rgb: np.ndarray, occupancy: np.ndarray, percentile: float = 99.0) -> np.ndarray:
+    """Colours dimmed by occupancy: rgb x occupancy / its percentile over occupied voxels, clipped to [0, 1].
+
+    Parameters
+    ----------
+    rgb
+        [..., 3] colours, e.g. an IPF map
+    occupancy
+        [...] total occupancy per voxel
+    percentile
+        Occupancy that gets full brightness, as a percentile of the occupied voxels' (default 99)
+
+    Returns
+    -------
+    np.ndarray
+        [..., 3] dimmed colours
+    """
+    occupancy = np.asarray(occupancy, float)
+    scale = np.percentile(occupancy[occupancy > 0], percentile) if np.any(occupancy > 0) else 1.0
+    return np.asarray(rgb, float) * np.clip(occupancy / scale, 0.0, 1.0)[..., None]
+
+
 def select_populations(tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, occupied: float,
                        min_frac: float) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
     """Return the occupied voxels and the populations reported in them.
@@ -326,8 +358,10 @@ def select_populations(tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, occu
 # --------------------------------------------------------------------------------------------------------- 1. histogram
 def stage_histogram(
     analysisroot: str, sample: str, dataset: str, out: str | None = None, *, phase: str | None = None,
-    parfile: str | None = None, rings: int = 6, cif: str | None = None, tth_tol: float | None = None,
+    parfile: str | None = None, rings: int | list[int] = 6, ring_merge: float = 1e-4, cif: str | None = None,
+    tth_tol: float | None = None,
     monitor: str | None = None, dty_source: str = "dataset", frame_dty: bool = True, gridstep: int = 1,
+    grid_pad: float = 0.0, saturation: float | None = None,
     check: bool = False, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Bin an ImageD11 dataset's sparse pixels into the indexer's histograms (see :func:`open_dataset`).
@@ -343,7 +377,9 @@ def stage_histogram(
     parfile
         pars.json (default: the DataSet's, else pars/pars.json beside PROCESSED_DATA)
     rings
-        Number of rings used
+        Number of rings used (the first ones), or a list of ring indices (0 for the lowest 2theta)
+    ring_merge
+        Reflections within this in d* (1 / angstrom) are one ring
     cif
         CIF of the phase, for structure factors (default: ``|F|^2 = 1``)
     tth_tol
@@ -356,6 +392,12 @@ def stage_histogram(
         Follow dty's motion within the rows (fly and helical scans) in the model
     gridstep
         Voxel = gridstep x dty step; rows are summed in groups of gridstep
+    grid_pad
+        Widen the voxel grid by this on every side (sample units), for a sample reaching past the scanned range
+        (:func:`voxel_grid`). The grid is fixed here, for every later stage
+    saturation
+        Detector counts at which a pixel saturated (e.g. 65535 for a 16-bit Eiger): the bins holding such a pixel
+        are recorded, and the fit takes their data as a lower bound (:func:`anri.index.occupancy.censored_ratio`)
     check
         Only resolve and log the setup, write nothing, return ""
     command
@@ -373,38 +415,49 @@ def stage_histogram(
     from .data import dty_offsets, histogram_pixels, ring_profile, ring_table
 
     options = {"analysisroot": analysisroot, "sample": sample, "dataset": dataset, "phase": phase, "parfile": parfile,
-               "rings": rings, "cif": cif, "tth_tol": tth_tol, "monitor": monitor, "dty_source": dty_source,
-               "frame_dty": frame_dty, "gridstep": gridstep}  # fmt: skip
+               "rings": rings, "ring_merge": ring_merge, "cif": cif, "tth_tol": tth_tol, "monitor": monitor, "dty_source": dty_source,
+               "frame_dty": frame_dty, "gridstep": gridstep, "grid_pad": grid_pad,
+               "saturation": saturation}  # fmt: skip
     d = open_dataset(analysisroot, sample, dataset, phase=phase, parfile=parfile, monitor=monitor,
-                     dty_source=dty_source, gridstep=gridstep, log=log)  # fmt: skip
+                     dty_source=dty_source, gridstep=gridstep, saturation=saturation, log=log)  # fmt: skip
     sc, geom, stream, ds = d["scan"], d["geom"], d["stream"], d["ds"]
     structure = None
     if cif:
         import Dans_Diffraction
 
         structure = Dans_Diffraction.Crystal(cif)
-    ring_t = ring_table(d["lattice"], d["space_group"], d["geo"]["wavelength"], rings, structure)
+    ring_t = ring_table(d["lattice"], d["space_group"], d["geo"]["wavelength"], rings, structure, ring_merge)
+    n_rings = len(ring_t["tth"])
     n_e, n_o, NK = sc["n_e"], sc["n_o"], sc["n_rows"]
-    log(f"{len(ring_t['hkls'])} hkls in {rings} rings at 2theta {', '.join(f'{v:.2f}' for v in ring_t['tth'])}")
-    log(f"memory: data {rings * (n_e // R_E) * (n_o // R_O) * NK * 4 / 1e9:.2f} GB (x ~4 in MLEM)")
+    idx, tth = ", ".join(str(i) for i in ring_t["index"]), ", ".join(f"{v:.3f}" for v in ring_t["tth"])
+    log(f"{len(ring_t['hkls'])} hkls in {n_rings} rings (indices {idx}) at 2theta {tth}")
+    log(f"memory: data {n_rings * (n_e // R_E) * (n_o // R_O) * NK * 4 / 1e9:.2f} GB (x ~4 in MLEM)")
     if check:
         return ""
 
     t1 = time.perf_counter()
     groups, chunk = d["groups"], d["chunk"]
     sample_ = sample_groups(groups)
-    ring_off, ring_hw = ring_profile(stream(sample_), geom, ring_t["tth"], chunk)
+    # widths between every ring's neighbours, not only the rings used: a window must not reach an unused ring
+    ring_off, ring_hw = ring_profile(stream(sample_), geom, ring_t["tth_all"], chunk)
+    ring_off, ring_hw = ring_off[ring_t["index"]], ring_hw[ring_t["index"]]
     ring_t["hw"] = ring_hw
-    tol = np.abs(ring_off) + ring_hw if tth_tol is None else np.full(rings, tth_tol)
+    tol = np.abs(ring_off) + ring_hw if tth_tol is None else np.full(n_rings, tth_tol)
     ring_t["tth_tol"] = tol
     log(f"ring widths from {len(sample_)} groups ({time.perf_counter() - t1:.0f} s): offset / half-width (95%) / "
         "tolerance, deg: " + "; ".join(f"{o:+.3f} / {w:.3f} / {t:.3f}" for o, w, t in zip(ring_off, ring_hw, tol)))  # fmt: skip
 
     t1 = time.perf_counter()
-    H_lit, H = histogram_pixels(  # one pass: the lit histogram (rows summed, fine bins), and the fit data (per row)
+    hists = histogram_pixels(  # one pass: the lit histogram (rows summed, fine bins), and the fit data (per row)
         stream(groups), geom, ring_t["tth"], tol, sc["om0"],
         [((B_E, B_O, n_e, n_o), 1), ((B_E * R_E, B_O * R_O, n_e // R_E, n_o // R_O), NK)], chunk,
+        saturated_into=None if saturation is None else 1,
     )  # fmt: skip
+    H_lit, H = hists[0], hists[1]
+    sat_bins = np.flatnonzero(np.asarray(hists[2])) if saturation is not None else None
+    if sat_bins is not None:
+        log(f"saturated (>= {saturation:g} counts): {int(np.asarray(hists[2]).sum())} pixels in {len(sat_bins)} of the "
+            f"fit's bins; the fit takes them as lower bounds")  # fmt: skip
     log(f"histograms: {time.perf_counter() - t1:.0f} s; {H.size / 1e6:.0f}M bins, {float(jnp.mean(H > 0)) * 100:.1f}% "
         "non-empty")  # fmt: skip
 
@@ -426,6 +479,14 @@ def stage_histogram(
         else:
             expo = None
 
+    # the voxel grid, for every later stage: n x n voxels of the row step, centred on the rotation axis. y0 only
+    # sizes it (to cover the scan); a y0 chosen later moves no voxel
+    y0_grid = ds["y0"] if ds["y0"] is not None else sc["dty0"] + 0.5 * (sc["n_rows"] - 1) * sc["ystep"]
+    grid = {"n": voxel_grid(sc, y0_grid, grid_pad), "step": float(sc["ystep"]), "grid_pad": float(grid_pad)}
+    log(
+        f"voxel grid: {grid['n']} x {grid['n']} of {grid['step']:.6g}, centred on the rotation axis"
+        + (f" (widened by {grid_pad:g} on every side)" if grid_pad else "")
+    )
     out = out or f"{sample}_{dataset}_histogram.h5"
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     resolved = {"dataset_file": d["dsfile"], "sparsefile": d["sparsefile"], "parfile": d["parfile"],
@@ -441,12 +502,15 @@ def stage_histogram(
             g[k] = np.asarray(v)
         g = h.create_group("scan")
         write_attrs(g, sc)
+        write_attrs(h.create_group("grid"), grid)
         if ddty is not None:
             g["ddty"] = np.asarray(ddty, np.float32)
         if expo is not None:
             g["exposure"] = np.asarray(expo, np.float32)
         h.create_dataset("H", data=np.asarray(H), compression="lzf", chunks=True)
         h.create_dataset("H_lit", data=np.asarray(H_lit), compression="lzf", chunks=True)
+        if sat_bins is not None:
+            h.create_dataset("H_saturated", data=sat_bins.astype(np.int64))  # indices into H
     write_results(out, {"bins": int(H.size), "nonempty_fraction": float(jnp.mean(H > 0))})
     log(f"-> {out}")
     return out
@@ -596,8 +660,9 @@ def stage_filter(
 # --------------------------------------------------------------------------------------------------------------- 4. fit
 def stage_fit(
     filter_file: str, out: str | None = None, *, y0: float | None = None, cand: int = 64, n_iter: int = 10,
-    coarse: int = 1, beam: float = 0.0, mask: str | None = "disc", block_gb: float = 1.0, censor: float = 0.0,
-    save_model: bool = False, command: str | None = None, log: Callable = print, callback: Callable | None = None,
+    coarse: int = 1, beam: float = 0.0, mask: str | None = "disc", pad: float = 0.0, absorption: bool = True,
+    mu: float | None = None, block_gb: float = 1.0, censor: float = 0.0, save_model: bool = False,
+    command: str | None = None, log: Callable = print, callback: Callable | None = None,
 ) -> str:  # fmt: skip
     """Fit each voxel's occupancy of the kept orientations.
 
@@ -619,10 +684,19 @@ def stage_fit(
         FWHM of the beam across dty, as dty: each voxel is spread over the rows by this Gaussian profile integrated
         over the voxel. 0: linearly over the 2 nearest rows (close to a beam of FWHM = the dty step)
     mask
-        Fit only the voxels in a sample mask: "disc" (the voxels the beam sees at every omega, :func:`~anri.index.mask.disc_mask`),
-        "auto" (in the disc, the Otsu threshold, largest region and convex hull of a quick reconstruction), or a .npy
-        file of [voxels, voxels] booleans in reconstruction order; None fits every voxel of the square grid, also those
-        the data hardly constrain
+        Fit only the voxels in a sample mask: "disc" (the voxels the beam sees at every omega, grown by pad,
+        :func:`~anri.index.mask.disc_mask`), "auto" (the sample's support in the projections, wherever the beam
+        reaches it, :func:`~anri.index.mask.support_mask`), a .npy file of [NR, NR] booleans in reconstruction order,
+        or None for every voxel
+    pad
+        With mask "disc": grow the disc by this (sample units), for a sample a little larger than it
+    absorption
+        Model absorption along the incoming and diffracted paths (:func:`anri.geom.paths.transmission`) whenever mu
+        is known: from the histogram stage's CIF (:func:`anri.crystal.structure.attenuation`) or given. The sample's
+        shape is the mask (a disc is the wrong shape for a sample that does not fill it: give its mask). The
+        occupancies are then free of absorption
+    mu
+        Linear attenuation coefficient (1 / sample units, e.g. 1/um), instead of the CIF's
     block_gb
         Memory for one block of voxels' system entries (GB)
     censor
@@ -643,12 +717,13 @@ def stage_fit(
     import anri.geom
     from anri.maths.utils import fwhm_to_sigma
 
-    from .mask import disc_mask, reconstruct, threshold_mask
+    from .mask import disc_mask, load_mask, support_mask
     from .occupancy import beam_rows, fit_occupancy
     from .search import predictions
 
-    options = {"y0": y0, "cand": cand, "n_iter": n_iter, "coarse": coarse, "beam": beam, "mask": mask,
-               "block_gb": block_gb, "censor": censor, "save_model": save_model}  # fmt: skip
+    options = {"y0": y0, "cand": cand, "n_iter": n_iter, "coarse": coarse, "beam": beam, "mask": mask, "pad": pad,
+               "absorption": absorption, "mu": mu, "block_gb": block_gb, "censor": censor,
+               "save_model": save_model}  # fmt: skip
     search_file = upstream(filter_file, "search")
     hist_file = upstream(search_file, "histogram")
     d = load_histogram(hist_file)
@@ -661,7 +736,8 @@ def stage_fit(
         msg = f"{r['dataset_file']} has no y0: give it with y0"
         raise ValueError(msg)
     sc, rings, geom, B = d["scan"], d["rings"], d["geom"], d["B"]
-    YSTEP, NR = sc["ystep"], voxel_grid(sc, Y0)
+    YSTEP = sc["ystep"]
+    NR = d["grid"]["n"] if d["grid"] is not None else voxel_grid(sc, Y0)  # the histogram stage's grid
     NV = NR * NR
     log(f"y0 {Y0:.6g}: voxels {NR} x {NR} of {YSTEP:g}; occupancies {NV} voxels x {cand} candidates = "
         f"{NV * cand * 8 / 1e9:.2f} GB; blocks of ~{block_gb:g} GB; {len(U_kept)} orientations")  # fmt: skip
@@ -679,23 +755,38 @@ def stage_fit(
         log(f"beam: FWHM {beam:g} across dty, each voxel spread over {dims[4]} rows")
     sel, rec = np.ones(NV, bool), None
     if mask:
-        if mask in ("disc", "auto"):
-            sel = disc_mask(sc, Y0, NR).ravel()
+        if mask == "disc":
+            sel = disc_mask(sc, Y0, NR, pad).ravel()
             if not sel.any():
                 msg = f"y0 {Y0:.6g} is outside the scanned dty range: no voxel is in the beam at every omega"
                 raise ValueError(msg)
-        if mask == "auto":
-            rec = reconstruct(d["H"], d["n_rings"], sc["n_e"] // R_E, sc["n_o"] // R_O, scan, B_O * R_O, NR)
-            sel &= threshold_mask(rec).ravel()
-        elif mask != "disc":
-            sel = np.load(mask).astype(bool).ravel()
-            if sel.size != NV:
-                msg = f"mask {mask}: {sel.size} voxels, the grid has {NR} x {NR}"
-                raise ValueError(msg)
+        elif mask == "auto":
+            m_auto, rec = support_mask(d["H"], d["n_rings"], sc["n_e"] // R_E, sc["n_o"] // R_O, scan, B_O * R_O, NR)
+            sel = m_auto.ravel()
+        else:
+            sel = load_mask(mask, NR, YSTEP, log).ravel()
         log(f"mask ({mask}): {sel.sum()} of {NV} voxels fitted")
+    MU, absorb = None, None
+    if absorption:
+        MU = mu
+        cif = d["prov"]["options"].get("cif")
+        if MU is None and cif:
+            import Dans_Diffraction
+
+            import anri.crystal
+
+            MU = anri.crystal.structure.attenuation(Dans_Diffraction.Crystal(cif), 12.398419843320026 / r["wavelength"])
+        if MU is not None:
+            scan.update({"mu": MU, "ring_tth": np.asarray(rings["tth"], np.float32)})
+            absorb = (sel.reshape(NR, NR).astype(np.float32), YSTEP)
+            log(f"absorption: mu {MU:.4g} per unit length ({'given' if mu is not None else cif}), through the mask "
+                f"({mask})" + ("; a disc is the wrong shape unless the sample fills it: give the sample's mask"
+                               if mask == "disc" else ""))  # fmt: skip
+        else:
+            log("absorption: not modelled (no CIF in the histogram stage and no mu given)")
     f_m, cand_m, model = fit_occupancy(d["H"], pred, rings["ring_j"], pos[sel], scan, dims, cand, n_iter, coarse,
                                        block_gb * 1e9, log=log, return_model=True, censor=censor,
-                                       callback=callback)  # fmt: skip
+                                       callback=callback, absorb=absorb, saturated=d["saturated"])  # fmt: skip
     f = np.zeros((NV, f_m.shape[1]), f_m.dtype)
     cands = np.zeros((NV, cand_m.shape[1]), cand_m.dtype)
     f[sel], cands[sel] = f_m, cand_m
@@ -710,11 +801,12 @@ def stage_fit(
     results = {"f": f, "cand": cands, "U": U_kept, "comp": comp_kept, "pos": pos, "mask": sel, "row_ratio": row_ratio,
                "row_data": d_row, "row_model": m_row}  # fmt: skip
     if rec is not None:
-        results["recon"] = rec  # the reconstruction the automatic mask was thresholded from
+        results["support"] = rec  # the projections' support the automatic mask was thresholded from
     if save_model:
         results["model"] = np.asarray(model)
     with h5py.File(out, "w") as h:
-        write_provenance(h, "fit", filter_file, options, {"y0": Y0, "voxels": NR, "voxel_size": YSTEP}, command)
+        resolved = {"y0": Y0, "voxels": NR, "voxel_size": YSTEP, "mu": MU if absorb is not None else 0.0}
+        write_provenance(h, "fit", filter_file, options, resolved, command)
         for k, v in results.items():
             h.create_dataset(k, data=np.asarray(v), compression="lzf" if np.asarray(v).size > 1000 else None)
     write_results(out, {"voxels_in_mask": int(sel.sum()), "orientations": len(U_kept),
@@ -831,6 +923,9 @@ def stage_populations(
             "fraction": frac[:, 0],
             "spread": spread[:, 0],
             "completeness": comp_pop[:, 0],
+            "sx": pos[:, 0],  # sample-frame position of each voxel (a single slice: sz = 0)
+            "sy": pos[:, 1],
+            "sz": np.zeros(len(pos)),
         }
         maps = {k: m.reshape(NR, NR, *m.shape[1:]) for k, m in maps.items()}  # reconstruction order
         tmap = anri.io.imaged11.tensormap_from_recon(
@@ -838,6 +933,8 @@ def stage_populations(
         )
         try:
             tmap.get_ipf_maps()  # ipf_x, ipf_y, ipf_z
+            for a in "xyz":  # the same, dimmed by occupancy: thin lamellae and weak regions show
+                tmap.add_map(f"ipf_{a}_occupancy", occupancy_weighted(tmap[f"ipf_{a}"], tmap["occupancy"]))
         except ImportError:
             log("orix is not installed: no IPF maps")
         _ = tmap.euler  # computed and kept in the maps. No strain: these UBIs are rotations of the nominal lattice.

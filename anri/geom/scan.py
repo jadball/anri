@@ -229,6 +229,38 @@ def recon_positions(n: int, step: float) -> jax.Array:
     return jnp.stack([sx.ravel(), sy.ravel(), jnp.zeros(n * n)], 1)
 
 
+def regrid(a: np.ndarray, n: int, fill: float = 0) -> np.ndarray:
+    """Move a [m, m, ...] reconstruction-order array to a grid of n x n voxels of the same size, both centred on the axis.
+
+    Grids centred on the rotation axis (:func:`recon_positions`) that differ only in size share their middle voxels
+    exactly (an odd size puts the axis on a voxel; the sizes then differ by an even number), so the array is cropped
+    or padded by the same number of voxels on every side.
+
+    Parameters
+    ----------
+    a
+        [m, m, ...] array in reconstruction order
+    n
+        Voxels per side of the target grid
+    fill
+        Value of the voxels padded on
+
+    Returns
+    -------
+    np.ndarray
+        [n, n, ...]
+    """
+    a = np.asarray(a)
+    m = a.shape[0]
+    if a.shape[1] != m or (m - n) % 2:
+        msg = f"cannot centre a {a.shape[0]} x {a.shape[1]} grid on a {n} x {n} one: both must be square, odd or even alike"
+        raise ValueError(msg)
+    k = (m - n) // 2
+    if k >= 0:
+        return a[k : m - k, k : m - k]
+    return np.pad(a, [(-k, -k), (-k, -k)] + [(0, 0)] * (a.ndim - 2), constant_values=fill)
+
+
 def sino_shift_and_pad(y0: float, ny: int, ymin: float, ystep: float) -> tuple[float, int]:
     """Shift and padding that centre a sinogram of ny dty rows on the rotation axis, as ImageD11 does.
 

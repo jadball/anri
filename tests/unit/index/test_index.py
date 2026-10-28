@@ -52,6 +52,28 @@ class TestRings(unittest.TestCase):
         self.assertEqual(sorted(np.bincount(rings["ring_j"]) // 2), [6, 12, 24])  # {200}, {110}, {211}
         np.testing.assert_allclose(np.sort(np.sum(h * h, 1))[[0, 12, 18]], [2, 4, 6])
 
+    def test_chosen_rings(self):
+        """A list of ring indices keeps those rings, numbered 0.. in order, and the same reflections as the first N."""
+        c, _, _ = iron()
+        first = ix.data.ring_table(*c, PARS["wavelength"], 4)
+        some = ix.data.ring_table(*c, PARS["wavelength"], [3, 1])
+        np.testing.assert_array_equal(some["index"], [1, 3])
+        np.testing.assert_allclose(some["tth"], first["tth"][[1, 3]])
+        np.testing.assert_allclose(some["tth_all"], first["tth"])
+        keep = np.isin(first["ring_j"][::2], [1, 3])
+        np.testing.assert_array_equal(some["hkls"], first["hkls"][keep])
+        np.testing.assert_array_equal(some["ring_j"][::2], np.searchsorted([1, 3], first["ring_j"][::2][keep]))
+
+    def test_merge_rings(self):
+        """Monoclinic Ag2S: (1 0 -2) and (-1 -1 0) are 1e-4 apart in d*; a wider merge makes them one ring."""
+        c = ([4.2263, 6.92759, 8.2814, 90, 110.552, 90], 14)
+        split = ix.data.ring_table(*c, 0.17163, 8, merge=5e-5)
+        merged = ix.data.ring_table(*c, 0.17163, 8, merge=5e-4)
+        self.assertLess(len(merged["ds_all"]), len(split["ds_all"]) + 1)
+        d = np.abs(merged["ds_all"] - 0.2909).argmin()
+        self.assertEqual(np.sum(merged["ring_j"][::2] == d), 6)  # 2 + 4 reflections in one ring
+        self.assertTrue(np.all(np.diff(merged["ds_all"]) > 5e-4))
+
     def test_ring_widths(self):
         ring_tth = np.array([5.0, 6.0])
         lo, step = 4.5, 0.002
@@ -105,6 +127,45 @@ class TestTolerances(unittest.TestCase):
 
 
 class TestOccupancy(unittest.TestCase):
+    def test_saturated_bins(self):
+        """A saturated bin is a lower bound: a model at or above it agrees; below it, the data pull it up."""
+        d = jnp.array([10.0, 10.0, 10.0, 0.0])
+        mu = jnp.array([20.0, 5.0, 20.0, 1.0])
+        sat = jnp.array([0, 1])  # bins 0 and 1 saturated; bin 2 the same numbers, not saturated
+        r = np.asarray(ix.occupancy.censored_ratio(d, mu, 0.0, sat))
+        np.testing.assert_allclose(r[:3], [1.0, 2.0, 0.5])
+        dev = float(ix.occupancy.deviance(d, mu, 0.0, sat))
+        dev_plain = float(ix.occupancy.deviance(d, mu, 0.0))
+        bin0 = 2 * (10 * np.log(10 / 20) - 10 + 20)  # the plain deviance of bin 0, dropped when saturated
+        self.assertAlmostEqual(dev, dev_plain - bin0, places=4)
+
+    def test_absorption(self):
+        """With edge distances after the positions, each weight is scaled by exp(-mu (L_in + L_out))."""
+        n, step, r, mu = 81, 2.0, 60.0, 0.005
+        grid = np.asarray(anri.geom.scan.recon_positions(n, step))
+        disc = (np.hypot(grid[:, 0], grid[:, 1]) <= r).reshape(n, n).astype(np.float32)
+        pos = np.zeros((1, 3), np.float32)  # the disc's centre
+        D = np.asarray(anri.geom.paths.edge_distances(disc, step, pos[:, :2]))
+        tth, eta = 5.0, np.array([[[30.0, 150.0, -60.0]]])
+        om, use, w = np.zeros_like(eta), np.ones(eta.shape, bool), np.ones_like(eta)
+        scan = {
+            "y0": 0.0,
+            "dty0": -30.0,
+            "ystep": step,
+            "n_rows": 31,
+            "om0": -90.0,
+            "mu": mu,
+            "ring_tth": np.array([tth]),
+        }
+        args = (jnp.asarray(eta), jnp.asarray(om), jnp.asarray(use), jnp.asarray(w), jnp.zeros(3, jnp.int32))
+        _, w0 = ix.occupancy.system(*args, jnp.asarray(pos), scan, 1.0, 1.0, 360, 180)
+        _, wa = ix.occupancy.system(*args, jnp.asarray(np.concatenate([pos, D], 1)), scan, 1.0, 1.0, 360, 180)
+        t, e = np.radians(tth), np.radians(eta[0, 0])
+        horizontal = np.hypot(np.cos(t), np.sin(t) * np.sin(e))  # k_out at omega = 0, beam along x
+        expected = np.exp(-mu * (r + r / horizontal))
+        ratio = np.asarray(wa).sum(-1)[0, 0] / np.asarray(w0).sum(-1)[0, 0]
+        np.testing.assert_allclose(ratio, expected, rtol=0.02)
+
     def test_adjoint(self):
         """<A f, r> = <f, A^T r>."""
         c, B, _ = iron()
@@ -330,6 +391,14 @@ class TestPopulations(unittest.TestCase):
         self.assertLess(anri.crystal.orientation.disorientation(U[0, 1:2], (twin @ U0)[None], ops)[0], 0.05)  # float32
         self.assertGreater(spread[0, 0], 0.2)
 
+    def test_occupancy_weighted(self):
+        """IPF colours dimmed by occupancy, full brightness at the 99th percentile of the occupied voxels."""
+        occ = np.array([0.0, 0.5, 1.0, 2.0])
+        rgb = np.ones((4, 3))
+        w = ix.stages.occupancy_weighted(rgb, occ, percentile=100)
+        np.testing.assert_allclose(w[:, 0], [0.0, 0.25, 0.5, 1.0])
+        np.testing.assert_allclose(ix.stages.occupancy_weighted(rgb, np.zeros(4)), 0.0)
+
 
 class TestEndToEnd(unittest.TestCase):
     def test_two_grains(self):
@@ -371,6 +440,21 @@ class TestEndToEnd(unittest.TestCase):
             H_lit, H = ix.data.histogram_pixels(
                 stream(), geom, rings["tth"], 0.1, om0, [((0.5, 0.5, 720, 360), 1), ((1.0, 1.0, 360, 180), nk)], 1 << 16
             )
+            # saturated pixels: flagged on the raw values, counted in the fit's bins; the histograms do not change
+            cap = float(np.percentile(np.concatenate([c[4] for c in stream()]), 99.9))
+            sat_stream = anri.io.imaged11.stream_sparse(
+                sparse, ds["ybinedges"], ds["omegamotor"], ds["dtymotor"], 1 << 16, saturation=cap
+            )
+            H_lit2, H2, S = ix.data.histogram_pixels(
+                sat_stream, geom, rings["tth"], 0.1, om0, [((0.5, 0.5, 720, 360), 1), ((1.0, 1.0, 360, 180), nk)],
+                1 << 16, saturated_into=1,
+            )  # fmt: skip
+            np.testing.assert_array_equal(np.asarray(H2), np.asarray(H))
+            np.testing.assert_array_equal(np.asarray(H_lit2), np.asarray(H_lit))
+            n_cap = sum(int(np.sum(c[4] >= cap)) for c in stream())
+            self.assertGreater(float(np.asarray(S).sum()), 0)
+            self.assertLessEqual(float(np.asarray(S).sum()), n_cap)  # those in the rings' windows
+            self.assertTrue(np.all(np.asarray(H)[np.asarray(S) > 0] > 0))  # in bins with data
         Hs = H_lit.reshape(3, 720, 360)
         lit = {
             "table": ix.data.lit_table(Hs > 0),
@@ -453,7 +537,8 @@ class TestProvenance(unittest.TestCase):
         from anri.io.provenance import write_provenance
 
         values = {"analysisroot": "/data/a b", "sample": "s", "dataset": "d", "tth_tol": 0.02, "frame_dty": False,
-                  "grid": 1.5, "min_comp": 0.3, "y0": -1.25, "mask": "auto"}  # fmt: skip
+                  "grid": 1.5, "min_comp": 0.3, "y0": -1.25, "mask": "auto", "rings": [8, 9, 15], "pad": 10.0,
+                  "absorption": False, "mu": 0.002}  # fmt: skip
         recorded = {}
         with tempfile.TemporaryDirectory() as tmp:
             source = None
@@ -471,8 +556,8 @@ class TestProvenance(unittest.TestCase):
         for k, v in recorded.items():
             if k == "save_model":  # not an option of the command line
                 continue
-            if k == "frame_dty":
-                self.assertEqual(args.no_frame_dty, not v)
+            if k in ("frame_dty", "absorption"):  # on by default, turned off on the command line
+                self.assertEqual(getattr(args, "no_" + k), not v, msg=k)
                 continue
             self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), v, msg=k)
 
@@ -489,6 +574,31 @@ class TestDiscMask(unittest.TestCase):
         self.assertTrue(m[nr // 2, nr // 2])
         off = ix.mask.disc_mask(scan, 2.0, ix.stages.voxel_grid(scan, 2.0))
         self.assertLess(off.sum(), m.sum())  # 3.5 from the nearer end
+        np.testing.assert_array_equal(ix.mask.disc_mask(scan, 0.0, nr, pad=1.5), r <= 7.0)
+        wide = ix.stages.voxel_grid(scan, 0.0, grid_pad=2.5)  # 3 voxels more on every side
+        self.assertEqual(wide, nr + 6)
+        inner = np.asarray(anri.geom.scan.recon_positions(wide, 1.0)).reshape(wide, wide, 3)[3:-3, 3:-3]
+        np.testing.assert_allclose(inner.reshape(-1, 3), np.asarray(anri.geom.scan.recon_positions(nr, 1.0)))
+
+    def test_support(self):
+        """A square sample poking out of the disc is recovered from its projections, corners outside the disc too."""
+        import jax.numpy as jnp
+
+        from anri.geom.gonio import find_dty_for_beam_xy
+
+        scan = {"y0": 0.0, "dty0": -20.0, "ystep": 1.0, "n_rows": 41, "om0": -90.0}
+        nr, n_o, b_o = ix.stages.voxel_grid(scan, 0.0), 180, 1.0
+        pos = np.asarray(anri.geom.scan.recon_positions(nr, 1.0))
+        square = ((np.abs(pos[:, 0]) <= 16) & (np.abs(pos[:, 1]) <= 16)).reshape(nr, nr)  # corners at 22.6 > 20.5
+        sino = np.zeros((n_o, 41))
+        for i, om in enumerate(-90 + (np.arange(n_o) + 0.5) * b_o):  # chord length of each row: voxels per row
+            dty = np.asarray(
+                find_dty_for_beam_xy(jnp.asarray(pos[square.ravel()]), jnp.array([1.0, 0, 0]), om, 0.0, 0.0, 0.0)
+            )
+            sino[i] = np.bincount(np.clip(np.round(dty + 20).astype(int), 0, 40), minlength=41)
+        m, _ = ix.mask.support_mask(sino[None, None].ravel(), 1, 1, n_o, scan, b_o, nr, level=0.03)
+        self.assertGreater((m & square).sum() / (m | square).sum(), 0.9)  # the square, to about a voxel
+        self.assertGreater((m & square & ~ix.mask.disc_mask(scan, 0.0, nr)).sum(), 10)  # its corners, outside the disc
 
 
 class TestSelections(unittest.TestCase):
@@ -598,3 +708,21 @@ class TestInherit(unittest.TestCase):
         self.assertEqual(list(cand[0][:9]), sorted(centre, reverse=True))  # by occupancy
         self.assertEqual(cand[0][9], 100)  # the shared one once
         self.assertIn(24, cand[1])
+
+
+class TestMaskFiles(unittest.TestCase):
+    def test_load_mask(self):
+        """A mask carries its voxel size; another size of grid is centred on, another voxel size refused."""
+        m = np.zeros((9, 9), bool)
+        m[3:6, 2:7] = True
+        with tempfile.TemporaryDirectory() as tmp:
+            p = os.path.join(tmp, "m.npz")
+            ix.mask.save_mask(p, m, 2.0)
+            got = ix.mask.load_mask(p, 13, 2.0, log=lambda s: None)
+            self.assertEqual(got.shape, (13, 13))
+            np.testing.assert_array_equal(got[2:-2, 2:-2], m)
+            with self.assertRaises(ValueError):
+                ix.mask.load_mask(p, 13, 1.0)
+            q = os.path.join(tmp, "m.npy")
+            np.save(q, m)
+            np.testing.assert_array_equal(ix.mask.load_mask(q, 7, 2.0, log=lambda s: None), m[1:-1, 1:-1])

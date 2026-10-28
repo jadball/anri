@@ -568,6 +568,7 @@ def stream_sparse(
     masterfile: str | None = None,
     dataset_omega: np.ndarray | None = None,
     spatial: tuple | None = None,
+    saturation: float | None = None,
 ) -> Iterator[tuple]:
     """Read sparse pixels a chunk at a time, with each frame's dty row.
 
@@ -608,11 +609,15 @@ def stream_sparse(
     spatial
         (dx, dy) [n_slow, n_fast] detector distortion maps (:func:`read_spatial`): each pixel is yielded at
         (row + dy[row, col], col + dx[row, col]), as ImageD11 corrects its peaks. None: the raw pixel positions
+    saturation
+        Detector counts at which a pixel saturated (e.g. 65535): each chunk then also holds whether each pixel's
+        raw value reached it, before any normalisation. None (default): 5-tuples, no flag
 
     Yields
     ------
     tuple
-        (slow, fast, omega, row, value): NumPy arrays of at most ``chunk`` pixels
+        (slow, fast, omega, row, value), and with ``saturation`` also ``saturated`` (bool): NumPy arrays of at most
+        ``chunk`` pixels
     """
     ybinedges = np.asarray(ybinedges)
     if groups is None:
@@ -644,13 +649,10 @@ def stream_sparse(
                 slow, fast = gr["row"][s0 : s0 + m], gr["col"][s0 : s0 + m]
                 if spatial is not None:  # where the pixel really is: its distortion-corrected position
                     slow, fast = slow + spatial[1][slow, fast], fast + spatial[0][slow, fast]
-                yield (
-                    slow.astype(np.float32),
-                    fast.astype(np.float32),
-                    om_f[fr],
-                    k_f[fr],
-                    gr["intensity"][s0 : s0 + m].astype(np.float32) * scale[fr],
-                )
+                raw = gr["intensity"][s0 : s0 + m]
+                item = (slow.astype(np.float32), fast.astype(np.float32), om_f[fr], k_f[fr],
+                        raw.astype(np.float32) * scale[fr])  # fmt: skip
+                yield item if saturation is None else (*item, raw >= saturation)
 
 
 def prefetch(chunks: Iterable, depth: int = 2) -> Iterator:
