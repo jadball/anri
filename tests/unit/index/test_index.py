@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 
+import h5py
 import jax.numpy as jnp
 import numpy as np
 
@@ -761,3 +762,52 @@ class TestMaskFiles(unittest.TestCase):
             q = os.path.join(tmp, "m.npy")
             np.save(q, m)
             np.testing.assert_array_equal(ix.mask.load_mask(q, 7, 2.0, log=lambda s: None), m[1:-1, 1:-1])
+
+
+class TestPowder(unittest.TestCase):
+    def _pattern(self, good, step=0.1, n_eta=36, n_frames=2):
+        """Every measured pixel lit in n_frames frames with c x its solid angle: a uniform 2 per sr per frame."""
+        geom = geometry()
+        n_t = int(30 / step)
+        Om, npx = ix.data.detector_cake(good, geom, 0.0, step, n_t, n_eta)
+        s, f = np.nonzero(good)
+        s, f = s.astype(np.float32), f.astype(np.float32)
+        val = 2.0 * np.asarray(ix.data.pixel_solid_angle(jnp.asarray(s), jnp.asarray(f), geom))
+        chunk = [(s, f, np.zeros_like(s), np.zeros_like(s), val)] * n_frames
+        I, hits = ix.data.pixel_cake(chunk, geom, 0.0, step, n_t, len(s), n_eta, counts=True)  # [2, n_t, n_eta]
+        return ix.data.powder_pattern(I, Om, npx, hits, n_frames, 0.0, step)
+
+    def test_uniform_intensity(self):
+        """A uniform intensity per sr comes out flat; whole rings have coverage 1 (their analytic solid angle)."""
+        p = self._pattern(np.ones((2200, 2100), bool))
+        whole = (p["tth"] > 1.0) & (p["tth"] < 20.0)  # rings entirely on the detector
+        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=1e-4)
+        np.testing.assert_allclose(p["coverage"][whole], 1.0, atol=0.02)
+        np.testing.assert_allclose(p["lit_fraction"][whole], 1.0)
+        np.testing.assert_allclose(p["sigma"][whole], p["sigma_counting"][whole])  # no spread over eta
+        self.assertTrue(np.all(p["coverage"][p["tth"] > 28.5] < 0.98))  # rings past the nearest edge (27.7 deg)
+
+    def test_masked_half(self):
+        """Masking half the detector halves the coverage, not the intensity."""
+        good = np.ones((2200, 2100), bool)
+        good[:, : int(PARS["y_center"])] = False
+        p = self._pattern(good)
+        whole = (p["tth"] > 1.0) & (p["tth"] < 20.0)
+        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=1e-4)
+        np.testing.assert_allclose(p["coverage"][whole], 0.5, atol=0.02)
+
+    def test_write_xye(self):
+        """The .xye holds the covered bins, with the wavelength in its header."""
+        from anri.io.provenance import write_provenance
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "x_powder.h5")
+            with h5py.File(path, "w") as h:
+                write_provenance(h, "powder", None, {}, {"wavelength": 0.2})
+                h["tth"], h["intensity"], h["sigma"] = np.arange(4.0), np.arange(4.0) * 10, np.ones(4)
+                h["coverage"] = np.array([0.0, 0.5, 1.0, 0.1])
+                h["intensity"].attrs["units"] = "per sr per frame"
+            xye = ix.stages.write_xye(path, min_coverage=0.3)
+            np.testing.assert_allclose(np.loadtxt(xye), [[1.0, 10.0, 1.0], [2.0, 20.0, 1.0]])
+            with open(xye) as fh:
+                self.assertIn("wavelength 0.200000", fh.readline())

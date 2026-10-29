@@ -8,6 +8,8 @@
 5. :func:`stage_populations`: the occupancies grouped into orientation populations, a TensorMap and map entries for
    the renderer.
 
+:func:`stage_powder` is not one of them: it exports the whole scan as a powder pattern, for use elsewhere.
+
 Each stage is split where a choice is made by looking at the previous one's output: y0 and the sample mask are read
 off the histogram, so they are options of the fit; the occupied and population cuts are read off the fit, so they are
 cheap to redo without fitting again. The selections that sliders redo are functions of their own
@@ -549,6 +551,149 @@ def stage_histogram(
     write_results(out, {"bins": int(H.size), "nonempty_fraction": float(jnp.mean(H > 0))})
     log(f"-> {out}")
     return out
+
+
+# --------------------------------------------------------------------------------------------- powder pattern (export)
+def stage_powder(
+    analysisroot: str, sample: str, dataset: str, out: str | None = None, *, phase: str | None = None,
+    parfile: str | None = None, monitor: str | None = None, detector_mask: str | None = None,
+    tth_step: float = 0.005, n_eta: int = 360, min_coverage: float = 0.3, check: bool = False,
+    command: str | None = None, log: Callable = print,
+) -> str:  # fmt: skip
+    """Export a dataset's sparse pixels, summed over every frame, as a powder pattern (with its (2theta, eta) cake).
+
+    Not a stage of the indexer: a whole-sample pattern, e.g. for phase identification or a Rietveld or Le Bail fit
+    elsewhere. Pixels are read as the indexer reads them (:func:`open_dataset`: distortion corrected, monitor
+    normalised) and binned by their centre; each bin is divided by the solid angle of the measured pixels in it
+    (:func:`anri.index.data.detector_cake`), giving the intensity per steradian per frame, with esds from the
+    spread over eta (:func:`anri.index.data.powder_pattern`). No Lorentz or polarisation correction is made.
+
+    The sparse data hold only pixels above the segmentation cut, so valleys between peaks where nearly every pixel
+    was below it are censored, not zero: ``lit_fraction`` shows them; exclude them from a fit.
+
+    Parameters
+    ----------
+    analysisroot, sample, dataset
+        The dataset
+    out
+        Output file (default ``<sample>_<dataset>_powder.h5`` in the working directory); the pattern is also written
+        beside it as ``.xye`` (:func:`write_xye`)
+    phase, parfile, monitor
+        As :func:`stage_histogram`
+    detector_mask
+        Detector mask, non-zero for masked pixels (default: the DataSet's maskfile; none: every pixel measured)
+    tth_step
+        2theta bin width (deg), from 0 to the detector's largest 2theta
+    n_eta
+        eta bins over 360 deg (the esd is the spread over them)
+    min_coverage
+        The .xye file holds the bins whose ring is measured over at least this share of its solid angle
+    check
+        Only resolve and log the setup, write nothing, return ""
+    command
+        The command line, for the provenance
+    log
+        Progress messages
+
+    Returns
+    -------
+    str
+        The file written
+    """
+    import jax.numpy as jnp
+
+    import anri.io
+
+    from .data import detector_cake, pixel_angles, pixel_cake, powder_pattern
+
+    options = {"analysisroot": analysisroot, "sample": sample, "dataset": dataset, "phase": phase, "parfile": parfile,
+               "monitor": monitor, "detector_mask": detector_mask, "tth_step": tth_step, "n_eta": n_eta,
+               "min_coverage": min_coverage}  # fmt: skip
+    d = open_dataset(analysisroot, sample, dataset, phase=phase, parfile=parfile, monitor=monitor, log=log)
+    geom, ds = d["geom"], d["ds"]
+    mask_file = detector_mask or ds["maskfile"]
+    if mask_file and not os.path.exists(mask_file):
+        msg = f"detector mask {mask_file} not found" + ("" if detector_mask else " (the DataSet's): give detector_mask")
+        raise FileNotFoundError(msg)
+    good = anri.io.imaged11.read_mask(mask_file) if mask_file else None
+    shape = good.shape if good is not None else d["detector_shape"]
+    if shape is None:
+        msg = "the detector's shape is unknown (no mask, and none in the sparse file): give detector_mask"
+        raise ValueError(msg)
+    if good is not None and d["detector_shape"] is not None and good.shape != d["detector_shape"]:
+        msg = f"detector mask {mask_file}: shape {good.shape}, frames {d['detector_shape']}"
+        raise ValueError(msg)
+    good = np.ones(shape, bool) if good is None else good
+    corners = np.array([[0, 0], [0, shape[1] - 1], [shape[0] - 1, 0], [shape[0] - 1, shape[1] - 1]], np.float32)
+    tth_max = float(
+        np.max(pixel_angles(jnp.asarray(corners[:, 0]), jnp.asarray(corners[:, 1]), jnp.zeros(4), geom)[:, 0])
+    )
+    n_t = int(np.ceil((tth_max + 0.1) / tth_step))
+    with h5py.File(d["sparsefile"], "r") as h:
+        n_frames = sum(len(h[g]["nnz"]) for g in d["groups"])
+    log(f"powder pattern: 2theta 0 - {n_t * tth_step:.3f} deg in {n_t} bins of {tth_step:g}, {n_eta} eta bins; "
+        f"{n_frames} frames; detector mask: {mask_file or 'none'}")  # fmt: skip
+    if check:
+        return ""
+
+    t1 = time.perf_counter()
+    Om, npx = detector_cake(good, geom, 0.0, tth_step, n_t, n_eta, d["spatial"])
+    log(f"detector: {good.size} pixels, {(~good).mean() * 100:.1f}% masked, {Om.sum():.4g} sr measured "
+        f"({time.perf_counter() - t1:.0f} s)")  # fmt: skip
+    t1 = time.perf_counter()
+    I, hits = pixel_cake(d["stream"](d["groups"]), geom, 0.0, tth_step, n_t, d["chunk"], n_eta, counts=True)
+    log(f"pixels: {hits.sum():.4g}, intensity {I.sum():.4g} ({time.perf_counter() - t1:.0f} s)")
+    pat = powder_pattern(I, Om, npx, hits, n_frames, 0.0, tth_step)
+
+    out = out or f"{sample}_{dataset}_powder.h5"
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    resolved = {"dataset_file": d["dsfile"], "sparsefile": d["sparsefile"], "parfile": d["parfile"],
+                "phase": d["phase"], "wavelength": d["geo"]["wavelength"], "n_frames": n_frames, "tth_max": tth_max,
+                "solid_angle_sr": float(Om.sum()), "spatial_correction": d["spatial_correction"],
+                "detector_mask": mask_file}  # fmt: skip
+    with h5py.File(out, "w") as h:
+        write_provenance(h, "powder", None, options, resolved, command)
+        write_attrs(h.create_group("geometry"), d["geo"])
+        for k, v in pat.items():
+            h[k] = v
+        h["intensity"].attrs["units"] = "per sr per frame" + (f", normalised to the mean {monitor}" if monitor else "")
+        g = h.create_group("cake")
+        g.attrs["eta_edges_deg"] = np.linspace(-180.0, 180.0, n_eta + 1)
+        for k, v in (("intensity", I), ("solid_angle", Om), ("n_pixels", npx), ("hits", hits)):
+            g.create_dataset(k, data=np.asarray(v, np.float32), compression="lzf", chunks=True)
+    xye = write_xye(out, min_coverage=min_coverage)
+    write_results(out, {"total_intensity": float(I.sum()), "xye": xye})
+    log(f"-> {out}, {xye}")
+    return out
+
+
+def write_xye(powder_file: str, path: str | None = None, min_coverage: float = 0.3) -> str:
+    """Write a powder stage file's pattern as three columns, 2theta (deg), intensity, esd, with a commented header.
+
+    Parameters
+    ----------
+    powder_file
+        A :func:`stage_powder` file
+    path
+        Output (default: the powder file's name with .xye)
+    min_coverage
+        Write the bins whose ring is measured over at least this share of its solid angle
+
+    Returns
+    -------
+    str
+        The file written
+    """
+    path = path or os.path.splitext(powder_file)[0] + ".xye"
+    prov = read_provenance(powder_file)
+    with h5py.File(powder_file, "r") as h:
+        tth, y, s, cov = (h[k][()] for k in ("tth", "intensity", "sigma", "coverage"))
+        units = h["intensity"].attrs["units"]
+    keep = cov >= min_coverage
+    header = (f"{os.path.basename(powder_file)} (id {prov['id']}): wavelength {prov['resolved']['wavelength']:.6f} A; "
+              f"intensity {units}, esd from the spread over eta; bins with ring coverage >= {min_coverage:g}")  # fmt: skip
+    np.savetxt(path, np.column_stack([tth[keep], y[keep], s[keep]]), fmt=["%.5f", "%.6g", "%.4g"], header=header)
+    return path
 
 
 # ------------------------------------------------------------------------------------------------------------ 2. search

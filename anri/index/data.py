@@ -145,7 +145,7 @@ def cake(x: jax.Array, val: jax.Array, lo: float, step: float, n_t: int, n_eta: 
 
 
 def pixel_cake(
-    chunks: Iterable, geom: dict, lo: float, step: float, n_t: int, chunk: int, n_eta: int = 1
+    chunks: Iterable, geom: dict, lo: float, step: float, n_t: int, chunk: int, n_eta: int = 1, counts: bool = False
 ) -> np.ndarray:
     """Sum a stream of pixels into a (2theta, eta) cake (:func:`cake`), a chunk at a time.
 
@@ -159,13 +159,16 @@ def pixel_cake(
         The bins, see :func:`cake`
     chunk
         Pixels per call (every call is padded to it, so the jitted functions compile once)
+    counts
+        Also count the pixels in each bin
 
     Returns
     -------
     np.ndarray
-        [n_t, n_eta] intensity per bin
+        [n_t, n_eta] intensity per bin; with counts, [2, n_t, n_eta]: intensity and pixels per bin
     """
     total = jnp.zeros((n_t, n_eta), jnp.float32)
+    n_pix = jnp.zeros((n_t, n_eta), jnp.float32)
     for item in chunks:
         slow, fast, omega, _, value = item[:5]
         m = len(value)
@@ -173,8 +176,134 @@ def pixel_cake(
         def pad(a: ArrayLike, m: int = m) -> jax.Array:
             return jnp.asarray(np.pad(np.asarray(a, np.float32), (0, chunk - m)))
 
-        total = total + cake(pixel_angles(pad(slow), pad(fast), pad(omega), geom), pad(value), lo, step, n_t, n_eta)
-    return np.asarray(total)
+        x = pixel_angles(pad(slow), pad(fast), pad(omega), geom)
+        total = total + cake(x, pad(value), lo, step, n_t, n_eta)
+        if counts:
+            n_pix = n_pix + cake(x, pad(np.ones(m)), lo, step, n_t, n_eta)
+    return np.stack([np.asarray(total), np.asarray(n_pix)]) if counts else np.asarray(total)
+
+
+@jax.jit
+def pixel_solid_angle(slow: jax.Array, fast: jax.Array, geom: dict) -> jax.Array:
+    """Solid angle (sr) of pixels, seen from the lab origin: area x cos(incidence) / distance^2.
+
+    Parameters
+    ----------
+    slow, fast
+        [N] pixel coordinates (of the pixel centre)
+    geom
+        Geometry dict, see :func:`pixel_angles`
+
+    Returns
+    -------
+    jax.Array
+        [N] solid angle of each pixel
+    """
+    p = geom["det_origin_lab"] + slow[:, None] * geom["s_step_lab"] + fast[:, None] * geom["f_step_lab"]
+    n = jnp.cross(geom["s_step_lab"], geom["f_step_lab"])  # normal, |n| = pixel area
+    return jnp.abs(p @ n) / jnp.linalg.norm(p, axis=1) ** 3
+
+
+def detector_cake(
+    good: ArrayLike, geom: dict, lo: float, step: float, n_t: int, n_eta: int, spatial: tuple | None = None,
+    rows: int = 256,
+) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
+    """Solid angle and number of the measured pixels in each (2theta, eta) bin, binned like the data.
+
+    Each pixel counts in the bin of its centre after detector distortion (as :func:`anri.io.imaged11.stream_sparse`
+    yields the data), so a bin's intensity (:func:`pixel_cake`) divided by its solid angle is the intensity per
+    steradian, whatever the bins' size.
+
+    Parameters
+    ----------
+    good
+        [n_slow, n_fast] True where a pixel is measured (:func:`anri.io.imaged11.read_mask`; all True for no mask)
+    geom
+        Geometry dict, see :func:`pixel_angles`
+    lo, step, n_t, n_eta
+        The bins, see :func:`cake`
+    spatial
+        Detector distortion (dx, dy) as :func:`anri.io.imaged11.read_spatial`, or None
+    rows
+        Detector rows per call (the last call is padded, so the jitted functions compile once)
+
+    Returns
+    -------
+    solid_angle, n_pixels: np.ndarray
+        [n_t, n_eta] each
+    """
+    good = np.asarray(good, bool)
+    n_s, n_f = good.shape
+    om = jnp.zeros((n_t, n_eta), jnp.float32)
+    npx = jnp.zeros((n_t, n_eta), jnp.float32)
+    zeros = jnp.zeros(rows * n_f, jnp.float32)
+    for s0 in range(0, n_s, rows):
+        s, f = np.mgrid[s0 : s0 + rows, 0:n_f]
+        inside = s < n_s
+        s = np.minimum(s, n_s - 1)
+        g = (good[s, f] & inside).ravel().astype(np.float32)
+        ps, pf = s.ravel().astype(np.float32), f.ravel().astype(np.float32)
+        if spatial is not None:
+            ps, pf = ps + spatial[1][s, f].ravel(), pf + spatial[0][s, f].ravel()
+        ps, pf = jnp.asarray(ps), jnp.asarray(pf)
+        x = pixel_angles(ps, pf, zeros, geom)
+        om = om + cake(x, pixel_solid_angle(ps, pf, geom) * g, lo, step, n_t, n_eta)
+        npx = npx + cake(x, jnp.asarray(g), lo, step, n_t, n_eta)
+    return np.asarray(om, np.float64), np.asarray(npx, np.float64)
+
+
+def powder_pattern(
+    intensity: ArrayLike, solid_angle: ArrayLike, n_pixels: ArrayLike, hits: ArrayLike, n_frames: int, lo: float,
+    step: float,
+) -> dict:  # fmt: skip
+    """Make a powder pattern from a (2theta, eta) cake of all frames: intensity per steradian per frame, and its esd.
+
+    The eta average of the intensity per solid angle is the azimuthal average of a 2D powder pattern, so the usual
+    Debye-Scherrer Lorentz factor applies to it (no Lorentz or polarisation correction is made). Summed over a
+    whole scan the grains act as a powder, but a coarse one: each eta bin is an independent estimate of the ring's
+    average, so the esd is the spread over eta of the solid-angle-weighted mean, sqrt(n / (n - 1) sum w^2 (v - y)^2)
+    with w the bins' share of the solid angle, never below the counting esd sqrt(sum I) / (solid angle x frames).
+
+    Parameters
+    ----------
+    intensity
+        [n_t, n_eta] summed intensity in each bin (:func:`pixel_cake`)
+    solid_angle, n_pixels
+        [n_t, n_eta] solid angle (sr) and number of the measured detector pixels in each bin (:func:`detector_cake`)
+    hits
+        [n_t, n_eta] number of data pixels in each bin (:func:`pixel_cake` with counts)
+    n_frames
+        Frames summed
+    lo, step
+        2theta bins (deg)
+
+    Returns
+    -------
+    dict
+        [n_t] each: "tth" (bin centres, deg), "intensity" (per sr per frame; 0 where nothing is measured), "sigma"
+        (over eta), "sigma_counting", "coverage" (measured share of the full ring's solid angle), "lit_fraction"
+        (share of the measured pixel-frames holding a data pixel: sparse data keep only pixels above the
+        segmentation cut, so a bin lit in very few of them is mostly censored)
+    """
+    I, Om = np.asarray(intensity, float), np.asarray(solid_angle, float)
+    n_t = I.shape[0]
+    t0 = np.radians(lo + step * np.arange(n_t))
+    ring = 2.0 * np.pi * (np.cos(t0) - np.cos(t0 + np.radians(step)))  # the full ring's solid angle
+    S = Om.sum(1)
+    ok = S > 0
+    norm = np.where(ok, S, 1.0) * n_frames
+    y = np.where(ok, I.sum(1) / norm, 0.0)
+    sig_c = np.where(ok, np.sqrt(np.maximum(I.sum(1), 1.0)) / norm, 0.0)
+    live = Om > 0
+    n = live.sum(1)
+    v = np.where(live, I / np.where(live, Om, 1.0), 0.0) / n_frames
+    w = Om / np.where(ok, S, 1.0)[:, None]
+    var = n / np.maximum(n - 1, 1) * np.sum(w**2 * (v - y[:, None]) ** 2 * live, 1)
+    sig = np.where(n > 1, np.maximum(np.sqrt(var), sig_c), sig_c)
+    npx = np.asarray(n_pixels, float).sum(1)
+    lit = np.where(npx > 0, np.asarray(hits, float).sum(1) / (np.maximum(npx, 1.0) * n_frames), 0.0)
+    return {"tth": np.degrees(t0) + 0.5 * step, "intensity": y, "sigma": sig, "sigma_counting": sig_c,
+            "coverage": S / ring, "lit_fraction": lit}  # fmt: skip
 
 
 def ring_widths(
