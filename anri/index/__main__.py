@@ -1,17 +1,19 @@
 """Index an ImageD11 scanning-3DXRD dataset from scratch: orientation populations per voxel.
 
-The indexer runs in five stages, each a subcommand that writes one HDF5 file the next one reads:
+The indexer runs in six stages, each a subcommand that writes one HDF5 file the next one reads:
 
     python -m anri.index histogram <analysisroot> <sample> <dataset> [options]   -> <sample>_<dataset>_histogram.h5
     python -m anri.index search  <..._histogram.h5> [options]                    -> <...>_search.h5
     python -m anri.index filter  <..._search.h5> [options]                       -> <...>_filter.h5
     python -m anri.index fit     <..._filter.h5> [options]                       -> <...>_fit.h5
-    python -m anri.index populations <..._fit.h5> [options]                      -> <...>_populations.h5, _entries.npz,
+    python -m anri.index localsearch <..._fit.h5> [options]                      -> <...>_localsearch.h5
+    python -m anri.index populations <..._localsearch.h5> [options]              -> <...>_populations.h5, _entries.npz,
                                                                                     _tmap.h5
-    python -m anri.index run <analysisroot> <sample> <dataset> [options]         all five
+    python -m anri.index run <analysisroot> <sample> <dataset> [options]         all six (--levels 0: no local search)
     python -m anri.index show <any stage file>                                   how it was made, back to the dataset
     python -m anri.index powder <analysisroot> <sample> <dataset> [options]      -> <sample>_<dataset>_powder.h5, .xye
 
+``populations`` also takes a fit stage file directly, without a local search.
 ``powder`` is not a stage of the indexer: it exports the whole scan as a powder pattern (e.g. for phase
 identification, or a Rietveld or Le Bail fit in another program).
 
@@ -175,6 +177,16 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _localsearch_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--levels", type=int, default=2, help="local search: levels of subdivision around each voxel's "
+                   "orientations, each a third of the step before (default 2: a 1 deg grid to 0.11 deg; with run, 0 "
+                   "skips the local search)")  # fmt: skip
+    p.add_argument("--cover", type=float, default=0.95, help="local search: a voxel uses its most occupied orientations "
+                   "that together hold this share of its occupancy (default 0.95)")  # fmt: skip
+    p.add_argument("--per-voxel", type=int, default=8, help="local search: at most this many orientations per voxel, "
+                   "each subdivided into 27 (default 8)")  # fmt: skip
+
+
 def _populations_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--occupied", type=float, default=0.2, help="voxels count as occupied (in the TensorMap and entries) "
                    "above this x the 99th percentile of the total occupancy in the mask (default 0.2; the raw occupancy is always saved)")  # fmt: skip
@@ -215,17 +227,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     _censor_option(m)
     m.add_argument("--out", help="output file (default: the source's name with _fit)")
 
+    ls = sub.add_parser("localsearch", parents=[common], help="sharpen the fit's orientations off the search grid")
+    ls.add_argument("source", help="a fit stage file")
+    _localsearch_options(ls)
+    ls.add_argument("--out", help="output file (default: the source's name with _localsearch)")
+
     q = sub.add_parser("populations", parents=[common], help="orientation populations, TensorMap and entries")
-    q.add_argument("source", help="a fit stage file")
+    q.add_argument("source", help="a fit or localsearch stage file")
     _populations_options(q)
     q.add_argument("--out", help="output file (default: the source's name with _populations)")
 
-    r = sub.add_parser("run", parents=[dataset, common], help="all five stages, into --outdir")
+    r = sub.add_parser("run", parents=[dataset, common], help="all six stages, into --outdir")
     _histogram_options(r)
     _search_options(r)
     _keep_option(r)
     _filter_options(r)
     _fit_options(r)
+    _localsearch_options(r)
     _populations_options(r)
     _censor_option(r)
     r.add_argument("--outdir", default=".")
@@ -297,6 +315,9 @@ def main() -> None:
         source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.iter, coarse=args.coarse,
                               beam=args.beam, mask=args.mask, pad=args.pad, absorption=not args.no_absorption, mu=args.mu, block_gb=args.block_gb, censor=args.censor,
                               command=command, log=log)  # fmt: skip
+    if cmd == "localsearch" or (cmd == "run" and args.levels > 0):
+        source = ix.stages.stage_localsearch(source, out, levels=args.levels, cover=args.cover,
+                                             per_voxel=args.per_voxel, command=command, log=log)  # fmt: skip
     if cmd in ("populations", "run"):
         ix.stages.stage_populations(
             source, out, occupied=args.occupied, min_frac=args.min_frac, command=command, log=log

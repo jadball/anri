@@ -334,8 +334,13 @@ def select_by_completeness(comp: np.ndarray, min_comp: float, keep: int) -> np.n
     return above[np.argsort(comp[above])[::-1]][:keep]
 
 
-def predictions(U: ArrayLike, B: ArrayLike, rings: dict, geom: dict, etacut: float, qc: int = 16) -> tuple:
+def predictions(
+    U: ArrayLike, B: ArrayLike, rings: dict, geom: dict, etacut: float, qc: int = 16, chunk: int = 1 << 16
+) -> tuple:
     """Predictions of an orientation list for :func:`~anri.index.occupancy.fit_occupancy`, padded to a multiple of qc.
+
+    Lists longer than chunk (e.g. a local search's millions) are predicted chunk by chunk, all of one shape (one
+    compile), and padded to whole chunks.
 
     Parameters
     ----------
@@ -351,6 +356,8 @@ def predictions(U: ArrayLike, B: ArrayLike, rings: dict, geom: dict, etacut: flo
         Reflections with ``|sin eta|`` at or below this are not used
     qc
         Pad to a multiple of this
+    chunk
+        Orientations predicted in one call at most (a multiple of qc)
 
     Returns
     -------
@@ -359,9 +366,14 @@ def predictions(U: ArrayLike, B: ArrayLike, rings: dict, geom: dict, etacut: flo
     """
     U = np.asarray(U, np.float32)
     nq = len(U)
-    Up = jnp.asarray(np.concatenate([U, np.repeat(U[:1], -nq % qc, 0)]))
+    n = nq + (-nq % qc)
+    if n > chunk:
+        n += -n % chunk
+    Up = np.concatenate([U, np.repeat(U[:1], n - nq, 0)])
     Bj, hkls = jnp.asarray(B, jnp.float32), jnp.asarray(rings["hkls"])
-    eta, om, ok, lp = predict(Up, Bj, hkls, geom)
-    use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut) & (jnp.arange(Up.shape[0]) < nq)[:, None]
+    step = min(n, chunk)
+    parts = [predict(jnp.asarray(Up[i : i + step]), Bj, hkls, geom) for i in range(0, n, step)]
+    eta, om, ok, lp = (parts[0][j] if len(parts) == 1 else jnp.concatenate([p[j] for p in parts]) for j in range(4))
+    use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut) & (jnp.arange(n) < nq)[:, None]
     F2 = jnp.asarray(np.repeat(rings.get("F2", np.ones(len(rings["hkls"]))), 2), jnp.float32)
     return eta, om, use, jnp.where(use, lp * F2[None], 0.0)

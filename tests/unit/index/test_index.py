@@ -516,6 +516,23 @@ class TestEndToEnd(unittest.TestCase):
             err = anri.crystal.orientation.disorientation(U_pop[sel, 0], np.repeat(U_true[g][None], sel.sum(), 0), ops)
             self.assertLess(np.median(err), delta / 2, msg=f"grain {g}")
             self.assertGreater(np.median(frac[sel, 0]), 0.5)
+        # local search: two levels around each voxel's orientations, 5 deg -> 0.56 deg, each voxel over its own children
+        U_l, f_l, c_l, step = U_kept, f, cand, 5.0
+        for _ in range(2):
+            use = ix.local.used(f_l, c_l, len(U_l), m=2)  # two grains: at most 2 orientations per voxel
+            given = ix.local.inherit(f_l, c_l, use, m=2)
+            U_l, step = ix.local.children(U_l[use], step), step / 3
+            pred = ix.search.predictions(U_l, B, rings, geom, 0.2)
+            f_l, c_l = ix.occupancy.fit_occupancy(H, pred, rings["ring_j"], vox, scan, (1.0, 1.0, 360, 180), n_iter=2,
+                                                  log=lambda m: None, given=given)  # fmt: skip
+        _, U_pop_l, _, _ = ix.populations.group(f_l, c_l, U_l, ops, 1.8 * 5.0)
+        for g, sel in ((0, (vox[:, 0] < -0.9) & (vox[:, 0] > -2.6)), (1, (vox[:, 0] > 0.9) & (vox[:, 0] < 2.6))):
+            sel &= np.abs(vox[:, 1]) < 2.6
+            truth = np.repeat(U_true[g][None], sel.sum(), 0)
+            err = anri.crystal.orientation.disorientation(U_pop[sel, 0], truth, ops)
+            err_l = anri.crystal.orientation.disorientation(U_pop_l[sel, 0], truth, ops)
+            print(f"grain {g}: grid {np.median(err):.3f} deg, local search {np.median(err_l):.3f} deg")
+            self.assertLess(np.median(err_l), np.median(err), msg=f"grain {g}")
 
 
 class TestProvenance(unittest.TestCase):
@@ -771,6 +788,48 @@ class TestDetectorCoverage(unittest.TestCase):
         on1 = np.asarray(rings["ring_j"]) == 1
         self.assertEqual(float(np.abs(np.asarray(w2)[:, on1]).max()), 0.0)
         np.testing.assert_allclose(np.asarray(w2)[:, ~on1], np.asarray(w0)[:, ~on1])
+
+
+class TestLocalSearch(unittest.TestCase):
+    def test_children(self):
+        """27 rotations around each orientation, the middle one itself, step / 3 apart along each sample axis."""
+        u, _, vt = np.linalg.svd(rotations(2, 3).astype(np.float64))
+        U = u @ vt  # exact rotations (rotations() gives float32)
+        ch = ix.local.children(U, 3.0)
+        self.assertEqual(ch.shape, (54, 3, 3))
+        np.testing.assert_allclose(ch[13], U[0], atol=1e-12)
+        np.testing.assert_allclose(ch[27 + 13], U[1], atol=1e-12)
+        np.testing.assert_allclose(np.einsum("nji,njk->nik", ch, ch), np.broadcast_to(np.eye(3), ch.shape), atol=1e-12)
+        ang = np.degrees(np.arccos(np.clip((np.einsum("nij,ij->n", ch[:27], U[0]) - 1) / 2, -1, 1)))
+        self.assertAlmostEqual(np.sort(ang)[1], 1.0, places=6)  # nearest neighbours 1 deg off
+        self.assertAlmostEqual(ang.max(), np.sqrt(3), places=6)  # the corners
+
+    def test_used_and_inherit(self):
+        """A voxel's orientations holding cover of its occupancy are subdivided; it inherits their children only."""
+        cand = np.array([[5, 2, 7, -1], [2, 9, -1, -1]], np.int32)
+        f = np.array([[0.6, 0.38, 0.02, 0.0], [1.0, 0.0, 0.0, 0.0]], np.float32)
+        use = ix.local.used(f, cand, 10, cover=0.95, m=2)
+        np.testing.assert_array_equal(np.flatnonzero(use), [2, 5])  # 7 is not needed for 95%, 9 holds nothing
+        f0, c0 = ix.local.inherit(f, cand, use, cover=0.95, m=2)
+        self.assertEqual(c0.shape, (2, 54))
+        np.testing.assert_array_equal(c0[0, :27], np.arange(27, 54))  # orientation 5: the second subdivided
+        np.testing.assert_array_equal(c0[0, 27:], np.arange(27))  # orientation 2: the first
+        np.testing.assert_allclose(f0[0], np.repeat([0.6 / 27, 0.38 / 27], 27), rtol=1e-6)
+        np.testing.assert_array_equal(c0[1, :27], np.arange(27))
+        np.testing.assert_array_equal(c0[1, 27:], -1)
+        np.testing.assert_array_equal(f0[1, 27:], 0)
+
+    def test_predictions_in_chunks(self):
+        """Predicting in chunks gives the same predictions, padded to whole chunks that predict nothing."""
+        c, B, _ = iron()
+        rings = ix.data.ring_table(*c, PARS["wavelength"], 3)
+        U = rotations(40, 5)
+        whole = ix.search.predictions(U, B, rings, geometry(), 0.2)
+        chunked = ix.search.predictions(U, B, rings, geometry(), 0.2, chunk=32)
+        self.assertEqual(chunked[0].shape[0], 64)
+        for a, b in zip(whole, chunked):
+            np.testing.assert_array_equal(np.asarray(a)[:40], np.asarray(b)[:40])
+        self.assertFalse(np.asarray(chunked[2])[40:].any())
 
 
 class TestInherit(unittest.TestCase):

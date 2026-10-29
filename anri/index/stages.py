@@ -1,11 +1,13 @@
-"""The indexer as five stages, each writing one HDF5 file that the next one reads, with its provenance.
+"""The indexer as six stages, each writing one HDF5 file that the next one reads, with its provenance.
 
 1. :func:`stage_histogram`: an ImageD11 dataset binned into the fit histogram ``H[ring, eta, omega, row]`` and a
    row-summed lit histogram, with the measured ring widths and the scan resolved from the data.
 2. :func:`stage_search`: the completeness of every orientation of a grid over the fundamental zone.
 3. :func:`stage_filter`: the orientations kept for the fit, by a global likelihood fit or by completeness.
 4. :func:`stage_fit`: occupancies of the kept orientations per voxel.
-5. :func:`stage_populations`: the occupancies grouped into orientation populations, a TensorMap and map entries for
+5. :func:`stage_localsearch`: the fit's orientations sharpened off the search grid, around those each voxel uses
+   (optional: :func:`stage_populations` also takes a fit).
+6. :func:`stage_populations`: the occupancies grouped into orientation populations, a TensorMap and map entries for
    the renderer.
 
 :func:`stage_powder` is not one of them: it exports the whole scan as a powder pattern, for use elsewhere.
@@ -43,7 +45,7 @@ from anri.io.provenance import (
     write_results,
 )
 
-STAGES = ("histogram", "search", "filter", "fit", "populations")
+STAGES = ("histogram", "search", "filter", "fit", "localsearch", "populations")
 B_E, B_O = 0.5, 0.25  # lit histogram bins (deg): eta, omega
 R_E, R_O = 2, 4  # fit histogram bins = lit bins x these (1 x 1 deg)
 N_POP = 4  # populations per voxel at most
@@ -899,6 +901,29 @@ def stage_fit(
         The file written: occupancies ("f", "cand") of every voxel, the mask, the voxels' positions, and per dty row
         the data and fitted intensity
     """
+    from .occupancy import fit_occupancy
+    from .search import predictions
+
+    options = {"y0": y0, "cand": cand, "n_iter": n_iter, "coarse": coarse, "beam": beam, "mask": mask, "pad": pad,
+               "absorption": absorption, "mu": mu, "block_gb": block_gb, "censor": censor,
+               "save_model": save_model}  # fmt: skip
+    s = _fit_setup(filter_file, y0, beam, mask, pad, absorption, mu, log)
+    log(f"occupancies {s['NV']} voxels x {cand} candidates = {s['NV'] * cand * 8 / 1e9:.2f} GB; blocks of "
+        f"~{block_gb:g} GB; {len(s['U'])} orientations")  # fmt: skip
+    pred = predictions(s["U"], s["B"], s["rings"], s["geom"], s["etacut"])
+    f_m, cand_m, model = fit_occupancy(s["H"], pred, s["rings"]["ring_j"], s["pos"][s["sel"]], s["scan"], s["dims"],
+                                       cand, n_iter, coarse, block_gb * 1e9, log=log, return_model=True, censor=censor,
+                                       callback=callback, absorb=s["absorb"], saturated=s["saturated"])  # fmt: skip
+    out = stage_path(filter_file, "fit", out)
+    check_out(out, [*chain(filter_file), mask])
+    _write_fit(out, "fit", filter_file, options, {}, command, s, f_m, cand_m, model, s["U"], s["comp"], save_model,
+               log)  # fmt: skip
+    return out
+
+
+def _fit_setup(filter_file: str, y0: float | None, beam: float, mask: str | None, pad: float, absorption: bool,
+               mu: float | None, log: Callable) -> dict:  # fmt: skip
+    """Everything a fit needs from the stages before it (see :func:`stage_fit` for the options)."""
     import jax.numpy as jnp
 
     import anri.geom
@@ -906,12 +931,8 @@ def stage_fit(
 
     from .data import coarsen_coverage
     from .mask import disc_mask, load_mask, support_mask
-    from .occupancy import beam_rows, fit_occupancy
-    from .search import predictions
+    from .occupancy import beam_rows
 
-    options = {"y0": y0, "cand": cand, "n_iter": n_iter, "coarse": coarse, "beam": beam, "mask": mask, "pad": pad,
-               "absorption": absorption, "mu": mu, "block_gb": block_gb, "censor": censor,
-               "save_model": save_model}  # fmt: skip
     search_file = upstream(filter_file, "search")
     hist_file = upstream(search_file, "histogram")
     d = load_histogram(hist_file)
@@ -923,14 +944,11 @@ def stage_fit(
     if Y0 is None:
         msg = f"{r['dataset_file']} has no y0: give it with y0"
         raise ValueError(msg)
-    sc, rings, geom, B = d["scan"], d["rings"], d["geom"], d["B"]
+    sc, rings = d["scan"], d["rings"]
     YSTEP = sc["ystep"]
     NR = d["grid"]["n"] if d["grid"] is not None else voxel_grid(sc, Y0)  # the histogram stage's grid
     NV = NR * NR
-    log(f"y0 {Y0:.6g}: voxels {NR} x {NR} of {YSTEP:g}; occupancies {NV} voxels x {cand} candidates = "
-        f"{NV * cand * 8 / 1e9:.2f} GB; blocks of ~{block_gb:g} GB; {len(U_kept)} orientations")  # fmt: skip
-
-    pred = predictions(U_kept, B, rings, geom, so["etacut"])
+    log(f"y0 {Y0:.6g}: voxels {NR} x {NR} of {YSTEP:g}")
     pos = np.asarray(anri.geom.scan.recon_positions(NR, YSTEP), np.float32)
     scan = {"y0": Y0, **{k: sc[k] for k in ("dty0", "ystep", "n_rows", "om0", "k_in_lab", "wedge", "chi")}}
     for k in ("ddty", "exposure"):
@@ -974,36 +992,40 @@ def stage_fit(
                                if mask == "disc" else ""))  # fmt: skip
         else:
             log("absorption: not modelled (no CIF in the histogram stage and no mu given)")
-    f_m, cand_m, model = fit_occupancy(d["H"], pred, rings["ring_j"], pos[sel], scan, dims, cand, n_iter, coarse,
-                                       block_gb * 1e9, log=log, return_model=True, censor=censor,
-                                       callback=callback, absorb=absorb, saturated=d["saturated"])  # fmt: skip
+    return {"d": d, "H": d["H"], "saturated": d["saturated"], "U": U_kept, "comp": comp_kept, "Y0": Y0, "NR": NR,
+            "NV": NV, "YSTEP": YSTEP, "pos": pos, "sel": sel, "rec": rec, "scan": scan, "dims": dims, "MU": MU,
+            "absorb": absorb, "rings": rings, "geom": d["geom"], "B": d["B"], "etacut": so["etacut"]}  # fmt: skip
+
+
+def _write_fit(out: str, stage: str, source: str, options: dict, resolved: dict, command: str | None, s: dict,
+               f_m: np.ndarray, cand_m: np.ndarray, model: np.ndarray, U: np.ndarray, comp: np.ndarray,
+               save_model: bool, log: Callable) -> None:  # fmt: skip
+    """Write a fit (stage_fit's or stage_localsearch's): occupancies of the voxels in the mask, and the rows' fit."""
+    d, sel, NV = s["d"], s["sel"], s["NV"]
     f = np.zeros((NV, f_m.shape[1]), f_m.dtype)
     cands = np.zeros((NV, cand_m.shape[1]), cand_m.dtype)
     f[sel], cands[sel] = f_m, cand_m
-    d_row, m_row = row_intensities(d["H"], model, d["n_rings"], sc, so["etacut"])
+    d_row, m_row = row_intensities(d["H"], model, d["n_rings"], d["scan"], s["etacut"])
     lit_rows = m_row > 0.05 * m_row.max()
     row_ratio = np.where(lit_rows, d_row / np.maximum(m_row, 1e-30), np.nan)
     dev = row_ratio[lit_rows] - 1
     log(f"measured / fitted intensity per dty row ({lit_rows.sum()} rows with intensity): rms {np.sqrt(np.mean(dev**2)):.3f}, "
         f"min {np.nanmin(row_ratio):.3f}, max {np.nanmax(row_ratio):.3f}; row-to-row rms {np.sqrt(np.nanmean(np.diff(row_ratio) ** 2)):.3f}")  # fmt: skip
-
-    out = stage_path(filter_file, "fit", out)
-    check_out(out, [*chain(filter_file), mask])
-    results = {"f": f, "cand": cands, "U": U_kept, "comp": comp_kept, "pos": pos, "mask": sel, "row_ratio": row_ratio,
+    results = {"f": f, "cand": cands, "U": U, "comp": comp, "pos": s["pos"], "mask": sel, "row_ratio": row_ratio,
                "row_data": d_row, "row_model": m_row}  # fmt: skip
-    if rec is not None:
-        results["support"] = rec  # the projections' support the automatic mask was thresholded from
+    if s["rec"] is not None:
+        results["support"] = s["rec"]  # the projections' support the automatic mask was thresholded from
     if save_model:
         results["model"] = np.asarray(model)
     with h5py.File(out, "w") as h:
-        resolved = {"y0": Y0, "voxels": NR, "voxel_size": YSTEP, "mu": MU if absorb is not None else 0.0}
-        write_provenance(h, "fit", filter_file, options, resolved, command)
+        resolved = {"y0": s["Y0"], "voxels": s["NR"], "voxel_size": s["YSTEP"],
+                    "mu": s["MU"] if s["absorb"] is not None else 0.0, **resolved}  # fmt: skip
+        write_provenance(h, stage, source, options, resolved, command)
         for k, v in results.items():
             h.create_dataset(k, data=np.asarray(v), compression="lzf" if np.asarray(v).size > 1000 else None)
-    write_results(out, {"voxels_in_mask": int(sel.sum()), "orientations": len(U_kept),
+    write_results(out, {"voxels_in_mask": int(sel.sum()), "orientations": len(U),
                         "row_ratio_rms": float(np.sqrt(np.mean(dev**2)))})  # fmt: skip
     log(f"-> {out}")
-    return out
 
 
 def row_intensities(H: np.ndarray, model: np.ndarray, n_rings: int, scan: dict, etacut: float) -> tuple:
@@ -1019,6 +1041,81 @@ def row_intensities(H: np.ndarray, model: np.ndarray, n_rings: int, scan: dict, 
     d_row = np.asarray(H).reshape(n_rings, n_e, -1, scan["n_rows"]).sum(2)[:, use_e].sum((0, 1))
     m_row = np.asarray(model).reshape(n_rings, n_e, -1, scan["n_rows"]).sum(2)[:, use_e].sum((0, 1))
     return d_row, m_row
+
+
+# ------------------------------------------------------------------------------------------------------ 4b. local search
+def stage_localsearch(
+    fit_file: str, out: str | None = None, *, levels: int = 2, cover: float = 0.95, per_voxel: int = 8,
+    command: str | None = None, log: Callable = print, callback: Callable | None = None,
+) -> str:  # fmt: skip
+    """Sharpen a fit's orientations off the search grid, around those each voxel uses (:mod:`anri.index.local`).
+
+    Each level replaces every orientation a voxel uses by its 27 children, a third of the step apart, and fits each
+    voxel again over the children of its own orientations, with the fit's options. Two levels take a 1 deg grid to
+    0.11 deg. Writes a file like the fit's, for :func:`stage_populations`.
+
+    Parameters
+    ----------
+    fit_file
+        From :func:`stage_fit`
+    out
+        Output file (default: the input's name with ``_localsearch``)
+    levels
+        Levels of subdivision, each a third of the step before
+    cover
+        A voxel uses its most occupied orientations that together hold this share of its occupancy
+    per_voxel
+        A voxel uses at most this many orientations, so it fits at most 27 x per_voxel children
+    command, log
+        See :func:`stage_histogram`
+    callback
+        See :func:`stage_fit` (called at every level)
+
+    Returns
+    -------
+    str
+        The file written, as :func:`stage_fit`'s, the orientations the children of the last level
+    """
+    from . import local
+    from .occupancy import fit_occupancy
+    from .search import predictions
+
+    if levels < 1:
+        msg = f"levels must be at least 1, not {levels}"
+        raise ValueError(msg)
+    options = {"levels": levels, "cover": cover, "per_voxel": per_voxel}
+    fo = read_provenance(fit_file)["options"]
+    filter_file = upstream(fit_file, "filter")
+    step = float(read_provenance(upstream(filter_file, "search"))["resolved"]["grid_step"])
+    # as the fit was made (options absent from older files: their behaviour then)
+    s = _fit_setup(filter_file, fo.get("y0"), fo.get("beam", 0.0), fo.get("mask"), fo.get("pad", 0.0),
+                   fo.get("absorption", False), fo.get("mu"), log)  # fmt: skip
+    with h5py.File(fit_file, "r") as h:
+        f, cand, U, comp, sel = h["f"][()], h["cand"][()], h["U"][()], h["comp"][()], h["mask"][()]
+    if not np.array_equal(sel, s["sel"]):
+        msg = f"the mask ({fo.get('mask')}) is not the one {fit_file} was fitted in"
+        raise ValueError(msg)
+    f_m, cand_m, model = f[sel], cand[sel], None
+    for level in range(1, levels + 1):
+        t0 = time.perf_counter()
+        use = local.used(f_m, cand_m, len(U), cover, per_voxel)
+        f0, c0 = local.inherit(f_m, cand_m, use, cover, per_voxel)
+        U, comp = local.children(U[use], step), np.repeat(comp[use], local.N_CHILD)
+        step /= 3
+        log(f"level {level}: {use.sum()} orientations used, each replaced by its {local.N_CHILD} children "
+            f"{step:.3g} deg apart: {len(U)} orientations")  # fmt: skip
+        pred = predictions(U, s["B"], s["rings"], s["geom"], s["etacut"])
+        f_m, cand_m, model = fit_occupancy(s["H"], pred, s["rings"]["ring_j"], s["pos"][sel], s["scan"], s["dims"],
+                                           n_iter=fo["n_iter"], block_bytes=fo.get("block_gb", 1.0) * 1e9,
+                                           log=log, return_model=True, censor=fo.get("censor", 0.0), callback=callback,
+                                           absorb=s["absorb"], saturated=s["saturated"], given=(f0, c0))  # fmt: skip
+        log(f"level {level}: {time.perf_counter() - t0:.0f} s")
+    assert model is not None  # levels >= 1
+    out = stage_path(fit_file, "localsearch", out)
+    check_out(out, chain(fit_file))
+    _write_fit(out, "localsearch", fit_file, options, {"step": step}, command, s, f_m, cand_m, model, U, comp, False,
+               log)  # fmt: skip
+    return out
 
 
 # ------------------------------------------------------------------------------------------------------- 5. populations

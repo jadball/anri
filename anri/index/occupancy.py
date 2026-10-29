@@ -607,6 +607,7 @@ def fit_occupancy(
     callback: Callable | None = None,
     absorb: tuple | None = None,
     saturated: ArrayLike | None = None,
+    given: tuple | None = None,
 ) -> tuple:
     """Fit sparse occupancies: candidates per voxel, then MLEM.
 
@@ -650,6 +651,9 @@ def fit_occupancy(
         (1 / the units of step) and ``scan["ring_tth"]`` (degrees). The occupancies are then free of absorption
     saturated
         Indices of the bins holding a saturated pixel, censored from above in the MLEM (:func:`censored_ratio`)
+    given
+        ``(f0, cand)``, each [Nv, k]: each voxel's own candidates (-1 for an empty slot) and starting occupancies,
+        instead of picking them (k and coarse are then not used), e.g. from :func:`anri.index.local.inherit`
     log
         Progress messages
 
@@ -665,7 +669,7 @@ def fit_occupancy(
     if pred[0].shape[0] == 0:
         msg = "no orientations to fit"
         raise ValueError(msg)
-    k = min(k, pred[0].shape[0])  # top_k needs k <= the orientations (padding rows score 0 and stay 0)
+    k = given[1].shape[1] if given is not None else min(k, pred[0].shape[0])  # top_k needs k <= the orientations
     sat = None if saturated is None or np.size(saturated) == 0 else jnp.asarray(saturated, jnp.int32)
 
     def with_edges(p: np.ndarray) -> np.ndarray:  # positions followed by their edge distances (see system)
@@ -687,7 +691,14 @@ def fit_occupancy(
     vbp = max(vb_all, vb)
     pos_p = pad_voxels(pos, vbp)
     t0 = time.perf_counter()
-    if coarse == 1:
+    if given is not None:
+        cand_g = np.full((len(pos_p), k), -1, np.int32)
+        f_g = np.zeros((len(pos_p), k), np.float32)
+        cand_g[:nv], f_g[:nv] = given[1], given[0]
+        log(f"candidates: given, {(cand_g[:nv] >= 0).sum(1).mean():.0f} of {k} per voxel on average")
+        # an empty slot: orientation 0 at zero occupancy, which MLEM's multiplicative update keeps at zero
+        f0, cand = jnp.asarray(np.where(cand_g >= 0, f_g, 0.0)), jnp.asarray(np.maximum(cand_g, 0))
+    elif coarse == 1:
         log(f"candidates: {nv} voxels x {pred[0].shape[0]} orientations, the top {k} per voxel")
         f0, cand = candidates(H, pred, ring_j, pos_p, scan, dims, k, vb_all, qc=qc, log=log)
     else:
