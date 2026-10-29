@@ -140,7 +140,7 @@ def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
     $$\left( a, b, c, \alpha, \beta, \gamma \right)$$
     and a reciprocal space lattice:
     $$\left( a^*, b^*, c^*, \alpha^*, \beta^*, \gamma^* \right)$$
-    We can say (Busing and Levy, 1966, equation 3) [2]_:
+    We can say (Busing and Levy, 1967, equation 3) [2]_:
     $$B = 
     \begin{bmatrix}
     a^* & b^* \cos{\gamma^*} &  c^* \cos{\beta^*} \\
@@ -151,7 +151,8 @@ def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
 
     References
     ----------
-    .. [2] https://doi.org/10.2172/4457192
+    .. [2] Busing, W.R., Levy, H.A., 1967. Angle calculations for 3- and 4-circle X-ray and neutron diffractometers.
+       Acta Crystallographica 22, 457–464. https://doi.org/10.1107/S0365110X67000970
     """
     _a, _b, c, alpha, _beta, _gamma = lpars
     astar, bstar, cstar, _alphastar, betastar, gammastar = rlpars
