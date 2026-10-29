@@ -469,3 +469,32 @@ class TestStreamMonitor(unittest.TestCase):
             np.testing.assert_allclose(val, [32.0, 16.0, 8.0])
             with self.assertRaises(KeyError):
                 read_monitor(path, ["1.1"], "fpico6")  # no master file to fall back on
+
+
+class TestReadPeaks(unittest.TestCase):
+    def test_merges_label_per_row(self):
+        """2D peaks of one 4D label merge per dty row, intensity-weighted; distortion moves each 2D peak first."""
+        from anri.io.imaged11 import read_peaks
+
+        omega = np.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])  # [rows, frames]
+        dty = np.array([[-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]])
+        # (pixels, intensity, intensity x row, intensity x column, frame): label 0 in frames 0, 1 of row 0 and
+        # frame 4 (row 1, frame 1); label 1 alone in frame 2
+        props = np.array([[2, 1.0, 10.0, 20.0, 0], [3, 3.0, 36.0, 66.0, 1], [1, 2.0, 8.0, 8.0, 4],
+                          [4, 5.0, 5.0, 5.0, 2]]).T  # fmt: skip
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "pks.h5")
+            with h5py.File(path, "w") as h:
+                h["pks2d/glabel"] = np.array([0, 0, 0, 1])
+                h["pks2d/pk_props"] = props.astype(np.int64)
+            spatial = (np.full((30, 30), 0.5, np.float32), np.full((30, 30), -0.25, np.float32))  # (dx, dy)
+            pk = read_peaks(path, omega, dty, spatial)
+        self.assertEqual(len(pk["sc"]), 3)
+        i = np.lexsort((pk["row"], pk["intensity"]))  # label 1 row 0 (I 5), label 0 row 0 (I 4), label 0 row 1 (I 2)
+        np.testing.assert_allclose(pk["intensity"][i], [2.0, 4.0, 5.0])
+        np.testing.assert_array_equal(pk["row"][i], [1, 0, 0])
+        np.testing.assert_allclose(pk["sc"][i], [4.0 - 0.25, (10.0 + 36.0) / 4 - 0.25, 1.0 - 0.25])
+        np.testing.assert_allclose(pk["fc"][i], [4.0 + 0.5, (20.0 + 66.0) / 4 + 0.5, 1.0 + 0.5])
+        np.testing.assert_allclose(pk["omega"][i], [1.0, (0.0 + 3.0) / 4, 2.0])
+        np.testing.assert_allclose(pk["dty"][i], [1.0, -1.0, -1.0])
+        np.testing.assert_array_equal(pk["n2d"][i], [1, 2, 1])

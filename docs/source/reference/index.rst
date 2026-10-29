@@ -20,6 +20,7 @@ API reference
     crystal
     fwd
     index
+    calib
     simulate
     io
     phantom
