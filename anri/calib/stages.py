@@ -2,11 +2,14 @@
 
 :func:`stage_fit` matches ImageD11's peaks to the map, fits the geometry (:func:`anri.calib.fit.calibrate`) and frees
 each orientation's lattice with that geometry (:func:`anri.calib.fit.strain_left`). :func:`write_pars` writes the
-result as ImageD11 parameter files, for anri or ImageD11 to use.
+result as ImageD11 parameter files, for anri or ImageD11 to use. :func:`load_inputs` reads what the stage starts
+from, to look at before running it (the calibration guide does), and :func:`run_command` gives the command line
+that remakes a calibration file.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 import h5py
@@ -25,6 +28,54 @@ from anri.io.provenance import (
 FREE = ("distance", "y_center", "z_center", "tilt_x", "tilt_y", "tilt_z", "wavelength")
 _COMPONENTS = ("xx", "yy", "zz", "yz", "xz", "xy")
 _IJ = ((0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1))
+
+
+def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = None, min_occ: float = 0.01) -> dict:
+    """Read what :func:`stage_fit` starts from: the peaks, the indexed map and the starting geometry.
+
+    Parameters
+    ----------
+    fit_file, peaks, lattice, min_occ
+        See :func:`stage_fit`
+
+    Returns
+    -------
+    dict
+        "peaks" (:func:`anri.io.imaged11.read_peaks`) and "peaks_file"; the map as :func:`anri.calib.fit.match` takes
+        it: "ubi" [G, 3, 3], "grid_o", "grid_w" (occupancies below min_occ x the largest left out) and "step" (the
+        voxel size); "lattice" (the reference, a, b, c, alpha, beta, gamma) and its "B"; "pars" (the starting
+        parameters, :func:`anri.calib.fit.base_pars`); "histogram" and "fit" (the resolved provenance of those stages)
+    """
+    import anri.io.imaged11 as io
+    from anri.crystal.lattice import lpars_to_B
+
+    from . import fit
+
+    hr = read_provenance(upstream(fit_file, "histogram"))["resolved"]
+    fr = read_provenance(fit_file)["resolved"]
+    ds = io.read_dataset(hr["dataset_file"])
+    pks_file = peaks or ds["pksfile"]
+    if not pks_file:
+        msg = f"{hr['dataset_file']} names no peaks table: give it with peaks"
+        raise ValueError(msg)
+    lpars = np.asarray(lattice if lattice is not None else hr["lattice"], float)
+    B = np.asarray(lpars_to_B(lpars))
+    with h5py.File(fit_file, "r") as h:
+        U, f, cand = h["U"][()], h["f"][()], h["cand"][()]
+    grid_o = np.where(f > min_occ * f.max(), cand, -1).astype(np.int32)
+    return {
+        "peaks": io.read_peaks(pks_file, ds["omega"], ds["dty"], io.read_spatial(ds)),
+        "peaks_file": pks_file,
+        "ubi": np.linalg.inv(U @ B),
+        "grid_o": grid_o,
+        "grid_w": np.where(grid_o >= 0, f, 0.0),
+        "step": float(fr["voxel_size"]),
+        "lattice": lpars,
+        "B": B,
+        "pars": fit.base_pars(io.read_geometry(hr["parfile"]), float(fr["y0"])),
+        "histogram": hr,
+        "fit": fr,
+    }
 
 
 def stage_fit(
@@ -70,37 +121,20 @@ def stage_fit(
         The file written: the fitted geometry ("geometry", attributes as in an ImageD11 ``.par``), the covariance of
         the free parameters, each orientation's UBI and the strain left with its lattice free, and the matched peaks
     """
-    import anri.io.imaged11 as io
-    from anri.crystal.lattice import lpars_to_B
-
     from . import fit
 
     options = {"peaks": peaks, "lattice": lattice, "free": list(free), "tols": list(tols), "n_iter": n_iter,
                "clip": clip, "min_occ": min_occ, "min_peaks": min_peaks}  # fmt: skip
-    hr = read_provenance(upstream(fit_file, "histogram"))["resolved"]
-    fr = read_provenance(fit_file)["resolved"]
-    ds = io.read_dataset(hr["dataset_file"])
-    pks_file = peaks or ds["pksfile"]
-    if not pks_file:
-        msg = f"{hr['dataset_file']} names no peaks table: give it with peaks"
-        raise ValueError(msg)
-    lpars = np.asarray(lattice if lattice is not None else hr["lattice"], float)
-    B = np.asarray(lpars_to_B(lpars))
-    y0, step = float(fr["y0"]), float(fr["voxel_size"])
-    geometry = io.read_geometry(hr["parfile"])
-    pars0 = fit.base_pars(geometry, y0)
+    d = load_inputs(fit_file, peaks, lattice, min_occ)
+    hr, pk, B, lpars, pars0 = d["histogram"], d["peaks"], d["B"], d["lattice"], d["pars"]
+    pks_file, y0, step = d["peaks_file"], pars0["y0"], d["step"]
     out = stage_path(fit_file, "calib", out)
     check_out(out, [*chain(fit_file), hr["dataset_file"], pks_file, hr["parfile"]])
 
-    pk = io.read_peaks(pks_file, ds["omega"], ds["dty"], io.read_spatial(ds))
-    with h5py.File(fit_file, "r") as h:
-        U, f, cand = h["U"][()], h["f"][()], h["cand"][()]
-    grid_o = np.where(f > min_occ * f.max(), cand, -1).astype(np.int32)
-    grid_w = np.where(grid_o >= 0, f, 0.0)
-    log(f"{len(pk['sc'])} peaks from {pks_file}; map: {len(U)} orientations on {np.any(grid_o >= 0, 1).sum()} "
-        f"voxels of {step:g}, y0 {y0:g}; lattice {np.round(lpars, 6).tolist()}")  # fmt: skip
+    log(f"{len(pk['sc'])} peaks from {pks_file}; map: {len(d['ubi'])} orientations on "
+        f"{np.any(d['grid_o'] >= 0, 1).sum()} voxels of {step:g}, y0 {y0:g}; lattice {np.round(lpars, 6).tolist()}")  # fmt: skip
     log("start (" + hr["parfile"] + "): " + ", ".join(f"{k} {pars0[k]:.7g}" for k in free))
-    res = fit.calibrate(pk, np.linalg.inv(U @ B), grid_o, grid_w, step, pars0, tuple(free), tuple(tols), n_iter,
+    res = fit.calibrate(pk, d["ubi"], d["grid_o"], d["grid_w"], step, pars0, tuple(free), tuple(tols), n_iter,
                         clip, log=log)  # fmt: skip
     st = fit.strain_left(pk, res["matched"], res["ubi"], B, res["pars"], res["sig"], min_peaks, n_iter, log=log)
     E = st["strain"]
@@ -167,3 +201,28 @@ def write_pars(calib_file: str, folder: str) -> str:
     if isinstance(cell.get(key), float) and float(cell[key]).is_integer():
         cell[key] = int(cell[key])  # a space group number, not 227.0
     return io.write_pars(folder, geometry, {name: cell})
+
+
+def run_command(calib_file: str) -> str:
+    """Return the ``python -m anri.calib fit`` command that remakes a calibration file, with every option it recorded.
+
+    Parameters
+    ----------
+    calib_file
+        From :func:`stage_fit`
+    """
+    import shlex
+
+    p = read_provenance(calib_file)
+    cmd = ["python", "-m", "anri.calib", "fit", p["source"]]
+    if os.path.abspath(calib_file) != stage_path(p["source"], "calib"):
+        cmd += ["--out", calib_file]
+    for k, v in p["options"].items():
+        flag = "--" + {"n_iter": "iter"}.get(k, k).replace("_", "-")
+        if k == "lattice":
+            cmd += [flag, *(str(x) for x in v)]
+        elif isinstance(v, list):
+            cmd += [flag, ",".join(str(x) for x in v)]
+        else:
+            cmd += [flag, str(v)]
+    return shlex.join(cmd)
