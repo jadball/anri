@@ -44,6 +44,13 @@ class TestRmatFromAxisAngle(unittest.TestCase):
                     anri.maths.rotation.rmat_from_axis_angle(jnp.array(axis), angle), rot(angle), atol=1e-12
                 )
 
+    def test_integer_axis(self):
+        # an integer axis must not truncate a fractional angle (issue #34)
+        np.testing.assert_allclose(anri.maths.rotation.rmat_from_axis_angle(jnp.array([0, 0, 1]), 30.5),
+                                   anri.maths.rotation.rot_z(30.5), atol=1e-12)  # fmt: skip
+        np.testing.assert_allclose(anri.maths.rotation.rmat_from_axis_angle(np.array([1, 0, 0]), np.array(0.5)),
+                                   anri.maths.rotation.rot_x(0.5), atol=1e-12)  # fmt: skip
+
 
 class TestSkewAndRodrigues(unittest.TestCase):
     def test_skew(self):
