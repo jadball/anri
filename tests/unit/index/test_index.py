@@ -403,6 +403,28 @@ class TestPopulations(unittest.TestCase):
         self.assertLess(anri.crystal.orientation.disorientation(U[0, 1:2], (twin @ U0)[None], ops)[0], 0.05)  # float32
         self.assertGreater(spread[0, 0], 0.2)
 
+    def test_largest_first(self):
+        """Populations come out largest first, though the most occupied candidate seeds the smaller one (#29)."""
+        U = np.asarray(anri.maths.rotation.rmat_from_axis_angle(jnp.array([[0.0, 0.0, 1.0]]), jnp.array([0, 10, 10.1])))
+        f = np.array([[0.3, 0.25, 0.25]], np.float32)
+        frac, mean, _, n = ix.populations.group(f, np.arange(3)[None], U, np.eye(3)[None], 1.0, p=2, m=3, vb=1)
+        np.testing.assert_allclose(frac[0], [0.625, 0.375], rtol=1e-5)
+        np.testing.assert_array_equal(n[0], [2, 1])
+        self.assertAlmostEqual(float(np.degrees(anri.maths.rotation.rotation_angle(mean[0, 0]))), 10.05, places=2)
+
+    def test_spread_thin(self):
+        """Occupancy spread thinly over many candidates is one population with a spread, never the identity (#27)."""
+        U = np.asarray(
+            anri.maths.rotation.rmat_from_axis_angle(jnp.array([[0.0, 0.0, 1.0]]), 40 + jnp.arange(64) * 0.01)
+        )
+        frac, mean, spread, n = ix.populations.group(
+            np.ones((1, 64)), np.arange(64)[None], U, np.eye(3)[None], 1.0, vb=1
+        )
+        self.assertEqual(int(n[0, 0]), 16)  # the m = 16 considered, each 1/64 of the total, below 0.02 of it
+        np.testing.assert_allclose(frac[0, 0], 16 / 64, rtol=1e-5)
+        self.assertAlmostEqual(float(np.degrees(anri.maths.rotation.rotation_angle(mean[0, 0]))), 40.0, delta=0.2)
+        self.assertGreater(spread[0, 0], 0.0)
+
     def test_occupancy_weighted(self):
         """IPF colours dimmed by occupancy, full brightness at the 99th percentile of the occupied voxels."""
         occ = np.array([0.0, 0.5, 1.0, 2.0])

@@ -1102,9 +1102,11 @@ def stage_populations(
     with float64():
         ubi_pop = np.asarray(anri.crystal.lattice.U_B_to_UBI(U_pop[v, q], d["B"]))
         ubi_main = np.asarray(anri.crystal.lattice.U_B_to_UBI(U_pop[:, 0], d["B"]))
+    # sig_rot: per component of the rotation vector (anri.fwd.render.render_row); an isotropic rms angle is sqrt(3) x it
     np.savez(f"{stem}_entries.npz", ubi=ubi_pop, pos=pos[v].astype(np.float32), density=tot[v] * frac[v, q],
-             sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q], voxel_size=YSTEP,
-             lattice=np.asarray(r["lattice"], float), space_group=r["space_group"], phase=r["phase"])  # fmt: skip
+             sig_rot=np.radians(spread[v, q]) / np.sqrt(3), voxel=v, population=q, completeness=comp_pop[v, q],
+             voxel_size=YSTEP, lattice=np.asarray(r["lattice"], float), space_group=r["space_group"],
+             phase=r["phase"])  # fmt: skip
     log(f"-> {out}, {stem}_entries.npz")
     try:
         maps = {
