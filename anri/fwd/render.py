@@ -610,11 +610,18 @@ def _render_sharded(
 
 
 def _valid_from_shards(x: jax.Array, count: np.ndarray, per_shard: int) -> np.ndarray:
-    """Copy the first count[k] elements of each device's shard of x to the host."""
+    """Copy the first count[k] elements of each device's shard of x to the host.
+
+    The slice on the device is rounded up to a power of 2 (at most the shard) and cut to count[k] on the host: a slice
+    of each new length would compile again, and the counts change from batch to batch.
+    """
     out = []
     for shard in sorted(x.addressable_shards, key=lambda sh: sh.index[0].start or 0):
         k = (shard.index[0].start or 0) // per_shard
-        out.append(np.asarray(shard.data[: count[k]]))
+        c = int(count[k])
+        n = min(1 << max(c - 1, 0).bit_length(), per_shard)  # at most 2 x the elements needed
+        data = shard.data if n == per_shard else shard.data[:n]
+        out.append(np.asarray(data)[:c])
     return np.concatenate(out)
 
 
