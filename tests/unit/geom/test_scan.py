@@ -15,11 +15,10 @@ class TestStepGrid(unittest.TestCase):
         from ImageD11.sinograms import geometry as g
 
         ybincens = np.arange(-10.5, 12.0, 0.75)
-        for args in ((ybincens, 0.75, 1, 0.3), (ybincens, 0.75, 2, -1.2)):
-            si, sj = anri.geom.scan.step_grid_from_ybincens(*args)
-            # ImageD11 gives a list of (si, sj) for si in steps for sj in steps
-            expected = np.array(g.step_grid_from_ybincens(*args)).reshape(si.shape + (2,))
-            np.testing.assert_array_equal(np.stack([si, sj], axis=-1), expected)
+        si, sj = anri.geom.scan.step_grid_from_ybincens(ybincens, 0.75, 1, 0.3)
+        # ImageD11 gives a list of (si, sj) for si in steps for sj in steps
+        expected = np.array(g.step_grid_from_ybincens(ybincens, 0.75, 1, 0.3)).reshape(si.shape + (2,))
+        np.testing.assert_array_equal(np.stack([si, sj], axis=-1), expected)
         si, sj = anri.geom.scan.step_grid_from_ybincens(ybincens, 0.75, 1, 0.3)
         recon_shape = (si.shape[0], si.shape[1] + 2)
         ri, rj = anri.geom.scan.step_to_recon(si, sj, recon_shape)
@@ -32,6 +31,17 @@ class TestStepGrid(unittest.TestCase):
             np.stack(anri.geom.scan.recon_to_sample(ri, rj, recon_shape, 0.75)),
             np.stack(g.recon_to_sample(ri, rj, recon_shape, 0.75)),
         )
+
+    def test_downsampled_holds_zero(self):
+        """A downsampled grid is symmetric and holds 0 in its middle, where step_to_recon puts it (issue #33)."""
+        ybincens = np.arange(-10.5, 12.0, 0.75)  # half extent 17 steps from y0 = -1.2: odd, so rounded up to 18
+        si, sj = anri.geom.scan.step_grid_from_ybincens(ybincens, 0.75, 2, -1.2)
+        np.testing.assert_array_equal(si[:, 0], np.arange(-18, 19, 2))
+        np.testing.assert_array_equal(sj, si.T)
+        n = si.shape[0]
+        ri, _ = anri.geom.scan.step_to_recon(si, sj, (n, n))
+        self.assertEqual((int(si[n // 2, n // 2]), int(sj[n // 2, n // 2])), (0, 0))
+        np.testing.assert_array_equal(ri[:, 0], si[:, 0] + n // 2)  # 0 at the middle index n // 2
 
 
 class TestDtyToRow(unittest.TestCase):
