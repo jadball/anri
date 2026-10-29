@@ -505,8 +505,10 @@ def _inherit(near9: jax.Array, f_c: jax.Array, cand_c: jax.Array, k2: int) -> ja
         o = jnp.argsort(c)
         c, w = c[o], w[o]
         dup = jnp.concatenate([jnp.array([False]), c[1:] == c[:-1]])
-        _, i = jax.lax.top_k(jnp.where(dup, -1.0, w), k2)  # each orientation once
-        return c[i]
+        seg = jnp.cumsum(~dup) - 1  # which orientation each entry is, in sorted order
+        w_max = jax.ops.segment_max(w, seg, num_segments=c.size)[seg]  # its largest occupancy in any neighbour
+        v, i = jax.lax.top_k(jnp.where(dup, -jnp.inf, w_max), k2)  # each orientation once
+        return jnp.where(v > -jnp.inf, c[i], -1)  # -1: fewer than k2 orientations in the neighbourhood
 
     return jax.vmap(one)(near9)
 
@@ -525,14 +527,15 @@ def inherit_candidates(
     f_c, cand_c
         [Nc, K] coarse occupancies and orientation indices
     k2
-        Candidates per fine voxel, the most occupied first
+        Candidates per fine voxel, the most occupied first (an orientation in several neighbours by its largest
+        occupancy)
     vb
         Fine voxels per call
 
     Returns
     -------
     jax.Array
-        [Nv, k2] orientation indices
+        [Nv, k2] orientation indices, each once; -1 in the last slots where the neighbourhood holds fewer than k2
     """
     from scipy.spatial import KDTree
 
@@ -557,7 +560,7 @@ def candidates_from(
     d
         [n_cells] histogram
     cand_in
-        [Nv, K2] orientations to score per voxel, e.g. from :func:`inherit_candidates`
+        [Nv, K2] orientations to score per voxel, e.g. from :func:`inherit_candidates`; -1 for none
     pred, ring_j, pos, scan, dims, vb
         See :func:`forward`
     k
@@ -572,11 +575,14 @@ def candidates_from(
     """
     t0 = time.perf_counter()
     n_cells = d.shape[0]
-    a1 = forward(jnp.ones(cand_in.shape, jnp.float32), cand_in, pred, ring_j, pos, scan, dims, n_cells, vb)
+    ok = cand_in >= 0
+    cand_in = jnp.maximum(cand_in, 0)  # the empty slots: any orientation, with no weight and never picked
+    a1 = forward(ok.astype(jnp.float32), cand_in, pred, ring_j, pos, scan, dims, n_cells, vb)
     r = jnp.where(a1 > 0, d / jnp.maximum(a1, 1e-30), 0.0)
     num = backward(r, cand_in, pred, ring_j, pos, scan, dims, vb)
     f1 = num / jnp.maximum(backward(jnp.ones(n_cells, jnp.float32), cand_in, pred, ring_j, pos, scan, dims, vb), 1e-30)
-    val, i = jax.lax.top_k(f1, k)
+    val, i = jax.lax.top_k(jnp.where(ok, f1, -jnp.inf), k)
+    val = jnp.maximum(val, 0.0)  # an empty slot picked (fewer than k orientations): occupancy 0
     cand = jnp.take_along_axis(cand_in, i, 1)
     jax.block_until_ready(cand)
     log(f"  candidates: top {k} of {cand_in.shape[1]} inherited per voxel: {time.perf_counter() - t0:.1f} s")
