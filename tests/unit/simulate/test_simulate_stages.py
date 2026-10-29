@@ -39,6 +39,18 @@ def two_phase_map(folder):
     return path
 
 
+class TestCommandLine(unittest.TestCase):
+    def test_run_dataset_names(self):
+        # run's positional output dataset and --dataset (an input DataSet to simulate) are separate (issue #25)
+        from anri.simulate.__main__ import parse_args
+
+        args = parse_args(["run", "map.npz", "geometry.par", "results", "sample", "out_name"])
+        self.assertEqual((args.dataset, args.input_dataset), ("out_name", None))
+        args = parse_args(["run", "map.npz", "geometry.par", "results", "sample", "out_name", "--dataset", "in.h5"])
+        self.assertEqual((args.dataset, args.input_dataset), ("out_name", "in.h5"))
+        self.assertEqual(parse_args(["prepare", "map.npz", "--dataset", "in.h5"]).input_dataset, "in.h5")
+
+
 class TestRenderStages(unittest.TestCase):
     def test_prepare_render_assemble(self):
         """Two phases, rendered in two parts and assembled into an ImageD11 dataset with the provenance chain."""

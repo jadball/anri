@@ -42,7 +42,7 @@ def _cif(values: list | None) -> str | dict | None:
 def _prepare_options(p: argparse.ArgumentParser) -> None:
     from anri.simulate.stages import BANDWIDTH, OPTICS
 
-    p.add_argument("--dataset", help="an ImageD11 DataSet to simulate: its frames' omega and dty, detector shape, y0 and "
+    p.add_argument("--dataset", dest="input_dataset", help="an ImageD11 DataSet to simulate: its frames' omega and dty, detector shape, y0 and "
                    "geometry replace the scan options")  # fmt: skip
     p.add_argument("--remap", nargs="+", metavar="OLD=NEW",
                    help="rewrite the path prefixes the DataSet records, e.g. where the data are mounted elsewhere")  # fmt: skip
@@ -144,7 +144,7 @@ def main() -> None:
             args.outdir, os.path.splitext(os.path.basename(args.map))[0] + "_prepare.h5"
         )
         source = sim.stages.stage_prepare(
-            args.map, args.pars, out, dataset=args.dataset,
+            args.map, args.pars, out, dataset=args.input_dataset,
             remap=dict(v.split("=", 1) for v in args.remap) if args.remap else None, cif=_cif(args.cif), optics=args.optics, divergence=args.divergence,
             bandwidth=args.bandwidth, beam_fwhm=args.beam_fwhm, psf=args.psf, pol_factor=args.pol_factor, y0=args.y0,
             omega_range=tuple(args.omega_range), omega_step=args.omega_step, dty_step=args.dty_step,
