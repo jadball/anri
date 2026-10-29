@@ -6,41 +6,12 @@ The crystal
 This chapter turns a crystal structure (a CIF) into the list of reflections Anri predicts and their structure
 factors.
 
-Lattice and the B matrix
-------------------------
+Lattice and orientation
+-----------------------
 
-A lattice :math:`(a, b, c, \alpha, \beta, \gamma)` has a reciprocal lattice :math:`(a^*, b^*, c^*, \alpha^*, \beta^*, \gamma^*)`,
-both from the metric tensor. The :math:`\matr{B}` matrix takes Miller indices to Cartesian reciprocal-lattice vectors in the
-crystal frame [BusingLevy1967]_:
-
-.. math::
-    :label: cry-B
-
-    \matr{B} =
-    \begin{bmatrix}
-    a^* & b^* \cos\gamma^* & c^* \cos\beta^* \\
-    0 & b^* \sin\gamma^* & -c^* \sin\beta^* \cos\alpha \\
-    0 & 0 & 1/c
-    \end{bmatrix},
-    \qquad
-    \vec{g}_c = \matr{B}\, \vec{h}.
-
-**Code:** :func:`anri.crystal.lattice.lpars_rlpars_to_B`, :func:`anri.crystal.lattice.lpars_to_B`,
-:func:`anri.crystal.structure.B_matrix`.
-
-The orientation :math:`\matr{U}` takes the crystal frame to the sample frame, so a reflection's vector in the sample frame is
-
-.. math::
-    :label: cry-g
-
-    \vec{g}_s = \matr{U}\matr{B}\, \vec{h} = \text{UBI}^{-1}\, \vec{h}.
-
-A strained crystal has its own :math:`\matr{U}\matr{B}`, no longer :math:`\matr{U}` times the reference
-:math:`\matr{B}`. Anri carries the UBI, so orientation and strain go together everywhere below.
-
-**Code:** :func:`anri.crystal.lattice.U_B_to_UBI`, :func:`anri.maths.utils.inv3`
-
-(the inverse is written out: for 3 × 3 matrices it is several times faster than ``jnp.linalg.inv`` on a GPU).
+A crystal enters as its lattice parameters, which give the :math:`\matr{B}` matrix (:eq:`frm-B`), and its orientation
+:math:`\matr{U}`; together, as the UBI, they put a reflection :math:`\vec{h}` at :math:`\vec{g}_s` in the sample frame
+(:eq:`frm-g`). Both are defined in :doc:`frames`.
 
 Reflections and rings
 ---------------------

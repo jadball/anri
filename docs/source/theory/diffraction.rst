@@ -43,7 +43,7 @@ Solving for omega
 
 The sample turns about its omega axis, so :math:`\vec{g}` sweeps a cone and meets the Ewald condition at up to two omegas
 per turn. Work in the frame that turns with omega, in which the rotation axis is :math:`\hat{z}` and the beam is
-:math:`\tilde{\vec{k}} = (\matr{W}\matr{C})^T \vec{k}_{\text{in}}` (:eq:`conv-stack`). Split :math:`\vec{g}_s` (:eq:`cry-g`) into
+:math:`\tilde{\vec{k}} = (\matr{W}\matr{C})^T \vec{k}_{\text{in}}` (:eq:`frm-stack`). Split :math:`\vec{g}_s` (:eq:`frm-g`) into
 parts along and across the axis, :math:`\vec{g}_\parallel = (\vec{g}_s \cdot \hat{z})\hat{z}` and
 :math:`\vec{g}_\perp = \vec{g}_s - \vec{g}_\parallel`. Rotating by :math:`\omega` turns only :math:`\vec{g}_\perp`, so
 :eq:`dif-ewald` becomes
@@ -85,7 +85,7 @@ lab.
 
 **Code:** :func:`anri.fwd.peak.hkl_to_k_omega`.
 
-Its angles are :math:`2\theta = \arccos(\hat{k}_{\text{out}} \cdot \hat{k})` and :math:`\eta` from :eq:`conv-eta`.
+Its angles are :math:`2\theta = \arccos(\hat{k}_{\text{out}} \cdot \hat{k})` and :math:`\eta` from :eq:`frm-eta`.
 Conversely [Poulsen2017]_ (eq. 39),
 
 .. math::
@@ -103,7 +103,7 @@ Where the voxel scatters from
 -----------------------------
 
 The ray starts at the voxel, not at the rotation axis, so its position matters (parallax). At the solution's omega,
-and the frame's dty, the voxel centre is at :eq:`conv-stack`. Anri has two kinds of voxel:
+and the frame's dty, the voxel centre is at :eq:`frm-stack`. Anri has two kinds of voxel:
 
 - a **column** (2D maps): the voxel extends through the whole beam height and scatters at the height where the beam
   crosses it. For a beam tilted out of the horizontal plane that height rises with distance along the beam.
@@ -151,7 +151,7 @@ parameters [FABLEgeom]_.
 
 **Code:** :func:`anri.geom.detector.raytrace_to_det`, :func:`anri.geom.detector.detector_basis_vectors_lab`.
 
-Chaining :eq:`cry-g`, :eq:`dif-omega`, the origin and :eq:`dif-raytrace` gives the forward model's one centroid
+Chaining :eq:`frm-g`, :eq:`dif-omega`, the origin and :eq:`dif-raytrace` gives the forward model's one centroid
 function, which the renderer, the box-beam and the scanning models all call.
 
 **Code:** :func:`anri.fwd.peak.get_centroid`, :func:`anri.fwd.peak.get_centroid_both`.
@@ -174,7 +174,7 @@ along :math:`x`, axis along :math:`z`) keeps :math:`|\vec{g}|`, so it leaves :ma
     \qquad
     \Delta 2\theta = 0,
 
-to first order. This follows from differentiating :eq:`dif-omega` and :eq:`conv-eta`; it was checked against the
+to first order. This follows from differentiating :eq:`dif-omega` and :eq:`frm-eta`; it was checked against the
 exact solution for random orientations and rotations of 0.05°, where it is right to 0.5 % of :math:`|\vec{\delta}|`.
 Read term by term:
 

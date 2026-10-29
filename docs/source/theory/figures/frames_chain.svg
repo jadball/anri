@@ -1,0 +1,28 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1050 190' width='1050' height='190'>
+<defs><marker id='a555555' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M 0 0 L 10 5 L 0 10 z' fill='#555555'/></marker></defs>
+<rect x='0' y='0' width='1050' height='190' rx='10' fill='white'/>
+<rect x='20.0' y='50.0' width='166.0' height='76.0' rx='6' stroke='#7b2fa8' stroke-width='2.2' fill='#ffffff'/>
+<text x='103.0' y='80.0' fill='#7b2fa8' font-size='16' text-anchor='middle' font-weight='bold' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>Miller indices</text>
+<text x='103.0' y='106.0' fill='#222222' font-size='15' text-anchor='middle' font-weight='normal' font-style='italic' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>(h, k, l)</text>
+<line x1='190.0' y1='88.0' x2='226.0' y2='88.0' stroke='#555555' stroke-width='2.2' stroke-linecap='round' marker-end='url(#a555555)'/>
+<text x='208.0' y='42.0' fill='#555555' font-size='13' text-anchor='middle' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>B</text>
+<rect x='230.0' y='50.0' width='166.0' height='76.0' rx='6' stroke='#2e8b3d' stroke-width='2.2' fill='#ffffff'/>
+<text x='313.0' y='80.0' fill='#2e8b3d' font-size='16' text-anchor='middle' font-weight='bold' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>crystal Cartesian</text>
+<text x='313.0' y='106.0' fill='#222222' font-size='15' text-anchor='middle' font-weight='normal' font-style='italic' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>g<tspan baseline-shift='sub' font-size='72%'>c</tspan> = B h</text>
+<line x1='400.0' y1='88.0' x2='436.0' y2='88.0' stroke='#555555' stroke-width='2.2' stroke-linecap='round' marker-end='url(#a555555)'/>
+<text x='418.0' y='42.0' fill='#555555' font-size='13' text-anchor='middle' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>U</text>
+<rect x='440.0' y='50.0' width='166.0' height='76.0' rx='6' stroke='#1f5fbf' stroke-width='2.2' fill='#ffffff'/>
+<text x='523.0' y='80.0' fill='#1f5fbf' font-size='16' text-anchor='middle' font-weight='bold' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>sample</text>
+<text x='523.0' y='106.0' fill='#222222' font-size='15' text-anchor='middle' font-weight='normal' font-style='italic' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>g<tspan baseline-shift='sub' font-size='72%'>s</tspan> = U g<tspan baseline-shift='sub' font-size='72%'>c</tspan></text>
+<line x1='610.0' y1='88.0' x2='646.0' y2='88.0' stroke='#555555' stroke-width='2.2' stroke-linecap='round' marker-end='url(#a555555)'/>
+<text x='628.0' y='42.0' fill='#555555' font-size='13' text-anchor='middle' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>ω, χ, wedge, dty</text>
+<rect x='650.0' y='50.0' width='166.0' height='76.0' rx='6' stroke='#222222' stroke-width='2.2' fill='#ffffff'/>
+<text x='733.0' y='80.0' fill='#222222' font-size='16' text-anchor='middle' font-weight='bold' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>lab</text>
+<text x='733.0' y='106.0' fill='#222222' font-size='15' text-anchor='middle' font-weight='normal' font-style='italic' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>W C R(ω) g<tspan baseline-shift='sub' font-size='72%'>s</tspan></text>
+<line x1='820.0' y1='88.0' x2='856.0' y2='88.0' stroke='#555555' stroke-width='2.2' stroke-linecap='round' marker-end='url(#a555555)'/>
+<text x='838.0' y='42.0' fill='#555555' font-size='13' text-anchor='middle' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>ray trace</text>
+<rect x='860.0' y='50.0' width='166.0' height='76.0' rx='6' stroke='#d9822b' stroke-width='2.2' fill='#ffffff'/>
+<text x='943.0' y='80.0' fill='#d9822b' font-size='16' text-anchor='middle' font-weight='bold' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>detector</text>
+<text x='943.0' y='106.0' fill='#222222' font-size='15' text-anchor='middle' font-weight='normal' font-style='italic' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>(slow, fast)</text>
+<text x='525.0' y='165.0' fill='#555555' font-size='13' text-anchor='middle' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>reciprocal-lattice vectors carry no 2π: |g| = 1/d; UBI = (U B)⁻¹ holds orientation and strain</text>
+</svg>

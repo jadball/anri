@@ -22,7 +22,8 @@ Goniometer
 ----------
 
 Anri currently uses the FABLE geometry definitions for converting to and from detector, laboratory and sample coordinate systems.
-Please see the included :download:`FABLE geometry document<./Fable_Geometry_version_1.0.8.pdf>` for their definitions.
+Every frame, from Miller indices to detector pixels, is defined with diagrams in :ref:`theory_frames`; the included
+:download:`FABLE geometry document<./Fable_Geometry_version_1.0.8.pdf>` is the original.
 
 As that document isn't perfectly descriptive, I'll try to describe slightly more what convention we use.
 We use a right-handed coordinate system. With no goniometer rotations (all angles zero), the $\omega$ rotation axis (vertical) defines our $Z$ direction. The dty stage defines the $Y$ axis, and the $X$ axis (approximately down-beam) is perpendicular to $Y$ and $Z$.

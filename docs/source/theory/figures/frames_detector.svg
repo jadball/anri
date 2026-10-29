@@ -1,0 +1,33 @@
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 820 470' width='820' height='470'>
+<defs><marker id='a222222' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M 0 0 L 10 5 L 0 10 z' fill='#222222'/></marker><marker id='ad9822b' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto-start-reverse'><path d='M 0 0 L 10 5 L 0 10 z' fill='#d9822b'/></marker></defs>
+<rect x='0' y='0' width='820' height='470' rx='10' fill='white'/>
+<rect x='140.0' y='40.0' width='420.0' height='380.0' rx='2' stroke='#d9822b' stroke-width='2.2' fill='#fdf1e3'/>
+<path d='M 459.0 230.0 L 458.3 243.6 L 456.2 257.0 L 452.6 270.2 L 447.8 282.9 L 441.6 295.0 L 434.2 306.4 L 425.6 317.0 L 416.0 326.6 L 405.4 335.2 L 394.0 342.6 L 381.9 348.8 L 369.2 353.6 L 356.0 357.2 L 342.6 359.3 L 329.0 360.0 L 315.4 359.3 L 302.0 357.2 L 288.8 353.6 L 276.1 348.8 L 264.0 342.6 L 252.6 335.2 L 242.0 326.6 L 232.4 317.0 L 223.8 306.4 L 216.4 295.0 L 210.2 282.9 L 205.4 270.2 L 201.8 257.0 L 199.7 243.6 L 199.0 230.0 L 199.7 216.4 L 201.8 203.0 L 205.4 189.8 L 210.2 177.1 L 216.4 165.0 L 223.8 153.6 L 232.4 143.0 L 242.0 133.4 L 252.6 124.8 L 264.0 117.4 L 276.1 111.2 L 288.8 106.4 L 302.0 102.8 L 315.4 100.7 L 329.0 100.0 L 342.6 100.7 L 356.0 102.8 L 369.2 106.4 L 381.9 111.2 L 394.0 117.4 L 405.4 124.8 L 416.0 133.4 L 425.6 143.0 L 434.2 153.6 L 441.6 165.0 L 447.8 177.1 L 452.6 189.8 L 456.2 203.0 L 458.3 216.4 L 459.0 230.0' stroke='#e65100' stroke-width='1.4' fill='none' stroke-linejoin='round' stroke-dasharray='5 4'/>
+<circle cx='428.6' cy='146.4' r='7' fill='#e65100'/>
+<line x1='329.0' y1='230.0' x2='329.0' y2='75.0' stroke='#222222' stroke-width='1.2' stroke-linecap='round' stroke-dasharray='4 3'/>
+<line x1='329.0' y1='230.0' x2='428.6' y2='146.4' stroke='#e65100' stroke-width='1.4' stroke-linecap='round'/>
+<path d='M 329.0 160.0 L 331.0 160.0 L 333.1 160.1 L 335.1 160.3 L 337.1 160.5 L 339.1 160.7 L 341.2 161.1 L 343.2 161.4 L 345.1 161.9 L 347.1 162.4 L 349.1 162.9 L 351.0 163.6 L 352.9 164.2 L 354.8 164.9 L 356.7 165.7 L 358.6 166.6 L 360.4 167.4 L 362.2 168.4 L 364.0 169.4 L 365.7 170.4 L 367.5 171.5 L 369.2 172.7 L 370.8 173.9 L 372.4 175.1 L 374.0 176.4 L 375.5 177.7 L 377.0 179.1 L 378.5 180.5 L 379.9 182.0 L 381.3 183.5 L 382.6 185.0' stroke='#d9822b' stroke-width='1.8' fill='none' stroke-linejoin='round' marker-end='url(#ad9822b)'/>
+<text x='367.0' y='150.0' fill='#d9822b' font-size='19' text-anchor='middle' font-weight='bold' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>η</text>
+<text x='399.0' y='205.0' fill='#e65100' font-size='13' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>2θ grows outwards</text>
+<line x1='329.0' y1='230.0' x2='234.0' y2='230.0' stroke='#222222' stroke-width='2.2' stroke-linecap='round' marker-end='url(#a222222)'/>
+<line x1='329.0' y1='230.0' x2='329.0' y2='135.0' stroke='#222222' stroke-width='2.2' stroke-linecap='round' marker-end='url(#a222222)'/>
+<text x='229.0' y='250.0' fill='#222222' font-size='16' text-anchor='middle' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>y<tspan baseline-shift='sub' font-size='72%'>l</tspan></text>
+<text x='315.0' y='130.0' fill='#222222' font-size='16' text-anchor='middle' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>z<tspan baseline-shift='sub' font-size='72%'>l</tspan></text>
+<circle cx='329.0' cy='230.0' r='5' fill='none' stroke='#c62828' stroke-width='2'/>
+<circle cx='329.0' cy='230.0' r='1.8' fill='#c62828'/>
+<text x='339.0' y='252.0' fill='#c62828' font-size='13' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>beam centre (y<tspan baseline-shift='sub' font-size='72%'>center</tspan>, z<tspan baseline-shift='sub' font-size='72%'>center</tspan>)</text>
+<line x1='548.0' y1='408.0' x2='428.0' y2='408.0' stroke='#d9822b' stroke-width='2.4' stroke-linecap='round' marker-end='url(#ad9822b)'/>
+<line x1='548.0' y1='408.0' x2='548.0' y2='288.0' stroke='#d9822b' stroke-width='2.4' stroke-linecap='round' marker-end='url(#ad9822b)'/>
+<text x='423.0' y='400.0' fill='#d9822b' font-size='15' text-anchor='end' font-weight='bold' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>fast</text>
+<text x='540.0' y='280.0' fill='#d9822b' font-size='15' text-anchor='end' font-weight='bold' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>slow</text>
+<text x='552.0' y='438.0' fill='#d9822b' font-size='13' text-anchor='end' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>pixel (0, 0)</text>
+<text x='585.0' y='60.0' fill='#333333' font-size='14' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>seen from the sample,</text>
+<text x='585.0' y='82.0' fill='#333333' font-size='14' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>looking downstream</text>
+<text x='585.0' y='104.0' fill='#333333' font-size='14' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'></text>
+<text x='585.0' y='126.0' fill='#333333' font-size='14' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>o-matrix = identity:</text>
+<text x='585.0' y='148.0' fill='#333333' font-size='14' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>slow → z<tspan baseline-shift='sub' font-size='72%'>det</tspan> (up)</text>
+<text x='585.0' y='170.0' fill='#333333' font-size='14' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>fast → y<tspan baseline-shift='sub' font-size='72%'>det</tspan> (left)</text>
+<text x='585.0' y='192.0' fill='#333333' font-size='14' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'></text>
+<text x='585.0' y='214.0' fill='#333333' font-size='14' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>other o-matrices flip</text>
+<text x='585.0' y='236.0' fill='#333333' font-size='14' text-anchor='start' font-weight='normal' font-style='normal' font-family='DejaVu Sans, Helvetica, Arial, sans-serif'>or transpose the image</text>
+</svg>
