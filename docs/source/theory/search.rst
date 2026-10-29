@@ -13,7 +13,9 @@ Grids over the fundamental zone
 Because of the Laue group (:eq:`cry-laue`), only one fundamental zone of orientation space needs covering.
 
 **Cubic** (24 rotations): a regular grid of Rodrigues vectors :math:`\vec{r} = \tan(\theta/2)\,\hat{n}`, inside the cubic
-fundamental zone :math:`|r_i| \le \tan(\pi/8)`, :math:`|r_1| + |r_2| + |r_3| \le 1` [Frank1988]_. The grid is coarsest at the
+fundamental zone :math:`|r_i| \le \tan(\pi/8)`, :math:`|r_1| + |r_2| + |r_3| \le 1` [Frank1988]_: a cube truncated by
+eight planes, with corners at :math:`(\sqrt{2} - 1, \sqrt{2} - 1, 3 - 2\sqrt{2})` and their permutations and sign changes
+([Rosca2014]_, section 4.4). The grid is coarsest at the
 origin, so the largest misorientation from any orientation to its nearest grid point is that of half a cell diagonal
 there:
 
@@ -26,13 +28,17 @@ for a grid step :math:`s`. **Code:** :func:`anri.crystal.orientation.orientation
 :func:`anri.crystal.orientation.cubic_grid_misorientation`. For cubic crystals it needs about half the orientations
 of a cubochoric grid for the same worst case.
 
-**Other Laue groups**: the cubochoric grid of all rotations [Rosca2014]_, a regular grid in a cube mapped onto the
-homochoric ball (and so to quaternions) preserving volume, so its points are spread evenly over orientation space.
-:math:`N = 131.97 / (s - 0.037)` points per semi-edge give a mean spacing of about :math:`s` [SinghDeGraef2016]_. The grid is
+**Other Laue groups**: the cubochoric grid of all rotations [Rosca2014]_, a regular grid in a cube of edge
+:math:`\pi^{2/3}` mapped onto the homochoric ball, preserving volume (section 2.1 and appendix A there), and from the
+ball to the quaternions by the homochoric vector :math:`\vec{h} = \hat{n}\,[\tfrac{3}{4}(\omega - \sin\omega)]^{1/3}`
+([Rosca2014]_, section 3.3; [Rowenhorst2015]_, equation 13), so its points are spread evenly over orientation space.
+:math:`N = 131.97 / (s - 0.037)` points per semi-edge give a mean nearest-neighbour disorientation of about :math:`s`:
+the fit of [SinghDeGraef2016]_ (equation 9), which holds for every rotation group (their table 3). The grid is
 reduced to the fundamental zone around the identity, plus a shell half a step wide outside it (without the shell,
 points just outside the zone leave gaps along its boundary, as their symmetric images are not grid points). The worst
-case, measured for every Laue group from 1.5 to 12°, is at most :math:`1.15\,s`; Anri uses :math:`1.2\,s`.
-**Code:** :func:`anri.crystal.orientation.cubochoric_quaternions`.
+case is larger than the mean spacing. **Anri's choice:** measured for every Laue group from 1.5 to 12°, it is at most
+:math:`1.15\,s`, and Anri uses :math:`1.2\,s`. The same grid and fit are in orix's ``cubochoric_sampling``
+[Johnstone2020]_. **Code:** :func:`anri.crystal.orientation.cubochoric_quaternions`.
 
 Completeness
 ------------

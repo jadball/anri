@@ -50,6 +50,10 @@ The works the theory pages cite, by label.
    with synchrotron radiation: photographic data collection and polarization correction. Journal of Applied
    Crystallography 15, 330–337. https://doi.org/10.1107/S0021889882012060
 
+.. [Johnstone2020] Johnstone, D.N., Martineau, B.H., Crout, P., Midgley, P.A., Eggeman, A.S., 2020. Density-based
+   clustering of crystal (mis)orientations and the orix Python library. Journal of Applied Crystallography 53,
+   1293–1298. https://doi.org/10.1107/S1600576720011103
+
 .. [KakSlaney1988] Kak, A.C., Slaney, M., 1988. Principles of Computerized Tomographic Imaging. IEEE Press, New York.
    Reprinted 2001, SIAM, Philadelphia. https://doi.org/10.1137/1.9780898719277
 
@@ -79,6 +83,10 @@ The works the theory pages cite, by label.
 .. [Rosca2014] Roşca, D., Morawiec, A., De Graef, M., 2014. A new method of constructing a grid in the space of 3D
    rotations and its applications to texture analysis. Modelling and Simulation in Materials Science and Engineering
    22, 075013. https://doi.org/10.1088/0965-0393/22/7/075013
+
+.. [Rowenhorst2015] Rowenhorst, D., Rollett, A.D., Rohrer, G.S., Groeber, M., Jackson, M., Konijnenberg, P.J., De
+   Graef, M., 2015. Consistent representations of and conversions between 3D rotations. Modelling and Simulation in
+   Materials Science and Engineering 23, 083501. https://doi.org/10.1088/0965-0393/23/8/083501
 
 .. [Schmidt2014] Schmidt, S., 2014. GrainSpotter: a fast and robust polycrystalline indexing algorithm. Journal of
    Applied Crystallography 47, 276–284. https://doi.org/10.1107/S1600576713030185

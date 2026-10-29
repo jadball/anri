@@ -205,6 +205,10 @@ def mat_to_rod(U: ArrayLike) -> np.ndarray:
 def mat_to_quat(U: ArrayLike) -> np.ndarray:
     """Convert rotation matrices to unit quaternions ``(w, x, y, z)`` with ``w >= 0``.
 
+    By Shepperd's method [1]_: of the four formulas for the quaternion, each dividing by one component, use the one
+    whose component is largest (4 w^2 = 1 + trace, 4 x_i^2 = 1 + 2 U_ii - trace), the best conditioned. Comparing the
+    trace with the diagonal elements picks it.
+
     Parameters
     ----------
     U
@@ -214,6 +218,11 @@ def mat_to_quat(U: ArrayLike) -> np.ndarray:
     -------
     np.ndarray
         [..., 4] quaternions
+
+    References
+    ----------
+    .. [1] Shepperd, S.W., 1978. Quaternion from rotation matrix. Journal of Guidance and Control 1, 223–224.
+       https://doi.org/10.2514/3.55767b
     """
     U = np.asarray(U, float)
     tr = np.trace(U, axis1=-2, axis2=-1)
@@ -340,8 +349,9 @@ def rotation_angle(R: ArrayLike) -> jax.Array:
 def mean_rotation(U: ArrayLike, w: ArrayLike) -> jax.Array:
     """Weighted mean of nearby rotations: the rotation closest to their weighted sum (SVD projection).
 
-    Align symmetric equivalents first (:func:`~anri.crystal.orientation.closest_equivalent`). The projection keeps det = +1, so the result is
-    always a proper rotation. With all weights zero it is the identity.
+    The weighted arithmetic mean projected back onto the rotations, in the Frobenius norm (Moakher, 2002) [1]_. Align
+    symmetric equivalents first (:func:`~anri.crystal.orientation.closest_equivalent`). The projection keeps det = +1,
+    so the result is always a proper rotation. With all weights zero it is the identity.
 
     Parameters
     ----------
@@ -354,6 +364,11 @@ def mean_rotation(U: ArrayLike, w: ArrayLike) -> jax.Array:
     -------
     jax.Array
         [3, 3] the mean rotation
+
+    References
+    ----------
+    .. [1] Moakher, M., 2002. Means and averaging in the group of rotations. SIAM Journal on Matrix Analysis and
+       Applications 24, 1–16. https://doi.org/10.1137/S0895479801383877
     """
     U, w = jnp.asarray(U), jnp.asarray(w)
     total = jnp.einsum("m,mij->ij", w, U) + jnp.where(jnp.sum(w) > 0, 0.0, 1.0) * jnp.eye(3, dtype=U.dtype)

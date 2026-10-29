@@ -133,7 +133,12 @@ def cubic_grid_misorientation(step_deg: float) -> float:
 
 
 def _cubic_rodrigues_grid(step_deg: float) -> np.ndarray:
-    """Rodrigues vectors on a regular grid inside the cubic fundamental zone (spacing ~step_deg near the origin)."""
+    """Rodrigues vectors on a regular grid inside the cubic fundamental zone (spacing ~step_deg near the origin).
+
+    The zone is the cube |r_i| <= tan(pi / 8) = sqrt(2) - 1 cut by the planes |r_1| + |r_2| + |r_3| <= 1: its corners
+    are (sqrt(2) - 1, sqrt(2) - 1, 3 - 2 sqrt(2)) and their permutations and sign changes (Roşca et al., 2014,
+    section 4.4).
+    """
     dr = np.tan(np.radians(step_deg) / 2)
     lim = np.tan(np.pi / 8)
     g = np.arange(-lim, lim + 1e-12, dr)
@@ -142,7 +147,13 @@ def _cubic_rodrigues_grid(step_deg: float) -> np.ndarray:
 
 
 def _cube_to_ball(xyz: np.ndarray) -> np.ndarray:
-    """Map points of the cube of edge pi^(2/3) onto the homochoric ball, preserving volume (Rosca et al., 2014)."""
+    """Map points of the cube of edge pi^(2/3) onto the homochoric ball, preserving volume (Roşca et al., 2014).
+
+    Section 2.1 there: per pyramid, a scaling by (pi / 6)^(1/6), the square-to-curved-square map T of appendix A
+    (equations 26 and 27), then the inverse Lambert projection of step 3, onto the ball of radius (3 pi / 4)^(1/3)
+    (section 4.2). beta and prek group T's constants as EMsoft does: prek / (3 pi / 4)^(1/3) = 2^(1/4) / beta_paper,
+    with the paper's beta = sqrt(pi / 6).
+    """
     sc = (np.pi / 6) ** (1 / 6)
     beta = np.pi ** (5 / 6) / (2 * 6 ** (1 / 6))
     prek = (3 * np.pi / 4) ** (1 / 3) * 2**0.25 / beta
@@ -174,7 +185,11 @@ def _cube_to_ball(xyz: np.ndarray) -> np.ndarray:
 
 
 def _ball_to_quat(h: np.ndarray) -> np.ndarray:
-    """Map homochoric vectors to quaternions: |h| = (3/4 (w - sin w))^(1/3) for rotation angle w along h."""
+    """Map homochoric vectors to quaternions: |h| = (3/4 (w - sin w))^(1/3) for rotation angle w along h.
+
+    The homochoric vector of Roşca et al., 2014 (section 3.3) and Rowenhorst et al., 2015 (equation 13). The angle
+    is found by bisection rather than their series fit (Roşca et al., 2014, equations 20 and 23).
+    """
     n = np.linalg.norm(h, axis=1)
     target = n**3
     lo, hi = np.zeros_like(n), np.full_like(n, np.pi)
@@ -190,9 +205,9 @@ def _ball_to_quat(h: np.ndarray) -> np.ndarray:
 def cubochoric_quaternions(semi_edge_steps: int) -> np.ndarray:
     """Quaternions of the cubochoric grid of rotations, uniform in volume.
 
-    The grid (Rosca et al., 2014; Singh and De Graef, 2016) has ``(2 N)^3`` points on the cube of edge pi^(2/3), the
-    identity among them: indices -N + 1 ... N along each edge, since opposite faces of the cube are the same rotations
-    (as orix's ``cubochoric_sampling``).
+    The grid (Roşca et al., 2014 [1]_) has ``(2 N)^3`` points on the cube of edge pi^(2/3), the identity among them:
+    indices -N + 1 ... N along each edge, since opposite faces of the cube are the same rotations. It is the grid
+    S_000(N) of Singh and De Graef, 2016 [2]_, as orix's ``cubochoric_sampling`` (Johnstone et al., 2020) [3]_.
 
     Parameters
     ----------
@@ -203,6 +218,18 @@ def cubochoric_quaternions(semi_edge_steps: int) -> np.ndarray:
     -------
     np.ndarray
         [(2 N)^3, 4] quaternions ``(w, x, y, z)``
+
+    References
+    ----------
+    .. [1] Roşca, D., Morawiec, A., De Graef, M., 2014. A new method of constructing a grid in the space of 3D rotations
+       and its applications to texture analysis. Modelling and Simulation in Materials Science and Engineering 22,
+       075013. https://doi.org/10.1088/0965-0393/22/7/075013
+    .. [2] Singh, S., De Graef, M., 2016. Orientation sampling for dictionary-based diffraction pattern indexing
+       methods. Modelling and Simulation in Materials Science and Engineering 24, 085013.
+       https://doi.org/10.1088/0965-0393/24/8/085013
+    .. [3] Johnstone, D.N., Martineau, B.H., Crout, P., Midgley, P.A., Eggeman, A.S., 2020. Density-based clustering of
+       crystal (mis)orientations and the orix Python library. Journal of Applied Crystallography 53, 1293–1298.
+       https://doi.org/10.1107/S1600576720011103
     """
     a = np.pi ** (2 / 3) / 2
     g = np.arange(-semi_edge_steps + 1, semi_edge_steps + 1) * a / semi_edge_steps
@@ -218,8 +245,9 @@ def orientation_grid(step_deg: float, ops: ArrayLike) -> tuple[np.ndarray, float
 
     Cubic groups (24 rotations) use a regular Rodrigues grid of the cubic fundamental zone: for cubic crystals it
     needs about half the orientations of a cubochoric grid for the same worst case. Other groups use the cubochoric
-    grid of all rotations (:func:`cubochoric_quaternions`, with ``N = 131.97 / (step - 0.037)`` as in Singh and De
-    Graef, 2016, so ``step_deg`` is about the mean spacing) reduced to the fundamental zone around the identity, plus a
+    grid of all rotations (:func:`cubochoric_quaternions`, with ``N = 131.97 / (step - 0.037)``: Singh and De Graef's
+    fit of the mean nearest-neighbour disorientation, their equation 9 [1]_, which holds for every rotation group, their
+    table 3; so ``step_deg`` is about the mean spacing) reduced to the fundamental zone around the identity, plus a
     shell half a step wide outside it: without the shell, points just outside the zone leave gaps along its boundary
     (their symmetric images are not grid points).
 
@@ -236,7 +264,13 @@ def orientation_grid(step_deg: float, ops: ArrayLike) -> tuple[np.ndarray, float
         [N, 3, 3] orientations (float32)
     delta: float
         Largest misorientation (degrees) from any orientation to its nearest grid point: exact for the cubic grid,
-        measured for the cubochoric one (at most 1.15 x step for every Laue group, 1.5 to 12 degrees; 1.2 x step)
+        measured here for the cubochoric one (at most 1.15 x step for every Laue group, 1.5 to 12 degrees; 1.2 x step)
+
+    References
+    ----------
+    .. [1] Singh, S., De Graef, M., 2016. Orientation sampling for dictionary-based diffraction pattern indexing
+       methods. Modelling and Simulation in Materials Science and Engineering 24, 085013.
+       https://doi.org/10.1088/0965-0393/24/8/085013
     """
     ops = np.asarray(ops, float)
     if len(ops) == 24:
