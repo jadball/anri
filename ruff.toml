@@ -25,6 +25,7 @@ ignore = [
 [lint.per-file-ignores]
 "tests/*" = ["D", "ANN"]  # Ignore "D" (Docstrings) in the tests folder
 "__init__.py" = ["F401"] # Ignore unused imports in init files
+"conftest.py" = ["E402"]  # JAX's environment is set before anri is imported
 
 [lint.pydocstyle]
 convention = "numpy"
