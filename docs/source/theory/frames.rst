@@ -134,11 +134,14 @@ wave-vector) is not translated: :math:`\vec{g}_{\text{lab}} = \matr{W}\matr{C}\m
 
 **Code:** :func:`anri.geom.gonio.sample_to_lab`, :func:`anri.geom.gonio.lab_to_sample`.
 
-.. figure:: figures/frames_stack.svg
-    :width: 85%
-    :alt: The goniometer stack from the floor up: dty, wedge, chi, omega, sample, and the equation that combines them.
+.. figure:: figures/frames_gonio.svg
+    :width: 100%
+    :alt: The goniometer stack, exploded: the floor with dty along y, the wedge stage rotating about y, the chi stage
+          rotating about x, and the omega turntable rotating about z with the sample on it, each with an arrow showing
+          its positive sense.
 
-    The goniometer stack. :math:`\matr{R}(\omega)` acts first, so chi and wedge tilt the ω axis.
+    The goniometer stack, exploded, with the positive sense of each rotation. :math:`\matr{R}(\omega)` acts first, so
+    chi and wedge tilt the ω axis.
 
 ω is positive anticlockwise seen from above, as FABLE's equation 2.1. Where Anri differs from FABLE and ImageD11:
 
@@ -242,27 +245,37 @@ a tilted detector. Anri's equations (:eq:`frm-g`, :eq:`dif-omega`, :eq:`frm-eta`
 
 .. list-table::
     :header-rows: 1
-    :widths: 30 35 35
+    :widths: 28 24 24 24
 
     * - Quantity
-      - Anri
+      - Anri, :math:`hc` = 12.39842
+      - Anri, :math:`hc` = 12.398
       - FABLE
     * - :math:`\omega`
-      - 79.7935°
-      - 79.7937°
+      - 79.79351°
+      - 79.79368°
+      - 79.79368°
     * - :math:`\theta`
-      - 4.3735°
-      - 4.3733°
+      - 4.37346°
+      - 4.37332°
+      - 4.37331°
     * - :math:`\eta`
-      - 62.1909°
-      - 62.1910°
+      - 62.19095°
+      - 62.19095°
+      - 62.19096°
     * - pixel :math:`(y_{\text{det}}, z_{\text{det}})`
+      - (418.4, 698.4)
       - (418.4, 698.4)
       - (418, 698)
 
-The :math:`2 \times 10^{-4}` degree difference in :math:`\theta` is the conversion from energy to wavelength:
-:math:`hc` to a few more digits in one than the other. ``tests/unit/geom/test_fable_case.py`` runs this case
-through :func:`anri.fwd.peak.get_centroid` in CI.
+The differences of about :math:`2 \times 10^{-4}` degrees in ω and θ come from the wavelength: Anri converts energy to
+wavelength with :math:`hc = 12.39842` keV Å (CODATA), FABLE with 12.398 (the value its θ implies). With FABLE's
+:math:`hc`, ω and θ agree to :math:`2 \times 10^{-6}` degrees. The :math:`10^{-5}` degrees left in η is the rounding
+of FABLE's :math:`\matr{U}`, printed to six digits and orthogonal only to about :math:`10^{-6}`. FABLE gives the pixel
+as whole pixels.
+
+``tests/unit/geom/test_fable_case.py`` runs this case, with FABLE's :math:`hc`, through
+:func:`anri.fwd.peak.get_centroid` in CI.
 
 What is left out
 ----------------

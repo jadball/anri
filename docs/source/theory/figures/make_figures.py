@@ -184,7 +184,7 @@ def lab(eye=(-0.45, -1.0, 0.55), eta_deg=130.0, tth_deg=24.0):
     P = scale(d, L / d[0])
     # fit the sketch into the canvas above the caption
     probe = Camera(list(eye), 1, (0, 0))
-    pts = [probe(c) for c in corners] + [probe(q) for q in ([-3.2, 0, 0], [0, 0, 2.7], [0, 2.4, 0], [0, -1.8, -0.9])]
+    pts = [probe(c) for c in corners] + [probe(q) for q in ([-3.2, 0, 0], [0, 0, 2.7], [0, 2.4, 0], [0, -1.9, -0.7], [-3.2, 0, -0.6])]
     xs_, ys_ = [q[0] for q in pts], [q[1] for q in pts]
     px = min(820 / (max(xs_) - min(xs_)), 440 / (max(ys_) - min(ys_)))
     cam = Camera(list(eye), px, (40 - px * min(xs_), 40 - px * min(ys_)))
@@ -193,14 +193,18 @@ def lab(eye=(-0.45, -1.0, 0.55), eta_deg=130.0, tth_deg=24.0):
     s.text(add(cam([L, half, half]), (-10, -10)), "detector", COL["det"], 16, anchor="end", weight="bold")
     # beam, through the origin to the beam centre
     s.line(cam([-3.2, 0, 0]), cam([-0.15, 0, 0]), COL["beam"], 4, arrow=True)
-    s.text(add(cam([-3.2, 0, 0]), (0, -26)), "beam, k_in_", COL["beam"], 16, anchor="start", weight="bold")
+    s.text(add(cam([-3.2, 0, 0]), (6, 30)), "beam, k_in_", COL["beam"], 16, anchor="start", weight="bold")
     s.line(cam(o), cam([L, 0, 0]), COL["beam"], 1.4, dash="6 5")
     bc = cam([L, 0, 0])
     s.path([(bc[0] - 6, bc[1]), (bc[0] + 6, bc[1])], COL["beam"], 2)
     s.path([(bc[0], bc[1] - 6), (bc[0], bc[1] + 6)], COL["beam"], 2)
-    # turntable, and the sample frame turned by omega
+    # dty under the turntable, then the turntable centred on the origin, and the sample frame turned by omega
+    p1, p2 = cam([0.0, -1.9, -0.7]), cam([0.0, 1.9, -0.7])
+    s.line(p2, p1, "#555555", 1.6, arrow=True)
+    s.line(p1, p2, "#555555", 1.6, arrow=True)
+    s.text(add(p1, (-10, 4)), "dty", "#555555", 15, anchor="end")
     w = math.radians(35)
-    ring = [cam([1.15 * math.cos(t / 40 * 2 * math.pi), 1.15 * math.sin(t / 40 * 2 * math.pi), -0.35]) for t in range(41)]
+    ring = [cam([1.15 * math.cos(t / 40 * 2 * math.pi), 1.15 * math.sin(t / 40 * 2 * math.pi), 0]) for t in range(41)]
     s.path(ring, COL["sample"], 1.2, fill="#eaf1fb")
     xs, ys = rot_z(w, [1.9, 0, 0]), rot_z(w, [0, 1.9, 0])
     s.line(cam(o), cam(xs), COL["sample"], 2.2, arrow=True, dash="7 4")
@@ -214,11 +218,6 @@ def lab(eye=(-0.45, -1.0, 0.55), eta_deg=130.0, tth_deg=24.0):
                               ([0, 0, 2.6], "z_l_ = ω axis", (10, 4), "start")):  # fmt: skip
         s.line(cam(o), cam(v), COL["lab"], 2.4, arrow=True)
         s.text(add(cam(v), off), labl, COL["lab"], 16, anchor=anc)
-    # dty: translation along lab y
-    p1, p2 = cam([0.0, -1.8, -0.9]), cam([0.0, 1.8, -0.9])
-    s.line(p2, p1, "#555555", 1.6, arrow=True)
-    s.line(p1, p2, "#555555", 1.6, arrow=True)
-    s.text(add(p1, (-10, 4)), "dty", "#555555", 15, anchor="end")
     # the diffracted ray at 2theta, eta
     s.line(cam(o), cam(P), COL["ray"], 2.6, arrow=True)
     s.text(add(cam(P), (10, 4)), "k_out_", COL["ray"], 16, anchor="start", weight="bold")
@@ -241,23 +240,72 @@ def lab(eye=(-0.45, -1.0, 0.55), eta_deg=130.0, tth_deg=24.0):
     s.save("frames_lab.svg")
 
 
-def stack():
-    """The goniometer stack and its equation."""
-    s = new_svg(820, 330)
-    layers = [("sample", "sample frame: v_s_", COL["sample"]), ("omega", "R(ω): rotation about z", COL["sample"]),
-              ("chi", "C(χ): rotation about x", "#555555"), ("wedge", "W: rotation about y", "#555555"),
-              ("dty", "translation along y by dty − y_0_", "#555555"), ("floor", "lab frame", COL["lab"])]  # fmt: skip
-    x, w, h = 30, 150, 38
-    for k, (name, what, col) in enumerate(layers):
-        y = 20 + k * (h + 8)
-        s.rect(x, y, w, h, col, fill="#ffffff" if name != "floor" else "#eeeeee", width=2)
-        s.text((x + w / 2, y + 25), name, col, 16, weight="bold")
-        s.text((x + w + 20, y + 25), what, "#333333", 14, anchor="start")
-    s.text((560, 120), "v_lab_ = (0, dty − y_0_, 0)", "#222222", 17, style="italic")
-    s.text((560, 150), "+ W C R(ω) v_s_", "#222222", 17, style="italic")
-    s.text((560, 200), "R acts first (innermost),", "#555555", 13)
-    s.text((560, 220), "so chi and wedge tilt the ω axis", "#555555", 13)
-    s.save("frames_stack.svg")
+def gonio(eye=(-0.45, -1.0, 0.42)):
+    """The goniometer stack in 3D, exploded: dty on the floor, then wedge (about y), chi (about x), omega (about z).
+
+    Each curved arrow turns the positive (right-handed) way about its axis: it is drawn in the plane of two unit
+    vectors u, v with u x v along the axis, from u towards v.
+    """
+    s = new_svg(900, 700)
+    cam = Camera(list(eye), 62, (300, 225))
+    grey = "#555555"
+    label_x = 640
+
+    def slab(z0, z1, hx, hy, col, fill):  # a box's faces seen from this side: front (-y), left (-x), top
+        top = [[-hx, -hy, z1], [hx, -hy, z1], [hx, hy, z1], [-hx, hy, z1]]
+        front = [[-hx, -hy, z0], [hx, -hy, z0], [hx, -hy, z1], [-hx, -hy, z1]]
+        left = [[-hx, -hy, z0], [-hx, hy, z0], [-hx, hy, z1], [-hx, -hy, z1]]
+        for face in (front, left, top):
+            s.path([cam(q) for q in face], col, 1.4, fill=fill, close=True)
+
+    def turn(centre, u, v, r, col, label, t0=-50.0, t1=220.0):
+        arc = [cam(add(centre, add(scale(u, r * math.cos(math.radians(t))), scale(v, r * math.sin(math.radians(t))))))
+               for t in [t0 + (t1 - t0) * k / 48 for k in range(49)]]  # fmt: skip
+        s.path(arc, col, 2.6, arrow=True)
+        right = max(arc, key=lambda q: q[0])
+        s.line((right[0] + 6, right[1]), (label_x - 8, right[1]), col, 0.8, dash="2 3")
+        s.text((label_x, right[1] + 5), label, col, 16, anchor="start", weight="bold")
+
+    def axis(p, q, col):
+        s.line(cam(p), cam(q), col, 1.2, dash="6 4")
+
+    # floor and dty
+    slab(-4.6, -4.35, 2.2, 2.6, COL["lab"], "#eeeeee")
+    a, b = cam([2.2, -2.3, -4.35]), cam([2.2, 2.3, -4.35])
+    s.line(a, b, grey, 2.4, arrow=True)
+    s.line(b, a, grey, 2.4, arrow=True)
+    s.line((max(a[0], b[0]) + 6, a[1]), (label_x - 8, a[1]), grey, 0.8, dash="2 3")
+    s.text((label_x, a[1] + 5), "dty: translation along y", grey, 16, anchor="start", weight="bold")
+    # wedge: rotation about y
+    slab(-3.5, -3.0, 1.6, 1.9, grey, "#f4f4f4")
+    axis([0, -3.0, -3.25], [0, 2.6, -3.25], grey)
+    turn([0, -2.6, -3.25], [0, 0, 1], [1, 0, 0], 0.55, grey, "wedge: rotation about y")
+    # chi: rotation about x
+    slab(-2.1, -1.6, 1.3, 1.5, grey, "#f4f4f4")
+    axis([-2.0, 0, -1.85], [2.6, 0, -1.85], grey)
+    turn([2.2, 0, -1.85], [0, 1, 0], [0, 0, 1], 0.55, grey, "χ: rotation about x")
+    # omega: a turntable rotating about z, the sample on it at the lab origin
+    disc = [cam([1.1 * math.cos(t / 40 * 2 * math.pi), 1.1 * math.sin(t / 40 * 2 * math.pi), -0.6]) for t in range(41)]
+    s.path(disc, COL["sample"], 1.6, fill="#eaf1fb")
+    axis([0, 0, -0.6], [0, 0, 1.6], COL["sample"])
+    s.path([cam([0.3 * math.cos(t / 30 * 2 * math.pi), 0.3 * math.sin(t / 30 * 2 * math.pi), 0])
+            for t in range(31)], COL["sample"], 1.6, fill="#cfe0f7")  # fmt: skip
+    turn([0, 0, 1.0], [1, 0, 0], [0, 1, 0], 0.7, COL["sample"], "ω: rotation about z")
+    s.text(add(cam([0.3, 0, 0]), (8, 18)), "sample", COL["sample"], 14, anchor="start")
+    # the beam onto the sample at the lab origin
+    s.line(cam([-4.4, 0, 0]), cam([-0.4, 0, 0]), COL["beam"], 4, arrow=True)
+    s.text(add(cam([-4.4, 0, 0]), (0, -14)), "beam", COL["beam"], 16, anchor="start", weight="bold")
+    # lab axes, off to the side
+    o = [-3.6, -1.0, -3.4]
+    for v, labl in (([1.2, 0, 0], "x"), ([0, 1.2, 0], "y"), ([0, 0, 1.2], "z")):
+        s.line(cam(o), cam(add(o, v)), COL["lab"], 2.2, arrow=True)
+        s.text(add(cam(add(o, scale(v, 1.25))), (0, 6)), labl, COL["lab"], 16)
+    s.text(add(cam(o), (0, 26)), "lab axes", COL["lab"], 13)
+    for k, t in enumerate(["Arrows show the positive (right-handed) sense of each rotation: ω anticlockwise seen from",
+                           "above, χ anticlockwise seen from +x, wedge anticlockwise seen from +y. R(ω) acts first, so χ",
+                           "and wedge tilt the ω axis: v_lab_ = (0, dty − y_0_, 0) + W C R(ω) v_s_"]):  # fmt: skip
+        s.text((20, 626 + 22 * k), t, "#333333", 14, anchor="start")
+    s.save("frames_gonio.svg")
 
 
 def detector():
@@ -305,5 +353,5 @@ if __name__ == "__main__":
     chain()
     crystal()
     lab()
-    stack()
+    gonio()
     detector()
