@@ -140,6 +140,17 @@ class TestOccupancy(unittest.TestCase):
         bin0 = 2 * (10 * np.log(10 / 20) - 10 + 20)  # the plain deviance of bin 0, dropped when saturated
         self.assertAlmostEqual(dev, dev_plain - bin0, places=4)
 
+    def test_fewer_orientations_than_candidates(self):
+        """Fewer orientations than the candidates asked for: as many candidates as orientations (issue #32)."""
+        pred = (jnp.full((16, 1), 90.0), jnp.full((16, 1), 0.5), jnp.ones((16, 1), bool), jnp.ones((16, 1)))
+        scan = {"n_rows": 1, "y0": 0.0, "dty0": 0.0, "ystep": 1.0, "om0": 0.0}
+        args = (np.ones(4, np.float32), pred, np.array([0]), np.zeros((1, 3), np.float32), scan, (90.0, 1.0, 4, 1))
+        f, cand = ix.occupancy.fit_occupancy(*args, n_iter=0, block_bytes=4096, log=lambda _: None)
+        self.assertEqual(f.shape, (1, 16))
+        self.assertEqual(sorted(cand[0].tolist()), list(range(16)))
+        with self.assertRaises(ValueError):
+            ix.occupancy.fit_occupancy(args[0], tuple(p[:0] for p in pred), *args[2:], n_iter=0, log=lambda _: None)
+
     def test_absorption(self):
         """With edge distances after the positions, each weight is scaled by exp(-mu (L_in + L_out))."""
         n, step, r, mu = 81, 2.0, 60.0, 0.005
