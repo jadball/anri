@@ -9,4 +9,3 @@ This is a (work-in-progress) user guide for Anri, showing some tutorials and exa
 
     ../tutorials/index.rst
     ../examples/index.rst
-    powder.rst

@@ -82,3 +82,14 @@ They are not re-executed when the docs are built.
     phantom
     indexing
     indexing_parameters
+
+Powder patterns
+===============
+
+``python -m anri.index powder`` sums a dataset's sparse pixels over every frame into a powder pattern, for phase
+identification and for refining a cell with a Rietveld or Le Bail program (rietx in the example).
+
+.. toctree::
+    :maxdepth: 1
+
+    powder
