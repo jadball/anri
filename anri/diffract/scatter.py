@@ -144,7 +144,7 @@ def tth_eta_to_k_out(tth: jax.Array, eta: jax.Array, wavelength: float, k_in_lab
 
     References
     ----------
-    .. [1] Poulsen, H.F., Jakobsen, A.C., Simons, H., Ahl, S.R., Cook, P.K., Detlefs, C., 2017. X-ray diffraction microscopy based on refractive optics. J Appl Crystallogr 50, 1441–1456. https://doi.org/10.1107/S1600576717011037
+    .. [1] Poulsen, H.F., Jakobsen, A.C., Simons, H., Ahl, S.R., Cook, P.K., Detlefs, C., 2017. X-ray diffraction microscopy based on refractive optics. Journal of Applied Crystallography 50, 1441–1456. https://doi.org/10.1107/S1600576717011037
     """
     tth = jnp.radians(tth)
     eta = jnp.radians(eta)

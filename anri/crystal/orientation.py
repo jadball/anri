@@ -188,10 +188,11 @@ def _ball_to_quat(h: np.ndarray) -> np.ndarray:
 
 
 def cubochoric_quaternions(semi_edge_steps: int) -> np.ndarray:
-    """Quaternions of the cubochoric grid of rotations, uniform in volume (Rosca et al., 2014; Singh & De Graef, 2016).
+    """Quaternions of the cubochoric grid of rotations, uniform in volume.
 
-    The grid has ``(2 N)^3`` points on the cube of edge pi^(2/3), the identity among them: indices -N + 1 ... N
-    along each edge, since opposite faces of the cube are the same rotations (as orix's ``cubochoric_sampling``).
+    The grid (Rosca et al., 2014; Singh and De Graef, 2016) has ``(2 N)^3`` points on the cube of edge pi^(2/3), the
+    identity among them: indices -N + 1 ... N along each edge, since opposite faces of the cube are the same rotations
+    (as orix's ``cubochoric_sampling``).
 
     Parameters
     ----------
@@ -217,10 +218,10 @@ def orientation_grid(step_deg: float, ops: ArrayLike) -> tuple[np.ndarray, float
 
     Cubic groups (24 rotations) use a regular Rodrigues grid of the cubic fundamental zone: for cubic crystals it
     needs about half the orientations of a cubochoric grid for the same worst case. Other groups use the cubochoric
-    grid of all rotations (:func:`cubochoric_quaternions`, with ``N = 131.97 / (step - 0.037)`` as in Singh & De
-    Graef, so ``step_deg`` is about the mean spacing) reduced to the fundamental zone around the identity, plus a shell
-    half a step wide outside it: without the shell, points just outside the zone leave gaps along its boundary (their
-    symmetric images are not grid points).
+    grid of all rotations (:func:`cubochoric_quaternions`, with ``N = 131.97 / (step - 0.037)`` as in Singh and De
+    Graef, 2016, so ``step_deg`` is about the mean spacing) reduced to the fundamental zone around the identity, plus a
+    shell half a step wide outside it: without the shell, points just outside the zone leave gaps along its boundary
+    (their symmetric images are not grid points).
 
     Parameters
     ----------

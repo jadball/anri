@@ -392,7 +392,7 @@ def squarem(
 ) -> jax.Array:  # fmt: skip
     """Iterate an MLEM update ``step``, accelerated by SQUAREM, logging the deviance.
 
-    Each iteration is a SQUAREM step (Varadhan & Roland 2008, Scand. J. Stat. 35, 335): two MLEM updates f1, f2
+    Each iteration is a SQUAREM step (Varadhan and Roland, 2008) [1]_: two MLEM updates f1, f2
     from f; the point ``f - 2 a r + a^2 v`` with ``r = f1 - f``, ``v = f2 - 2 f1 + f`` and ``a = -norm(r) / norm(v)``
     (at most -1: never shorter than plain MLEM), kept above 1e-3 f2 (MLEM multiplies: an occupancy at 0 could never
     come back); and one more MLEM update from there. If the point fits worse than f1, f2 is kept instead, so the
@@ -420,6 +420,12 @@ def squarem(
     -------
     jax.Array
         The occupancies
+
+    References
+    ----------
+    .. [1] Varadhan, R., Roland, C., 2008. Simple and globally convergent methods for accelerating the convergence of
+       any EM algorithm. Scandinavian Journal of Statistics 35, 335–353.
+       https://doi.org/10.1111/j.1467-9469.2007.00585.x
     """
     for it in range(1, n_iter + 1):
         f1, _ = step(f)

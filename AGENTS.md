@@ -255,6 +255,8 @@ CI (`.github/workflows/main.yml`) tests Python 3.9 and 3.14 on Ubuntu for pushes
 ## Development
 
 - Lint and format with `ruff`, type-check with `ty`, test with `pytest tests/`. All code outside `anri/sandbox` must pass.
+- Cite papers in the style of `CONTRIBUTING.md` ("Citing papers"). Never cite a paper, page or DOI you have not checked: ask
+  the maintainer for the PDF.
 - Hooks in `.githooks/` catch CI failures early: pre-commit runs `ruff check .`; pre-push builds the docs with `sphinx-build -W` (notebooks not executed, ~30 s). Enable them once per clone with `git config core.hooksPath .githooks`.
 - If `ty` can't find the environment (e.g. `VIRTUAL_ENV` points at a conda env), run `env -u VIRTUAL_ENV ty check --python <env>/bin/python`.
 - Shared test data lives in `tests/data/`. Docs notebooks load it by relative path, e.g. `../../../tests/data/cif/Si.cif`.

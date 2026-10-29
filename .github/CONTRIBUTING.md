@@ -166,3 +166,26 @@ When you're ready to contribute code to address an open issue, please follow the
 We use [Sphinx](https://www.sphinx-doc.org/en/master/index.html) to build our API docs, which automatically parses all docstrings
 of public classes and methods using the [autodoc](https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html) extension.
 Please refer to autoc's documentation to learn about the docstring syntax.
+
+(citing-papers)=
+### Citing papers
+
+Docstrings and the Theory pages (`docs/source/theory`) use one citation style, the "Elsevier - Harvard (with titles)"
+style that Zotero and Mendeley export:
+
+    Thomas, D.J., 1992. Modern equations of diffractometry. Diffraction geometry. Acta Crystallographica Section A 48, 134–158. https://doi.org/10.1107/S0108767391008577
+
+- **Authors:** surname, then initials with no spaces (`Poulsen, H.F.`), every author separated by commas, no "&".
+- **Then:** year, title (as published), journal name in full (no abbreviations, no italics), volume, pages with an en
+  dash (`134–158`), and the DOI as a `https://doi.org/` link. An article number replaces the pages (`22, 075013`).
+- **Books:** title, edition, chapter if one is meant, publisher and city: `Kak, A.C., Slaney, M., 1988. Principles of
+  Computerized Tomographic Imaging. IEEE Press, New York.`
+- **Software and web pages:** author or organisation, `n.d.` for no date, name, link: `Wright, J.P., n.d. ImageD11.
+  https://github.com/FABLE-3DXRD/ImageD11`
+- **In the text:** `(Thomas, 1992)`, `(Milch and Minor, 1974)`, `(Rosca et al., 2014)` for three or more authors; add a
+  place where it helps: `(Kabsch, 1988, p. 922)`.
+- **Where the entry goes:** in a docstring, under a numpy-style `References` section as `.. [1] ...`, cited as `[1]_`;
+  in the Theory pages, in `docs/source/theory/references.rst` under a label such as `[Thomas1992]`, cited as
+  `[Thomas1992]_`.
+- **Check before citing:** cite only what you have read, for what it says. Give a DOI only when it has been checked
+  against the paper.

@@ -60,7 +60,7 @@ def lpars_to_mt(lpars: jax.Array) -> jax.Array:
 
     References
     ----------
-    .. [1] https://dictionary.iucr.org/Metric_tensor
+    .. [1] IUCr, n.d. Metric tensor. Online Dictionary of Crystallography. https://dictionary.iucr.org/Metric_tensor
     """
     a, b, c, alpha, beta, gamma = lpars
     ca = jnp.cos(jnp.radians(alpha))
@@ -140,7 +140,7 @@ def lpars_rlpars_to_B(lpars: jax.Array, rlpars: jax.Array) -> jax.Array:
     $$\left( a, b, c, \alpha, \beta, \gamma \right)$$
     and a reciprocal space lattice:
     $$\left( a^*, b^*, c^*, \alpha^*, \beta^*, \gamma^* \right)$$
-    We can say (Busing & Levy 1966, Equation 3) [2]_:
+    We can say (Busing and Levy, 1966, equation 3) [2]_:
     $$B = 
     \begin{bmatrix}
     a^* & b^* \cos{\gamma^*} &  c^* \cos{\beta^*} \\
