@@ -228,7 +228,7 @@ def read_dataset(dsfile: str, remap: dict | None = None) -> dict:
     -------
     dict
         "y0" (None if absent), "ybincens", "ybinedges", "obinedges", "dtymotor", "omegamotor", "parfile",
-        "sparsefile", "masterfile", the detector distortion files "e2dxfile", "e2dyfile", "detectorh5" and
+        "sparsefile", "pksfile" (the peaks table, "" if absent), "masterfile", the detector distortion files "e2dxfile", "e2dyfile", "detectorh5" and
         "splinefile", and the segmenter's detector mask "maskfile" (made absolute: a relative path is relative to the DataSet's folder; "" if absent), "detector"; "dty" and "omega" [scans, frames] (None if absent): each frame's motor positions as ImageD11 has binned
         them, the sinogram's rows; and "scans" (None if absent): each row's sparse group, or slice of one
         ("1.1::[0:1440]")
@@ -259,6 +259,7 @@ def read_dataset(dsfile: str, remap: dict | None = None) -> dict:
     out.update(
         parfile=absolute("parfile"),
         sparsefile=absolute("sparsefile"),
+        pksfile=absolute("pksfile"),
         masterfile=absolute("masterfile"),
         e2dxfile=absolute("e2dxfile"),
         e2dyfile=absolute("e2dyfile"),
@@ -436,6 +437,61 @@ def read_spatial(ds: dict) -> tuple[np.ndarray, np.ndarray] | None:
         msg = f"{ds['splinefile']}: spline distortion files are not supported; make e2dx/e2dy maps from it"
         raise ValueError(msg)
     return None
+
+
+def read_peaks(pks_file: str, omega: np.ndarray, dty: np.ndarray, spatial: tuple | None = None) -> dict:
+    """Read ImageD11's 2D peaks and merge them into one peak per 4D label and dty row.
+
+    ImageD11's ``properties`` step labels the sparse pixels of each frame into 2D peaks, stores their moments
+    (pixels, intensity, intensity-weighted row and column, frame), and joins 2D peaks that overlap in neighbouring
+    frames and dty rows under one 4D label. Merging a label's 2D peaks within each row averages over the energy band
+    (each frame of a rocking peak diffracts a different part of it) and keeps each row's scattering origin, where the
+    beam crosses the grain at that dty.
+
+    Parameters
+    ----------
+    pks_file
+        ImageD11 peaks table (``<sample>_<dataset>_peaks_table.h5``, group ``pks2d``)
+    omega, dty
+        [rows, frames] motor positions of each frame, as the DataSet stores them (:func:`anri.io.imaged11.read_dataset`)
+    spatial
+        (dx, dy) distortion maps from :func:`anri.io.imaged11.read_spatial`, or None. Each 2D peak's centroid is
+        moved by the distortion of its nearest pixel before merging, as ImageD11 corrects peaks.
+
+    Returns
+    -------
+    dict
+        Per merged peak: "sc", "fc" (corrected slow and fast centroids, pixels), "omega", "dty" (intensity-weighted
+        over the merged 2D peaks), "row" (dty row), "intensity", "npix" (pixels) and "n2d" (2D peaks merged)
+    """
+    with h5py.File(pks_file, "r") as h:
+        glabel = h["pks2d/glabel"][()]
+        s1, sI, srI, scI, frm = h["pks2d/pk_props"][()]
+    sI = sI.astype(float)
+    s, f = srI / sI, scI / sI
+    if spatial is not None:
+        dx, dy = spatial
+        i = np.clip(np.round(s).astype(int), 0, dx.shape[0] - 1)
+        j = np.clip(np.round(f).astype(int), 0, dx.shape[1] - 1)
+        s, f = s + dy[i, j], f + dx[i, j]
+    row = frm // omega.shape[1]
+    key, inv = np.unique(glabel.astype(np.int64) * omega.shape[0] + row, return_inverse=True)
+    n = len(key)
+    w = np.bincount(inv, sI, n)
+
+    def mean(v: np.ndarray) -> np.ndarray:
+        return np.bincount(inv, sI * v, n) / w
+
+    return {
+        "sc": mean(s),
+        "fc": mean(f),
+        "omega": mean(omega.ravel()[frm]),
+        "dty": mean(dty.ravel()[frm]),
+        "row": key % omega.shape[0],
+        "intensity": w,
+        "npix": np.bincount(inv, s1, n),
+        "n2d": np.bincount(inv, None, n),
+    }
 
 
 def _scan_slices(scans: list) -> dict:
