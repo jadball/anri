@@ -169,6 +169,28 @@ def show(path: str) -> str:
     return "\n".join(lines)
 
 
+def check_out(out: str, inputs: list) -> None:
+    """Refuse an output path that is one of a stage's inputs, before it is opened for writing (which would erase it).
+
+    Parameters
+    ----------
+    out
+        The stage's output file
+    inputs
+        The files the stage reads (None entries are skipped), e.g. :func:`chain` of its source
+    """
+    for f in inputs:
+        if f is None:
+            continue
+        if os.path.exists(out) and os.path.exists(f):
+            same = os.path.samefile(out, f)  # also through links
+        else:
+            same = os.path.normcase(os.path.realpath(out)) == os.path.normcase(os.path.realpath(f))
+        if same:
+            msg = f"the output {out} is the input {f}: give another output file"
+            raise ValueError(msg)
+
+
 def stage_path(source: str, stage: str, out: str | None = None) -> str:
     """Return a stage's output path: ``out`` if given, else the source's name with its stage replaced, beside it."""
     if out is not None:
