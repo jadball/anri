@@ -19,8 +19,10 @@ wave-vector is a reciprocal-lattice vector (the Laue condition):
     \vec{Q} = \vec{k}_{\text{out}} - \vec{k}_{\text{in}} = \vec{g},
     \qquad |\vec{k}_{\text{out}}| = |\vec{k}_{\text{in}}| = \frac{1}{\lambda}.
 
-**Code:** :func:`anri.diffract.scatter.k_to_q_lab`, :func:`anri.diffract.scatter.q_lab_to_k_out`. Squaring
-:math:`\vec{k}_{\text{out}} = \vec{g} + \vec{k}_{\text{in}}` and using the equal lengths gives the Ewald condition
+**Code:** :func:`anri.diffract.scatter.k_to_q_lab`, :func:`anri.diffract.scatter.q_lab_to_k_out`.
+
+Squaring :math:`\vec{k}_{\text{out}} = \vec{g} + \vec{k}_{\text{in}}` and using the equal lengths gives the Ewald
+condition
 
 .. math::
     :label: dif-ewald
@@ -63,20 +65,28 @@ With :math:`R = \sqrt{\alpha^2 + \beta^2}` and :math:`\phi = \operatorname{atan2
 
     \omega_1 = \arcsin\frac{\delta}{R} - \phi, \qquad \omega_2 = -\arcsin\frac{\delta}{R} - \phi - \pi,
 
-which exist when :math:`|\delta / R| \le 1` [MilchMinor1974]_ [BusingLevy1967]_. :math:`\omega_1` is branch ``etasign = +1`` and
-:math:`\omega_2` is ``-1`` (:doc:`conventions`). **Code:** :func:`anri.diffract.scatter.omega_solns_core`,
-:func:`anri.diffract.scatter.omega_from_core`, :func:`anri.diffract.scatter.omega_solns`.
+which exist when :math:`|\delta / R| \le 1` [MilchMinor1974]_ [BusingLevy1967]_. :math:`\omega_1` is branch
+``etasign = +1`` and :math:`\omega_2` is ``-1`` (:doc:`conventions`).
 
-**Anri's choice:** the arcsine's argument is clipped to :math:`\pm(1 - 10^{-6})` and :math:`R^2` floored at :math:`10^{-7}`, so that the
-gradient stays finite at the edge of the Ewald sphere and along the rotation axis. The two branches share everything
-but the last line, so Anri solves for both at once. **Code:** :func:`anri.fwd.peak.hkl_to_k_omega_both`.
+**Code:** :func:`anri.diffract.scatter.omega_solns_core`, :func:`anri.diffract.scatter.omega_from_core`,
+:func:`anri.diffract.scatter.omega_solns`.
+
+**Anri's choice:** the arcsine's argument is clipped to :math:`\pm(1 - 10^{-6})` and :math:`R^2` floored at
+:math:`10^{-7}`, so that the gradient stays finite at the edge of the Ewald sphere and along the rotation axis. The two
+branches share everything but the last line, so Anri solves for both at once.
+
+**Code:** :func:`anri.fwd.peak.hkl_to_k_omega_both`.
 
 The diffracted ray, 2θ and η
 ----------------------------
 
-At the solution, :math:`\vec{k}_{\text{out}} = \matr{W}\matr{C}\matr{R}(\omega)\vec{g}_s + \vec{k}_{\text{in}}` in the lab.
-**Code:** :func:`anri.fwd.peak.hkl_to_k_omega`. Its angles are :math:`2\theta = \arccos(\hat{k}_{\text{out}} \cdot \hat{k})`
-and :math:`\eta` from :eq:`conv-eta`. Conversely [Poulsen2017]_ (eq. 39),
+At the solution, :math:`\vec{k}_{\text{out}} = \matr{W}\matr{C}\matr{R}(\omega)\vec{g}_s + \vec{k}_{\text{in}}` in the
+lab.
+
+**Code:** :func:`anri.fwd.peak.hkl_to_k_omega`.
+
+Its angles are :math:`2\theta = \arccos(\hat{k}_{\text{out}} \cdot \hat{k})` and :math:`\eta` from :eq:`conv-eta`.
+Conversely [Poulsen2017]_ (eq. 39),
 
 .. math::
     :label: dif-kout
@@ -110,11 +120,18 @@ horizontal line is :math:`y = (k_y/k_x)\,x` through the lab origin, and dty move
     \text{dty} = y_0 + \frac{k_y}{k_x}\, x_{\text{lab}} - y_{\text{lab}},
     \qquad (x_{\text{lab}}, y_{\text{lab}}, \cdot) = \matr{W}\matr{C}\matr{R}(\omega)\, \vec{v}_s.
 
-For a beam along :math:`x` and no tilts that is :math:`\text{dty} = y_0 - (x_s \sin\omega + y_s \cos\omega)`: each voxel traces
-a sinusoid in (omega, dty), the sinogram. **Code:** :func:`anri.geom.gonio.find_dty_for_beam_xy`,
-:func:`anri.geom.gonio.dty_and_origin_lab`, :func:`anri.fwd.scan.get_centroid_scan`. In a box beam the whole sample is
-lit at dty = :math:`y_0`. **Code:** :func:`anri.fwd.box.get_centroid_box`. The renderer instead puts the voxel at each
-frame's real dty and weights it by how much of it the beam lights there (:ref:`theory_beam_profile`).
+For a beam along :math:`x` and no tilts that is :math:`\text{dty} = y_0 - (x_s \sin\omega + y_s \cos\omega)`: each voxel
+traces a sinusoid in (omega, dty), the sinogram.
+
+**Code:** :func:`anri.geom.gonio.find_dty_for_beam_xy`, :func:`anri.geom.gonio.dty_and_origin_lab`,
+:func:`anri.fwd.scan.get_centroid_scan`.
+
+In a box beam the whole sample is lit at dty = :math:`y_0`.
+
+**Code:** :func:`anri.fwd.box.get_centroid_box`.
+
+The renderer instead puts the voxel at each frame's real dty and weights it by how much of it the beam lights there
+(:ref:`theory_beam_profile`).
 
 On the detector
 ---------------
@@ -129,13 +146,15 @@ at :math:`\vec{d}_0` by one-pixel steps :math:`\vec{s}` (slow) and :math:`\vec{f
     \qquad
     f_c = \frac{\hat{k}_{\text{out}} \cdot \left((\vec{d}_0 - \vec{o}) \times \vec{s}\right)}{\hat{k}_{\text{out}} \cdot (\vec{s} \times \vec{f})}
 
-(Cramer's rule) [Thomas1992]_. :math:`\vec{s}`, :math:`\vec{f}` and :math:`\vec{d}_0` come from the detector's ImageD11 parameters
-[FABLEgeom]_. **Code:** :func:`anri.geom.detector.raytrace_to_det`,
-:func:`anri.geom.detector.detector_basis_vectors_lab`.
+(Cramer's rule) [Thomas1992]_. :math:`\vec{s}`, :math:`\vec{f}` and :math:`\vec{d}_0` come from the detector's ImageD11
+parameters [FABLEgeom]_.
+
+**Code:** :func:`anri.geom.detector.raytrace_to_det`, :func:`anri.geom.detector.detector_basis_vectors_lab`.
 
 Chaining :eq:`cry-g`, :eq:`dif-omega`, the origin and :eq:`dif-raytrace` gives the forward model's one centroid
-function, which the renderer, the box-beam and the scanning models all call. **Code:**
-:func:`anri.fwd.peak.get_centroid`, :func:`anri.fwd.peak.get_centroid_both`.
+function, which the renderer, the box-beam and the scanning models all call.
+
+**Code:** :func:`anri.fwd.peak.get_centroid`, :func:`anri.fwd.peak.get_centroid_both`.
 
 .. _theory_rotation_motion:
 

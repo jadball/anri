@@ -25,8 +25,9 @@ independent Gaussian about its nominal value, and pushed through the centroid to
 
 With a diagonal :math:`\matr{\Sigma}_{\text{in}}` the sum needs one Jacobian column at a time, and JAX's forward-mode
 differentiation computes each as one Jacobian-vector product of the centroid function [JAX2018]_: no derivative is
-written by hand, so the covariance always matches the centroid it comes from. **Code:**
-:func:`anri.fwd.peak.make_propagator`, :func:`anri.fwd.peak.propagate_cov`, :func:`anri.fwd.peak.get_cov_in`.
+written by hand, so the covariance always matches the centroid it comes from.
+
+**Code:** :func:`anri.fwd.peak.make_propagator`, :func:`anri.fwd.peak.propagate_cov`, :func:`anri.fwd.peak.get_cov_in`.
 
 The inputs:
 
@@ -38,10 +39,14 @@ The inputs:
   vertical divergence (about :math:`y`) by :math:`|\cot\eta|` (:eq:`dif-rotation-motion`).
 - **Orientation spread** of a map entry, :math:`\sigma_{\text{rot}}` (radians, isotropic):
   :math:`\text{UBI} \to \text{UBI}\,(\matr{I} + [\vec{\delta}]_\times)^T`, exact to first order. It widens peaks by
-  :math:`\sigma/|\sin\eta|` in omega and along the ring in :math:`\eta`. **Code:** :func:`anri.maths.rotation.skew`.
+  :math:`\sigma/|\sin\eta|` in omega and along the ring in :math:`\eta`.
 
-Added to the propagated covariance: the detector's point spread :math:`\sigma_{\text{psf}}^2` (pixels²) on the slow and fast
-variances, an optional extra omega variance, and small floors so that a peak with no broadening at all still renders.
+  **Code:** :func:`anri.maths.rotation.skew`.
+
+Added to the propagated covariance: the detector's point spread :math:`\sigma_{\text{psf}}^2` (pixels²) on the slow and
+fast variances, an optional extra omega variance, and small floors so that a peak with no broadening at all still
+renders.
+
 **Code:** :func:`anri.fwd.render.render_peaks`.
 
 **Anri's choice:** first order is right for spreads up to a few degrees; beyond that a peak is a curved arc
@@ -75,9 +80,10 @@ the moments of a truncated normal, for :math:`x \sim N(\mu, \sigma^2)` restricte
     \operatorname{Var}[x] = \sigma^2 \left[1 + \frac{a\varphi(a) - b\varphi(b)}{Z}
     - \left(\frac{\varphi(a) - \varphi(b)}{Z}\right)^2\right].
 
-**Code:** :func:`anri.maths.utils.truncated_moments`, :func:`anri.maths.utils.bin_fractions`. For slow given omega in a
-frame whose omega has truncated mean :math:`m_\omega` and variance :math:`v_\omega`, by the Gaussian's regression and the law of
-total variance:
+**Code:** :func:`anri.maths.utils.truncated_moments`, :func:`anri.maths.utils.bin_fractions`.
+
+For slow given omega in a frame whose omega has truncated mean :math:`m_\omega` and variance :math:`v_\omega`, by the
+Gaussian's regression and the law of total variance:
 
 .. math::
     :label: ps-condition
@@ -91,20 +97,23 @@ and fast given (slow, omega) the same way, with omega integrated out given slow 
 
 **Anri's choice:** this keeps the slow-fast and detector-omega correlations, and the true position of a peak narrower
 than a frame or a pixel (most peaks are narrower than a frame: conditioning on the within-frame mean, not the frame
-centre, matters). It is exact for a Gaussian along each axis separately, and an approximation for the joint box mass.
-In the upper tail (:math:`a > 0`) the mass is computed as :math:`\Phi(-a) - \Phi(-b)`, not :math:`\Phi(b) - \Phi(a)`: in single precision
-the difference of two numbers close to 1 left model pixels far from bright peaks wrong, even negative. **Code:**
-:func:`anri.maths.utils.bin_fractions`.
+centre, matters). It is exact for a Gaussian along each axis separately, and an approximation for the joint box mass. In
+the upper tail (:math:`a > 0`) the mass is computed as :math:`\Phi(-a) - \Phi(-b)`, not :math:`\Phi(b) - \Phi(a)`: in
+single precision the difference of two numbers close to 1 left model pixels far from bright peaks wrong, even negative.
+
+**Code:** :func:`anri.maths.utils.bin_fractions`.
 
 Windows
 -------
 
-Each peak is evaluated over a fixed window of cells around its centroid, (frames, rows, columns), each odd. Each
-frame's row and column window is centred on the peak's mean position *in that frame*, so a peak that moves across the
-detector with omega stays inside its window. The fraction of the Gaussian inside the window is reported per peak as
-``captured``, so a window that is too small shows up. Peaks broad in omega can be given more frames (``max_frames``).
-Fixed window sizes keep array shapes fixed, so the renderer compiles once per size. **Code:**
-:func:`anri.fwd.render.render_peaks`, :func:`anri.fwd.render.window_origins`, :func:`anri.fwd.render.render_row`.
+Each peak is evaluated over a fixed window of cells around its centroid, (frames, rows, columns), each odd. Each frame's
+row and column window is centred on the peak's mean position *in that frame*, so a peak that moves across the detector
+with omega stays inside its window. The fraction of the Gaussian inside the window is reported per peak as ``captured``,
+so a window that is too small shows up. Peaks broad in omega can be given more frames (``max_frames``). Fixed window
+sizes keep array shapes fixed, so the renderer compiles once per size.
+
+**Code:** :func:`anri.fwd.render.render_peaks`, :func:`anri.fwd.render.window_origins`,
+:func:`anri.fwd.render.render_row`.
 
 Which pixels a peak touches is not differentiable (windows are placed from rounded centroids); the pixel values are,
 with respect to the map. Fixed window origins (``origins``) keep values smooth in the parameters for a refiner.

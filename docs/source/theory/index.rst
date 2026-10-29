@@ -11,7 +11,10 @@ computes, where it comes from, and the function that computes it.
   (``tests/unit/test_theory_docs.py``) imports every name these pages give, so a renamed function fails CI instead of
   leaving a dead link here.
 - Where an equation comes from the literature, it cites the paper (:ref:`theory_references`). Where it is Anri's own
-  choice or approximation, the page says so: **Anri's choice**, with the reason.
+  choice or approximation, the page says so:
+
+  **Anri's choice**, with the reason.
+
 - Each chapter ends with **What is left out**: the approximations made, so that you know when a result can't be
   trusted.
 

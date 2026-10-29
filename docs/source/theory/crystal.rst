@@ -35,23 +35,29 @@ The orientation :math:`\matr{U}` takes the crystal frame to the sample frame, so
 
     \vec{g}_s = \matr{U}\matr{B}\, \vec{h} = \text{UBI}^{-1}\, \vec{h}.
 
-A strained crystal has its own :math:`\matr{U}\matr{B}`, no longer :math:`\matr{U}` times the reference :math:`\matr{B}`. Anri carries
-the UBI, so orientation and strain go together everywhere below. **Code:** :func:`anri.crystal.lattice.U_B_to_UBI`,
-:func:`anri.maths.utils.inv3` (the inverse is written out: for 3 × 3 matrices it is several times faster than
-``jnp.linalg.inv`` on a GPU).
+A strained crystal has its own :math:`\matr{U}\matr{B}`, no longer :math:`\matr{U}` times the reference
+:math:`\matr{B}`. Anri carries the UBI, so orientation and strain go together everywhere below.
+
+**Code:** :func:`anri.crystal.lattice.U_B_to_UBI`, :func:`anri.maths.utils.inv3`
+
+(the inverse is written out: for 3 × 3 matrices it is several times faster than ``jnp.linalg.inv`` on a GPU).
 
 Reflections and rings
 ---------------------
 
-Every :math:`\vec{h}` with :math:`d^* = |\matr{B}\vec{h}| \le d^*_{\max}` is listed, capped at :math:`2/\lambda` (:math:`2\theta = 180°`). The
-space group's systematic absences are removed: :math:`\vec{h}` is absent if some operation :math:`(\matr{R}, \vec{t})` of the
-space group has :math:`\vec{h}\matr{R} = \vec{h}` and :math:`\vec{h} \cdot \vec{t}` not an integer, since then
-:math:`F(\vec{h}) = e^{2\pi i\, \vec{h} \cdot \vec{t}} F(\vec{h}) = 0`. That covers lattice centring, screw axes and glide
-planes. Reflections absent for other reasons (atoms on special positions) stay, and their structure factor is zero.
+Every :math:`\vec{h}` with :math:`d^* = |\matr{B}\vec{h}| \le d^*_{\max}` is listed, capped at :math:`2/\lambda`
+(:math:`2\theta = 180°`). The space group's systematic absences are removed: :math:`\vec{h}` is absent if some operation
+:math:`(\matr{R}, \vec{t})` of the space group has :math:`\vec{h}\matr{R} = \vec{h}` and :math:`\vec{h} \cdot \vec{t}`
+not an integer, since then :math:`F(\vec{h}) = e^{2\pi i\, \vec{h} \cdot \vec{t}} F(\vec{h}) = 0`. That covers lattice
+centring, screw axes and glide planes. Reflections absent for other reasons (atoms on special positions) stay, and their
+structure factor is zero.
+
 **Code:** :func:`anri.crystal.structure.reflections`, :func:`anri.crystal.lattice.allowed_hkls`.
 
-Reflections closer in :math:`d^*` than a tolerance (default :math:`10^{-4}` Å⁻¹) form one ring: rings the data cannot separate
-should be merged, not split. **Code:** :func:`anri.crystal.structure.rings`, :func:`anri.index.data.ring_table`.
+Reflections closer in :math:`d^*` than a tolerance (default :math:`10^{-4}` Å⁻¹) form one ring: rings the data cannot
+separate should be merged, not split.
+
+**Code:** :func:`anri.crystal.structure.rings`, :func:`anri.index.data.ring_table`.
 
 Laue group
 ----------
@@ -66,7 +72,10 @@ fractional coordinates acts on reflections as :math:`\vec{h} \to \matr{R}^T\vec{
 
     \matr{S} = \matr{B}\, \matr{R}^T \matr{B}^{-1}, \qquad \matr{R} \to \matr{R} \det \matr{R}.
 
-That gives 24 rotations for m-3m, down to 1 for -1. **Code:** :func:`anri.crystal.orientation.laue_rotations`.
+That gives 24 rotations for m-3m, down to 1 for -1.
+
+**Code:** :func:`anri.crystal.orientation.laue_rotations`.
+
 Misorientations and averages of orientations are always taken over these (:doc:`populations`).
 
 Structure factors
@@ -80,21 +89,26 @@ The intensity of a reflection is proportional to :math:`|F(\vec{h})|^2`,
     F(\vec{h}) = \sum_{\text{atoms } a} o_a \left(f_a(s) + f'_a + i f''_a\right)
     e^{-B_a s^2}\, e^{2\pi i\, \vec{h} \cdot \vec{x}_a}, \qquad s = \frac{\sin\theta}{\lambda} = \frac{d^*}{2},
 
-with occupancy :math:`o_a`, atomic form factor :math:`f_a`, anomalous dispersion :math:`f'_a, f''_a` at this wavelength, isotropic
-displacement :math:`B_a = 8\pi^2 U_{\text{iso}}` and fractional position :math:`\vec{x}_a`. Anri does not compute it
-itself: Dans Diffraction [DansDiffraction]_ reads the CIF and evaluates it. Without displacement parameters in the CIF
-there is no Debye-Waller fall-off with :math:`s`, and Anri warns. **Code:** :func:`anri.crystal.structure.structure_factors`.
+with occupancy :math:`o_a`, atomic form factor :math:`f_a`, anomalous dispersion :math:`f'_a, f''_a` at this wavelength,
+isotropic displacement :math:`B_a = 8\pi^2 U_{\text{iso}}` and fractional position :math:`\vec{x}_a`. Anri does not
+compute it itself: Dans Diffraction [DansDiffraction]_ reads the CIF and evaluates it. Without displacement parameters
+in the CIF there is no Debye-Waller fall-off with :math:`s`, and Anri warns.
+
+**Code:** :func:`anri.crystal.structure.structure_factors`.
 
 The indexer scales :math:`|F|^2` to a mean of 1 over the rings used, so occupancies come out in units of the data.
 
 Attenuation
 -----------
 
-A ray loses intensity as :math:`e^{-\mu L}` along a path :math:`L` in the sample. The linear attenuation coefficient :math:`\mu` comes
-from the structure's composition and density and each element's total mass attenuation (photoelectric, Compton and
-Rayleigh), from Dans Diffraction's tables, which reproduce NIST XCOM [XCOM]_ (iron at 50 keV: 1.958 cm²/g). Anri
-returns it per micrometre, the unit of sample positions. **Code:** :func:`anri.crystal.structure.attenuation`. Where
-it is used: :ref:`theory_absorption`.
+A ray loses intensity as :math:`e^{-\mu L}` along a path :math:`L` in the sample. The linear attenuation coefficient
+:math:`\mu` comes from the structure's composition and density and each element's total mass attenuation (photoelectric,
+Compton and Rayleigh), from Dans Diffraction's tables, which reproduce NIST XCOM [XCOM]_ (iron at 50 keV: 1.958 cm²/g).
+Anri returns it per micrometre, the unit of sample positions.
+
+**Code:** :func:`anri.crystal.structure.attenuation`.
+
+Where it is used: :ref:`theory_absorption`.
 
 What is left out
 ----------------

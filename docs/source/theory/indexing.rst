@@ -50,16 +50,19 @@ histogram over rings, :math:`\eta`, omega and dty rows:
 
     H[r, e, o, k] = \sum_{\text{pixels in bin}} I_{\text{pixel}},
 
-at the scale of the orientation grid: bins of 1° in :math:`\eta` and 1° in omega for the fit, and a finer, row-summed "lit"
-histogram (0.5° × 0.25°) for the search. Each pixel's :math:`(2\theta, \eta)` is computed from the lab origin (no parallax),
-and the pixel goes to the nearest ring if within that ring's tolerance. **Code:** :func:`anri.index.data.pixel_angles`,
-:func:`anri.index.data.histogram`, :func:`anri.index.data.histogram_pixels`.
+at the scale of the orientation grid: bins of 1° in :math:`\eta` and 1° in omega for the fit, and a finer, row-summed
+"lit" histogram (0.5° × 0.25°) for the search. Each pixel's :math:`(2\theta, \eta)` is computed from the lab origin (no
+parallax), and the pixel goes to the nearest ring if within that ring's tolerance.
 
-**Ring tolerances** are measured from the data, not assumed: each ring's :math:`2\theta` profile is taken within half the gap
-to its neighbours, its background (the median of the window's outer fifth) removed, and the tolerance is the distance
-from the ring's position to its centroid plus the half-width that holds 95 % of its net intensity. This sums
-everything that widens a ring: parallax (sample size over distance), strain, and detector distortion. **Code:**
-:func:`anri.index.data.ring_profile`, :func:`anri.index.data.ring_widths`.
+**Code:** :func:`anri.index.data.pixel_angles`, :func:`anri.index.data.histogram`,
+:func:`anri.index.data.histogram_pixels`.
+
+**Ring tolerances** are measured from the data, not assumed: each ring's :math:`2\theta` profile is taken within half
+the gap to its neighbours, its background (the median of the window's outer fifth) removed, and the tolerance is the
+distance from the ring's position to its centroid plus the half-width that holds 95 % of its net intensity. This sums
+everything that widens a ring: parallax (sample size over distance), strain, and detector distortion.
+
+**Code:** :func:`anri.index.data.ring_profile`, :func:`anri.index.data.ring_widths`.
 
 **Anri's choice:** a histogram loses the shape of each peak within a bin, and parallax. It keeps the information the
 search and the occupancy fit need at the scale of a 1-3° orientation grid, and makes them cheap enough to run on every
@@ -91,19 +94,24 @@ diffracted paths (:eq:`int-absorption`). The prediction's weight is shared:
 
 **Fly and helical scans.** When dty moves during the rotation, the frames of one omega bin were taken up to half a step
 away from their row's nominal dty. The real dty per (row, omega bin) is measured from the frames' own motor readings and
-used in place of the nominal one; bins with more or fewer frames than usual get their exposure. **Code:**
-:func:`anri.index.data.dty_offsets`.
+used in place of the nominal one; bins with more or fewer frames than usual get their exposure.
+
+**Code:** :func:`anri.index.data.dty_offsets`.
 
 The model is never stored. Each pass over the data recomputes :math:`A`'s entries for a block of voxels and accumulates
-:math:`A f` (a segment sum) or :math:`A^T r` (a gather), so memory is set by the block size, not by voxels × orientations.
+:math:`A f` (a segment sum) or :math:`A^T r` (a gather), so memory is set by the block size, not by voxels ×
+orientations.
+
 **Code:** :func:`anri.index.occupancy.forward`, :func:`anri.index.occupancy.backward`,
 :func:`anri.index.occupancy.block_voxels`.
 
 The voxel grid
 --------------
 
-The voxels are an :math:`N \times N` grid of the dty step, centred on the rotation axis and sized from :math:`y_0` and the scanned
-range, as ImageD11 pads its reconstructions. The histogram stage fixes it, so a :math:`y_0` chosen later moves no voxel.
+The voxels are an :math:`N \times N` grid of the dty step, centred on the rotation axis and sized from :math:`y_0` and
+the scanned range, as ImageD11 pads its reconstructions. The histogram stage fixes it, so a :math:`y_0` chosen later
+moves no voxel.
+
 **Code:** :func:`anri.geom.scan.recon_positions`, :func:`anri.index.stages.voxel_grid`.
 
 What is left out

@@ -17,7 +17,9 @@ deviance
 
     D(f) = 2 \sum_b \left[ d_b \log\frac{d_b}{\mu_b} - d_b + \mu_b \right],
 
-which is zero for a perfect fit. **Code:** :func:`anri.index.occupancy.deviance`.
+which is zero for a perfect fit.
+
+**Code:** :func:`anri.index.occupancy.deviance`.
 
 **Anri's choice:** the bins hold sums of pixel intensities, normalised to the monitor, not raw photon counts, so the
 Poisson model is an approximation: it weights each bin by roughly the inverse of its intensity, which is what makes
@@ -34,9 +36,11 @@ The expectation-maximisation algorithm for this model [Dempster1977]_ is the MLE
 
     f_{vq} \leftarrow f_{vq}\, \frac{\left[A^T (d / A f)\right]_{vq}}{\left[A^T \mathbf{1}\right]_{vq}}.
 
-Each update keeps :math:`f \ge 0`, never decreases the likelihood, and needs one forward projection :math:`A f` and one back
-projection per iteration, which is all Anri can afford on billions of peaks. **Code:**
-:func:`anri.index.occupancy.mlem`, :func:`anri.index.occupancy.forward`, :func:`anri.index.occupancy.backward`.
+Each update keeps :math:`f \ge 0`, never decreases the likelihood, and needs one forward projection :math:`A f` and one
+back projection per iteration, which is all Anri can afford on billions of peaks.
+
+**Code:** :func:`anri.index.occupancy.mlem`, :func:`anri.index.occupancy.forward`,
+:func:`anri.index.occupancy.backward`.
 
 Accelerating MLEM: SQUAREM
 --------------------------
@@ -51,10 +55,14 @@ MLEM updates :math:`f_1` and :math:`f_2`, then the extrapolated point
     f' = f - 2a\,\vec{r} + a^2\,\vec{v}, \qquad
     \vec{r} = f_1 - f, \quad \vec{v} = f_2 - 2f_1 + f, \quad a = -\frac{\lVert \vec{r} \rVert}{\lVert \vec{v} \rVert},
 
-and one more MLEM update from :math:`f'`. **Anri's choice** of safeguards: :math:`a \le -1`, so a step is never shorter than plain
-MLEM; :math:`f'` is kept above :math:`10^{-3} f_2`, since MLEM multiplies and an occupancy at zero could never come back; and if
-the result fits worse than :math:`f_2`, :math:`f_2` is kept, so the deviance never rises. One iteration costs three MLEM updates
-and goes about as far as ten or more. **Code:** :func:`anri.index.occupancy.squarem`.
+and one more MLEM update from :math:`f'`.
+
+**Anri's choice** of safeguards: :math:`a \le -1`, so a step is never shorter than plain MLEM; :math:`f'` is kept above
+:math:`10^{-3} f_2`, since MLEM multiplies and an occupancy at zero could never come back; and if the result fits worse
+than :math:`f_2`, :math:`f_2` is kept, so the deviance never rises. One iteration costs three MLEM updates and goes
+about as far as ten or more.
+
+**Code:** :func:`anri.index.occupancy.squarem`.
 
 Censored and saturated bins
 ---------------------------
@@ -79,9 +87,10 @@ data there it agrees; below, the data pull it up as usual.
     c / (2\mu_b) & d_b = 0,\ \mu_b \ge c
     \end{cases}
 
-**Anri's choice:** this is a simple stand-in for the likelihood of a censored observation, not that likelihood
-itself. :math:`c = 0` gives plain Poisson MLEM, the default. **Code:** :func:`anri.index.occupancy.censored_ratio`,
-:func:`anri.index.occupancy.deviance`.
+**Anri's choice:** this is a simple stand-in for the likelihood of a censored observation, not that likelihood itself.
+:math:`c = 0` gives plain Poisson MLEM, the default.
+
+**Code:** :func:`anri.index.occupancy.censored_ratio`, :func:`anri.index.occupancy.deviance`.
 
 .. _theory_global_fit:
 
@@ -100,10 +109,11 @@ deviance if that orientation alone were removed, the others fixed,
     \Lambda_q = 2\sum_b \left[ d_b \log\frac{\mu_b}{\mu_b - g_q a_{qb}} - g_q a_{qb} \right],
 
 over observed bins, with :math:`a_{qb}` the orientation's system entries (empty bins add their change in
-:math:`\max(\mu_b - c, 0)`). For an orientation that is not there, :math:`\Lambda_q` is about :math:`\chi^2` with one degree of freedom
-[Wilks1938]_, so ``min_lr = 25`` is about 5σ. A small grain with clean spots scores well; a decoy that only borrows
-intensity from real grains does not. **Code:** :func:`anri.index.orientations.fit`,
-:func:`anri.index.stages.select_by_likelihood`.
+:math:`\max(\mu_b - c, 0)`). For an orientation that is not there, :math:`\Lambda_q` is about :math:`\chi^2` with one
+degree of freedom [Wilks1938]_, so ``min_lr = 25`` is about 5σ. A small grain with clean spots scores well; a decoy that
+only borrows intensity from real grains does not.
+
+**Code:** :func:`anri.index.orientations.fit`, :func:`anri.index.stages.select_by_likelihood`.
 
 Two caveats on reading 25 as 5σ. An occupancy cannot be negative, so the null sits on the boundary and its
 distribution is half :math:`\chi^2_1`, half zero [Chernoff1954]_: the tail is smaller than assumed. Holding the other
@@ -125,14 +135,16 @@ default): those with the largest first MLEM update from unit occupancy,
 
     f^{(1)}_{vq} = \frac{\left[A^T\left(d / A\mathbf{1}\right)\right]_{vq}}{\left[A^T\mathbf{1}\right]_{vq}},
 
-which scores each orientation by how well its predicted spots are lit, each bin down-weighted by how many
-(voxel, orientation) pairs could explain it. Then MLEM with SQUAREM runs on the candidates of every voxel jointly.
+which scores each orientation by how well its predicted spots are lit, each bin down-weighted by how many (voxel,
+orientation) pairs could explain it. Then MLEM with SQUAREM runs on the candidates of every voxel jointly.
+
 **Code:** :func:`anri.index.occupancy.candidates`, :func:`anri.index.occupancy.fit_occupancy`.
 
-**Coarse to fine** (``coarse = G``): the candidate pass and a fit run first on voxels :math:`G` times larger (rows summed in
-groups of :math:`G`), and each fine voxel then scores only the :math:`2K` orientations its 3 × 3 coarse neighbourhood occupied
-most: about :math:`G^2` times cheaper, at the risk of missing a grain the coarse fit missed. **Code:**
-:func:`anri.index.occupancy.inherit_candidates`, :func:`anri.index.occupancy.candidates_from`,
+**Coarse to fine** (``coarse = G``): the candidate pass and a fit run first on voxels :math:`G` times larger (rows
+summed in groups of :math:`G`), and each fine voxel then scores only the :math:`2K` orientations its 3 × 3 coarse
+neighbourhood occupied most: about :math:`G^2` times cheaper, at the risk of missing a grain the coarse fit missed.
+
+**Code:** :func:`anri.index.occupancy.inherit_candidates`, :func:`anri.index.occupancy.candidates_from`,
 :func:`anri.index.data.coarsen_rows`, :func:`anri.index.data.coarsen_scan`.
 
 What is left out
