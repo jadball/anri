@@ -159,6 +159,8 @@ def rmat_from_axis_angle(axis: jax.Array, angle: jax.Array) -> jax.Array:
        Science and Engineering 23, 083501. https://doi.org/10.1088/0965-0393/23/8/083501
     """
     axis = jnp.asarray(axis)
+    if not jnp.issubdtype(axis.dtype, jnp.floating):
+        axis = axis.astype(jnp.result_type(float))  # an integer axis would truncate the angle
     n = axis / jnp.linalg.norm(axis, axis=-1, keepdims=True)
     t = jnp.radians(jnp.asarray(angle, axis.dtype))[..., None, None]
     c, s = jnp.cos(t), jnp.sin(t)
