@@ -14,6 +14,7 @@ from anri.fwd.render import (
     _free_memory,
     _merge,
     _merge_host,
+    _valid_from_shards,
     check_render,
     guess_batch_size,
     make_row,
@@ -522,6 +523,31 @@ class TestMerge(unittest.TestCase):
         # merging the device's output again on the host changes nothing (render_row does both on GPUs)
         again = _merge_host(fr[:count], px[:count], val[:count], npix)
         np.testing.assert_allclose(again[2], h_val, rtol=1e-12)
+
+    def test_valid_from_shards_compiles_few_shapes(self):
+        """The valid elements of each shard, sliced in a few bucketed lengths, not one per count (issue #35)."""
+        import logging
+
+        compiles = []
+
+        class Count(logging.Handler):
+            def emit(self, record):
+                if "Compiling" in record.getMessage():
+                    compiles.append(record)
+
+        x = jnp.arange(100, dtype=jnp.float32)
+        handler = Count()
+        logging.getLogger("jax").addHandler(handler)
+        try:
+            with jax.log_compiles():
+                for n in (5, 6, 7, 0, 100):
+                    np.testing.assert_array_equal(_valid_from_shards(x, np.array([n]), 100), np.arange(n))
+                n_first = len(compiles)
+                for n in (6, 7, 8, 0, 99):  # lengths in the buckets already compiled
+                    np.testing.assert_array_equal(_valid_from_shards(x, np.array([n]), 100), np.arange(n))
+        finally:
+            logging.getLogger("jax").removeHandler(handler)
+        self.assertEqual(len(compiles), n_first)
 
 
 class TestPolarisationDirection(unittest.TestCase):
