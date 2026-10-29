@@ -72,6 +72,7 @@ Some parts of the code are developed with the assistance of LLMs, such as Claude
     :hidden:
 
     user/index
+    theory/index
     reference/index
     CONTRIBUTING
     CHANGELOG
