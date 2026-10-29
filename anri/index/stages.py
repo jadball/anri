@@ -33,6 +33,7 @@ import numpy as np
 
 from anri.io.provenance import (
     chain,
+    check_out,
     read_attrs,
     read_provenance,
     stage_path,
@@ -531,6 +532,7 @@ def stage_histogram(
                 "omega_step": sc["omega_step"], "rings_tth_deg": list(ring_t["tth"]), "tth_tol_deg": list(tol),
                 "n_hkls": len(ring_t["hkls"]), "spatial_correction": d["spatial_correction"],
                 "detector_mask": mask_file}  # fmt: skip
+    check_out(out, [d["dsfile"], d["sparsefile"], d["parfile"], mask_file])
     with h5py.File(out, "w") as h:
         write_provenance(h, "histogram", None, options, resolved, command)
         write_attrs(h.create_group("geometry"), d["geo"])
@@ -651,6 +653,7 @@ def stage_powder(
                 "phase": d["phase"], "wavelength": d["geo"]["wavelength"], "n_frames": n_frames, "tth_max": tth_max,
                 "solid_angle_sr": float(Om.sum()), "spatial_correction": d["spatial_correction"],
                 "detector_mask": mask_file}  # fmt: skip
+    check_out(out, [d["dsfile"], d["sparsefile"], d["parfile"], mask_file])
     with h5py.File(out, "w") as h:
         write_provenance(h, "powder", None, options, resolved, command)
         write_attrs(h.create_group("geometry"), d["geo"])
@@ -744,6 +747,7 @@ def stage_search(
         f"from the truth; completeness {time.perf_counter() - t1:.1f} s: median (chance) {chance:.2f}, 99th "
         f"{np.percentile(comp, 99):.2f}, max {comp.max():.2f}, halfway {halfway:.2f}")  # fmt: skip
     out = stage_path(histogram_file, "search", out)
+    check_out(out, chain(histogram_file))
     with h5py.File(out, "w") as h:
         write_provenance(h, "search", histogram_file, options, {"grid_step": step, "grid_auto": grid is None,
                                                                  "grid_worst_case_deg": delta}, command)  # fmt: skip
@@ -824,6 +828,7 @@ def stage_filter(
         msg = f"prune must be 'likelihood' or 'completeness', not {prune!r}"
         raise ValueError(msg)
     out = stage_path(search_file, "filter", out)
+    check_out(out, chain(search_file))
     with h5py.File(out, "w") as h:
         write_provenance(h, "filter", search_file, options, {"min_comp_used": min_comp_used}, command)
         h["kept"] = np.asarray(kept)
@@ -983,6 +988,7 @@ def stage_fit(
         f"min {np.nanmin(row_ratio):.3f}, max {np.nanmax(row_ratio):.3f}; row-to-row rms {np.sqrt(np.nanmean(np.diff(row_ratio) ** 2)):.3f}")  # fmt: skip
 
     out = stage_path(filter_file, "fit", out)
+    check_out(out, [*chain(filter_file), mask])
     results = {"f": f, "cand": cands, "U": U_kept, "comp": comp_kept, "pos": pos, "mask": sel, "row_ratio": row_ratio,
                "row_data": d_row, "row_model": m_row}  # fmt: skip
     if rec is not None:
@@ -1080,6 +1086,7 @@ def stage_populations(
         f"(includes the grid); completeness median {np.median(comp_pop[present]):.2f}")  # fmt: skip
 
     out = stage_path(fit_file, "populations", out)
+    check_out(out, chain(fit_file))
     results = {"frac": frac, "U_pop": U_pop, "spread": spread, "n": n_pop, "comp_pop": comp_pop, "occupied": occ,
                "present": present}  # fmt: skip
     with h5py.File(out, "w") as h:
@@ -1095,9 +1102,11 @@ def stage_populations(
     with float64():
         ubi_pop = np.asarray(anri.crystal.lattice.U_B_to_UBI(U_pop[v, q], d["B"]))
         ubi_main = np.asarray(anri.crystal.lattice.U_B_to_UBI(U_pop[:, 0], d["B"]))
+    # sig_rot: per component of the rotation vector (anri.fwd.render.render_row); an isotropic rms angle is sqrt(3) x it
     np.savez(f"{stem}_entries.npz", ubi=ubi_pop, pos=pos[v].astype(np.float32), density=tot[v] * frac[v, q],
-             sig_rot=np.radians(spread[v, q]), voxel=v, population=q, completeness=comp_pop[v, q], voxel_size=YSTEP,
-             lattice=np.asarray(r["lattice"], float), space_group=r["space_group"], phase=r["phase"])  # fmt: skip
+             sig_rot=np.radians(spread[v, q]) / np.sqrt(3), voxel=v, population=q, completeness=comp_pop[v, q],
+             voxel_size=YSTEP, lattice=np.asarray(r["lattice"], float), space_group=r["space_group"],
+             phase=r["phase"])  # fmt: skip
     log(f"-> {out}, {stem}_entries.npz")
     try:
         maps = {

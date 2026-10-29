@@ -21,7 +21,7 @@ def _populations(
         total = jnp.maximum(jnp.sum(fv), 1e-30)
         fm, i = jax.lax.top_k(fv, m)
         Um = U_list[cv[i]]  # [m, 3, 3]
-        valid = fm > eps * total
+        valid = fm > eps * fm[0]  # relative to the largest, so an occupied voxel always seeds a population
         assigned = jnp.full(m, -1)
         out = []
         for q in range(p):
@@ -35,7 +35,9 @@ def _populations(
             mean = mean_rotation(aligned, w)
             a = rotation_angle(mean.T @ aligned)
             out.append((sw / total, mean, jnp.sqrt(jnp.sum(w * a**2) / jnp.maximum(sw, 1e-30)), jnp.sum(member)))
-        return tuple(jnp.stack(x) for x in zip(*out))
+        frac, mean, spread, n = (jnp.stack(x) for x in zip(*out))
+        order = jnp.argsort(-frac)  # largest first: a population of several candidates can outweigh the first seed
+        return frac[order], mean[order], spread[order], n[order]
 
     return jax.vmap(one)(f, cand)
 
@@ -53,8 +55,8 @@ def group(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Group each voxel's occupied candidate orientations into up to p populations.
 
-    A voxel's m most occupied candidates above ``eps`` x its total are grouped greedily: the most occupied free
-    candidate seeds a population, and every free candidate within ``radius_deg`` of it (over the Laue group) joins.
+    A voxel's m most occupied candidates above ``eps`` x its most occupied one are grouped greedily: the most occupied
+    free candidate seeds a population, and every free candidate within ``radius_deg`` of it (over the Laue group) joins.
     Each population gets its share of the voxel's occupancy, the occupancy-weighted mean of its members (aligned to
     the seed over the symmetry, then projected back to a rotation) and their weighted rms misorientation from that
     mean. Populations closer than the radius come out as one, with a larger spread: what the data cannot separate is
@@ -76,14 +78,14 @@ def group(
     m
         Candidates considered per voxel
     eps
-        Smallest occupancy considered, as a fraction of the voxel's total
+        Smallest occupancy considered, as a fraction of the voxel's most occupied candidate
     vb
         Voxels per call
 
     Returns
     -------
     fraction: np.ndarray
-        [Nv, p] share of each voxel's occupancy (0 where absent), largest first
+        [Nv, p] share of each voxel's occupancy (0 where absent), largest first; the other outputs in the same order
     U: np.ndarray
         [Nv, p, 3, 3] mean orientations
     spread: np.ndarray

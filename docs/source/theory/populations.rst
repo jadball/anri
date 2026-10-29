@@ -11,10 +11,13 @@ mean and a spread, and describes which voxels are fitted at all.
 Grouping
 --------
 
-A voxel's :math:`m` most occupied candidates (16 by default), above a fraction :math:`\epsilon` (0.02) of its total
-occupancy, are grouped greedily: the most occupied candidate not yet assigned seeds a population, and every unassigned
-candidate within a radius (about 1.8 grid steps) of it joins, the distance being the misorientation over the Laue group
-(:eq:`cry-laue`). Up to :math:`p` (4) populations per voxel.
+A voxel's :math:`m` most occupied candidates (16 by default), above a fraction :math:`\epsilon` (0.02) of its most
+occupied one, are grouped greedily: the most occupied candidate not yet assigned seeds a population, and every
+unassigned candidate within a radius (about 1.8 grid steps) of it joins, the distance being the misorientation over the
+Laue group (:eq:`cry-laue`). Up to :math:`p` (4) populations per voxel, ordered by fraction, largest first: a population
+of several candidates can outweigh the one the most occupied candidate seeded. The cut is relative to the most occupied
+candidate, not the total, so an occupied voxel always has a population, even when its occupancy is spread thinly over
+many orientations: it then comes out as one population with a large spread.
 
 **Code:** :func:`anri.index.populations.group`, :func:`anri.crystal.orientation.closest_equivalent`.
 
@@ -37,6 +40,10 @@ Each population gets
 - its **spread**: the occupancy-weighted rms misorientation of the members from that mean.
 
   **Code:** :func:`anri.maths.rotation.rotation_angle`.
+
+  The forward model takes a spread as the standard deviation :math:`\sigma` of each component of a small rotation
+  vector (``sig_rot``). For an isotropic spread the rms angle is :math:`\sqrt{3}\,\sigma`, so the populations
+  stage exports ``sig_rot`` as the spread divided by :math:`\sqrt{3}`.
 
 **Anri's choice:** populations closer than the radius come out as one, with a larger spread. What the data cannot
 separate is reported as a mean and a spread rather than as invented structure. The spread includes the orientation

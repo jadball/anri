@@ -39,6 +39,18 @@ def two_phase_map(folder):
     return path
 
 
+class TestCommandLine(unittest.TestCase):
+    def test_run_dataset_names(self):
+        # run's positional output dataset and --dataset (an input DataSet to simulate) are separate (issue #25)
+        from anri.simulate.__main__ import parse_args
+
+        args = parse_args(["run", "map.npz", "geometry.par", "results", "sample", "out_name"])
+        self.assertEqual((args.dataset, args.input_dataset), ("out_name", None))
+        args = parse_args(["run", "map.npz", "geometry.par", "results", "sample", "out_name", "--dataset", "in.h5"])
+        self.assertEqual((args.dataset, args.input_dataset), ("out_name", "in.h5"))
+        self.assertEqual(parse_args(["prepare", "map.npz", "--dataset", "in.h5"]).input_dataset, "in.h5")
+
+
 class TestRenderStages(unittest.TestCase):
     def test_prepare_render_assemble(self):
         """Two phases, rendered in two parts and assembled into an ImageD11 dataset with the provenance chain."""
@@ -53,6 +65,9 @@ class TestRenderStages(unittest.TestCase):
             self.assertEqual(p["omega"].shape, (3, 90))  # radius 4.2 + 0.25 x 8: one row either side of y0
             self.assertEqual(p["cells"]["Ni"]["cell_lattice_[P,A,B,C,I,F,R]"], 225)
             self.assertEqual(list(sim.stages.parse_rows("1:", 3)), [1, 2])
+            with self.assertRaises(ValueError):  # an output that is the source is refused, the source kept (#26)
+                sim.stages.stage_render(prep, out=prep, log=lambda m: None)
+            self.assertEqual(sim.stages.load_prepare(prep)["names"], ["Fe", "Ni"])
             a = sim.stages.stage_render(prep, rows=":1", log=lambda m: None)
             self.assertTrue(a.endswith("x_render_0000-0000.h5"))
             with self.assertRaises(ValueError):  # row 1 and 2 missing

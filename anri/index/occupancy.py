@@ -628,7 +628,7 @@ def fit_occupancy(
         Rows and (b_e, b_o, n_e, n_o) of the histogram, plus n_beam for a beam profile (:func:`system`,
         :func:`beam_rows`)
     k
-        Candidates per voxel
+        Candidates per voxel (at most the number of orientations; fewer orientations, fewer candidates)
     n_iter
         MLEM iterations (SQUAREM, :func:`mlem`)
     coarse
@@ -662,6 +662,10 @@ def fit_occupancy(
     """
     H, ring_j, pos = jnp.asarray(H), jnp.asarray(ring_j), np.asarray(pos, np.float32)
     nv = len(pos)
+    if pred[0].shape[0] == 0:
+        msg = "no orientations to fit"
+        raise ValueError(msg)
+    k = min(k, pred[0].shape[0])  # top_k needs k <= the orientations (padding rows score 0 and stay 0)
     sat = None if saturated is None or np.size(saturated) == 0 else jnp.asarray(saturated, jnp.int32)
 
     def with_edges(p: np.ndarray) -> np.ndarray:  # positions followed by their edge distances (see system)

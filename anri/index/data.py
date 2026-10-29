@@ -16,7 +16,8 @@ from Dans_Diffraction.classes_crystal import Crystal as DansCrystal
 from jax.typing import ArrayLike
 
 from anri.crystal.structure import reflections, rings, structure_factors
-from anri.diffract.scatter import ds_to_tth, k_out_to_tth_eta
+from anri.diffract.scatter import ds_to_tth, k_out_to_tth_eta, tth_eta_to_k_out
+from anri.geom.detector import raytrace_to_det
 from anri.geom.gonio import wrap_omega
 from anri.geom.scan import dty_to_row
 from anri.maths.utils import float64
@@ -363,8 +364,10 @@ def detector_coverage(
     """Fraction of each ring's detector area that is measured, per eta bin: 0 off the detector and in masked pixels.
 
     Each pixel is sampled at sub x sub points (as the data, after detector distortion), and every point within a
-    ring's 2theta tolerance counts towards that ring's eta bin; the coverage is the share of them on measured pixels.
-    A reflection predicted there is seen with this fraction of its intensity on average.
+    ring's 2theta tolerance counts towards that ring's eta bin: the share of them on measured pixels. That share is
+    scaled by the share of the bin's window (2theta within the tolerance, eta within the bin) that reaches the
+    detector at all, so a bin half off the detector's edge is half covered whether or not the pixels beyond the edge
+    exist and are masked. A reflection predicted there is seen with this fraction of its intensity on average.
 
     Parameters
     ----------
@@ -407,7 +410,29 @@ def detector_coverage(
                     m = np.abs(x[:, 0] - ring_tth[r]) < ring_tol[r]
                     num += np.bincount(r * n_e + ie[m], g[m], n_r * n_e)
                     den += np.bincount(r * n_e + ie[m], None, n_r * n_e)
-    return np.where(den > 0, num / np.maximum(den, 1), 0.0).reshape(n_r, n_e)
+    measured = np.where(den > 0, num / np.maximum(den, 1), 0.0).reshape(n_r, n_e)
+    return measured * _on_detector(geom, ring_tth, ring_tol, b_e, n_e, (n_s, n_f))
+
+
+def _on_detector(geom: dict, ring_tth: np.ndarray, ring_tol: np.ndarray, b_e: float, n_e: int, shape: tuple,
+                 n_t: int = 8, n_sub: int = 16) -> np.ndarray:  # fmt: skip
+    """[Nr, n_e] share of each ring's window per eta bin that reaches the detector, on an n_t x n_sub grid per bin.
+
+    Rays from the lab origin (as :func:`pixel_angles`) to the detector plane, before distortion.
+    """
+    eta = -180.0 + (np.arange(n_e * n_sub) + 0.5) * (b_e / n_sub)
+    t = (np.arange(n_t) + 0.5) / n_t * 2 - 1  # across the tolerance, -1..1
+    tth = (ring_tth[:, None] + ring_tol[:, None] * t).ravel()
+    tt, ee = (x.ravel() for x in np.meshgrid(tth, eta, indexing="ij"))
+    k_in = geom["k_in_lab"]
+    k = jax.vmap(tth_eta_to_k_out, in_axes=(0, 0, None, None))(jnp.asarray(tt), jnp.asarray(ee), 1.0, k_in)
+    trace = jax.vmap(raytrace_to_det, in_axes=(0, None, None, None, None))
+    sc, fc = (np.asarray(x) for x in trace(k, jnp.zeros(3), geom["s_step_lab"], geom["f_step_lab"],
+                                           geom["det_origin_lab"]))  # fmt: skip
+    normal = np.cross(np.asarray(geom["s_step_lab"]), np.asarray(geom["f_step_lab"]))
+    ahead = np.asarray(k) @ normal * float(normal @ np.asarray(geom["det_origin_lab"])) > 0  # the ray meets the plane
+    inside = ahead & (sc >= -0.5) & (sc < shape[0] - 0.5) & (fc >= -0.5) & (fc < shape[1] - 0.5)
+    return inside.reshape(len(ring_tth), n_t, n_e, n_sub).mean((1, 3))
 
 
 def coarsen_coverage(cov: ArrayLike, n_e: int) -> np.ndarray:
