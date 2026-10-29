@@ -23,7 +23,15 @@ from collections.abc import Callable
 import h5py
 import numpy as np
 
-from anri.io.provenance import read_attrs, read_provenance, stage_path, write_attrs, write_provenance, write_results
+from anri.io.provenance import (
+    check_out,
+    read_attrs,
+    read_provenance,
+    stage_path,
+    write_attrs,
+    write_provenance,
+    write_results,
+)
 
 # ID11's focusing optics: the standard deviation of the beam's convergence at the sample (rad, horizontal and
 # vertical), from effective aperture / focal length (Si planar nanolenses: ~38 um / 10 cm; Al CRLs: ~115 um / 50 cm)
@@ -218,6 +226,7 @@ def stage_prepare(
                 "sig_wavelength": wl * fwhm_to_sigma(bandwidth), "sig_beam": fwhm_to_sigma(fwhm), "tth_max": tth,
                 "n_rows": omega.shape[0], "n_frames": omega.shape[1], "sample_radius": radius,
                 "phases": [p["name"] for p in phases]}  # fmt: skip
+    check_out(out, [map_file, pars_file, dataset, None if ds is None else ds["sparsefile"]])
     with h5py.File(out, "w") as h:
         write_provenance(h, "prepare", None, options, resolved, command)
         write_attrs(h.create_group("pars"), pars)
@@ -314,6 +323,7 @@ def stage_render(
             out = f"{out[:-3]}_{todo[0]:04d}-{todo[-1]:04d}.h5"
     log(f"rendering rows {todo[0]}..{todo[-1]} of {p['omega'].shape[0]}, {len(p['phases'])} phase(s)")
     t0 = time.perf_counter()
+    check_out(out, [prepare_file])
     with h5py.File(out, "w") as h:
         write_provenance(h, "render", prepare_file, options, {"first_row": todo[0], "last_row": todo[-1]}, command)
         stats = write_rendered_rows(h, p["phases"], p["geom"], p["omega"], p["dty"], p["det_shape"], rows=todo,
@@ -390,6 +400,8 @@ def stage_assemble(
         msg = (f"the parts {parts} hold rows {np.flatnonzero(seen == 0).tolist()} not at all and "
                f"{np.flatnonzero(seen > 1).tolist()} more than once")  # fmt: skip
         raise ValueError(msg)
+    out = stage_path(prepare_file, "assemble", out)
+    check_out(out, [prepare_file, *parts])
     folder = os.path.join(analysisroot, sample, f"{sample}_{dataset}")
     os.makedirs(folder, exist_ok=True)
     sparse = os.path.join(folder, f"{sample}_{dataset}_sparse.h5")
@@ -413,7 +425,6 @@ def stage_assemble(
                 "parts": [os.path.abspath(f) for f in parts], "part_ids": [read_provenance(f)["id"] for f in parts]}  # fmt: skip
     if peaks_table:
         resolved["peaks_table"] = write_peaks_table(dsfile)
-    out = stage_path(prepare_file, "assemble", out)
     with h5py.File(out, "w") as h:
         write_provenance(h, "assemble", prepare_file, options, resolved, command)
     write_results(out, {"rows": n_rows, "pixels": n_pixels})
