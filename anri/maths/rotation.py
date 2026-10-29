@@ -130,7 +130,8 @@ def skew(v: jax.Array) -> jax.Array:
 def rmat_from_axis_angle(axis: jax.Array, angle: jax.Array) -> jax.Array:
     r"""Return rotation matrices for positive right-handed rotations about axes by angles (degrees).
 
-    Rodrigues' formula, with $\hat{n}$ the unit axis and $\theta$ the angle:
+    Rodrigues' formula (e.g. Rowenhorst et al., 2015, equation 15 [1]_), with $\hat{n}$ the unit axis and $\theta$
+    the angle:
 
     $$
     \matr{R} = \cos\theta \, \matr{I} + \sin\theta \, [\hat{n}]_\times + (1 - \cos\theta) \, \hat{n}\hat{n}^T
@@ -150,6 +151,12 @@ def rmat_from_axis_angle(axis: jax.Array, angle: jax.Array) -> jax.Array:
     -------
     R: jax.Array
         [..., 3, 3] Rotation matrices. $\matr{R} \cdot \vec{v_{\text{sample}}} = \vec{v_{\text{lab}}}$
+
+    References
+    ----------
+    .. [1] Rowenhorst, D., Rollett, A.D., Rohrer, G.S., Groeber, M., Jackson, M., Konijnenberg, P.J., De Graef, M.,
+       2015. Consistent representations of and conversions between 3D rotations. Modelling and Simulation in Materials
+       Science and Engineering 23, 083501. https://doi.org/10.1088/0965-0393/23/8/083501
     """
     axis = jnp.asarray(axis)
     n = axis / jnp.linalg.norm(axis, axis=-1, keepdims=True)

@@ -32,7 +32,13 @@ if TYPE_CHECKING:
 def ramp_filter(sino: ArrayLike) -> np.ndarray:
     """Filter each projection (row of ``sino`` [omega, dty]) along dty with a Hamming-windowed ramp.
 
-    As ImageD11's ``run_iradon`` with ``filter_name="hamming"``, for filtered back-projection.
+    As ImageD11's ``run_iradon`` with ``filter_name="hamming"``, for filtered back-projection (Kak and Slaney,
+    1988) [1]_.
+
+    References
+    ----------
+    .. [1] Kak, A.C., Slaney, M., 1988. Principles of Computerized Tomographic Imaging. IEEE Press, New York. Reprinted
+       2001, SIAM, Philadelphia. https://doi.org/10.1137/1.9780898719277
     """
     sino = np.asarray(sino, float)
     n = sino.shape[1]
@@ -184,7 +190,15 @@ def support_mask(
 
 
 def otsu(values: ArrayLike, n_bins: int = 256) -> float:
-    """Otsu's threshold of some values: the cut that best separates them into two classes."""
+    """Otsu's threshold of some values: the cut that best separates them into two classes.
+
+    The cut that maximises the between-class variance (Otsu, 1979) [1]_.
+
+    References
+    ----------
+    .. [1] Otsu, N., 1979. A threshold selection method from gray-level histograms. IEEE Transactions on Systems, Man,
+       and Cybernetics 9, 62–66. https://doi.org/10.1109/TSMC.1979.4310076
+    """
     values = np.asarray(values, float).ravel()
     h, e = np.histogram(values, n_bins)
     c = 0.5 * (e[1:] + e[:-1])

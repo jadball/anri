@@ -177,7 +177,7 @@ def attenuation(structure: DansCrystal, energy_kev: float) -> float:
 
     The structure's atoms and cell give the composition and density; each element's total mass attenuation
     (photoelectric, Compton and Rayleigh) comes from Dans_Diffraction's tables (``Crystal.Properties.absorption``),
-    which reproduce NIST XCOM (e.g. iron at 50 keV: 1.958 cm^2/g).
+    which reproduce NIST XCOM [1]_ (e.g. iron at 50 keV: 1.958 cm^2/g).
 
     Parameters
     ----------
@@ -190,6 +190,11 @@ def attenuation(structure: DansCrystal, energy_kev: float) -> float:
     -------
     float
         mu (1 / micrometre, the unit of the voxel positions): the intensity falls as exp(-mu L) along a path L
+
+    References
+    ----------
+    .. [1] Berger, M.J., Hubbell, J.H., Seltzer, S.M., Chang, J., Coursey, J.S., Sukumar, R., Zucker, D.S., Olsen,
+       K., n.d. XCOM: Photon Cross Sections Database. NIST. https://physics.nist.gov/xcom
     """
     return float(np.asarray(structure.Properties.absorption(energy_kev)).ravel()[0])
 
@@ -197,8 +202,8 @@ def attenuation(structure: DansCrystal, energy_kev: float) -> float:
 def structure_factors(structure: DansCrystal, hkl: ArrayLike, wavelength: float) -> np.ndarray:
     """Compute ``|F|^2`` of reflections of a structure, with Debye-Waller factors and anomalous dispersion.
 
-    Uses Dans_Diffraction's X-ray scattering with dispersion (f', f'') at this wavelength. Warns if the structure has
-    no isotropic thermal factors, as there is then no Debye-Waller attenuation.
+    Uses Dans_Diffraction's [1]_ X-ray scattering with dispersion (f', f'') at this wavelength. Warns if the structure
+    has no isotropic thermal factors, as there is then no Debye-Waller attenuation.
 
     Parameters
     ----------
@@ -213,6 +218,10 @@ def structure_factors(structure: DansCrystal, hkl: ArrayLike, wavelength: float)
     -------
     np.ndarray
         [N] ``|F|^2``, in Dans_Diffraction's units (relative)
+
+    References
+    ----------
+    .. [1] Porter, D.G., n.d. Dans Diffraction. https://github.com/DanPorter/Dans_Diffraction
     """
     cif = getattr(structure, "cif", None)
     if not cif:  # built in code, not read from a CIF (Dans_Diffraction sets cif = {})

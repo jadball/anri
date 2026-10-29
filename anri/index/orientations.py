@@ -163,9 +163,18 @@ def fit(
         [Nq] increase in the Poisson deviance if that orientation alone were removed, the others fixed:
         ``2 sum_b [d_b log(mu_b / (mu_b - g a_b)) - g a_b]`` over observed bins (empty bins: the change in
         ``max(mu_b - censor, 0)``). About chi-square with one degree of freedom for an
-        orientation that is not there, so ~25 is 5 sigma.
+        orientation that is not there (Wilks, 1938) [1]_, so ~25 is 5 sigma. Two caveats: an occupancy cannot be
+        negative, so the null is half chi-square, half zero (Chernoff, 1954) [2]_; and holding the others fixed
+        overstates the ratio where orientations share spots. Read it as a ranking.
     model: np.ndarray
         [n_cells] the fitted histogram, if return_model
+
+    References
+    ----------
+    .. [1] Wilks, S.S., 1938. The large-sample distribution of the likelihood ratio for testing composite hypotheses.
+       Annals of Mathematical Statistics 9, 60–62. https://doi.org/10.1214/aoms/1177732360
+    .. [2] Chernoff, H., 1954. On the distribution of the likelihood ratio. Annals of Mathematical Statistics 25,
+       573–578. https://doi.org/10.1214/aoms/1177728725
     """
     U = np.asarray(U, np.float32)
     n = len(U)

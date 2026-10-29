@@ -11,7 +11,13 @@ from anri.geom.gonio import sample_to_lab
 def lorentz(k_in: jax.Array, k_out: jax.Array, rot_axis: jax.Array) -> jax.Array:
     """Lorentz factor for rotation about ``rot_axis``.
 
-    It is ``1 / |rot_axis . (k_in x k_out)|``, equal to 1 / :func:`ImageD11.refinegrains.lf` = ``1 / (sin(2theta) |sin(eta)|)`` for a vertical rotation axis.
+    It is ``1 / |rot_axis . (k_in x k_out)|`` (Kabsch, 1988, p. 922) [1]_, equal to
+    1 / :func:`ImageD11.refinegrains.lf` = ``1 / (sin(2theta) |sin(eta)|)`` for a vertical rotation axis.
+
+    References
+    ----------
+    .. [1] Kabsch, W., 1988. Evaluation of single-crystal X-ray diffraction data from a position-sensitive detector.
+       Journal of Applied Crystallography 21, 916–924. https://doi.org/10.1107/S0021889888007903
     """
     k_in = k_in / jnp.linalg.norm(k_in)
     k_out = k_out / jnp.linalg.norm(k_out)
@@ -23,7 +29,18 @@ def polarisation(k_in: jax.Array, k_out: jax.Array, factor: ArrayLike) -> jax.Ar
 
     Horizontal and vertical are across the beam, see :func:`anri.geom.beam.beam_basis`. For a beam along lab x
     (horizontal = lab y) this equals :func:`ImageD11.refinegrains.polarization` with ``eta0 = 0``.
-    ``factor = 1`` is fully horizontally polarised, ``factor = 0`` is unpolarised.
+    ``factor = 1`` is fully horizontally polarised, ``factor = 0`` is unpolarised. It is Kabsch's vector form
+    (Kabsch, 1988, p. 922) [1]_, with the field along the polarisation plane's normal ``e_h`` with probability
+    ``(1 + factor) / 2``, and Kahn et al.'s ``P = (1 + cos^2 2theta) / 2 - J' cos(2 rho) sin^2(2theta) / 2`` with
+    ``J' = factor`` and ``rho = eta + 90`` degrees (Kahn et al., 1982, equations 13-15) [2]_.
+
+    References
+    ----------
+    .. [1] Kabsch, W., 1988. Evaluation of single-crystal X-ray diffraction data from a position-sensitive detector.
+       Journal of Applied Crystallography 21, 916–924. https://doi.org/10.1107/S0021889888007903
+    .. [2] Kahn, R., Fourme, R., Gadet, A., Janin, J., Dumas, C., André, D., 1982. Macromolecular crystallography with
+       synchrotron radiation: photographic data collection and polarization correction. Journal of Applied
+       Crystallography 15, 330–337. https://doi.org/10.1107/S0021889882012060
     """
     _, e_h, e_v = beam_basis(k_in)
     k_out = k_out / jnp.linalg.norm(k_out)

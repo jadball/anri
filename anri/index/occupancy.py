@@ -450,6 +450,8 @@ def mlem(
 ) -> jax.Array:  # fmt: skip
     """Fit occupancies by MLEM (``f <- f A^T(d / A f) / A^T 1``), accelerated by SQUAREM (:func:`squarem`).
 
+    MLEM is the EM algorithm of emission tomography (Shepp and Vardi, 1982 [1]_; Lange and Carson, 1984 [2]_).
+
     An iteration costs 3 MLEM updates and goes about as far as 10 or more: thin features (twins one or two voxels
     thick) converge long after the deviance flattens. Empty bins are censored above ``censor`` (counts per bin,
     :func:`censored_ratio`); 0 for plain Poisson.
@@ -477,6 +479,13 @@ def mlem(
     -------
     jax.Array
         [Nv, K] occupancies
+
+    References
+    ----------
+    .. [1] Shepp, L.A., Vardi, Y., 1982. Maximum likelihood reconstruction for emission tomography. IEEE Transactions on
+       Medical Imaging 1, 113–122. https://doi.org/10.1109/TMI.1982.4307558
+    .. [2] Lange, K., Carson, R., 1984. EM reconstruction algorithms for emission and transmission tomography. Journal
+       of Computer Assisted Tomography 8, 306–316.
     """
     n_cells = d.shape[0]
     norm = jnp.maximum(backward(jnp.ones(n_cells, d.dtype), cand, pred, ring_j, pos, scan, dims, vb), 1e-30)
