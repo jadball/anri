@@ -15,8 +15,10 @@ a small mixture of populations: dislocation cells, twin domains, martensite vari
 spread. In copper strained by 3-4 % in tension, for example, nearly dislocation-free subgrains of 1-3 µm give sharp
 peaks, misoriented by hundredths of a degree, on a diffuse cloud from the dislocation walls between them; the
 subgrains resolved held at least 30 % of the volume [Jakobsen2006]_. Those sharp sub-spots were seen at an angular
-resolution of 0.004° with a 14 µm beam; at ordinary resolution they blur into one smeared peak. Anri therefore represents each voxel :math:`v` by occupancies :math:`f_{vq} \ge 0` of a list of
-orientations :math:`q`, and fits every voxel independently of its neighbours' values.
+resolution of 0.004° with a 14 µm beam; at ordinary resolution they blur into one smeared peak.
+
+Anri therefore represents each voxel :math:`v` by occupancies :math:`f_{vq} \ge 0` of a list of orientations :math:`q`,
+and fits every voxel independently of its neighbours' values.
 
 **Anri's choice:** no coupling between voxels: no smoothness, total variation or basis-function prior on orientation.
 Such priors suppress exactly the local variation Anri exists to measure, as averaging each voxel over the rays through
