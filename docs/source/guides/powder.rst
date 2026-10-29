@@ -1,5 +1,5 @@
-Powder pattern export
-=====================
+How to export a powder pattern
+==============================
 
 ``python -m anri.index powder`` sums a scanning-3DXRD dataset's sparse pixels over every frame into a powder pattern:
 the whole sample, every rotation and every dty row. It is useful for phase identification and for refining a phase's

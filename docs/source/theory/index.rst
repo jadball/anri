@@ -16,7 +16,8 @@ computes, where it comes from, and the function that computes it.
   trusted.
 
 Only the settled parts of Anri are covered: the forward model (:mod:`anri.fwd` and the layers below it) and the
-indexer (:mod:`anri.index`). The tutorials (:ref:`tut_geom` and the notebooks) show the same things with code.
+indexer (:mod:`anri.index`). The :doc:`tutorials <../tutorials/index>` compute the same equations with Anri's functions
+and check them.
 
 Forward model
 =============

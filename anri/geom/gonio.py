@@ -18,7 +18,7 @@ def sample_to_lab(v_sample: jax.Array, omega: float, wedge: float, chi: float, d
     r"""Convert from sample to lab coordinates (apply the diffractometer stack).
 
     Adapted from :func:`ImageD11.transform.compute_g_from_k` and :func:`ImageD11.transform.compute_grain_origins`.
-    See :ref:`tut_geom` for more details about our geometry.
+    See :ref:`theory_frames` for the goniometer stack.
 
     Parameters
     ----------
@@ -67,7 +67,7 @@ def lab_to_sample(v_lab: jax.Array, omega: float, wedge: float, chi: float, dty:
     r"""Convert from lab to sample coordinates (apply the diffractometer stack).
 
     Adapted from :func:`ImageD11.transform.compute_g_from_k` and :func:`ImageD11.transform.compute_grain_origins`.
-    See :ref:`tut_geom` for more details about our geometry.
+    See :ref:`theory_frames` for the goniometer stack.
 
     Parameters
     ----------

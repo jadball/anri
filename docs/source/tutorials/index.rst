@@ -2,12 +2,15 @@
 Tutorials
 =========
 
-This page contains tutorials on how to use Anri.
+The tutorials teach Anri by running it, in order: each builds on the ones before. Each goes with a page of
+:ref:`theory`, which states the equations; the tutorial computes them with Anri's functions and checks the results, so
+the two never disagree for long. To do one task with your own data, see the :doc:`../guides/index` instead.
 
 Crystallography
 ===============
 
-Anri's crystallography is a set of plain functions. Dan's Diffraction reads the CIF; Anri gets the lattice parameters and space group from it, computes the B matrix, lists the reflections, groups them into rings (by d-star) and computes structure factors.
+From a CIF to the reflections a crystal can give: the lattice and its :math:`\matr{B}` matrix, the reflections and
+their rings, structure factors and the Laue group. With :doc:`../theory/crystal`.
 
 .. nbgallery::
 
@@ -18,78 +21,40 @@ Anri's crystallography is a set of plain functions. Dan's Diffraction reads the 
 Geometry
 ========
 
-Goniometer
-----------
-
-Anri currently uses the FABLE geometry definitions for converting to and from detector, laboratory and sample coordinate systems.
-Every frame, from Miller indices to detector pixels, is defined with diagrams in :ref:`theory_frames`; the included
-:download:`FABLE geometry document<./Fable_Geometry_version_1.0.8.pdf>` is the original.
-
-As that document isn't perfectly descriptive, I'll try to describe slightly more what convention we use.
-We use a right-handed coordinate system. With no goniometer rotations (all angles zero), the $\omega$ rotation axis (vertical) defines our $Z$ direction. The dty stage defines the $Y$ axis, and the $X$ axis (approximately down-beam) is perpendicular to $Y$ and $Z$.
-If you are the beam, looking towards the detector from the source, the $Y$ axis points to the left.
-
-Our goniometer stack is as follows::
-
-    sample
-    omega - roll around Z axis
-    chi - roll around X axis
-    wedge - roll around Y axis (in ImageD11 this has a negative sign, we definine it as positive.)
-    dty stage - horizontal translation. Defines Y axis.
-    Hutch floor
-
-General rotation functions like :func:`anri.maths.rotation.rot_z` work thusly. 
-Imagine the most basic stage, with a single rotation about $Z$. 
-We want to generate a rotation matrix that encodes the pose of the stage. 
-When we receive the matrix $\matr{R_z}$, it is applied like this:
-
-$$\matr{R_z} \cdot \vec{v_{\text{sample}}} = \vec{v_{\text{lab}}}$$
-
-Detector
---------
-
-Anri currently uses the FABLE geometry definitions for detector space.
+The goniometer takes a point or a direction from the sample frame to the lab, and the detector takes a diffracted ray
+to a pixel. Both follow :ref:`theory_frames`, which defines every frame, from Miller indices to detector pixels, with
+diagrams, and lists where Anri differs from the FABLE geometry (the
+:download:`FABLE geometry document<./Fable_Geometry_version_1.0.8.pdf>`). The detector tutorial ends with FABLE's own
+test case.
 
 .. nbgallery::
-    
-    detector_geometry
+
     goniometer_geometry
+    detector_geometry
 
-Forward Modeling
-================
+Forward modelling
+=================
 
-There's a very basic demonstration of how to perform a forward model with Anri, a walk through the renderer that simulates whole scanning 3DXRD datasets, a DCT scan rendered with it, and the stages of ``python -m anri.simulate`` with a plot for each option, simulating the AM316L phantom as an ImageD11 dataset (the last two are stored runs: they need a GPU, so they are not re-executed when the docs are built). The last notebook compares a measured dataset's frames, row by row and frame by frame, with a map's forward model; it needs your own data, so it is stored without outputs.
+Where a grain's reflections land, then how wide each peak is, then whole scans: the renderer simulates a scanning
+3DXRD dataset pixel by pixel, and a DCT scan with it (stored run: it needs a GPU, so it is not re-executed when the
+docs are built). With :doc:`../theory/diffraction`, :doc:`../theory/intensity` and :doc:`../theory/peak_shape`.
 
 .. nbgallery::
-    
+
     forward_model_simple
     forward_model_covariance
     renderer
     dct
-    rendering_parameters
-    compare_frames
 
 Indexing
 ========
 
-Indexing finds each voxel's orientations from the data alone, by fitting every voxel's orientation occupancies jointly with the forward model.
-The first notebook makes a phantom microstructure (grains, misoriented cells and twins), the second simulates a scan of it and indexes it from scratch.
-The third runs the steps of ``python -m anri.index`` one at a time on any ImageD11 dataset (or the phantom), with a diagnostic plot and, where it is cheap, a slider for each option, and prints the command line with the values chosen.
-They are not re-executed when the docs are built.
+Indexing finds each voxel's orientations from the data alone, by fitting every voxel's orientation occupancies jointly
+with the forward model. The first notebook makes a phantom microstructure (grains, misoriented cells and twins), the
+second simulates a scan of it and indexes it from scratch. Both are stored runs, not re-executed when the docs are
+built. With :doc:`../theory/indexing` and the chapters after it.
 
 .. nbgallery::
 
     phantom
     indexing
-    indexing_parameters
-
-Powder patterns
-===============
-
-``python -m anri.index powder`` sums a dataset's sparse pixels over every frame into a powder pattern, for phase
-identification and for refining a cell with a Rietveld or Le Bail program (rietx in the example).
-
-.. toctree::
-    :maxdepth: 1
-
-    powder

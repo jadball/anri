@@ -17,7 +17,9 @@ Anri follows the FABLE geometry [FABLEgeom]_ (H.F. Poulsen, S. Schmidt, J. Wrigh
 A. Alpers, version 1.0.8, 2009), as ImageD11 [ImageD11]_ implements it. Where Anri differs, this page says so. The
 FABLE document, which also covers Euler angles, strain and symmetry, is included as
 :download:`Fable_Geometry_version_1.0.8.pdf <../tutorials/Fable_Geometry_version_1.0.8.pdf>`. All rotations are
-right-handed and active: :math:`\matr{R}\vec{v}` turns the vector :math:`\vec{v}`.
+right-handed and active: :math:`\matr{R}\vec{v}` turns the vector :math:`\vec{v}`. The tutorials
+:doc:`../tutorials/crystallography`, :doc:`../tutorials/goniometer_geometry` and :doc:`../tutorials/detector_geometry`
+compute each transform below with Anri's functions and check it.
 
 **Code:** :func:`anri.maths.rotation.rot_x`, :func:`anri.maths.rotation.rot_y`, :func:`anri.maths.rotation.rot_z`.
 

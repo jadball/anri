@@ -12,7 +12,7 @@ def detector_orientation_matrix(o11: float, o12: float, o21: float, o22: float) 
 
     This accounts for the varying possible readout directions and origins of the detector.
     We get a vector coming back in the format $\left(z_{\text{det}}, y_{\text{det}}, 0\right)$.
-    See :ref:`tut_geom` for more details about FABLE geometry.
+    See :ref:`theory_frames` for the detector frame.
     In ImageD11, you can find this in :func:`ImageD11.transform.compute_xyz_lab`
 
     Parameters

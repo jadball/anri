@@ -29,6 +29,9 @@ written by hand, so the covariance always matches the centroid it comes from.
 
 **Code:** :func:`anri.fwd.peak.make_propagator`, :func:`anri.fwd.peak.propagate_cov`, :func:`anri.fwd.peak.get_cov_in`.
 
+The tutorial :doc:`../tutorials/forward_model_covariance` propagates a position error, a wavelength spread and the
+divergence through the centroid, and checks each against the formulas below.
+
 The inputs:
 
 - **Wavelength spread** :math:`\sigma_\lambda` moves a peak across the ring (radially), the only term that grows with
