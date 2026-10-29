@@ -140,6 +140,17 @@ class TestOccupancy(unittest.TestCase):
         bin0 = 2 * (10 * np.log(10 / 20) - 10 + 20)  # the plain deviance of bin 0, dropped when saturated
         self.assertAlmostEqual(dev, dev_plain - bin0, places=4)
 
+    def test_fewer_orientations_than_candidates(self):
+        """Fewer orientations than the candidates asked for: as many candidates as orientations (issue #32)."""
+        pred = (jnp.full((16, 1), 90.0), jnp.full((16, 1), 0.5), jnp.ones((16, 1), bool), jnp.ones((16, 1)))
+        scan = {"n_rows": 1, "y0": 0.0, "dty0": 0.0, "ystep": 1.0, "om0": 0.0}
+        args = (np.ones(4, np.float32), pred, np.array([0]), np.zeros((1, 3), np.float32), scan, (90.0, 1.0, 4, 1))
+        f, cand = ix.occupancy.fit_occupancy(*args, n_iter=0, block_bytes=4096, log=lambda _: None)
+        self.assertEqual(f.shape, (1, 16))
+        self.assertEqual(sorted(cand[0].tolist()), list(range(16)))
+        with self.assertRaises(ValueError):
+            ix.occupancy.fit_occupancy(args[0], tuple(p[:0] for p in pred), *args[2:], n_iter=0, log=lambda _: None)
+
     def test_absorption(self):
         """With edge distances after the positions, each weight is scaled by exp(-mu (L_in + L_out))."""
         n, step, r, mu = 81, 2.0, 60.0, 0.005
@@ -726,6 +737,20 @@ class TestDetectorCoverage(unittest.TestCase):
         np.testing.assert_allclose(cov.mean(1), 0.5, atol=0.02)
         self.assertLessEqual(np.sum((cov > 0.01) & (cov < 0.99)), 8)  # only the bins the mask's edge crosses
         np.testing.assert_allclose(ix.data.coarsen_coverage(cov, 180), cov.reshape(2, 180, 2).mean(2))
+
+    def test_detector_edge(self):
+        """A ring window past the detector's edge is part covered, whether or not masked pixels extend it (#30)."""
+        geom = {"det_origin_lab": jnp.array([100.0, -10.0, -10.0]), "s_step_lab": jnp.array([0.0, 0.0, 1.0]),
+                "f_step_lab": jnp.array([0.0, 1.0, 0.0]), "k_in_lab": jnp.array([1.0, 0.0, 0.0])}  # fmt: skip
+        tth = [np.degrees(np.arctan(0.1))]  # a ring of radius 10 pixels, its window 8.3-11.8, on 21 x 21 pixels
+        cropped = ix.data.detector_coverage(np.ones((21, 21), bool), geom, tth, [1.0], 10.0, 36, sub=4, rows=16)
+        good = np.zeros((21, 31), bool)
+        good[:, :21] = True  # the same measured pixels, and masked ones beyond the edge
+        extended = ix.data.detector_coverage(good, geom, tth, [1.0], 10.0, 36, sub=4, rows=16)
+        self.assertLess(cropped[0, 9], 0.7)  # was 1: only the points on the detector were counted
+        np.testing.assert_allclose(cropped, extended, atol=0.05)
+        whole = {**geom, "det_origin_lab": jnp.array([100.0, -30.0, -30.0])}
+        np.testing.assert_allclose(ix.data.detector_coverage(np.ones((61, 61), bool), whole, tth, [1.0], 10.0, 36), 1.0)
 
     def test_scales_the_system(self):
         """Coverage 1 changes nothing; coverage 0 on a ring removes its predictions' weight."""

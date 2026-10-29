@@ -90,8 +90,10 @@ def step_grid_from_ybincens(
     y_relative = ybincens - y0
     y_largest = jnp.max(jnp.abs(y_relative))
 
-    # Find the maximum integer step needed
+    # Find the maximum integer step needed, rounded up to whole grid steps so that 0 is on the grid and in its middle,
+    # where step_to_recon puts it (as ImageD11 does after its release 2.1.3)
     max_int = jnp.ceil(y_largest / step_size).astype(jnp.int32)
+    max_int = -(-max_int // gridstep) * gridstep
 
     # Create a symmetric range from -max_int to +max_int
     steps = jnp.arange(-max_int, max_int + 1, gridstep, dtype=jnp.int32)
