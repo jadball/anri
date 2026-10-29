@@ -792,6 +792,19 @@ class TestInherit(unittest.TestCase):
         self.assertEqual(cand[0][9], 100)  # the shared one once
         self.assertIn(24, cand[1])
 
+    def test_duplicates(self):
+        """An orientation in several neighbours ranks by its largest occupancy, and comes once (issue #28)."""
+        near = jnp.arange(9)[None]
+        c = np.arange(18, dtype=np.int32).reshape(9, 2)
+        c[8, 0] = 0  # orientation 0: weak in neighbour 0, strong in neighbour 8
+        f = np.full((9, 2), 2.0, np.float32)
+        f[0, 0], f[8, 0] = 0.01, 100.0
+        self.assertEqual(np.asarray(ix.occupancy._inherit(near, jnp.asarray(f), jnp.asarray(c), 2))[0, 0], 0)
+        c = np.tile(np.array([0, 1], np.int32), (9, 1))  # two orientations in all: the other slots empty
+        out = np.asarray(ix.occupancy._inherit(near, jnp.ones((9, 2)), jnp.asarray(c), 4))
+        np.testing.assert_array_equal(np.sort(out[0, :2]), [0, 1])
+        np.testing.assert_array_equal(out[0, 2:], [-1, -1])
+
 
 class TestMaskFiles(unittest.TestCase):
     def test_load_mask(self):
