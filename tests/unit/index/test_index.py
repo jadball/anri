@@ -705,6 +705,20 @@ class TestDetectorCoverage(unittest.TestCase):
         self.assertLessEqual(np.sum((cov > 0.01) & (cov < 0.99)), 8)  # only the bins the mask's edge crosses
         np.testing.assert_allclose(ix.data.coarsen_coverage(cov, 180), cov.reshape(2, 180, 2).mean(2))
 
+    def test_detector_edge(self):
+        """A ring window past the detector's edge is part covered, whether or not masked pixels extend it (#30)."""
+        geom = {"det_origin_lab": jnp.array([100.0, -10.0, -10.0]), "s_step_lab": jnp.array([0.0, 0.0, 1.0]),
+                "f_step_lab": jnp.array([0.0, 1.0, 0.0]), "k_in_lab": jnp.array([1.0, 0.0, 0.0])}  # fmt: skip
+        tth = [np.degrees(np.arctan(0.1))]  # a ring of radius 10 pixels, its window 8.3-11.8, on 21 x 21 pixels
+        cropped = ix.data.detector_coverage(np.ones((21, 21), bool), geom, tth, [1.0], 10.0, 36, sub=4, rows=16)
+        good = np.zeros((21, 31), bool)
+        good[:, :21] = True  # the same measured pixels, and masked ones beyond the edge
+        extended = ix.data.detector_coverage(good, geom, tth, [1.0], 10.0, 36, sub=4, rows=16)
+        self.assertLess(cropped[0, 9], 0.7)  # was 1: only the points on the detector were counted
+        np.testing.assert_allclose(cropped, extended, atol=0.05)
+        whole = {**geom, "det_origin_lab": jnp.array([100.0, -30.0, -30.0])}
+        np.testing.assert_allclose(ix.data.detector_coverage(np.ones((61, 61), bool), whole, tth, [1.0], 10.0, 36), 1.0)
+
     def test_scales_the_system(self):
         """Coverage 1 changes nothing; coverage 0 on a ring removes its predictions' weight."""
         from anri.index.orientations import _system
