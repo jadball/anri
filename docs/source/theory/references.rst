@@ -29,7 +29,7 @@ The works the theory pages cite, by label.
    three-dimensional X-ray diffraction microscopy. Journal of Applied Crystallography 48, 1094–1101.
    https://doi.org/10.1107/S1600576715009899
 
-.. [ImageD11] Wright, J.P., Ball, J.A.D., Jacob, J.-B., Hachi, Y.E., Merkel, S., Fang, H., Henningsson, N.A., 2024.
+.. [ImageD11] Wright, J.P., Ball, J.A.D., Jacob, J.-B., El Hachi, Y., Merkel, S., Fang, H., Henningsson, N.A., 2024.
    FABLE-3DXRD/ImageD11. https://github.com/FABLE-3DXRD/ImageD11
 
 .. [Jakobsen2006] Jakobsen, B., Poulsen, H.F., Lienert, U., Almer, J., Shastri, S.D., Sørensen, H.O., Gundlach, C.,
