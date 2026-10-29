@@ -21,7 +21,7 @@ Lorentz factor
 
 A reflection crosses the Ewald sphere at a rate set by the geometry, so the time it spends diffracting, and with it
 the integrated intensity of a rotation scan, varies from reflection to reflection. For rotation about an axis
-:math:`\hat{n}`, the Lorentz factor is [Kabsch1988]_
+:math:`\hat{n}`, the Lorentz factor is [Kabsch1988]_ (p. 922, after Zachariasen and [MilchMinor1974]_)
 
 .. math::
     :label: int-lorentz
@@ -29,7 +29,9 @@ the integrated intensity of a rotation scan, varies from reflection to reflectio
     L = \frac{1}{\left|\hat{n} \cdot (\hat{k}_{\text{in}} \times \hat{k}_{\text{out}})\right|}
     = \frac{1}{\sin 2\theta\, |\sin\eta|} \quad \text{(vertical axis)},
 
-where the second form is ImageD11's ``refinegrains.lf`` [ImageD11]_. :math:`\hat{n}` is the omega axis tilted by wedge and
+where the second form is ImageD11's ``refinegrains.lf`` [ImageD11]_. Kabsch writes the reciprocal as
+:math:`|\vec{S} \cdot (\vec{u} \times \vec{S}_0)| / (|\vec{S}||\vec{S}_0|)`, with :math:`\vec{u}` the axis and
+:math:`\vec{S}_0`, :math:`\vec{S}` the incoming and diffracted wave-vectors: the same triple product. :math:`\hat{n}` is the omega axis tilted by wedge and
 chi. :math:`L` diverges as :math:`\sin\eta \to 0`: reflections near the rotation axis pass slowly through the Ewald sphere, which
 is also why their peaks are wide in omega (:ref:`theory_rotation_motion`). **Code:**
 :func:`anri.diffract.factors.lorentz`.
@@ -38,7 +40,7 @@ Polarisation factor
 -------------------
 
 A synchrotron beam is polarised in the horizontal plane. With a degree of horizontal polarisation :math:`p` (1: fully
-horizontal, 0: unpolarised) [Warren1969]_,
+horizontal, 0: unpolarised),
 
 .. math::
     :label: int-pol
@@ -47,7 +49,11 @@ horizontal, 0: unpolarised) [Warren1969]_,
       + \tfrac{1}{2}(1 - p)\left(1 - (\hat{k}_{\text{out}} \cdot \hat{e}_v)^2\right).
 
 For a beam along :math:`x` this is ImageD11's ``refinegrains.polarization`` with ``eta0 = 0``. For :math:`p = 0` it is the
-familiar :math:`(1 + \cos^2 2\theta)/2`. **Code:** :func:`anri.diffract.factors.polarisation`,
+familiar :math:`(1 + \cos^2 2\theta)/2`. It is Kabsch's vector form [Kabsch1988]_ (p. 922), whose field lies along
+the polarisation plane's normal :math:`\vec{n} = \hat{e}_h` with probability :math:`1 - p_K`, so :math:`p_K = (1 - p)/2`;
+and Kahn et al.'s :math:`P = \tfrac{1}{2}(1 + \cos^2 2\theta) - \tfrac{1}{2}\mathcal{J}' \cos 2\rho \sin^2 2\theta`
+[Kahn1982]_ (eqs. 13-15, after Azaroff), with :math:`\mathcal{J}' = p` and :math:`\rho = \eta + 90°` measured from the
+horizontal. **Code:** :func:`anri.diffract.factors.polarisation`,
 :func:`anri.diffract.factors.lorentz_polarisation`.
 
 .. _theory_beam_profile:

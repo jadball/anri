@@ -48,6 +48,10 @@ The works the theory pages cite, by label.
    detector. *Journal of Applied Crystallography* 21, 916-924.
    https://doi.org/10.1107/S0021889888007903
 
+.. [Kahn1982] Kahn, R., Fourme, R., Gadet, A., Janin, J., Dumas, C. & André, D. (1982). Macromolecular
+   crystallography with synchrotron radiation: photographic data collection and polarization correction. *Journal of
+   Applied Crystallography* 15, 330-337. https://doi.org/10.1107/S0021889882012060
+
 .. [KakSlaney1988] Kak, A. C. & Slaney, M. (1988). *Principles of Computerized Tomographic Imaging*. IEEE Press.
    Reprinted (2001) as SIAM Classics in Applied Mathematics 33. https://doi.org/10.1137/1.9780898719277
 
@@ -94,8 +98,6 @@ The works the theory pages cite, by label.
 .. [VaradhanRoland2008] Varadhan, R. & Roland, C. (2008). Simple and globally convergent methods for accelerating the
    convergence of any EM algorithm. *Scandinavian Journal of Statistics* 35, 335-353.
    https://doi.org/10.1111/j.1467-9469.2007.00585.x
-
-.. [Warren1969] Warren, B. E. (1969). *X-Ray Diffraction*. Addison-Wesley (Dover reprint, 1990).
 
 .. [Wilks1938] Wilks, S. S. (1938). The large-sample distribution of the likelihood ratio for testing composite
    hypotheses. *Annals of Mathematical Statistics* 9, 60-62. https://doi.org/10.1214/aoms/1177732360

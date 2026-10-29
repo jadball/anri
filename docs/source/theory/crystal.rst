@@ -81,7 +81,7 @@ The intensity of a reflection is proportional to :math:`|F(\vec{h})|^2`,
     e^{-B_a s^2}\, e^{2\pi i\, \vec{h} \cdot \vec{x}_a}, \qquad s = \frac{\sin\theta}{\lambda} = \frac{d^*}{2},
 
 with occupancy :math:`o_a`, atomic form factor :math:`f_a`, anomalous dispersion :math:`f'_a, f''_a` at this wavelength, isotropic
-displacement :math:`B_a = 8\pi^2 U_{\text{iso}}` and fractional position :math:`\vec{x}_a` [Warren1969]_. Anri does not compute it
+displacement :math:`B_a = 8\pi^2 U_{\text{iso}}` and fractional position :math:`\vec{x}_a`. Anri does not compute it
 itself: Dans Diffraction [DansDiffraction]_ reads the CIF and evaluates it. Without displacement parameters in the CIF
 there is no Debye-Waller fall-off with :math:`s`, and Anri warns. **Code:** :func:`anri.crystal.structure.structure_factors`.
 
