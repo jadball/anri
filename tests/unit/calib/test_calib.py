@@ -75,5 +75,45 @@ class TestCalibrate(unittest.TestCase):
         np.testing.assert_allclose(U_fit, U, atol=1e-12)
 
 
+class TestRunCommand(unittest.TestCase):
+    def test_parses_back(self):
+        """run_command gives every option a calibration recorded, and the command line parses each one back."""
+        import inspect
+        import os
+        import shlex
+        import tempfile
+
+        import h5py
+
+        from anri.calib.__main__ import parse_args
+        from anri.calib.stages import run_command, stage_fit
+        from anri.io.provenance import write_provenance
+
+        values = {"peaks": "/data/a b/pks.h5", "lattice": [5.43, 5.43, 5.43, 90.0, 90.0, 90.0],
+                  "free": ["distance", "y_center", "lattice"], "tols": [0.2, 0.05], "n_iter": 7, "min_occ": 0.05}  # fmt: skip
+        params = inspect.signature(stage_fit).parameters
+        opts = {k: values.get(k, p.default) for k, p in params.items()
+                if p.kind == p.KEYWORD_ONLY and k not in ("command", "log")}  # fmt: skip
+        opts = {k: list(v) if isinstance(v, tuple) else v for k, v in opts.items()}  # as stage_fit records them
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "x_fit.h5")
+            with h5py.File(source, "w") as h:
+                write_provenance(h, "fit", None, {}, {})
+            for name, out in (("x_calib.h5", None), ("other.h5", "other.h5")):
+                path = os.path.join(tmp, name)
+                with h5py.File(path, "w") as h:
+                    write_provenance(h, "calib", source, opts, {})
+                args = parse_args(shlex.split(run_command(path))[3:])
+                self.assertEqual(args.command, "fit")
+                self.assertEqual(args.source, source)
+                self.assertEqual(args.out, None if out is None else path)
+                self.assertEqual(args.peaks, opts["peaks"])
+                self.assertEqual(args.lattice, opts["lattice"])
+                self.assertEqual(args.free.split(","), opts["free"])
+                self.assertEqual([float(t) for t in args.tols.split(",")], opts["tols"])
+                for k in ("n_iter", "clip", "min_occ", "min_peaks"):
+                    self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), opts[k], msg=k)
+
+
 if __name__ == "__main__":
     unittest.main()
