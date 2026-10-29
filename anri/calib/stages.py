@@ -12,7 +12,15 @@ from collections.abc import Callable
 import h5py
 import numpy as np
 
-from anri.io.provenance import read_provenance, stage_path, upstream, write_provenance, write_results
+from anri.io.provenance import (
+    chain,
+    check_out,
+    read_provenance,
+    stage_path,
+    upstream,
+    write_provenance,
+    write_results,
+)
 
 FREE = ("distance", "y_center", "z_center", "tilt_x", "tilt_y", "tilt_z", "wavelength")
 _COMPONENTS = ("xx", "yy", "zz", "yz", "xz", "xy")
@@ -81,6 +89,8 @@ def stage_fit(
     y0, step = float(fr["y0"]), float(fr["voxel_size"])
     geometry = io.read_geometry(hr["parfile"])
     pars0 = fit.base_pars(geometry, y0)
+    out = stage_path(fit_file, "calib", out)
+    check_out(out, [*chain(fit_file), hr["dataset_file"], pks_file, hr["parfile"]])
 
     pk = io.read_peaks(pks_file, ds["omega"], ds["dty"], io.read_spatial(ds))
     with h5py.File(fit_file, "r") as h:
@@ -106,7 +116,6 @@ def stage_fit(
             + ", ".join(f"{c} {np.average(dev[ok, i, j], weights=w) * 1e5:+.1f}" for c, (i, j) in zip(_COMPONENTS, _IJ))
             + f"; chi2 x {st['chi2_ratio']:.3f}")  # fmt: skip
 
-    out = stage_path(fit_file, "calib", out)
     resolved = {"dataset_file": hr["dataset_file"], "peaks_file": pks_file, "parfile": hr["parfile"],
                 "phase": hr["phase"], "space_group": hr["space_group"], "lattice": lpars.tolist(), "y0": y0,
                 "voxel_size": step, **{f"start_{k}": pars0[k] for k in fit.GEOMETRY}}  # fmt: skip
