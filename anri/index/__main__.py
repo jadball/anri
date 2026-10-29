@@ -10,6 +10,10 @@ The indexer runs in five stages, each a subcommand that writes one HDF5 file the
                                                                                     _tmap.h5
     python -m anri.index run <analysisroot> <sample> <dataset> [options]         all five
     python -m anri.index show <any stage file>                                   how it was made, back to the dataset
+    python -m anri.index powder <analysisroot> <sample> <dataset> [options]      -> <sample>_<dataset>_powder.h5, .xye
+
+``powder`` is not a stage of the indexer: it exports the whole scan as a powder pattern (e.g. for phase
+identification, or a Rietveld or Le Bail fit in another program).
 
 Each file records its options, the values resolved from the data, the file it was made from (checked by id when
 read) and the anri version and git commit. Re-run a stage with other options and a different ``--out`` to keep
@@ -226,6 +230,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     _censor_option(r)
     r.add_argument("--outdir", default=".")
 
+    o = sub.add_parser("powder", parents=[dataset, common], help="export the scan as a powder pattern (.h5 and .xye)")
+    o.add_argument("--phase", help="phase name in pars.json (default: the only one)")
+    o.add_argument("--parfile", help="pars.json (default: the DataSet's parfile, else pars/pars.json beside "
+                   "PROCESSED_DATA)")  # fmt: skip
+    o.add_argument("--monitor", help="normalise intensities by this counter, frame by frame (e.g. fpico6)")
+    o.add_argument("--detector-mask", help="detector mask, non-zero for masked pixels (default: the DataSet's "
+                   "maskfile)")  # fmt: skip
+    o.add_argument("--tth-step", type=float, default=0.005, help="2theta bin width, deg (default 0.005)")
+    o.add_argument("--n-eta", type=int, default=360, help="eta bins over 360 deg; the esd is the spread over them "
+                   "(default 360)")  # fmt: skip
+    o.add_argument("--min-coverage", type=float, default=0.3, help="the .xye holds the bins whose ring is measured "
+                   "over at least this share of its solid angle (default 0.3)")  # fmt: skip
+    o.add_argument("--check", action="store_true", help="print the resolved paths and parameters, then stop")
+    o.add_argument("--out", help="output file (default <sample>_<dataset>_powder.h5 in --outdir)")
+    o.add_argument("--outdir", default=".")
+
     w = sub.add_parser("show", help="how a stage file was made, all the way back to the dataset")
     w.add_argument("file")
     return p.parse_args(argv)
@@ -246,6 +266,15 @@ def main() -> None:
 
     cmd = args.command
     command = "python -m anri.index " + shlex.join(sys.argv[1:])
+    if cmd == "powder":
+        out = args.out or os.path.join(args.outdir, f"{args.sample}_{args.dataset}_powder.h5")
+        ix.stages.stage_powder(
+            args.analysisroot, args.sample, args.dataset, out, phase=args.phase, parfile=args.parfile,
+            monitor=args.monitor, detector_mask=args.detector_mask, tth_step=args.tth_step, n_eta=args.n_eta,
+            min_coverage=args.min_coverage, check=args.check, command=command, log=log,
+        )  # fmt: skip
+        log(f"done in {time.perf_counter() - T0:.0f} s")
+        return
     if cmd in ("histogram", "run"):
         out = getattr(args, "out", None) or os.path.join(args.outdir, f"{args.sample}_{args.dataset}_histogram.h5")
         source = ix.stages.stage_histogram(
