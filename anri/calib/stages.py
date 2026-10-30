@@ -76,7 +76,7 @@ def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = 
     with h5py.File(fit_file, "r") as h:
         U, f, cand = h["U"][()], h["f"][()], h["cand"][()]
     grid_o = np.where(f > min_occ * f.max(), cand, -1).astype(np.int32)
-    n_used = max(int((grid_o >= 0).sum(1).max()), 1)  # each voxel's kept entries first, the empty columns dropped
+    n_used = max(int(np.max((grid_o >= 0).sum(1))), 1)  # each voxel's kept entries first, the empty columns dropped
     order = np.argsort(grid_o < 0, axis=1, kind="stable")[:, :n_used]
     grid_o, f = np.take_along_axis(grid_o, order, 1), np.take_along_axis(f, order, 1)
     return {

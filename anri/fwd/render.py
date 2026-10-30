@@ -947,7 +947,7 @@ def add_absorption(
         dens = np.concatenate([np.asarray(e["density"], float) for e, _, _ in phases])
         n = attenuation_map(allpos, mus, dens, step).shape[0]  # one grid for every layer: one compile
     depth = np.zeros((len(allpos), n_phi), np.float32)
-    largest = int(np.unique(layer, return_counts=True)[1].max())
+    largest = int(np.max(np.unique(layer, return_counts=True)[1]))
     chunk = min(chunk, max(1024, 1 << (largest - 1).bit_length()))  # small maps: a small fixed size
     for k in np.unique(layer):
         sel = np.flatnonzero(layer == k)
