@@ -1,22 +1,24 @@
 ---
 name: anri
 description: >-
-  Index scanning-3DXRD (S3DXRD) data from scratch, and simulate datasets from a grain map, with the anri Python
-  package (python -m anri.index, python -m anri.simulate, anri.fwd). Read it before running an anri stage on a
-  dataset; before choosing the indexer's options (rings, y0, sample mask, lit cut, orientation grid, pruning,
-  occupancy fit, local search, populations); before judging an anri stage file or the map it holds; before rendering
-  a phantom or an indexed map back into detector frames; and before comparing anri's maps with ImageD11's. Not for
-  changing anri's own code: that is the repository's AGENTS.md.
+  Index scanning-3DXRD (S3DXRD) data from scratch, calibrate its geometry, and simulate datasets from a grain map,
+  with the anri Python package (python -m anri.index, python -m anri.calib, python -m anri.simulate, anri.fwd). Read
+  it before running an anri stage on a dataset; before calibrating the detector and beam geometry; before choosing
+  the indexer's options (rings, y0, sample mask, lit cut, orientation grid, pruning, occupancy fit, local search,
+  populations); before judging an anri stage file or the map it holds; before rendering
+  a phantom or an indexed map back into detector frames; before making a phantom (anri.phantom) to test a method;
+  and before comparing anri's maps with ImageD11's. Not for changing anri's own code: that is the repository's
+  AGENTS.md.
 license: GPL-3.0
 compatibility: >-
   Requires the anri package (JAX, h5py; ImageD11 to read and write ImageD11 datasets). Runs on CPU, or on a GPU when
   JAX has one. This file and its references ship inside the package; the manual is at https://jadball.github.io/anri/
 ---
 
-# Indexing and simulating scanning-3DXRD data with anri
+# Indexing, calibrating and simulating scanning-3DXRD data with anri
 
-anri indexes a scanning-3DXRD dataset into orientation populations per voxel, and renders a map back into detector
-frames. Both run as **stages**: each reads files, writes one HDF5 file, and records in it how it was made. The files
+anri indexes a scanning-3DXRD dataset into orientation populations per voxel, calibrates the geometry on it, and
+renders a map back into detector frames. All three run as **stages**: each reads files, writes one HDF5 file, and records in it how it was made. The files
 are the record of what you did. This file is the order of work, and the checks to make before you believe a number.
 
 ## Routing
@@ -25,11 +27,13 @@ are the record of what you did. This file is the order of work, and the checks t
 |---|---|
 | choosing an indexer option, or reading what a stage wrote | [index](references/index.md) |
 | simulating a dataset, rendering a map or phantom, calling `anri.fwd` | [simulate](references/simulate.md) |
+| calibrating the geometry: powder rings, then the indexed scan | [calib](references/calib.md) |
+| making a phantom to test a method (`anri.phantom`), and judging a method on it | [phantom](references/phantom.md) |
 | what a peak, a population or a spread can and cannot tell you | [physics](references/physics.md) |
 
 Read options and signatures from the installed code, never from memory: `python -m anri.index <stage> -h`,
-`python -m anri.simulate <stage> -h`, and the stage functions' docstrings (`anri.index.stages.stage_fit` and the
-others). The manual's Guides and Theory sections explain each choice at length.
+`python -m anri.calib <stage> -h`, `python -m anri.simulate <stage> -h`, and the stage functions' docstrings
+(`anri.index.stages.stage_fit` and the others). The manual's Guides and Theory sections explain each choice at length.
 
 ---
 
@@ -68,6 +72,10 @@ python -m anri.index populations <sample>_<dataset>_localsearch.h5  # -> ..._pop
 The dataset is ImageD11's layout: `{analysisroot}/{sample}/{sample}_{dataset}/{sample}_{dataset}_dataset.h5`, with
 the geometry and phase from its `pars.json` (`--parfile`, `--phase`). `run` does all six in one go, once the options
 are known.
+
+If the geometry is only the motors' first guess, calibrate first ([calib](references/calib.md)): fit the powder
+rings on the dataset's own pixels (`python -m anri.calib rings`), index with the `pars.json` they give, fit the
+geometry on the fit stage's file (`python -m anri.calib fit`), and index again with the calibrated `pars.json`.
 
 7. **An option is chosen by looking at the output of the stage before it.** y0 and the sample mask (fit options)
    are read off the histogram; the lit cut, eta cut and grid (search) off the histogram's lit map; the pruning cuts
@@ -109,7 +117,8 @@ are known.
     model's noise floor. Put `--min-frac` above that floor, and say where you put it.
 17. **A good-looking map is not a check.** To back a claim about a method, index a phantom whose truth you know:
     [simulate](references/simulate.md) renders one with cells and twins, and `python -m anri.index` reads the
-    dataset back. Orientation shifts shrunk towards each grain's mean are path averaging, the failure to look for.
+    dataset back; [phantom](references/phantom.md) says how to build one for the microstructure at hand.
+    Orientation shifts shrunk towards each grain's mean are path averaging, the failure to look for.
 18. **An input is not a result.** A value a stage took as a default (y0 from the DataSet, the automatic grid step)
     is an assumption you made. Say so.
 19. **Report** the files, the command that remakes them (`anri.index.stages.run_command(path)` gives a `run` command

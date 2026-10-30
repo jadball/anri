@@ -21,15 +21,22 @@ from anri.io.provenance import (
     chain,
     check_out,
     read_provenance,
+    recorder,
     stage_path,
     upstream,
+    write_log,
     write_provenance,
     write_results,
 )
 
 FREE = ("distance", "y_center", "z_center", "tilt_x", "tilt_y", "tilt_z", "wavelength")
-_COMPONENTS = ("xx", "yy", "zz", "yz", "xz", "xy")
-_IJ = ((0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1))
+COMPONENTS = ("xx", "yy", "zz", "yz", "xz", "xy")  # the strain's six components, as (i, j) in IJ
+IJ = ((0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1))
+
+
+def select_occupancy(f: np.ndarray, min_occ: float) -> np.ndarray:
+    """Return which of a fit's occupancies [V, K] the calibration uses: those above ``min_occ`` x the largest."""
+    return f > min_occ * f.max()
 
 
 def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = None, min_occ: float = 0.01) -> dict:
@@ -75,7 +82,7 @@ def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = 
     B = np.asarray(lpars_to_B(lpars))
     with h5py.File(fit_file, "r") as h:
         U, f, cand = h["U"][()], h["f"][()], h["cand"][()]
-    grid_o = np.where(f > min_occ * f.max(), cand, -1).astype(np.int32)
+    grid_o = np.where(select_occupancy(f, min_occ), cand, -1).astype(np.int32)
     n_used = max(int(np.max((grid_o >= 0).sum(1))), 1)  # each voxel's kept entries first, the empty columns dropped
     order = np.argsort(grid_o < 0, axis=1, kind="stable")[:, :n_used]
     grid_o, f = np.take_along_axis(grid_o, order, 1), np.take_along_axis(f, order, 1)
@@ -151,6 +158,7 @@ def stage_fit(
     """
     from . import fit
 
+    log, lines = recorder(log)
     options = {"peaks": peaks, "lattice": lattice, "free": list(free), "tols": list(tols), "n_iter": n_iter,
                "clip": clip, "extra_rounds": extra_rounds, "row_step": row_step, "min_occ": min_occ, "min_peaks": min_peaks}  # fmt: skip
     d = load_inputs(fit_file, peaks, lattice, min_occ)
@@ -168,9 +176,8 @@ def stage_fit(
                         clip, extra_rounds, log=log)  # fmt: skip
     st = fit.strain_left(pk, res["matched"], res["ubi"], B, res["pars"], res["sig"], min_peaks, n_iter, log=log)
     E = st["strain"]
-    hydro = np.trace(E, axis1=1, axis2=2) / 3
-    dev = E - hydro[:, None, None] * np.eye(3)
-    ok = np.isfinite(hydro)
+    parts = fit.split_strain(E, st["n_peaks"])
+    ok = parts["fitted"]
     err = np.sqrt(np.diag(res["cov"]))
     log("fitted: " + ", ".join(f"{k} {res['pars'][k]:.8g} +- {e:.2g}" for k, e in zip(free, err)))
     if res["moved"].max() > 1:
@@ -179,10 +186,10 @@ def stage_fit(
             "small. A deformed sample (orientations within a voxel closer than the geometry's error) converges "
             "slowly: calibrate on a calibrant or a little-deformed sample, or raise --extra-rounds")  # fmt: skip
     if ok.any():
-        w = st["n_peaks"][ok]
+        mean_dev = parts["mean_deviatoric"]
         log(f"strain left with free lattices ({ok.sum()} orientations, peak-weighted mean, 1e-5): hydrostatic "
-            f"{np.average(hydro[ok], weights=w) * 1e5:+.1f}; deviatoric "
-            + ", ".join(f"{c} {np.average(dev[ok, i, j], weights=w) * 1e5:+.1f}" for c, (i, j) in zip(_COMPONENTS, _IJ))
+            f"{parts['mean_hydrostatic'] * 1e5:+.1f}; deviatoric "
+            + ", ".join(f"{c} {mean_dev[i, j] * 1e5:+.1f}" for c, (i, j) in zip(COMPONENTS, IJ))
             + f"; chi2 x {st['chi2_ratio']:.3f}")  # fmt: skip
 
     resolved = {"dataset_file": hr["dataset_file"], "peaks_file": pks_file, "parfile": hr["parfile"],
@@ -209,11 +216,11 @@ def stage_fit(
                "sigma_fc_px": float(res["sig"][1]), "sigma_omega_deg": float(res["sig"][2]),
                "last_round_moved_sigma": float(res["moved"].max())}  # fmt: skip
     if ok.any():
-        w = st["n_peaks"][ok]
-        results["strain_left_hydrostatic"] = float(np.average(hydro[ok], weights=w))
-        results["strain_left_deviatoric_max"] = float(np.abs(np.average(dev[ok], axis=0, weights=w)).max())
+        results["strain_left_hydrostatic"] = parts["mean_hydrostatic"]
+        results["strain_left_deviatoric_max"] = float(np.abs(parts["mean_deviatoric"]).max())
     write_results(out, results)
     log(f"-> {out}")
+    write_log(out, lines)
     return out
 
 
@@ -278,6 +285,7 @@ def stage_rings(
 
     from . import fit, rings
 
+    log, lines = recorder(log)
     options = {"source": source, "parfile": parfile, "phase": phase, "detector_mask": detector_mask,
                "spatial": list(spatial) if spatial else None, "scans": scans, "threshold": threshold,
                "free": list(free), "tols": list(tols), "n_iter": n_iter, "n_eta": n_eta, "clip": clip,
@@ -386,6 +394,7 @@ def stage_rings(
     write_results(out, {**{k: res["pars"][k] for k in free}, **{f"{k}_err": float(e) for k, e in zip(free, err)},
                         "rms_deg": res["rms"], "n_sectors": res["n_sectors"]})  # fmt: skip
     log(f"-> {out}")
+    write_log(out, lines)
     return out
 
 

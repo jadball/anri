@@ -65,6 +65,7 @@ class TestFitRings(unittest.TestCase):
         import anri.io.imaged11 as io
         from anri.calib.diagnostics import read_rings
         from anri.calib.stages import stage_rings, write_pars
+        from anri.io.provenance import read_provenance
 
         cell = {"cell__a": SI[0][0], "cell__b": SI[0][1], "cell__c": SI[0][2], "cell_alpha": 90.0,
                 "cell_beta": 90.0, "cell_gamma": 90.0, "cell_lattice_[P,A,B,C,I,F,R]": SI[1]}  # fmt: skip
@@ -76,9 +77,11 @@ class TestFitRings(unittest.TestCase):
             out = stage_rings(img, os.path.join(tmp, "si_rings.h5"), parfile=parfile, log=lambda _: None)
             pars = io.read_pars_json(write_pars(out, os.path.join(tmp, "fitted")))[0]
             d = read_rings(out)  # what the plots draw: the searches and the rings' offsets
+            log = read_provenance(out)["log"]  # the stage keeps its log, though nothing was printed
         self.assertEqual(len(d["centre"]["levels"]), 3)
         self.assertAlmostEqual(d["distance"][np.argmax(d["score"])] / TRUE["distance"], 1.0, delta=0.01)
         self.assertEqual(d["offset"].shape, (len(d["tth"]), 360))
         self.assertLess(abs(pars["distance"] / TRUE["distance"] - 1), 2e-5)
         self.assertLess(abs(pars["y_center"] - TRUE["y_center"]), 0.02)
         self.assertEqual(pars["wavelength"], TRUE["wavelength"])  # not fitted
+        self.assertIn(f"-> {out}", log[-1])

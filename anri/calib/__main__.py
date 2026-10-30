@@ -3,7 +3,7 @@
     python -m anri.calib rings <..._dataset.h5 | image> [options] -> <...>_rings.h5
     python -m anri.calib fit <..._fit.h5> [options]      -> <...>_calib.h5
     python -m anri.calib pars <..._calib.h5> <folder>    ImageD11 parameter files (geometry.par, <phase>.par, pars.json)
-    python -m anri.calib show <any stage file>           how it was made, back to the dataset
+    python -m anri.calib show <any stage file> [--log]   how it was made, back to the dataset
 
 rings fits the distance, beam centre, tilt_y and tilt_z to a known phase's powder rings (ImageD11's powder
 calibration), so that the sample indexes; ``pars`` turns the result into the pars.json to index with.
@@ -83,6 +83,7 @@ def parse_args(argv: list | None = None) -> argparse.Namespace:
 
     s = sub.add_parser("show", help="how a stage file was made, all the way back to the dataset")
     s.add_argument("file")
+    s.add_argument("--log", action="store_true", help="also print what each stage logged")
     return p.parse_args(argv)
 
 
@@ -92,7 +93,7 @@ def main() -> None:
     if args.command == "show":
         from anri.io.provenance import show
 
-        print(show(args.file))
+        print(show(args.file, log=args.log))
         return
     if args.command == "pars":
         from anri.calib.stages import write_pars

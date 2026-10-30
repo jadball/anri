@@ -15,13 +15,14 @@ import unittest
 import anri
 
 SKILL = os.path.join(os.path.dirname(anri.__file__), "skill", "anri")
-COMMAND = re.compile(r"python -m anri\.(index|simulate) ([a-z]+)([^`\n]*)")
+COMMAND = re.compile(r"python -m anri\.(index|calib|simulate) ([a-z]+)([^`\n]*)")
 FLAG = re.compile(r"(?<![\w-])(--[a-z][a-z0-9-]*)")
 DOTTED = re.compile(r"`(anri\.[\w.]+)")
 PLOT = re.compile(r"`(plot_\w+)`")
 LINK = re.compile(r"\]\(([^)#:]+\.md)\)")
 # where the bare names in the skill's tables live
 MODULES = ("anri.index.diagnostics", "anri.index.plots", "anri.index.stages", "anri.index.mask",
+           "anri.calib.diagnostics", "anri.calib.plots", "anri.calib.stages",
            "anri.simulate.diagnostics", "anri.simulate.plots")  # fmt: skip
 
 
@@ -98,6 +99,7 @@ class TestSkill(unittest.TestCase):
         """Each command names a real subcommand and its own options; every other option is one of some subcommand."""
         subs = {"index": ("histogram", "search", "filter", "fit", "localsearch", "populations", "run", "show",
                           "powder"),
+                "calib": ("rings", "fit", "pars", "show"),
                 "simulate": ("prepare", "render", "assemble", "run", "show")}  # fmt: skip
         known = {(cli, sub): options(cli, sub) for cli, names in subs.items() for sub in names}
         every = set().union(*known.values())
@@ -109,7 +111,7 @@ class TestSkill(unittest.TestCase):
                     self.assertIn(flag, known[cli, sub], f"{rel}: python -m anri.{cli} {sub} ... {flag}")
                 n += 1
             for flag in FLAG.findall(text):
-                self.assertIn(flag, every, f"{rel}: {flag} is no option of python -m anri.index or anri.simulate")
+                self.assertIn(flag, every, f"{rel}: {flag} is no option of any python -m anri command")
         self.assertGreater(n, 10)
 
     def test_names(self):
