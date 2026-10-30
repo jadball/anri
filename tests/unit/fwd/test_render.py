@@ -15,6 +15,7 @@ from anri.fwd.render import (
     _merge,
     _merge_host,
     _valid_from_shards,
+    add_absorption,
     check_render,
     guess_batch_size,
     make_row,
@@ -323,6 +324,64 @@ class TestOrientationSpread(unittest.TestCase):
                        min_value=0.0, batch=BATCH)  # fmt: skip
         for x, y in zip(a[:3], b[:3]):
             np.testing.assert_allclose(x, y, rtol=1e-12, atol=1e-12)
+
+
+class TestAbsorption(unittest.TestCase):
+    @staticmethod
+    def _disc(r, step, mu):
+        """Entries filling a disc of radius r, one per voxel, and the index of the one at its centre."""
+        n = 2 * int(r / step) + 3
+        pos = np.asarray(anri.geom.scan.recon_positions(n, step))
+        pos = pos[np.hypot(pos[:, 0], pos[:, 1]) <= r]
+        return pos, int(np.flatnonzero(np.all(pos == 0, 1))[0])
+
+    def test_phases_and_layers(self):
+        """From the map's own entries: each phase's mu where it is, and each layer of a 3D map its own slice."""
+        r, step, mu1, mu2 = 40.0, 2.0, 1e-3, 4e-3
+        pos, c = self._disc(r, step, 1.0)
+        left = pos[:, 0] < 0
+        ents = [{"ubi": np.zeros((int(m.sum()), 3, 3)), "pos": pos[m], "density": np.ones(int(m.sum()))}
+                for m in (left, ~left)]  # fmt: skip
+        out = add_absorption([(e, None, None) for e in ents], step, mu=[mu1, mu2], n_phi=4)
+        d = out[1][0]["optical_depth"][np.flatnonzero(np.all(pos[~left] == 0, 1))[0]]  # the centre is in phase 2
+        self.assertAlmostEqual(d[0] / (mu2 * r), 1.0, delta=0.06)  # +x: through phase 2 only
+        self.assertAlmostEqual(d[2] / (mu1 * r), 1.0, delta=0.2)  # -x: through phase 1, after half a voxel of 2
+        # a second layer, a smaller disc: its centre sees its own radius
+        small, cs = self._disc(r / 2, step, 1.0)
+        both = np.concatenate([pos, small + [0, 0, step]])
+        e = {"ubi": np.zeros((len(both), 3, 3)), "pos": both, "density": np.ones(len(both))}
+        d = add_absorption([(e, None, None)], step, mu=mu1, n_phi=4)[0][0]["optical_depth"]
+        self.assertAlmostEqual(d[c, 0] / (mu1 * r), 1.0, delta=0.06)
+        self.assertAlmostEqual(d[len(pos) + cs, 0] / (mu1 * r / 2), 1.0, delta=0.1)
+
+    def test_rendered_peak(self):
+        """A voxel at the centre of an absorbing disc (given as a map): its peak is the unabsorbed one times
+        exp(-mu r (1 + 1 / cos(elevation of the diffracted ray)))."""
+        from anri.fwd.peak import hkl_to_k_omega
+
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        r, step, mu = 60.0, 1.0, 5e-3
+        n = 2 * int(r / step) + 5
+        grid = np.asarray(anri.geom.scan.recon_positions(n, step))
+        mu_map = np.where(np.hypot(grid[:, 0], grid[:, 1]) <= r, mu, 0.0).reshape(n, n)
+        omega = (np.floor(omega_c / 0.05) + np.arange(-5, 6)) * 0.05 + 0.025
+        row = make_row(omega, np.zeros_like(omega))
+        base = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        [(absorbed, _, _)] = add_absorption([(base, hkl[None], np.ones(1))], step, mu_map=mu_map)
+        kw = {"window": (5, 7, 7), "min_value": 0.0, "batch": BATCH}
+        a = render_row(base, hkl[None], np.ones(1), geom, row, det_shape, **kw)
+        b = render_row(absorbed, hkl[None], np.ones(1), geom, row, det_shape, **kw)
+        np.testing.assert_array_equal(a[0], b[0])
+        np.testing.assert_array_equal(a[1], b[1])
+        _, k_out, _, _ = hkl_to_k_omega(jnp.asarray(base["ubi"][0]), jnp.asarray(hkl), 1.0, geom["wavelength"],
+                                        geom["k_in_lab"], 0.0, 0.0, 0.0, 0.0)  # fmt: skip
+        k_out = np.asarray(k_out) / np.linalg.norm(k_out)
+        expected = np.exp(-mu * r * (1 + 1 / np.hypot(k_out[0], k_out[1])))
+        np.testing.assert_allclose(b[2] / a[2], expected, rtol=0.02)
+
+    def test_needs_one_source(self):
+        with self.assertRaises(ValueError):
+            add_absorption([], 1.0)
 
 
 class TestWindowClasses(unittest.TestCase):

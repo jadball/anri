@@ -39,6 +39,15 @@ def _cif(values: list | None) -> str | dict | None:
     return dict(v.split("=", 1) for v in values)
 
 
+def _mu(values: list | None) -> float | dict | None:
+    """--mu VALUE (one phase) or --mu NAME=VALUE ... (one per phase)."""
+    if not values:
+        return None
+    if len(values) == 1 and "=" not in values[0]:
+        return float(values[0])
+    return {k: float(v) for k, v in (x.split("=", 1) for x in values)}
+
+
 def _prepare_options(p: argparse.ArgumentParser) -> None:
     from anri.simulate.stages import BANDWIDTH, OPTICS
 
@@ -68,6 +77,12 @@ def _prepare_options(p: argparse.ArgumentParser) -> None:
                    help="detector pixels, slow fast (default 2162 2068: an Eiger 4M)")  # fmt: skip
     p.add_argument("--tth-max", type=float, help="largest 2theta of the reflections (default: the largest ring "
                    "wholly on the detector)")  # fmt: skip
+    p.add_argument("--no-absorption", action="store_true",
+                   help="do not model absorption along the incoming and diffracted paths, even with CIFs")  # fmt: skip
+    p.add_argument("--mu", nargs="+", metavar="[NAME=]VALUE", help="attenuation coefficient (1 / the map's length "
+                   "unit, e.g. 1/um) instead of the CIFs': VALUE for a single phase, or NAME=VALUE per phase")  # fmt: skip
+    p.add_argument("--mu-map", help="a .npy [n, n] map of attenuation coefficients instead (e.g. an absorption "
+                   "tomography): voxels of the map's size, reconstruction order, centred on the rotation axis")  # fmt: skip
 
 
 def _render_options(p: argparse.ArgumentParser) -> None:
@@ -149,7 +164,7 @@ def main() -> None:
             bandwidth=args.bandwidth, beam_fwhm=args.beam_fwhm, psf=args.psf, pol_factor=args.pol_factor, y0=args.y0,
             omega_range=tuple(args.omega_range), omega_step=args.omega_step, dty_step=args.dty_step,
             margin=args.margin, density=args.density, det_shape=tuple(args.det_shape), tth_max=args.tth_max,
-            command=command, log=log,
+            absorption=not args.no_absorption, mu=_mu(args.mu), mu_map=args.mu_map, command=command, log=log,
         )  # fmt: skip
     else:
         source = args.source

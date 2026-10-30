@@ -9,6 +9,9 @@ and every diffracted ray, for every prediction.
 
 Lengths are in the units of the voxel positions (micrometres in anri); the attenuation coefficient is in the inverse
 unit (:func:`anri.crystal.structure.attenuation`).
+
+The map can also hold the attenuation coefficient of each voxel itself (:func:`attenuation_map`, or an absorption
+tomography): :func:`edge_distances` then gives the optical depth to the edge, and :func:`transmission` takes mu = 1.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax.scipy.ndimage import map_coordinates
 from jax.typing import ArrayLike
 
@@ -36,7 +40,7 @@ def edge_distances(sample_map: jax.Array, step: float, pos: jax.Array, n_phi: in
     ----------
     sample_map
         [n, n] fraction of each voxel inside the sample (0 to 1), reconstruction order, centred on the rotation axis
-        (:func:`anri.geom.scan.recon_positions`)
+        (:func:`anri.geom.scan.recon_positions`); or each voxel's attenuation coefficient (1 / the units of step)
     step
         Voxel size
     pos
@@ -47,7 +51,7 @@ def edge_distances(sample_map: jax.Array, step: float, pos: jax.Array, n_phi: in
     Returns
     -------
     jax.Array
-        [Nv, n_phi] path inside the sample, in the units of step
+        [Nv, n_phi] path inside the sample, in the units of step; with attenuation coefficients, the optical depth
     """
     n = sample_map.shape[0]
     c0 = n // 2  # recon index of the rotation axis
@@ -67,6 +71,48 @@ def edge_distances(sample_map: jax.Array, step: float, pos: jax.Array, n_phi: in
 
     phis = jnp.arange(n_phi, dtype=jnp.float32) * (2 * jnp.pi / n_phi)
     return jax.lax.map(one, phis).T
+
+
+def attenuation_map(
+    pos: np.ndarray, mu: np.ndarray, weight: np.ndarray, step: float, n: int | None = None
+) -> np.ndarray:
+    """Attenuation coefficient of each voxel of a slice, from the map entries in it.
+
+    A voxel holding entries of non-zero weight is taken to be full of material, with the weighted mean coefficient of
+    their phases: in a multiphase map, each phase in proportion to its share of the voxel. Voxels without entries are
+    empty. A map knows nothing of what it does not hold (pores, unindexed phases): give a measured map for those, e.g.
+    an absorption tomography.
+
+    Parameters
+    ----------
+    pos
+        [N, 2 or 3] entry positions in the sample frame (x, y used)
+    mu
+        [N] attenuation coefficient of each entry's phase (1 / the units of pos)
+    weight
+        [N] each entry's share of its voxel (e.g. its density: only the ratios within a voxel matter)
+    step
+        Voxel size
+    n
+        Voxels along each side (default: just covering the entries, with an empty border)
+
+    Returns
+    -------
+    np.ndarray
+        [n, n] float32 coefficients, reconstruction order, centred on the rotation axis (as :func:`edge_distances`)
+    """
+    si = np.round(pos[:, 0] / step).astype(int)  # recon_to_sample, inverted
+    sj = np.round(-pos[:, 1] / step).astype(int)
+    if n is None:
+        n = 2 * (int(np.abs(np.concatenate([si, sj, [0]])).max()) + 2) + 1
+    idx = (si + n // 2) * n + sj + n // 2
+    if idx.size and (min(si.min(), sj.min()) + n // 2 < 0 or max(si.max(), sj.max()) + n // 2 >= n):
+        msg = f"entries reach beyond a grid of {n} x {n} voxels of {step:g}"
+        raise ValueError(msg)
+    w = np.asarray(weight, np.float64)
+    tot = np.bincount(idx, w, n * n)
+    mw = np.bincount(idx, w * np.asarray(mu, np.float64), n * n)
+    return np.divide(mw, tot, out=np.zeros(n * n), where=tot > 0).reshape(n, n).astype(np.float32)
 
 
 def ray_directions(

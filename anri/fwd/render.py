@@ -10,6 +10,10 @@ blurred by a Gaussian (a pure Gaussian with zero width). A pencil beam is narrow
 way, a box beam wide both ways. Voxels are either columns (2D maps: the beam's vertical profile integrates out)
 or cubes (3D maps). See :func:`anri.geom.beam.beam_weight`.
 
+Absorption along the incoming and diffracted paths through the sample is modelled when the entries carry their
+optical depth to the sample's edge (:func:`add_absorption`), with the same paths as the indexer
+(:mod:`anri.geom.paths`).
+
 Pixel values are differentiable with respect to the map. Which pixels a peak touches is not:
 window placement is computed from rounded centroids.
 """
@@ -36,6 +40,7 @@ import anri.utils
 from anri.diffract.factors import lorentz_polarisation
 from anri.geom.beam import beam_offsets, beam_weight
 from anri.geom.gonio import nearest_omega, sample_to_lab
+from anri.geom.paths import attenuation_map, edge_distances, ray_directions, transmission
 from anri.maths.rotation import skew
 from anri.maths.utils import bin_fractions, truncated_moments
 
@@ -390,6 +395,22 @@ def _frame_weights(pos: jax.Array, om_fr: jax.Array, fclip: jax.Array, row: dict
     return per_frame
 
 
+def _transmission(
+    depth: jax.Array, ubi: jax.Array, hkl: jax.Array, etasign: ArrayLike, omega: jax.Array, geom: dict
+) -> jax.Array:
+    """Fraction of a peak's intensity that survives absorption, at each omega (e.g. per window frame).
+
+    ``depth`` [n_phi] is the entry's optical depth to the sample's edge (:func:`add_absorption`); the paths go back
+    along the incoming beam and along the diffracted ray, from the voxel at that omega.
+    """
+    _, k_out, _, _ = hkl_to_k_omega(
+        ubi, hkl, etasign, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
+    )
+    k_out = jnp.broadcast_to(k_out, omega.shape + (3,))
+    d_in, d_out = ray_directions(geom["k_in_lab"], k_out, omega, geom["wedge"], geom["chi"])
+    return transmission(depth[None], d_in[None], d_out[None], 1.0)[0].astype(omega.dtype)
+
+
 def _render_peaks(
     entry: jax.Array,
     hkl_idx: jax.Array,
@@ -413,6 +434,8 @@ def _render_peaks(
         mu, shape, valid = _peak_shape(ubi, pos, hkl, etasign, sig, row, geom)
         frac, inside, fclip, rows, cols, om_fr, in_range, origin = _window_cells(mu, shape, org, row, window, det_shape)
         per_frame = _frame_weights(pos, om_fr, fclip, row, geom)
+        if "optical_depth" in entries:
+            per_frame = per_frame * _transmission(entries["optical_depth"][e], ubi, hkl, etasign, om_fr, geom)
         amp = entries["density"][e] * F2[h] * _peak_factors(ubi, hkl, etasign, geom)
         value = amp * per_frame[:, None, None] * frac
         use = inside & valid
@@ -676,6 +699,8 @@ def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict
     }
     if "sig_rot" in entries:  # only when given, so renders without it compile and cost the same as before
         out["sig_rot"] = jnp.broadcast_to(jnp.asarray(entries["sig_rot"], dtype=dtype), ubi.shape[:1])
+    if "optical_depth" in entries:  # likewise: absorption only when asked for (add_absorption)
+        out["optical_depth"] = jnp.asarray(entries["optical_depth"], dtype=jnp.float32)
     entries = out
     hkls, F2 = jnp.asarray(hkls, dtype=dtype), jnp.asarray(F2, dtype=dtype)
     return entries, hkls, F2, jax.tree.map(jnp.asarray, geom), jax.tree.map(jnp.asarray, row)
@@ -780,7 +805,8 @@ def render_row(
         intrinsic orientation spread, the standard deviation (radians) of each component of a small sample-frame
         rotation vector, isotropic. It widens the entry's peaks in omega and on the detector through the same
         linearised propagation as the beam's spreads, so it suits spreads up to a few degrees. Widen ``window``
-        (pixels) for spreads that move spots by several pixels.
+        (pixels) for spreads that move spots by several pixels. Optionally "optical_depth" [N, n_phi]
+        (:func:`add_absorption`): absorption along the incoming and diffracted paths, at each frame's omega.
     hkls, F2
         [Nh, 3] hkls of that phase and [Nh] their structure factors squared
     geom
@@ -871,6 +897,69 @@ def render_row(
     if len(classes) > 1:
         stats["window_frames"] = np.asarray(classes)[peak_class]
     return frame, pixel, value, stats
+
+
+def add_absorption(
+    phases: list, step: float, mu: ArrayLike | None = None, mu_map: ArrayLike | None = None, n_phi: int = 360,
+    chunk: int = 2**18,
+) -> list:  # fmt: skip
+    """Give every map entry its optical depth to the sample's edge, so that :func:`render_row` models absorption.
+
+    The sample is a slice of attenuation coefficients, the same above and below it (:mod:`anri.geom.paths`). It is
+    built from the map itself (:func:`anri.geom.paths.attenuation_map`: every voxel holding entries is full, of its
+    phases in proportion to their densities), one slice per layer of a 3D map; or given, e.g. from an absorption
+    tomography, and then used for every layer. Diffracted rays leave the slice at an angle, so a 3D map's layers are
+    each treated as a prism: paths through the layers above and below are not followed.
+
+    Parameters
+    ----------
+    phases
+        [(entries, hkls, F2), ...] one per phase, as :func:`render_phases` takes them
+    step
+        Voxel size of the map (and of mu_map), in the units of the entries' positions
+    mu
+        [n_phases] attenuation coefficient of each phase (1 / the units of step, as
+        :func:`anri.crystal.structure.attenuation` gives it), to build the sample from the map
+    mu_map
+        [n, n] attenuation coefficients instead (1 / the units of step), reconstruction order, centred on the rotation
+        axis (:func:`anri.geom.scan.recon_positions`)
+    n_phi
+        Directions in the slice: each entry gets n_phi float32 (1.4 kB for 360), so lower it for very large maps
+    chunk
+        Entries per call to :func:`anri.geom.paths.edge_distances` (a fixed size: one compile). Each call sums the
+        whole slice along every direction, so fewer, larger calls are cheaper; a call holds [n_phi, chunk] float32
+
+    Returns
+    -------
+    list
+        The phases, each entries dict with "optical_depth" [N, n_phi] added
+    """
+    if (mu is None) == (mu_map is None):
+        msg = "give mu (one per phase) or mu_map, not both"
+        raise ValueError(msg)
+    pos = [np.asarray(e["pos"], float) for e, _, _ in phases]
+    allpos = np.concatenate(pos)
+    z = allpos[:, 2] if allpos.shape[1] > 2 else np.zeros(len(allpos))
+    layer = np.round(z / step).astype(int)
+    if mu_map is None:
+        mu = np.broadcast_to(np.asarray(mu, float), (len(phases),))
+        mus = np.concatenate([np.full(len(p), m) for p, m in zip(pos, mu)])
+        dens = np.concatenate([np.asarray(e["density"], float) for e, _, _ in phases])
+        n = attenuation_map(allpos, mus, dens, step).shape[0]  # one grid for every layer: one compile
+    depth = np.zeros((len(allpos), n_phi), np.float32)
+    largest = int(np.unique(layer, return_counts=True)[1].max())
+    chunk = min(chunk, max(1024, 1 << (largest - 1).bit_length()))  # small maps: a small fixed size
+    for k in np.unique(layer):
+        sel = np.flatnonzero(layer == k)
+        m = mu_map if mu_map is not None else attenuation_map(allpos[sel], mus[sel], dens[sel], step, n)
+        m = jnp.asarray(m, jnp.float32)
+        for a in range(0, sel.size, chunk):
+            idx = sel[a : a + chunk]
+            p = np.zeros((chunk, 2), np.float32)
+            p[: idx.size] = allpos[idx, :2]
+            depth[idx] = np.asarray(edge_distances(m, step, jnp.asarray(p), n_phi))[: idx.size]
+    starts = np.cumsum([0] + [len(p) for p in pos])
+    return [({**e, "optical_depth": depth[a:b]}, h, f) for (e, h, f), a, b in zip(phases, starts[:-1], starts[1:])]
 
 
 def render_phases(

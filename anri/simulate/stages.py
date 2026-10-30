@@ -114,7 +114,8 @@ def stage_prepare(
     bandwidth: float = BANDWIDTH, beam_fwhm: float | None = None, psf: float = 0.5, pol_factor: float = 1.0,
     y0: float | None = None, omega_range: tuple = (0.0, 180.0), omega_step: float = 0.05,
     dty_step: float | None = None, margin: float = 3.0, density: float = 1.0, det_shape: tuple = EIGER_4M,
-    tth_max: float | None = None, command: str | None = None, log: Callable = print,
+    tth_max: float | None = None, absorption: bool = True, mu: float | dict | None = None, mu_map: str | None = None,
+    command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Turn a map and an instrument into everything the renderer needs, without rendering.
 
@@ -160,6 +161,18 @@ def stage_prepare(
         (n_slow, n_fast) pixels (default: an Eiger 4M)
     tth_max
         Largest 2theta of the reflections (default: the largest ring wholly on the detector)
+    absorption
+        Model absorption along the incoming and diffracted paths (:func:`anri.fwd.render.add_absorption`) whenever
+        the attenuation is known: mu_map, or every phase's mu (given, or from its CIF:
+        :func:`anri.crystal.structure.attenuation`). The sample is then the map itself: every voxel holding entries is
+        full, of its phases in proportion to their densities
+    mu
+        Attenuation coefficient (1 / the units of the map's positions, e.g. 1/um), instead of the CIFs': one value for
+        a single phase, or {phase name: value}
+    mu_map
+        A ``.npy`` file of the sample's attenuation coefficients instead, e.g. from an absorption tomography: [n, n]
+        (1 / the units of the map's positions), voxels of the map's voxel size, reconstruction order, centred on the
+        rotation axis (:func:`anri.geom.scan.recon_positions`)
     command, log
         The command line, if run from one, and where progress goes
 
@@ -191,6 +204,8 @@ def stage_prepare(
                "pol_factor": pol_factor, "y0": y0, "omega_range": list(omega_range), "omega_step": omega_step,
                "dty_step": dty_step, "margin": margin, "density": density, "det_shape": list(det_shape),
                "tth_max": tth_max, "dataset": None if dataset is None else os.path.abspath(dataset),
+               "absorption": absorption, "mu": [f"{k}={v}" for k, v in mu.items()] if isinstance(mu, dict) else mu,
+               "mu_map": None if mu_map is None else os.path.abspath(mu_map),
                "remap": None if not remap else [f"{k}={v}" for k, v in remap.items()]}  # fmt: skip
     if isinstance(cif, str):
         options["cif"] = os.path.abspath(cif)
@@ -217,6 +232,9 @@ def stage_prepare(
     else:  # the dataset's own frames
         omega, dty = np.asarray(ds["omega"], float), read_frame_dty(ds)
         omega_step = float(np.median(np.diff(omega[0])))
+    if isinstance(mu, (int, float)) and len(phases) > 1:
+        msg = "several phases: give mu per phase, as {name: value} (--mu NAME=VALUE)"
+        raise ValueError(msg)
     log(f"map {map_file}: {len(phases)} phase(s), voxel {voxel:g}, sample radius {radius:.4g}; scan {omega.shape[0]} "
         f"rows of {ystep:g} x {omega.shape[1]} frames of {omega_step:g} deg; beam FWHM {fwhm:g}, convergence {div:g} "
         f"rad ({optics if divergence is None else 'given'}), bandwidth {bandwidth:g} FWHM; 2theta up to {tth:.2f} "
@@ -226,11 +244,41 @@ def stage_prepare(
                 "sig_wavelength": wl * fwhm_to_sigma(bandwidth), "sig_beam": fwhm_to_sigma(fwhm), "tth_max": tth,
                 "n_rows": omega.shape[0], "n_frames": omega.shape[1], "sample_radius": radius,
                 "phases": [p["name"] for p in phases]}  # fmt: skip
+    mus, mu_grid = {}, None  # attenuation: each phase's mu, or the given map
+    if absorption and mu_map is not None:
+        mu_grid = np.load(mu_map).astype(np.float32)
+        if mu_grid.ndim != 2 or mu_grid.shape[0] != mu_grid.shape[1]:
+            msg = f"{mu_map}: an [n, n] map is needed, not {mu_grid.shape}"
+            raise ValueError(msg)
+        log(f"absorption: through {mu_map} ({mu_grid.shape[0]} x {mu_grid.shape[0]} voxels of {voxel:g}, mu up to "
+            f"{mu_grid.max():.4g})")  # fmt: skip
+    elif absorption:
+        for p in phases:
+            path = _cif_of(cif, p["name"], len(phases))
+            if isinstance(mu, dict) and p["name"] in mu:
+                mus[p["name"]] = float(mu[p["name"]])
+            elif isinstance(mu, (int, float)):
+                mus[p["name"]] = float(mu)
+            elif path is not None:
+                from anri.crystal.structure import attenuation
+
+                mus[p["name"]] = attenuation(Dans_Diffraction.Crystal(path), 12.398419843320026 / wl)
+        if len(mus) < len(phases):
+            log(f"absorption: not modelled (no mu or CIF for {[p['name'] for p in phases if p['name'] not in mus]})")
+            mus = {}
+        else:
+            log("absorption: through the map, mu " + ", ".join(f"{k} {v:.4g}" for k, v in mus.items()) + " per unit "
+                "length")  # fmt: skip
+    if mus:
+        resolved["mu"] = [f"{k}={v}" for k, v in mus.items()]
+    resolved["absorption"] = mu_grid is not None or bool(mus)
     check_out(out, [map_file, pars_file, dataset, None if ds is None else ds["sparsefile"]])
     with h5py.File(out, "w") as h:
         write_provenance(h, "prepare", None, options, resolved, command)
         write_attrs(h.create_group("pars"), pars)
         h["scan/omega"], h["scan/dty"] = omega, dty
+        if mu_grid is not None:
+            h["absorption/mu_map"] = mu_grid
         for p in phases:
             path = _cif_of(cif, p["name"], len(phases))
             hkls = reflections(p["lattice"], p["space_group"], wl, dsmax)["hkl"].astype(float)
@@ -248,6 +296,8 @@ def stage_prepare(
 
 def load_prepare(path: str) -> dict:
     """Read a prepare stage file back, ready to render.
+
+    With absorption, each phase's entries get their optical depths (:func:`anri.fwd.render.add_absorption`).
 
     Returns
     -------
@@ -269,6 +319,13 @@ def load_prepare(path: str) -> dict:
             entries = {k: g[k][()] for k in ("ubi", "pos", "density", "sig_rot") if k in g}
             phases.append((entries, g["hkls"][()], g["F2"][()]))
             cells[name] = {**dict(zip(_LATTICE_KEYS, a["lattice"])), "cell_lattice_[P,A,B,C,I,F,R]": a["space_group"]}
+        mu_map = h["absorption/mu_map"][()] if "absorption/mu_map" in h else None
+    if r.get("absorption"):
+        from anri.fwd.render import add_absorption
+
+        mus = dict(v.split("=", 1) for v in r.get("mu") or [])
+        mu = np.array([float(mus[n]) for n in r["phases"]]) if mus else None
+        phases = add_absorption(phases, r["voxel_size"], mu, mu_map)
     geom = geom_from_pars(pars, o["y0"], r["sig_wavelength"], r["divergence"], r["divergence"], r["sig_beam"],
                           r["voxel_size"], pol_factor=o["pol_factor"], sig_psf=o["psf"])  # fmt: skip
     return {"phases": phases, "names": r["phases"], "cells": cells, "geom": geom, "omega": omega, "dty": dty,
@@ -459,6 +516,8 @@ def run_command(assemble_file: str) -> str:
         if k == "cif":
             for c in [v] if isinstance(v, str) else v:
                 cmd += [flag, c]
+        elif k == "absorption":  # on by default; the command line can only turn it off
+            cmd += [] if v else ["--no-absorption"]
         elif v is True:
             cmd.append(flag)
         elif v is not False:

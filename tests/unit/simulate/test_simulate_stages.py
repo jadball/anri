@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 
 import anri.crystal
+import anri.geom
 import anri.io
 import anri.maths.rotation
 import anri.simulate as sim
@@ -120,6 +121,42 @@ class TestRenderStages(unittest.TestCase):
             k_mod = mod["frame"].astype(np.int64) * npix + mod["pixel"]
             self.assertTrue(np.isin(k_obs, k_mod).all())  # every measured pixel is one the model lights
             self.assertEqual(dg.frames_image(obs, range(90)).sum(), obs["value"].sum())
+
+
+class TestAbsorption(unittest.TestCase):
+    def test_mu_per_phase_and_map(self):
+        """mu per phase (built from the map) or a mu map file: the same optical depths for the same sample; absorption
+        lowers the intensities, and the command line that remakes it keeps the option."""
+        from anri.fwd.render import make_row, render_phases
+
+        quiet = {"omega_step": 2.0, "dty_step": 8.0, "margin": 0.25, "log": lambda m: None}
+        with tempfile.TemporaryDirectory() as tmp:
+            parfile = os.path.join(tmp, "geometry.par")
+            anri.io.imaged11.write_par(parfile, PARS)
+            map_file = two_phase_map(tmp)
+            plain = sim.stages.load_prepare(sim.stages.stage_prepare(
+                map_file, parfile, os.path.join(tmp, "a_prepare.h5"), absorption=False, **quiet))  # fmt: skip
+            self.assertNotIn("optical_depth", plain["phases"][0][0])
+            per = sim.stages.load_prepare(sim.stages.stage_prepare(
+                map_file, parfile, os.path.join(tmp, "b_prepare.h5"), mu={"Fe": 0.05, "Ni": 0.05}, **quiet))  # fmt: skip
+            self.assertEqual(per["prov"]["resolved"]["mu"], ["Fe=0.05", "Ni=0.05"])
+            pos = np.concatenate([e["pos"] for e, _, _ in per["phases"]])
+            np.save(os.path.join(tmp, "mu.npy"), anri.geom.paths.attenuation_map(pos, np.full(len(pos), 0.05),
+                                                                                  np.ones(len(pos)), 2.0))  # fmt: skip
+            given = sim.stages.load_prepare(sim.stages.stage_prepare(
+                map_file, parfile, os.path.join(tmp, "c_prepare.h5"), mu_map=os.path.join(tmp, "mu.npy"), **quiet))  # fmt: skip
+            for (a, _, _), (b, _, _) in zip(per["phases"], given["phases"]):
+                np.testing.assert_allclose(a["optical_depth"], b["optical_depth"], atol=1e-6)
+            self.assertGreater(per["phases"][0][0]["optical_depth"].max(), 0.1)
+            row = make_row(plain["omega"][1], plain["dty"][1])
+            totals = [render_phases(p["phases"], p["geom"], row, p["det_shape"], min_value=0.0, batch=1024)[2].sum()
+                      for p in (plain, per)]  # fmt: skip
+            self.assertLess(totals[1], 0.95 * totals[0])
+            self.assertGreater(totals[1], np.exp(-0.05 * 2 * 12) * totals[0])  # paths under 2 x (8 / cos 2theta)
+            from anri.simulate.__main__ import _mu, parse_args
+
+            args = parse_args(["prepare", "m.h5", "p.par", "--mu", "Fe=0.05", "Ni=0.05", "--no-absorption"])
+            self.assertEqual((_mu(args.mu), args.no_absorption), ({"Fe": 0.05, "Ni": 0.05}, True))
 
 
 if __name__ == "__main__":
