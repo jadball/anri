@@ -23,7 +23,7 @@ from anri.diffract.scatter import k_out_to_tth_eta
 from anri.fwd.peak import hkl_to_k_omega
 from anri.geom.gonio import wrap_omega
 
-from .data import coarsen_coverage, eta_bin, omega_bin
+from .data import B_E, B_O, coarsen_coverage, eta_bin, lit_table, omega_bin
 
 GRID_STEPS = (3.0, 2.5, 2.0, 1.5, 1.0)  # tried by choose_grid, coarsest first
 
@@ -377,3 +377,23 @@ def predictions(
     use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut) & (jnp.arange(n) < nq)[:, None]
     F2 = jnp.asarray(np.repeat(rings.get("F2", np.ones(len(rings["hkls"]))), 2), jnp.float32)
     return eta, om, use, jnp.where(use, lp * F2[None], 0.0)
+
+
+def lit_map(H_lit: np.ndarray, scan: dict, n_rings: int, lit: float, etacut: float) -> dict:
+    """Build the lit map for completeness: bins above lit x the median non-empty bin of the row-summed lit histogram.
+
+    Parameters
+    ----------
+    H_lit
+        The lit histogram of a histogram stage file (:func:`anri.index.stages.load_histogram`)
+    scan
+        Its scan ("om0", "omega_step", "n_e", "n_o")
+    n_rings
+        Its number of rings
+    lit, etacut
+        The search stage's options (:func:`anri.index.stages.stage_search`)
+    """
+    Hs = jnp.asarray(H_lit).reshape(n_rings, scan["n_e"], scan["n_o"])
+    med = float(jnp.median(Hs[Hs > 0]))
+    return {"table": lit_table(Hs > lit * med), "om0": scan["om0"], "bins": (B_E, B_O, scan["n_e"], scan["n_o"]),
+            "frame_step": scan["omega_step"], "etacut": etacut}  # fmt: skip

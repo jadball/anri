@@ -114,7 +114,7 @@ moves no voxel. It can be widened on every side (``grid_pad``) for a sample reac
 part would otherwise pile its intensity onto the grid's edge. With ``gridstep`` :math:`G`, the dty rows are summed in
 groups of :math:`G` and the voxels are :math:`G` dty steps wide.
 
-**Code:** :func:`anri.geom.scan.recon_positions`, :func:`anri.index.stages.voxel_grid`.
+**Code:** :func:`anri.geom.scan.recon_positions`, :func:`anri.index.mask.voxel_grid`.
 
 What is left out
 ----------------

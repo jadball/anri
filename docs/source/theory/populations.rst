@@ -61,7 +61,7 @@ total occupancy in the mask (below). In occupied voxels, the populations holding
 voxel's occupancy are reported, the largest always. These choose what goes into the map entries and the TensorMap; the
 raw occupancies are kept in the stage file whatever they are.
 
-**Code:** :func:`anri.index.stages.select_populations`, :func:`anri.index.stages.select_occupied`,
+**Code:** :func:`anri.index.populations.select_populations`, :func:`anri.index.populations.select_occupied`,
 :func:`anri.index.stages.stage_populations`.
 
 Which voxels are fitted

@@ -48,10 +48,13 @@ from anri.io.provenance import (
     write_results,
 )
 
+from .data import B_E, B_O, R_E, R_O, sample_groups
+from .mask import voxel_grid
+from .orientations import select_by_likelihood
+from .populations import N_POP, occupancy_weighted, select_populations
+from .search import lit_map
+
 STAGES = ("histogram", "search", "filter", "fit", "localsearch", "populations")
-B_E, B_O = 0.5, 0.25  # lit histogram bins (deg): eta, omega
-R_E, R_O = 2, 4  # fit histogram bins = lit bins x these (1 x 1 deg)
-N_POP = 4  # populations per voxel at most
 
 
 # ------------------------------------------------------------------------------------------------------- provenance
@@ -124,43 +127,6 @@ def _lattice(lattice: np.ndarray, sg: int) -> tuple:
         B64,
         anri.crystal.orientation.laue_rotations(anri.crystal.structure.symmetry_matrices(sg), B64),
     )
-
-
-def lit_map(H_lit: np.ndarray, scan: dict, n_rings: int, lit: float, etacut: float) -> dict:
-    """Build the lit map for completeness: bins above lit x the median non-empty bin of the row-summed lit histogram.
-
-    Parameters
-    ----------
-    H_lit
-        The lit histogram of a histogram stage file (:func:`load_histogram`)
-    scan
-        Its scan ("om0", "omega_step", "n_e", "n_o")
-    n_rings
-        Its number of rings
-    lit, etacut
-        The search stage's options (:func:`stage_search`)
-    """
-    import jax.numpy as jnp
-
-    from .data import lit_table
-
-    Hs = jnp.asarray(H_lit).reshape(n_rings, scan["n_e"], scan["n_o"])
-    med = float(jnp.median(Hs[Hs > 0]))
-    return {"table": lit_table(Hs > lit * med), "om0": scan["om0"], "bins": (B_E, B_O, scan["n_e"], scan["n_o"]),
-            "frame_step": scan["omega_step"], "etacut": etacut}  # fmt: skip
-
-
-def voxel_grid(scan: dict, y0: float, grid_pad: float = 0.0) -> int:
-    """Return NR: the indexer's voxel grid is NR x NR, centred on the rotation axis, as ImageD11 pads its recons.
-
-    ``grid_pad`` (sample units) adds voxels on every side, for a sample reaching past the scanned dty range: its
-    outer part is in the beam over part of the rotation only, but it exists, and would otherwise pile its intensity
-    onto the grid's edge. An ImageD11 mask on the unpadded grid lines up with the padded one's middle.
-    """
-    import anri.geom
-
-    _, pad = anri.geom.scan.sino_shift_and_pad(y0, scan["n_rows"], scan["dty0"], scan["ystep"])
-    return scan["n_rows"] + pad + 2 * int(np.ceil(grid_pad / scan["ystep"] - 1e-9))
 
 
 def load_histogram(path: str) -> dict:
@@ -308,89 +274,6 @@ def _pars_source(parfile: str, log: Callable) -> str | None:
         return None
     log(f"pars {parfile} written from {src['file']}: its source in the provenance")
     return src["file"]
-
-
-def sample_groups(groups: list, n: int = 9) -> list:
-    """Return n scans spread evenly over a dataset's scans (the ring profile is measured on these)."""
-    return [groups[i] for i in np.unique(np.linspace(0, len(groups) - 1, min(len(groups), n)).round().astype(int))]
-
-
-def select_by_likelihood(fitted: np.ndarray, lr: np.ndarray, min_lr: float, keep: int) -> np.ndarray:
-    """Return the orientations kept by likelihood ratio: above min_lr, the most likely first, at most keep.
-
-    Parameters
-    ----------
-    fitted, lr
-        Grid indices of the orientations fitted and their likelihood ratios (a filter stage file)
-    min_lr, keep
-        See :func:`stage_filter`
-    """
-    above = np.flatnonzero(lr > min_lr)
-    return fitted[above[np.argsort(lr[above])[::-1]][:keep]]
-
-
-def select_occupied(tot: np.ndarray, mask: np.ndarray, occupied: float) -> np.ndarray:
-    """Return the voxels in the mask above occupied x the 99th percentile of the total occupancy in the mask.
-
-    Parameters
-    ----------
-    tot
-        [Nv] each voxel's total occupancy
-    mask
-        [Nv] the voxels fitted
-    occupied
-        See :func:`stage_populations`
-    """
-    return mask & (tot > occupied * np.percentile(tot[mask], 99))
-
-
-def occupancy_weighted(rgb: np.ndarray, occupancy: np.ndarray, percentile: float = 99.0) -> np.ndarray:
-    """Colours dimmed by occupancy: rgb x occupancy / its percentile over occupied voxels, clipped to [0, 1].
-
-    Parameters
-    ----------
-    rgb
-        [..., 3] colours, e.g. an IPF map
-    occupancy
-        [...] total occupancy per voxel
-    percentile
-        Occupancy that gets full brightness, as a percentile of the occupied voxels' (default 99)
-
-    Returns
-    -------
-    np.ndarray
-        [..., 3] dimmed colours
-    """
-    occupancy = np.asarray(occupancy, float)
-    scale = np.percentile(occupancy[occupancy > 0], percentile) if np.any(occupancy > 0) else 1.0
-    return np.asarray(rgb, float) * np.clip(occupancy / scale, 0.0, 1.0)[..., None]
-
-
-def select_populations(tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, occupied: float,
-                       min_frac: float) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
-    """Return the occupied voxels and the populations reported in them.
-
-    Parameters
-    ----------
-    tot
-        [Nv] each voxel's total occupancy
-    mask
-        [Nv] the voxels fitted
-    frac
-        [Nv, P] each population's fraction of its voxel (:func:`anri.index.populations.group`)
-    occupied, min_frac
-        See :func:`stage_populations`
-
-    Returns
-    -------
-    occupied, present: np.ndarray
-        [Nv] voxels in the mask above occupied x the 99th percentile of the total occupancy in the mask; [Nv, P]
-        populations holding at least min_frac in occupied voxels (the main one always)
-    """
-    occ = select_occupied(tot, mask, occupied)
-    present = (frac >= min_frac) & occ[:, None]
-    present[:, 0] = occ  # the main population always
-    return occ, present
 
 
 # --------------------------------------------------------------------------------------------------------- 1. histogram

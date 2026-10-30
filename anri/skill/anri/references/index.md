@@ -63,7 +63,7 @@ the row-summed data and keeps those whose likelihood ratio is above `--min-lr` (
 | `--min-lr`, `--keep` | likelihood ratio against the misorientation to the nearest stronger orientation: a grain is one strong point far from anything stronger, with a halo of weak grid neighbours | `nearest_stronger`; `plot_likelihood` |
 | `--censor` | the segmentation cut, times the pixel-frames a faint spot covers: empty bins below it agree with the model | ask the human for the cut |
 
-`anri.index.stages.select_by_likelihood` redoes the choice for other cuts without fitting again: the file keeps every
+`anri.index.orientations.select_by_likelihood` redoes the choice for other cuts without fitting again: the file keeps every
 ratio. Writes `kept`, `U`, `completeness`, and for likelihood pruning `fitted` and `likelihood_ratio`.
 
 ## 4. fit: `--y0`, `--mask`, `--pad`, `--cand`, `--iter`, `--coarse`, `--beam`, `--mu`, `--censor`, `--block-gb`
@@ -110,7 +110,7 @@ with a fraction, mean orientation, spread and completeness.
 | `--occupied` | the histogram of total occupancy in the mask: the sample well apart from the air; put the cut in the gap |
 | `--min-frac` | second populations: real at boundaries and lamellae, a weak scatter everywhere is the floor; put the cut above it |
 
-Both are cheap to redo: `anri.index.stages.select_populations` recomputes the choice from the file. Writes `frac`,
+Both are cheap to redo: `anri.index.populations.select_populations` recomputes the choice from the file. Writes `frac`,
 `U_pop`, `spread` (deg, an upper bound), `n`, `comp_pop`, `occupied`, `present`; beside it `<stem>_entries.npz`
 (every population as map entries, which `python -m anri.simulate` renders) and, with ImageD11, `<stem>_tmap.h5` (a
 TensorMap of the main population, with `.xdmf` for ParaView).

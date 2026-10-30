@@ -53,7 +53,7 @@ An orientation's completeness is the fraction of its predicted reflections that 
 ``lit`` times its median non-empty bin. A prediction counts if any lit bin lies within its own tolerance box; a
 summed-area table makes each box a constant-time lookup.
 
-**Code:** :func:`anri.index.search.completeness`, :func:`anri.index.data.lit_table`, :func:`anri.index.stages.lit_map`.
+**Code:** :func:`anri.index.search.completeness`, :func:`anri.index.data.lit_table`, :func:`anri.index.search.lit_map`.
 
 Predictions on bins less than half measured (:eq:`idx-weight`'s coverage :math:`c < 0.5`) are not counted: they could not
 be lit. Nor are those with :math:`|\sin\eta| \le` ``etacut``.

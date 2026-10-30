@@ -197,3 +197,17 @@ def fit(
     if return_model:
         return np.asarray(g).ravel()[:n], np.asarray(lr).ravel()[:n], np.asarray(mu)
     return np.asarray(g).ravel()[:n], np.asarray(lr).ravel()[:n]
+
+
+def select_by_likelihood(fitted: np.ndarray, lr: np.ndarray, min_lr: float, keep: int) -> np.ndarray:
+    """Return the orientations kept by likelihood ratio: above min_lr, the most likely first, at most keep.
+
+    Parameters
+    ----------
+    fitted, lr
+        Grid indices of the orientations fitted and their likelihood ratios (a filter stage file)
+    min_lr, keep
+        See :func:`anri.index.stages.stage_filter`
+    """
+    above = np.flatnonzero(lr > min_lr)
+    return fitted[above[np.argsort(lr[above])[::-1]][:keep]]

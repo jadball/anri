@@ -12,6 +12,8 @@ from jax.typing import ArrayLike
 from anri.crystal.orientation import closest_equivalent
 from anri.maths.rotation import mean_rotation, rotation_angle
 
+N_POP = 4  # populations per voxel at most
+
 
 @partial(jax.jit, static_argnames=("m", "p"))
 def _populations(
@@ -109,3 +111,67 @@ def group(
         out.append([np.asarray(x)[:n] for x in res])
     frac, U, spread, n = (np.concatenate(x) for x in zip(*out))
     return frac, U, np.degrees(spread), n
+
+
+def select_occupied(tot: np.ndarray, mask: np.ndarray, occupied: float) -> np.ndarray:
+    """Return the voxels in the mask above occupied x the 99th percentile of the total occupancy in the mask.
+
+    Parameters
+    ----------
+    tot
+        [Nv] each voxel's total occupancy
+    mask
+        [Nv] the voxels fitted
+    occupied
+        See :func:`anri.index.stages.stage_populations`
+    """
+    return mask & (tot > occupied * np.percentile(tot[mask], 99))
+
+
+def select_populations(tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, occupied: float,
+                       min_frac: float) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
+    """Return the occupied voxels and the populations reported in them.
+
+    Parameters
+    ----------
+    tot
+        [Nv] each voxel's total occupancy
+    mask
+        [Nv] the voxels fitted
+    frac
+        [Nv, P] each population's fraction of its voxel (:func:`anri.index.populations.group`)
+    occupied, min_frac
+        See :func:`anri.index.stages.stage_populations`
+
+    Returns
+    -------
+    occupied, present: np.ndarray
+        [Nv] voxels in the mask above occupied x the 99th percentile of the total occupancy in the mask; [Nv, P]
+        populations holding at least min_frac in occupied voxels (the main one always)
+    """
+    occ = select_occupied(tot, mask, occupied)
+    present = (frac >= min_frac) & occ[:, None]
+    present[:, 0] = occ  # the main population always
+    return occ, present
+
+
+def occupancy_weighted(rgb: np.ndarray, occupancy: np.ndarray, percentile: float = 99.0) -> np.ndarray:
+    """Colours dimmed by occupancy: rgb x occupancy / its percentile over occupied voxels, clipped to [0, 1].
+
+    Parameters
+    ----------
+    rgb
+        [..., 3] colours, e.g. an IPF map
+    occupancy
+        [...] total occupancy per voxel
+    percentile
+        Occupancy that gets full brightness, as a percentile of the occupied voxels' (default 99)
+
+    Returns
+    -------
+    np.ndarray
+        [..., 3] dimmed colours
+    """
+    occupancy = np.asarray(occupancy, float)
+    scale = np.percentile(occupancy[occupancy > 0], percentile) if np.any(occupancy > 0) else 1.0
+    return np.asarray(rgb, float) * np.clip(occupancy / scale, 0.0, 1.0)[..., None]
