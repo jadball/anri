@@ -28,6 +28,7 @@ from anri.geom.scan import recon_positions
 from .data import coarsen_rows, coarsen_scan, eta_omega_corners, omega_bin, scan_beam
 
 
+@jax.jit
 def censored_ratio(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | None = None) -> jax.Array:
     """Compute the MLEM ratio d / mu, with empty bins taken as censored, and saturated bins as at least their data.
 
@@ -44,6 +45,7 @@ def censored_ratio(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Ar
     return r
 
 
+@jax.jit
 def deviance(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | None = None) -> jax.Array:
     """Poisson deviance of observed bins, plus 2 x (mu - censor) for empty bins the model predicts above ``censor``.
 
