@@ -19,6 +19,27 @@ write are the command line's, with the same provenance (``python -m anri.<module
 - :doc:`powder`: sum a dataset's pixels into a powder pattern, for phase identification and for refining a cell with a
   Rietveld or Le Bail program.
 
+Figures that survive a restart
+------------------------------
+
+The notebooks draw with ipympl (``%matplotlib widget``) when ``interactive = True``, their default: each figure can be
+zoomed and panned, and sliders redraw it. A widget lives in the Jupyter server, so after a restart of the server (or of
+the machine) a saved notebook shows "Error displaying widget: model not found" where each figure was. To keep the
+figures, turn on JupyterLab's widget state saving once: *Settings* → *Settings Editor* → *Jupyter Widgets* → *Save
+Widget State Automatically*, or in ``~/.jupyter/lab/user-settings/@jupyter-widgets/jupyterlab-manager/
+plugin.jupyterlab-settings``:
+
+.. code-block:: json
+
+    {"saveState": true}
+
+Each save then stores every figure as it was last drawn, zoom included (about 40 kB each), and after a restart it is
+shown as a picture, with the sliders at their last values; run the notebook again to interact. The same setting keeps
+the figures of ImageD11's notebooks.
+
+``interactive = False`` draws each figure once, at the parameters' values, as an inline image, with no widgets at all:
+the stored runs in these docs are made that way, so that they show as pictures and hold no widget state.
+
 .. toctree::
     :hidden:
 
