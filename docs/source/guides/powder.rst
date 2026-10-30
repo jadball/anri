@@ -14,6 +14,11 @@ centre in (2theta, eta), and divided by the solid angle of the measured detector
 intensity per steradian per frame, the azimuthal average of the 2D pattern, with no Lorentz or polarisation
 correction. It writes ``<sample>_<dataset>_powder.h5`` and a three-column ``.xye`` (2theta, intensity, esd) beside it.
 
+Its options: ``--tth-step`` (the 2theta bin width, default 0.005°), ``--n-eta`` (eta bins over 360°, default 360: the
+esd is the spread over them), ``--min-coverage`` (the ``.xye`` holds the bins whose ring is measured over at least this
+share of its solid angle, default 0.3), ``--phase`` and ``--parfile`` (as the indexer's), and ``--check`` (print the
+resolved paths and binning, write nothing).
+
 This is the pattern pyFAI gives for the sum of every frame as one image, integrated with solid-angle correction and
 without pixel splitting (``method=("no", "histogram", "cython")``), up to a constant factor: pyFAI's intensity is per
 reference solid angle and summed over the frames. pyFAI's default full pixel splitting differs: it spreads each pixel
