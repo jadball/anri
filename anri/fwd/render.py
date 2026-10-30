@@ -300,7 +300,13 @@ def _peak_shape(
 
 
 def _window_cells(
-    mu: jax.Array, shape: tuple, org: tuple | None, row: dict, window: tuple[int, int, int], det_shape: tuple[int, int]
+    mu: jax.Array,
+    shape: tuple,
+    org: tuple | None,
+    row: dict,
+    window: tuple[int, int, int],
+    det_shape: tuple[int, int],
+    moments: bool = False,
 ) -> tuple:
     """Integrate a peak's Gaussian over the (frame, slow, fast) cells of its window: the cheap part of rendering.
 
@@ -312,6 +318,8 @@ def _window_cells(
         Window origin (first frame, and each frame's first slow and fast pixel), or None: centred on the peak
     row, window, det_shape
         As for :func:`render_peaks`
+    moments
+        Also return the mean and variance of (slow, fast, omega) within each cell (e.g. for an EM refinement)
 
     Returns
     -------
@@ -319,7 +327,8 @@ def _window_cells(
         frac [wo, ws, wf] (fraction of the Gaussian in each cell), inside [wo, ws, wf] (cells on the detector and in
         the row), fclip [wo] (sorted frame of each window frame, clipped), rows [wo, ws], cols [wo, wf], om_fr [wo]
         (mean omega of the mass in each frame, unwrapped), in_range (the share of the peak's omega profile within the
-        scan's omega range) and the origin (jo, i0, j0)
+        scan's omega range) and the origin (jo, i0, j0); with moments, also mean and var [wo, ws, wf, 3] (slow, fast,
+        omega within each cell; omega unwrapped as om_fr)
     """
     wo, ws, wf = window
     ns, nf = det_shape
@@ -387,7 +396,17 @@ def _window_cells(
 
     sd_o = jnp.sqrt(oo)
     in_range = ndtr((row["omega_edges"][-1] - mu_o) / sd_o) - ndtr((row["omega_edges"][0] - mu_o) / sd_o)
-    return frac, inside, fclip, rows, cols, omega_peak + d_o, in_range, (jo, i0, j0)
+    out = (frac, inside, fclip, rows, cols, omega_peak + d_o, in_range, (jo, i0, j0))
+    if not moments:
+        return out
+    _, m_f, v_f = truncated_moments(
+        cols[:, None, :] - 0.5, cols[:, None, :] + 0.5, mu_f_so[..., None], sd_f_so[..., None]
+    )
+    shp = frac.shape
+    mean = jnp.stack([jnp.broadcast_to(m_s[:, :, None], shp), m_f,
+                      jnp.broadcast_to((omega_peak + d_o)[:, None, None], shp)], -1)  # fmt: skip
+    var = jnp.stack([jnp.broadcast_to(v_s[:, :, None], shp), v_f, jnp.broadcast_to(v_o[:, None, None], shp)], -1)
+    return (*out, mean, var)
 
 
 def _frame_weights(pos: jax.Array, om_fr: jax.Array, fclip: jax.Array, row: dict, geom: dict) -> jax.Array:
