@@ -929,64 +929,45 @@ def _peak_classes(
     return peak_class
 
 
-@partial(jax.jit, static_argnames=("window", "tile", "det_shape", "mesh"))
-def _splat_sharded(
-    spot_entry: jax.Array,
-    spot_hkl: jax.Array,
-    spot_branch: jax.Array,
-    spot_origin: jax.Array,
-    spot_live: jax.Array,
-    entry: jax.Array,
-    spot: jax.Array,
-    live: jax.Array,
-    entries: dict,
-    hkls: jax.Array,
-    F2: jax.Array,
-    geom: dict,
-    row: dict,
-    min_value: jax.Array,
-    window: tuple[int, int, int],
-    tile: int,
-    det_shape: tuple[int, int],
-    mesh: Mesh,
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Render whole spots of a grain map: each voxel added onto its spot's tile, then one kernel per spot (see render_row).
+# Voxel peaks per device per call of _splat_add, and spots per device per call of _splat_kernels: fixed sizes, so
+# the numbers of voxels and spots never compile a new shape
+_SPLAT_CHUNK = 2**15
+_SPLAT_SPOTS = 64
 
-    Each device holds S spots and the voxel peaks of those spots (padded), so nothing crosses devices.
+
+@partial(jax.jit, static_argnames=("window", "det_shape", "mesh"))
+def _splat_kernels(
+    spot_entry: jax.Array, spot_hkl: jax.Array, spot_branch: jax.Array, spot_origin: jax.Array, entries: dict,
+    hkls: jax.Array, F2: jax.Array, geom: dict, row: dict, window: tuple[int, int, int], det_shape: tuple[int, int],
+    mesh: Mesh,
+) -> tuple:  # fmt: skip
+    """Each spot's kernel: one peak's window cells, for a point at its tile's cell (0, 0), times |F|^2 and Lorentz x pol.
+
+    A peak's omega and covariance are the same for every voxel of a grain (to ~ voxel offset / detector distance), so
+    one peak, the spot's reference voxel's, stands for all.
 
     Parameters
     ----------
     spot_entry, spot_hkl, spot_branch
-        [nd S] each spot's reference peak: an entry of the grain (its position sets the kernel), hkl and branch
+        [nd S] each spot's reference peak: an entry of the grain, hkl and branch
     spot_origin
         [nd S, 2] int pixel (slow, fast) of each spot's tile cell (0, 0)
-    spot_live
-        [nd S] False for padding
-    entry, spot, live
-        [nd P] the voxel peaks: entry, index of its spot among its device's S, and False for padding
-    window, tile
-        Kernel window (frames, slow, fast) and tile size (pixels, square), static
+    window
+        Kernel window (frames, slow, fast), static
 
     Returns
     -------
-    frame, pixel, value, count
-        As :func:`_render_sharded`, per device
-    captured, in_range
-        [nd S] per spot, as :func:`render_peaks` gives them per peak
+    tuple
+        kernel [nd S, wo, ws, wf]; each window frame's sorted frame (fclip) and mean omega (om_fr), and first slow and
+        fast pixel of the kernel at cell (0, 0) (i0, j0), [nd S, wo] each; which window frames are in the scan
+        [nd S, wo]; captured and in_range [nd S], as render_peaks gives them
     """
-    reduce = _compact if mesh.devices.flat[0].platform == "cpu" else _merge
-    wo, ws, wf = window
-    ns, nf = det_shape
+    wo = window[0]
     nfr = row["omega_sorted"].shape[0]
 
-    def local(se: jax.Array, sh: jax.Array, sb: jax.Array, so: jax.Array, sl: jax.Array, pe: jax.Array,
-              ps: jax.Array, pl: jax.Array, ent: dict, hk: jax.Array, f2: jax.Array, g: dict, r: dict, mv: jax.Array
-              ) -> tuple:  # fmt: skip
-        n_spots = se.shape[0]
-
-        def one_spot(e: jax.Array, h: jax.Array, br: jax.Array, o: jax.Array) -> tuple:
-            # the peak of a point at the tile's cell (0, 0), with the reference voxel's covariance: a peak's omega and
-            # covariance are the same for every voxel of a grain (to ~ voxel offset / detector distance)
+    def local(se: jax.Array, sh: jax.Array, sb: jax.Array, so: jax.Array, ent: dict, hk: jax.Array, f2: jax.Array,
+              g: dict, r: dict) -> tuple:  # fmt: skip
+        def one(e: jax.Array, h: jax.Array, br: jax.Array, o: jax.Array) -> tuple:
             ubi, hkl, etasign = _entry_ubi(ent, e), hk[h], 1.0 - 2.0 * br
             sig = ent["sig_rot"][e] if "sig_rot" in ent else None
             mu, shape, valid = _peak_shape(ubi, ent["pos"][e], hkl, etasign, sig, r, g)
@@ -998,36 +979,83 @@ def _splat_sharded(
             kernel = jnp.where(real[:, None, None] & valid, frac * f2[h] * _peak_factors(ubi, hkl, etasign, g), 0.0)
             return kernel, fclip, om_fr, i0, j0, real, captured, in_range
 
-        kernel, fclip, om_fr, i0, j0, real, captured, in_range = jax.vmap(one_spot)(se, sh, sb, so)
+        return jax.vmap(one)(se, sh, sb, so)
 
-        def one_voxel(e: jax.Array, k: jax.Array) -> tuple:
+    specs = (P("d"),) * 4 + (P(),) * 5
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 8)(
+        spot_entry, spot_hkl, spot_branch, spot_origin, entries, hkls, F2, geom, row
+    )
+
+
+@partial(jax.jit, static_argnames=("shape", "dtype", "mesh"))
+def _splat_tiles(shape: tuple, dtype: Any, mesh: Mesh) -> jax.Array:  # noqa: ANN401
+    """Zeroed tiles [nd S, wo, tile, tile], split across the devices of ``mesh``."""
+    return jax.lax.with_sharding_constraint(jnp.zeros(shape, dtype), jax.sharding.NamedSharding(mesh, P("d")))
+
+
+@partial(jax.jit, static_argnames=("mesh",), donate_argnums=(0,))
+def _splat_add(
+    tiles: jax.Array, spot_hkl: jax.Array, spot_branch: jax.Array, spot_origin: jax.Array, fclip: jax.Array,
+    om_fr: jax.Array, entry: jax.Array, spot: jax.Array, live: jax.Array, entries: dict, hkls: jax.Array, geom: dict,
+    row: dict, mesh: Mesh,
+) -> jax.Array:  # fmt: skip
+    """Add voxel peaks onto their spots' tiles: each voxel's weight in every frame, shared between the 4 pixels around it.
+
+    Bilinear sharing keeps each voxel's intensity and centroid. ``entry``, ``spot`` and ``live`` are [nd x
+    _SPLAT_CHUNK]: each device's voxel peaks, the index of each one's spot among the device's spots, and False for
+    padding. The other per-spot inputs are as from :func:`_splat_kernels`.
+    """
+
+    def local(t: jax.Array, sh: jax.Array, sb: jax.Array, so: jax.Array, fc: jax.Array, om: jax.Array, pe: jax.Array,
+              ps: jax.Array, pl: jax.Array, ent: dict, hk: jax.Array, g: dict, r: dict) -> jax.Array:  # fmt: skip
+        def one(e: jax.Array, k: jax.Array) -> tuple:
             # where the voxel's peak lands, and its weight in each frame of its spot's window
             ubi, hkl, etasign, pos = _entry_ubi(ent, e), hk[sh[k]], 1.0 - 2.0 * sb[k], ent["pos"][e]
             cen, _ = _centroid(ubi, pos, hkl, etasign, g["wavelength"], 0.0, 0.0, r["dty_mid"], g)
-            w = ent["density"][e] * _frame_weights(pos, om_fr[k], fclip[k], r, g)
+            w = ent["density"][e] * _frame_weights(pos, om[k], fc[k], r, g)
             if "optical_depth" in ent:
-                w = w * _transmission(ent["optical_depth"][e], ubi, hkl, etasign, om_fr[k], g)
+                w = w * _transmission(ent["optical_depth"][e], ubi, hkl, etasign, om[k], g)
             u = cen[:2] - so[k].astype(cen.dtype)
             u0 = jnp.floor(u)
             return w, u0.astype(jnp.int32), u - u0
 
-        w, u0, d = jax.vmap(one_voxel)(pe, ps)
+        w, u0, d = jax.vmap(one)(pe, ps)
         w = jnp.where(pl[:, None], w, 0.0)  # [P, wo]
-
-        # bilinear: each voxel's weight shared between the four pixels around it (keeps its sum and centroid)
-        tiles = jnp.zeros((n_spots, wo, tile, tile), w.dtype)
-        fr = jnp.arange(wo)[None, :]
+        fr = jnp.arange(w.shape[1])[None, :]
         for a in (0, 1):
             for c in (0, 1):
                 share = (d[:, 0] if a else 1.0 - d[:, 0]) * (d[:, 1] if c else 1.0 - d[:, 1])
-                tiles = tiles.at[ps[:, None], fr, (u0[:, 0] + a)[:, None], (u0[:, 1] + c)[:, None]].add(
+                t = t.at[ps[:, None], fr, (u0[:, 0] + a)[:, None], (u0[:, 1] + c)[:, None]].add(
                     w * share[:, None], mode="drop"
                 )
+        return t
 
-        # every frame of every spot convolved with its own kernel (a full convolution: correlation, kernel flipped)
+    specs = (P("d"),) * 9 + (P(),) * 4
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=P("d"))(
+        tiles, spot_hkl, spot_branch, spot_origin, fclip, om_fr, entry, spot, live, entries, hkls, geom, row
+    )
+
+
+@partial(jax.jit, static_argnames=("det_shape", "mesh"))
+def _splat_out(
+    tiles: jax.Array, kernel: jax.Array, i0: jax.Array, j0: jax.Array, fclip: jax.Array, real: jax.Array,
+    spot_live: jax.Array, row: dict, min_value: jax.Array, det_shape: tuple[int, int], mesh: Mesh,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:  # fmt: skip
+    """Convolve every frame of every tile with its spot's kernel, and return the sparse pixels, as _render_sharded does.
+
+    A full convolution (correlation with the kernel flipped): a voxel at tile cell (u, v) puts the kernel's cell
+    (a, b) of frame k at pixel (i0[k] + u + a, j0[k] + v + b).
+    """
+    reduce = _compact if mesh.devices.flat[0].platform == "cpu" else _merge
+    ns, nf = det_shape
+
+    def local(t: jax.Array, kern: jax.Array, i0: jax.Array, j0: jax.Array, fc: jax.Array, re: jax.Array,
+              sl: jax.Array, r: dict, mv: jax.Array) -> tuple:  # fmt: skip
+        n_spots, wo, tile, _ = t.shape
+        ws, wf = kern.shape[2:]
         out = jax.lax.conv_general_dilated(
-            tiles.reshape(1, n_spots * wo, tile, tile),
-            kernel[:, :, ::-1, ::-1].reshape(n_spots * wo, 1, ws, wf),
+            t.reshape(1, n_spots * wo, tile, tile),
+            kern[:, :, ::-1, ::-1].reshape(n_spots * wo, 1, ws, wf),
             (1, 1),
             ((ws - 1, ws - 1), (wf - 1, wf - 1)),
             dimension_numbers=("NCHW", "OIHW", "NCHW"),
@@ -1036,28 +1064,32 @@ def _splat_sharded(
         rows = i0[:, :, None] + jnp.arange(tile + ws - 1)  # [S, wo, H]
         cols = j0[:, :, None] + jnp.arange(tile + wf - 1)  # [S, wo, W]
         inside = (
-            (real & sl[:, None])[:, :, None, None]
+            (re & sl[:, None])[:, :, None, None]
             & ((rows >= 0) & (rows < ns))[:, :, :, None]
             & ((cols >= 0) & (cols < nf))[:, :, None, :]
         )
-        frame = jnp.where(inside, r["order"][fclip][:, :, None, None], -1)
+        frame = jnp.where(inside, r["order"][fc][:, :, None, None], -1)
         pixel = jnp.where(inside, rows[:, :, :, None] * nf + cols[:, :, None, :], 0)
-        value = jnp.where(inside, out, 0.0)
-        frame, pixel, value, count = reduce(frame, pixel, value, mv)
-        return frame, pixel, value, count[None], captured, in_range
+        frame, pixel, value, count = reduce(frame, pixel, jnp.where(inside, out, 0.0), mv)
+        return frame, pixel, value, count[None]
 
-    specs = (P("d"),) * 8 + (P(),) * 6
-    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 6)(
-        spot_entry, spot_hkl, spot_branch, spot_origin, spot_live, entry, spot, live, entries, hkls, F2, geom, row,
-        min_value,
-    )  # fmt: skip
+    specs = (P("d"),) * 7 + (P(), P())
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 4)(
+        tiles, kernel, i0, j0, fclip, real, spot_live, row, min_value
+    )
 
 
 def _render_splat(
     entries: dict, hkls: jax.Array, F2: jax.Array, geom: dict, row: dict, det_shape: tuple[int, int],
     window: tuple[int, int, int], batch: int, select_chunk: int, min_value: float, mesh: Mesh, max_frames: int | None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:  # fmt: skip
-    """:func:`render_row` with ``splat=True``: a grain map rendered spot by spot (inputs as JAX arrays, see _as_jax)."""
+    """:func:`render_row` with ``splat=True``: a grain map rendered spot by spot (inputs as JAX arrays, see _as_jax).
+
+    Spots of one window class and tile size go nd x S at a time (S a power of 4, few compiles), with about as many
+    window cells as ``batch`` peaks would use without splat. Each device gets S spots: their kernels and tiles
+    (:func:`_splat_kernels`), then their voxel peaks added onto the tiles _SPLAT_CHUNK at a time (:func:`_splat_add`),
+    then the convolution (:func:`_splat_out`). Every shape is fixed by (window class, tile, S), whatever the voxels.
+    """
     if "grain" not in entries:
         msg = 'splat needs a grain map: entries with "grain" and "grain_ubi" (grain_entries)'
         raise ValueError(msg)
@@ -1091,42 +1123,56 @@ def _render_splat(
     extent = np.stack([np.maximum.reduceat(det[:, i], first) for i in (0, 1)], 1) - origin
     tile = np.maximum(8, 1 << np.ceil(np.log2(np.floor(extent.max(1)) + 2)).astype(int))  # a power of two
 
-    # Batches of spots of one window class and tile size, nd x S at a time: about as many window cells as `batch`
-    # peaks would use. Each device gets S spots and their voxel peaks, padded to a power of 2 (few compiles).
     min_value_j = jnp.asarray(min_value, dtype=dtype)
     frames, pixels, values = [], [], []
     captured_all, in_range_all = np.zeros(n_peaks), np.zeros(n_peaks)
     for k, wo_k in enumerate(classes):
         window_k = (wo_k, ws, wf)
-        for t in np.unique(tile[spot_class == k]).tolist():
+        # every spot's kernel and per-frame values, _SPLAT_SPOTS per device at a time (on the host: they are small)
+        in_class = np.flatnonzero(spot_class == k)
+        if in_class.size == 0:
+            continue
+        kern = [[] for _ in range(8)]
+        size = nd * _SPLAT_SPOTS
+        for a in range(0, in_class.size, size):
+            these = np.resize(in_class[a : a + size], size)  # padding repeats spots, then is discarded
+            out = _splat_kernels(e[first[these]], h[first[these]], b[first[these]], origin[these], entries, hkls, F2,
+                                 geom, row, window_k, det_shape, mesh)  # fmt: skip
+            for x, y in zip(kern, out):
+                x.append(np.asarray(y)[: min(size, in_class.size - a)])
+        kern = [np.concatenate(x) for x in kern]
+        place = np.zeros(n_spots, int)
+        place[in_class] = np.arange(in_class.size)  # each spot's row in kern
+        for t in np.unique(tile[in_class]).tolist():
             sel = np.flatnonzero((spot_class == k) & (tile == t))
             cells = wo_k * (t + ws - 1) * (t + wf - 1)
-            per_device = max(1, (batch // nd) * window[0] * ws * wf // cells)
-            per_device = min(1 << (per_device.bit_length() - 1), 1 << (-(-sel.size // nd) - 1).bit_length())
+            fit = max(1, (batch // nd) * window[0] * ws * wf // cells)  # spots per device the memory allows
+            per_device = 1
+            while per_device < -(-sel.size // nd) and 4 * per_device <= fit:
+                per_device *= 4
             per_shard = per_device * cells
             for start in range(0, sel.size, per_device * nd):
                 chunk = sel[start : start + per_device * nd]
-                pad = per_device * nd - chunk.size
-                spots = np.pad(chunk, (0, pad))  # padding repeats spot sel[0], marked not live
+                spots = np.pad(chunk, (0, per_device * nd - chunk.size))  # padding repeats sel[0], not live
                 spot_live = np.arange(spots.size) < chunk.size
-                # each device's voxel peaks: those of its spots, numbered by the spot's place on the device
+                ref = first[spots]
+                kernel, fclip, om_fr, i0, j0, real, cap, inr = (x[place[spots]] for x in kern)
+                spot_args = (h[ref], b[ref], origin[spots])
+                tiles = _splat_tiles((spots.size, wo_k, t, t), kernel.dtype, mesh)
+                # each device's voxel peaks, numbered by their spot's place on the device, _SPLAT_CHUNK at a time
                 n_c = np.where(spot_live, count[spots], 0)
-                per_dev = n_c.reshape(nd, per_device).sum(1)
-                n_p = max(_MIN_BATCH, 1 << (int(per_dev.max()) - 1).bit_length())
-                peak_of = np.repeat(first[spots], n_c) + np.arange(n_c.sum()) - np.repeat(np.cumsum(n_c) - n_c, n_c)
+                peak_of = np.repeat(ref, n_c) + np.arange(n_c.sum()) - np.repeat(np.cumsum(n_c) - n_c, n_c)
                 local = np.repeat(np.arange(spots.size) % per_device, n_c)
-                slot = (
-                    np.repeat(np.arange(nd) * n_p, per_dev)
-                    + np.arange(n_c.sum())
-                    - np.repeat(np.cumsum(per_dev) - per_dev, per_dev)
-                )
-                p_entry, p_spot = np.zeros(nd * n_p, np.int32), np.zeros(nd * n_p, np.int32)
-                p_live = np.zeros(nd * n_p, bool)
-                p_entry[slot], p_spot[slot], p_live[slot] = e[peak_of], local, True
-                fr, px, val, cnt, cap, inr = _splat_sharded(
-                    e[first[spots]], h[first[spots]], b[first[spots]], origin[spots], spot_live, p_entry, p_spot,
-                    p_live, entries, hkls, F2, geom, row, min_value_j, window_k, t, det_shape, mesh,
-                )  # fmt: skip
+                per_dev = n_c.reshape(nd, per_device).sum(1)
+                dev_start = np.cumsum(per_dev) - per_dev
+                for c0 in range(0, int(per_dev.max()), _SPLAT_CHUNK):
+                    j = np.arange(_SPLAT_CHUNK)
+                    have = c0 + j[None, :] < per_dev[:, None]  # [nd, chunk]
+                    idx = np.where(have, dev_start[:, None] + c0 + j[None, :], 0).ravel()
+                    tiles = _splat_add(tiles, *spot_args, fclip, om_fr, e[peak_of[idx]], local[idx], have.ravel(),
+                                       entries, hkls, geom, row, mesh)  # fmt: skip
+                fr, px, val, cnt = _splat_out(tiles, kernel, i0, j0, fclip, real, spot_live, row, min_value_j,
+                                              det_shape, mesh)  # fmt: skip
                 cnt = np.asarray(cnt)
                 frames.append(_valid_from_shards(fr, cnt, per_shard))
                 pixels.append(_valid_from_shards(px, cnt, per_shard))
