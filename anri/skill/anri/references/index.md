@@ -25,6 +25,8 @@ after changing the rings.
 | Choice | Look at | Function |
 |---|---|---|
 | which rings, how wide | the 2θ profile and the (2θ, η) cake: rings that touch or overlap, intensity between rings (another phase), a ring that wobbles with η (the geometry is off: fix the calibration, do not widen `--tth-tol`) | `ring_profile_cake`, `ring_windows`; `plot_rings` |
+| `--rings` as a list, `--ring-merge` | the table `plot_rings` returns lists every ring shown, used or not, with multiplicity, `\|F\|^2` and gap: for low symmetry pick strong rings well apart (`--rings 9,10,11`); merge rings the data cannot separate | `ring_windows(cake, [9, 10, 11])`; `plot_rings` |
+| `--detector-mask` | the measured share of each ring per η bin: dips are module gaps and the mask, 0 is off the detector | `rings/coverage` in the histogram file; `plot_coverage` |
 | `--monitor` | intensity per dty row: steps from one row to the next are flux changes between the rows' scans | `row_profile`; `plot_rows` |
 | `--gridstep` | the number of voxels the fit can afford: rows summed in groups make voxels larger and the fit much cheaper | the log's `memory:` line |
 | `--saturation` | the detector's saturation count; saturated bins become lower bounds in the fit | ask the human |
@@ -91,8 +93,12 @@ orientation explains (a missed grain, or another phase), negative ones are predi
 
 Replaces each orientation a voxel uses by 27 children a third of the step apart and fits again, level by level (2
 levels take a 1° grid to 0.11°). It removes the ghost twins a coarse grid makes. Each level costs about one fit.
-Raise `--per-voxel` if the log shows nearly every slot used. Writes a file like the fit's, which the populations
-stage reads.
+Writes a file like the fit's, which the populations stage reads.
+
+| Choice | Look at | Function |
+|---|---|---|
+| `--cover`, `--per-voxel` | before running, on the fit file: how many orientations each occupied voxel needs to hold `cover` of its occupancy; red over whole grains means raise `--per-voxel`. A level predicts 27 children per orientation used | `orientations_needed`; `plot_local_slots` |
+| `--levels`, and whether it worked | the deviance at each level (`level_recorder` as the stage's callback); how far each voxel's main population moved: up to the grid's worst case is expected, a twin's misorientation means the main population changed (a ghost lost, or a thin twin won) | `local_change`; `plot_local` |
 
 ## 6. populations: `--occupied`, `--min-frac`
 

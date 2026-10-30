@@ -48,10 +48,20 @@ def children(U: ArrayLike, step: float) -> np.ndarray:
     return np.einsum("cij,qjk->qcik", R, np.asarray(U, np.float64)).reshape(-1, 3, 3)
 
 
-def _covering(f: np.ndarray, cand: np.ndarray, cover: float, m: int) -> tuple:
-    """Each voxel's most occupied orientations that together hold cover of its occupancy, at most m.
+def covering(f: np.ndarray, cand: np.ndarray, cover: float, m: int) -> tuple:
+    """Return each voxel's most occupied orientations that together hold cover of its occupancy, at most m.
 
-    Returns their indices and occupancies, [Nv, m] each, and where they are, [Nv, m] booleans.
+    Parameters
+    ----------
+    f, cand
+        [Nv, K] occupancies and orientation indices of a fit (-1: none)
+    cover, m
+        See above
+
+    Returns
+    -------
+    cand, f, keep: np.ndarray
+        [Nv, min(m, K)] each: the voxel's orientations, largest first, their occupancies, and which of them are used
     """
     order = np.argsort(-f, 1)[:, :m]
     fs, cs = np.take_along_axis(f, order, 1), np.take_along_axis(cand, order, 1)
@@ -76,7 +86,7 @@ def used(f: ArrayLike, cand: ArrayLike, n_orient: int, cover: float = 0.95, m: i
     np.ndarray
         [n_orient] booleans
     """
-    cs, _, keep = _covering(np.asarray(f), np.asarray(cand), cover, m)
+    cs, _, keep = covering(np.asarray(f), np.asarray(cand), cover, m)
     out = np.zeros(n_orient, bool)
     out[cs[keep]] = True
     return out
@@ -101,7 +111,7 @@ def inherit(f: ArrayLike, cand: ArrayLike, use: ArrayLike, cover: float = 0.95, 
         [Nv, 27 m] starting occupancies and indices into the children (-1 for an empty slot), for
         :func:`anri.index.occupancy.fit_occupancy`'s given
     """
-    cs, fs, keep = _covering(np.asarray(f), np.asarray(cand), cover, m)
+    cs, fs, keep = covering(np.asarray(f), np.asarray(cand), cover, m)
     rank = np.cumsum(np.asarray(use)) - 1  # each subdivided orientation's block of children
     base = np.where(keep, rank[np.maximum(cs, 0)] * N_CHILD, -1)
     c = np.where(keep[..., None], base[..., None] + np.arange(N_CHILD), -1).reshape(len(cs), -1)

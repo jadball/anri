@@ -12,12 +12,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from .data import pixel_cake, ring_table, ring_widths
+from .local import covering
 from .search import GRID_STEPS, grid_chance, prune
 from .stages import B_E, B_O, R_E, R_O, sample_groups
 
 
 def ring_profile_cake(dset: dict, n_rings: int = 10, cif: str | None = None, step: float = 0.002,
-                      n_eta: int = 180) -> dict:  # fmt: skip
+                      n_eta: int = 180, merge: float = 1e-4) -> dict:  # fmt: skip
     """Measure the 2theta profile and the (2theta, eta) cake on the scans the histogram stage measures ring widths on.
 
     Parameters
@@ -25,13 +26,15 @@ def ring_profile_cake(dset: dict, n_rings: int = 10, cif: str | None = None, ste
     dset
         From :func:`anri.index.stages.open_dataset`
     n_rings
-        Rings shown, to choose the number used from
+        Rings shown (the first ones), to choose those used from
     cif
         CIF of the phase, for the structure factors listed (default: ``|F|^2 = 1``)
     step
         2theta bin width (degrees), as :func:`anri.index.data.ring_profile`
     n_eta
         eta bins over 360 degrees
+    merge
+        Reflections within this in d* (1 / angstrom) are one ring, as the histogram stage's ``ring_merge``
 
     Returns
     -------
@@ -45,7 +48,7 @@ def ring_profile_cake(dset: dict, n_rings: int = 10, cif: str | None = None, ste
         import Dans_Diffraction
 
         structure = Dans_Diffraction.Crystal(cif)
-    rings = ring_table(dset["lattice"], dset["space_group"], dset["geo"]["wavelength"], n_rings, structure)
+    rings = ring_table(dset["lattice"], dset["space_group"], dset["geo"]["wavelength"], n_rings, structure, merge)
     lo = float(rings["tth"][0]) - 0.5
     n_t = int(np.ceil((float(rings["tth"][-1]) + 0.5 - lo) / step))
     scans = sample_groups(dset["groups"])
@@ -59,37 +62,50 @@ def ring_profile_cake(dset: dict, n_rings: int = 10, cif: str | None = None, ste
             "n_scans": len(scans)}  # fmt: skip
 
 
-def ring_windows(cake: dict, n_rings: int, tth_tol: float | None = None) -> dict:
-    """Return the 2theta windows of the first n_rings rings, as the histogram stage sets them.
+def ring_windows(cake: dict, rings: int | list[int], tth_tol: float | None = None) -> dict:
+    """Return the 2theta windows of the rings used, as the histogram stage sets them.
+
+    As in the stage, each ring's width is measured between its true neighbours (every ring up to the last one used,
+    :func:`anri.index.data.ring_widths`), so a window does not reach into a ring that is not used.
 
     Parameters
     ----------
     cake
-        From :func:`ring_profile_cake`
-    n_rings
-        Rings used
+        From :func:`ring_profile_cake`, showing at least the rings used
+    rings
+        Number of rings used (the first ones), or a list of ring indices (0 for the lowest 2theta), as the histogram
+        stage's ``rings``
     tth_tol
         Tolerance (degrees), or None: measured per ring, ``|offset| + half-width``
 
     Returns
     -------
     dict
-        "offset", "half_width", "tolerance", "counts" (in each window), "overlap" (each window meets the next) and
-        "fraction" (of the intensity up to the last ring used that falls in a window)
+        "index" (of each ring used), "offset", "half_width", "tolerance", "counts" (in each window), "overlap" (the
+        window meets a neighbour's, used or not, measured the same way) and "fraction" (of the intensity up to the
+        last ring used that falls in a window); all per ring used
     """
-    tth, prof, x = cake["rings"]["tth"][:n_rings], cake["profile"], cake["tth"]
-    off, hw = ring_widths(prof, cake["lo"], cake["step"], tth)
-    tol = np.abs(off) + hw if tth_tol is None else np.full(n_rings, tth_tol)
+    index = np.arange(rings) if isinstance(rings, (int, np.integer)) else np.unique(np.asarray(list(rings), int))
+    tth_all, prof, x = cake["rings"]["tth"], cake["profile"], cake["tth"]
+    if len(index) == 0 or index[0] < 0 or index[-1] >= len(tth_all):
+        msg = f"rings {rings}: indices from 0 to {len(tth_all) - 1} (the rings the cake shows)"
+        raise ValueError(msg)
+    off, hw = ring_widths(prof, cake["lo"], cake["step"], tth_all[: index[-1] + 1])
+    off_n, hw_n = ring_widths(prof, cake["lo"], cake["step"], tth_all)  # every ring shown, for the neighbours
+    tol_n = np.abs(off_n) + hw_n if tth_tol is None else np.full(len(tth_all), tth_tol)
+    off, hw = off[index], hw[index]
+    tol = np.abs(off) + hw if tth_tol is None else np.full(len(index), tth_tol)
     inside = np.zeros(len(x), bool)
     counts = []
-    for t, w in zip(tth, tol):
+    for t, w in zip(tth_all[index], tol):
         win = np.abs(x - t) < w
         inside |= win
         counts.append(float(prof[win].sum()))
     gap = cake["gap"]
-    overlap = [r < len(gap) and r + 1 < n_rings and tol[r] + tol[r + 1] > gap[r] for r in range(n_rings)]
-    used = x < tth[-1] + 0.5
-    return {"offset": off, "half_width": hw, "tolerance": tol, "counts": counts, "overlap": overlap,
+    overlap = [bool((r > 0 and w + tol_n[r - 1] > gap[r - 1]) or (r < len(gap) and w + tol_n[r + 1] > gap[r]))
+               for r, w in zip(index, tol)]  # fmt: skip
+    used = x < tth_all[index[-1]] + 0.5
+    return {"index": index, "offset": off, "half_width": hw, "tolerance": tol, "counts": counts, "overlap": overlap,
             "fraction": float(prof[inside].sum() / max(prof[used].sum(), 1e-30))}  # fmt: skip
 
 
@@ -351,6 +367,88 @@ def candidate_shares(f: np.ndarray, voxels: np.ndarray, max_voxels: int = 200000
     iv = np.flatnonzero(voxels)
     iv = iv[:: max(1, len(iv) // max_voxels)]
     return np.sort(f[iv], 1)[:, ::-1] / np.maximum(f[iv].sum(1, keepdims=True), 1e-30)
+
+
+def orientations_needed(f: np.ndarray, cand: np.ndarray, cover: float) -> np.ndarray:
+    """Return how many of each voxel's most occupied orientations hold cover of its occupancy.
+
+    The local search's count before its ``per_voxel`` cap (:func:`anri.index.local.covering`).
+
+    Parameters
+    ----------
+    f, cand
+        [Nv, K] occupancies and orientation indices (a fit stage file, or the voxels to look at)
+    cover
+        As the local search's
+
+    Returns
+    -------
+    np.ndarray
+        [Nv] counts, 0 for an empty voxel
+    """
+    return covering(np.asarray(f), np.asarray(cand), cover, f.shape[1])[2].sum(1)
+
+
+def level_recorder() -> tuple[Callable, dict]:
+    """Return a callback for :func:`anri.index.stages.stage_localsearch` that records each level's deviance, and its record.
+
+    Returns
+    -------
+    callback, record
+        Pass callback to the local search. record then holds "deviance": one list per level, the deviance before
+        each iteration (the first: the level's start, each parent's occupancy shared among its children)
+    """
+    record: dict = {"deviance": []}
+
+    def callback(it: int, f: object, dev: float) -> None:
+        if it == 1:  # a new level
+            record["deviance"].append([])
+        record["deviance"][-1].append(float(dev))
+
+    return callback, record
+
+
+def local_change(fit_file: str, local_file: str, ops: np.ndarray, radius_deg: float, voxels: np.ndarray) -> dict:
+    """Compare the main population of each voxel before and after the local search.
+
+    Parameters
+    ----------
+    fit_file, local_file
+        A fit stage file and the local search made from it
+    ops
+        [n, 3, 3] Laue-group rotations
+    radius_deg
+        Population radius (:func:`anri.index.populations.group`), as the populations stage: 1.8 grid steps
+    voxels
+        [Nv] the voxels to compare (e.g. the occupied ones)
+
+    Returns
+    -------
+    dict
+        [Nv] each, NaN outside voxels: "angle" (disorientation between the main population's mean orientation
+        before and after, deg; near a twin's misorientation where the main population changed), "frac_fit" and
+        "frac_local" (its fraction of the voxel), "spread_fit" and "spread_local" (its spread, deg)
+    """
+    import h5py
+
+    from anri.crystal.orientation import disorientation
+
+    from .populations import group
+
+    main = {}
+    for name, path in (("fit", fit_file), ("local", local_file)):
+        with h5py.File(path, "r") as h:
+            f, cand, U = h["f"][()][voxels], h["cand"][()][voxels], h["U"][()]
+        frac, U_pop, spread, _ = group(f, cand, U, ops, radius_deg)
+        main[name] = (frac[:, 0], U_pop[:, 0], spread[:, 0])
+    out = {"angle": disorientation(main["fit"][1], main["local"][1], ops)}
+    for name in ("fit", "local"):
+        out[f"frac_{name}"], out[f"spread_{name}"] = main[name][0], main[name][2]
+    full = {}
+    for k, v in out.items():
+        full[k] = np.full(len(voxels), np.nan)
+        full[k][voxels] = v
+    return full
 
 
 def ring_ratios(H: np.ndarray, model: np.ndarray, n_rings: int, scan: dict, etacut: float) -> np.ndarray:

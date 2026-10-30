@@ -28,7 +28,9 @@ def _log_cmap() -> Colormap:
 
 
 def plot_rings(fig: Figure, cake: dict) -> Callable:
-    """Draw the 2theta profile, the cake and a close-up of each ring; ``update(n_rings, tth_tol)`` draws the windows.
+    """Draw the 2theta profile, the cake and a close-up of each ring; ``update(rings, tth_tol)`` draws the windows.
+
+    ``rings`` is a number of first rings or a list of ring indices, as the histogram stage's.
 
     Parameters
     ----------
@@ -41,12 +43,12 @@ def plot_rings(fig: Figure, cake: dict) -> Callable:
 
     from .diagnostics import ring_windows
 
-    tth, prof, C, rings = cake["tth"], cake["profile"], cake["cake"], cake["rings"]
-    n_all = len(rings["tth"])
+    tth, prof, C, table = cake["tth"], cake["profile"], cake["cake"], cake["rings"]
+    n_all = len(table["tth"])
     sf_top, sf_bot = fig.subfigures(2, 1, squeeze=False, height_ratios=[2.3, 0.9]).ravel()
     ax_p, ax_c = sf_top.subplots(2, 1, sharex=True)
     ax_p.semilogy(tth, np.maximum(prof, 0.5), lw=0.7, color="k")
-    for t in rings["tth"]:
+    for t in table["tth"]:
         ax_p.axvline(t, color="0.6", ls="--", lw=0.6)
     ax_p.set(ylabel="counts", title="2θ profile: every ring (grey), windows of the rings used (orange)")
     k = 5  # 0.01 deg in 2theta
@@ -57,36 +59,47 @@ def plot_rings(fig: Figure, cake: dict) -> Callable:
     ax_c.set(xlabel="2θ (°)", ylabel="η (°)", title="cake: rings should be straight; windows in cyan")
     axz = np.atleast_1d(sf_bot.subplots(1, n_all, sharex=True, sharey=True))
     for r, a in enumerate(axz):
-        z = np.abs(tth - rings["tth"][r]) < 0.15
-        a.semilogy(tth[z] - rings["tth"][r], np.maximum(prof[z], 0.5), lw=0.8, color="k")
+        z = np.abs(tth - table["tth"][r]) < 0.15
+        a.semilogy(tth[z] - table["tth"][r], np.maximum(prof[z], 0.5), lw=0.8, color="k")
         a.set_title(f"{r}: {cake['hkl'][r]}", fontsize=9)
         a.tick_params(labelsize=7)
     axz[0].set_ylabel("counts")
     sf_bot.supxlabel("2θ − ring (°); orange: window, blue: measured centre; grey: ring not used", fontsize=9)
     drawn: list = []
 
-    def update(n_rings: int, tth_tol: float | None = None) -> str:
-        w = ring_windows(cake, n_rings, tth_tol or None)
+    def update(rings: int | list[int], tth_tol: float | None = None) -> str:
         for art in drawn:
             art.remove()
         drawn.clear()
-        for r in range(n_rings):
-            t, tol = rings["tth"][r], w["tolerance"][r]
+        if not isinstance(rings, (int, np.integer)) and len(rings) == 0:
+            fig.canvas.draw_idle()
+            return "no ring selected"
+        w = ring_windows(cake, rings, tth_tol or None)
+        use = {int(r): k for k, r in enumerate(w["index"])}  # ring index -> its row in w
+        for r, k in use.items():
+            t, tol = table["tth"][r], w["tolerance"][k]
             drawn.append(ax_p.axvspan(t - tol, t + tol, color="tab:orange", alpha=0.4))
             drawn.extend(ax_c.axvline(t + s * tol, color="c", lw=0.6) for s in (-1, 1))
             drawn.append(axz[r].axvspan(-tol, tol, color="tab:orange", alpha=0.4))
-            drawn.append(axz[r].axvline(w["offset"][r], color="tab:blue", lw=0.8))
+            drawn.append(axz[r].axvline(w["offset"][k], color="tab:blue", lw=0.8))
         for r, a in enumerate(axz):
-            a.set_facecolor("white" if r < n_rings else "0.9")
+            a.set_facecolor("white" if r in use else "0.9")
         fig.canvas.draw_idle()
-        lines = [" ring  hkl        mult  |F|^2  2theta   offset  half-width  tolerance  gap to next  counts in window"]
-        for r in range(n_rings):
+        head = (
+            " ring  used  hkl        mult  |F|^2  2theta  gap to next   offset  half-width  tolerance  counts in window"
+        )
+        lines = [head]
+        for r in range(n_all):
             gap = f"{cake['gap'][r]:11.3f}" if r < len(cake["gap"]) else "          -"
-            lines.append(f"{r:5d}  {cake['hkl'][r]!s:10s} {cake['multiplicity'][r]:4d}  {cake['F2'][r]:5.2f}  "
-                         f"{rings['tth'][r]:6.3f}  {w['offset'][r]:+7.3f}  {w['half_width'][r]:10.3f}  "
-                         f"{w['tolerance'][r]:9.3f}  {gap}  {w['counts'][r]:.3g}"
-                         + ("  <- windows overlap" if w["overlap"][r] else ""))  # fmt: skip
-        lines.append(f"{w['fraction'] * 100:.1f}% of the intensity up to the last ring used is in a window")
+            line = (f"{r:5d}  {'yes' if r in use else '   '}   {cake['hkl'][r]!s:10s} {cake['multiplicity'][r]:4d}  "
+                    f"{cake['F2'][r]:5.2f}  {table['tth'][r]:6.3f}  {gap}")  # fmt: skip
+            if r in use:
+                k = use[r]
+                line += (f"  {w['offset'][k]:+7.3f}  {w['half_width'][k]:10.3f}  {w['tolerance'][k]:9.3f}  "
+                         f"{w['counts'][k]:.3g}" + ("  <- windows overlap" if w["overlap"][k] else ""))  # fmt: skip
+            lines.append(line)
+        lines.append(f"--rings {','.join(str(r) for r in use)}: {len(use)} rings; "
+                     f"{w['fraction'] * 100:.1f}% of the intensity up to the last ring used is in a window")  # fmt: skip
         return "\n".join(lines)
 
     return update
@@ -117,6 +130,27 @@ def plot_rows(fig: Figure, rows: dict, dty_within: np.ndarray | None = None, yst
         for v in dty_within[:: max(1, len(dty_within) // 10)]:
             ax[2].plot(np.linspace(0, 1, len(v)), (v - v.mean()) / ystep, lw=0.7)
         ax[2].set(xlabel="fraction of the row", ylabel="dty − row mean (dty steps)", title="the DataSet's dty in a row")
+
+
+def plot_coverage(fig: Figure, coverage: np.ndarray, index: np.ndarray) -> None:
+    """Draw the measured share of each ring per eta bin: the detector's edges, module gaps and masked pixels.
+
+    Parameters
+    ----------
+    fig
+        A matplotlib figure
+    coverage
+        [Nr, n_e] the histogram stage file's ``rings/coverage`` (eta bins of B_E from -180 deg)
+    index
+        [Nr] each ring's index (``rings/index``)
+    """
+    eta = -180.0 + (np.arange(coverage.shape[1]) + 0.5) * B_E
+    ax = fig.subplots(1, 1)
+    for r, c in zip(index, coverage):
+        ax.plot(eta, c, lw=0.8, label=f"ring {r}")
+    ax.set(xlabel="η (°)", ylabel="measured share", xlim=(-180, 180), ylim=(-0.03, 1.03),
+           title="detector coverage of each ring: predictions are scaled by it, so a gap is not a missing spot")  # fmt: skip
+    ax.legend(fontsize=8, ncols=min(len(index), 8))
 
 
 def plot_y0(fig: Figure, edges: dict, recon: Callable, y0: float, scan: dict) -> Callable:
@@ -597,6 +631,117 @@ def plot_residual(fig: Figure, H: np.ndarray, model: np.ndarray, n_rings: int, s
         return f"ring {ring}, eta {eta[0]}..{eta[1]} deg"
 
     return update
+
+
+def plot_local_slots(fig: Figure, f: np.ndarray, cand: np.ndarray, fitted: np.ndarray, occupied: np.ndarray,
+                     nr: int) -> Callable:  # fmt: skip
+    """Draw how many orientations each voxel needs to hold cover of its occupancy; ``update(cover, per_voxel)``.
+
+    Each orientation a voxel uses becomes 27 candidates at every level of the local search, so ``per_voxel`` sets a
+    level's candidates per voxel (27 x per_voxel), and the orientations used over the whole map the number of
+    children predicted (:func:`anri.index.local.used`, as the stage counts them).
+
+    Parameters
+    ----------
+    fig
+        A matplotlib figure
+    f, cand
+        [Nv, cand] a fit stage file's occupancies and orientation indices
+    fitted, occupied
+        [Nv] the voxels fitted (the mask) and those occupied
+    nr
+        Voxels per side
+    """
+    from .diagnostics import orientations_needed
+    from .local import N_CHILD, used
+
+    f_m, c_m = f[fitted], cand[fitted]
+    n_orient = int(cand.max()) + 1
+    occ = occupied[fitted]
+    k = f.shape[1]
+    ax = fig.subplots(1, 2, width_ratios=[1.6, 1])
+    hist = ax[0]
+    v_m = hist.axvline(8, color="tab:red")
+    hist.set(xlabel="orientations holding cover of the voxel's occupancy", ylabel="occupied voxels", yscale="log")
+    im = ax[1].imshow(np.full((nr, nr), np.nan), origin="lower", cmap="viridis", vmin=1)
+    ax[1].set(title="orientations needed (red: above per_voxel)", xticks=[], yticks=[])
+    fig.colorbar(im, ax=ax[1], shrink=0.8)
+    over = ax[1].imshow(np.zeros((nr, nr, 4)), origin="lower")
+    drawn: list = []
+
+    def update(cover: float, per_voxel: int) -> str:
+        need = orientations_needed(f_m, c_m, cover)
+        n_use = int(used(f_m, c_m, n_orient, cover, per_voxel).sum())
+        for art in drawn:
+            art.remove()
+        drawn[:] = list(hist.hist(need[occ], bins=np.arange(0.5, k + 1.5), color="tab:blue")[2])
+        v_m.set_xdata([per_voxel + 0.5, per_voxel + 0.5])
+        hist.set_xlim(0.5, max(int(need.max()) if len(need) else 1, per_voxel) + 1.5)
+        full = np.full(len(fitted), np.nan)
+        full[fitted] = np.where(occ, need, np.nan)
+        im.set_data(full.reshape(nr, nr))
+        im.set_clim(1, max(2, np.nanmax(full) if np.isfinite(full).any() else 2))
+        red = np.zeros((len(fitted), 4))
+        red[fitted] = np.where((occ & (need > per_voxel))[:, None], (0.85, 0.1, 0.1, 1.0), 0.0)
+        over.set_data(red.reshape(nr, nr, 4))
+        fig.canvas.draw_idle()
+        capped = float(np.mean(need[occ] > per_voxel)) if occ.any() else 0.0
+        return (f"{capped * 100:.1f}% of occupied voxels need more than per_voxel = {per_voxel} orientations to hold "
+                f"{cover:g} of their occupancy (median {np.median(need[occ]) if occ.any() else 0:.0f}); "
+                f"level 1: {n_use} orientations used, {N_CHILD * n_use} children, at most {N_CHILD * per_voxel} "
+                f"candidates per voxel (the fit had {k})")  # fmt: skip
+
+    return update
+
+
+def plot_local(fig: Figure, fit_deviance: list, level_deviance: list, change: dict, worst_case: float,
+               nr: int) -> None:  # fmt: skip
+    """Draw what the local search changed: the deviance at each level, and each voxel's main population.
+
+    Parameters
+    ----------
+    fig
+        A matplotlib figure
+    fit_deviance
+        The fit's deviance per iteration (:func:`anri.index.diagnostics.convergence_recorder`'s "deviance")
+    level_deviance
+        One list per level (:func:`anri.index.diagnostics.level_recorder`'s "deviance")
+    change
+        From :func:`anri.index.diagnostics.local_change`
+    worst_case
+        The search grid's worst-case distance to the truth (deg), the most a grid orientation can be off
+    nr
+        Voxels per side
+    """
+    from matplotlib.colors import LogNorm
+
+    ax = fig.subplots(1, 4, width_ratios=[1.2, 1, 1, 1])
+    start = len(fit_deviance)
+    ax[0].plot(np.arange(1, start + 1), fit_deviance, color="k", label="fit")
+    for lv, dev in enumerate(level_deviance, 1):
+        ax[0].axvline(start + 0.5, color="0.6", ls="--", lw=0.6)
+        ax[0].plot(start + np.arange(1, len(dev) + 1), dev, label=f"level {lv}")
+        start += len(dev)
+    ax[0].set(yscale="log", xlabel="iteration (fit, then each level)", ylabel="deviance",
+              title="deviance before each iteration")  # fmt: skip
+    ax[0].legend(fontsize=8)
+    angle = change["angle"]
+    ok = np.isfinite(angle)
+    lo = max(1e-3, float(np.nanpercentile(angle, 1)) if ok.any() else 1e-3)
+    im = ax[1].imshow(np.where(ok, np.maximum(angle, lo), np.nan).reshape(nr, nr), origin="lower", cmap="viridis",
+                      norm=LogNorm(lo, max(90.0, 2 * lo)))  # fmt: skip
+    ax[1].set(title="main population: moved by (°)", xticks=[], yticks=[])
+    fig.colorbar(im, ax=ax[1], shrink=0.8)
+    ax[2].hist(np.maximum(angle[ok], lo), bins=np.geomspace(lo, 90.0, 80), color="tab:blue")
+    ax[2].axvline(worst_case, color="tab:red", label=f"grid worst case {worst_case:.2g}°")
+    ax[2].set(xscale="log", yscale="log", xlabel="main population moved by (°)", ylabel="occupied voxels")
+    ax[2].legend(fontsize=8)
+    for name, color in (("fit", "k"), ("local", "tab:blue")):
+        fr, sp = change[f"frac_{name}"][ok], change[f"spread_{name}"][ok]
+        ax[3].hist(fr, bins=np.linspace(0, 1, 51), histtype="step", color=color,
+                   label=f"{name}: spread median {np.median(sp) if len(sp) else 0:.3g}°")  # fmt: skip
+    ax[3].set(yscale="log", xlabel="fraction of the main population", ylabel="occupied voxels")
+    ax[3].legend(fontsize=8)
 
 
 def plot_populations(fig: Figure, tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, spread: np.ndarray,
