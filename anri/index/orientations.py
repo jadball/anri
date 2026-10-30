@@ -18,7 +18,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from .data import coarsen_coverage, eta_omega_corners
-from .occupancy import censored_ratio, deviance, squarem
+from .occupancy import add_cells, censored_ratio, deviance, squarem, take_cells
 from .search import predict
 
 
@@ -59,8 +59,7 @@ def _forward(
     def step(acc: jax.Array, ch: tuple) -> tuple:
         gc, uc = ch
         idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, cov, bins)
-        c = (gc[:, None, None] * wt).ravel().astype(acc.dtype)
-        return acc + jax.ops.segment_sum(c, jnp.where(idx >= 0, idx, n_cells).ravel(), n_cells + 1)[:-1], None
+        return add_cells(acc, idx, gc[:, None, None] * wt), None
 
     acc, _ = jax.lax.scan(step, jnp.zeros(n_cells, jnp.float32), (g, U))
     return acc
@@ -73,7 +72,7 @@ def _backward(
 ) -> jax.Array:  # fmt: skip
     def one(uc: jax.Array) -> jax.Array:
         idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, cov, bins)
-        return jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (1, 2))
+        return jnp.sum(wt * take_cells(r, idx), (1, 2))
 
     return jax.lax.map(one, U)
 
@@ -86,8 +85,7 @@ def _likelihood_ratio(
     def one(ch: tuple) -> jax.Array:
         gc, uc = ch
         idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, cov, bins)
-        m = jnp.where(idx >= 0, mu[jnp.clip(idx, 0)], 0.0)
-        dd = jnp.where(idx >= 0, d[jnp.clip(idx, 0)], 0.0)
+        m, dd = take_cells(mu, idx), take_cells(d, idx)
         ga = gc[:, None, None] * wt
         rest = jnp.maximum(m - ga, 1e-6 * jnp.maximum(m, 1e-30))
         # log(m / rest) as log1p((m - rest) / rest): in float32, m / rest of a weak orientation rounds to 1 + a few
