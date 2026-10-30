@@ -28,6 +28,7 @@ from anri.geom.scan import recon_positions
 from .data import coarsen_rows, coarsen_scan, eta_omega_corners, omega_bin, scan_beam
 
 
+@jax.jit
 def censored_ratio(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | None = None) -> jax.Array:
     """Compute the MLEM ratio d / mu, with empty bins taken as censored, and saturated bins as at least their data.
 
@@ -44,6 +45,7 @@ def censored_ratio(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Ar
     return r
 
 
+@jax.jit
 def deviance(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | None = None) -> jax.Array:
     """Poisson deviance of observed bins, plus 2 x (mu - censor) for empty bins the model predicts above ``censor``.
 
@@ -113,6 +115,9 @@ def system(
         [Nv, Q, Nj, 8] each (4 n_beam with a beam profile); unused corners have index -1
     """
     n_k = scan["n_rows"]
+    real = jnp.isfinite(pos[:, 2])  # padding (:func:`pad_voxels`) has no entries
+    use = use & real[:, None, None]
+    pos = jnp.where(real[:, None], pos, 0.0)
     k_in, wedge, chi = scan_beam(scan)
     if pos.shape[1] > 3:  # absorption: each voxel's edge distances follow its position
         k, e_h, e_v = beam_basis(k_in)
@@ -199,7 +204,9 @@ def block_voxels(q: int, n_j: int, budget_bytes: float, n_corners: int = 8) -> i
 
 
 def pad_voxels(pos: ArrayLike, vb: int) -> jax.Array:
-    """Pad voxel positions to a multiple of vb with voxels far outside the scan (they reach no rows).
+    """Pad voxel positions to a multiple of vb with voxels at z = NaN, which :func:`system` gives no entries.
+
+    Not voxels far away: one at (1e6, 1e6) is on the axis's ray at omega = 135 and 315 degrees, and takes intensity.
 
     Parameters
     ----------
@@ -214,7 +221,8 @@ def pad_voxels(pos: ArrayLike, vb: int) -> jax.Array:
         [ceil(Nv / vb) vb, C] positions
     """
     pos = jnp.asarray(pos, jnp.float32)
-    return jnp.concatenate([pos, jnp.full((-pos.shape[0] % vb, pos.shape[1]), 1e6, pos.dtype)])
+    pad = jnp.zeros((-pos.shape[0] % vb, pos.shape[1]), pos.dtype).at[:, 2].set(jnp.nan)
+    return jnp.concatenate([pos, pad])
 
 
 def _chunks(a: jax.Array, qc: int) -> jax.Array:

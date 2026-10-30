@@ -270,6 +270,46 @@ class TestOccupancy(unittest.TestCase):
             var = (w * (dty - centre) ** 2).sum() / w.sum()
             self.assertAlmostEqual(var, sig**2 + vox**2 / 12, delta=0.05 * (sig**2 + vox**2 / 12))
 
+    def test_padding_is_invisible(self):
+        """Padded voxels get no entries: a far-away one (1e6, 1e6) would cross the axis's ray at omega 135, 315."""
+        pred = (jnp.array([[10.0, 10.0]]), jnp.array([[135.0, 315.0]]), jnp.ones((1, 2), bool), jnp.ones((1, 2)))
+        ring_j = jnp.zeros(2, jnp.int32)
+        scan = {"y0": 0.0, "dty0": -3.0, "ystep": 1.0, "n_rows": 7, "om0": 0.0}
+        dims, n_cells = (90.0, 1.0, 4, 360), 4 * 360 * 7
+        pos = ix.occupancy.pad_voxels(jnp.zeros((1, 3)), 2)
+        _, wt = ix.occupancy.system(*(p[None] for p in pred), ring_j, pos, scan, *dims)
+        np.testing.assert_array_equal(wt[1], 0.0)
+        data = ix.occupancy.forward(jnp.ones((1, 1)), jnp.zeros((1, 1), jnp.int32), pred, ring_j, pos[:1], scan, dims,
+                                    n_cells, 1)  # fmt: skip
+        f, _ = ix.occupancy.candidates(data, pred, ring_j, pos, scan, dims, 1, 1, qc=1, log=lambda _: None)
+        np.testing.assert_allclose(f, [[1.0], [0.0]], atol=1e-6)
+
+    def test_full_turn_seam(self):
+        """A full turn wraps omega's corners at the seam; a partial scan drops the corners past its ends."""
+        om0 = 17.25
+        for n_o, b_o in ((360, 1.0), (3600, 0.1)):
+            om = om0 + b_o * jnp.array([0.1, n_o - 0.1])  # 0.4 of a bin either side of the seam
+            corners = ix.data.eta_omega_corners(jnp.zeros(2), om, om0, 1.0, b_o, 360, n_o)
+            np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 1.0, atol=1e-4)
+            np.testing.assert_array_equal(corners[0][1], [n_o - 1, n_o - 1])
+            np.testing.assert_array_equal(corners[1][1], [0, 0])
+        corners = ix.data.eta_omega_corners(jnp.zeros(1), jnp.array([om0 + 0.1]), om0, 1.0, 1.0, 360, 180)
+        np.testing.assert_array_equal(corners[0][1], [-1])  # half a turn: the corner before om0 is outside
+        np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 0.6, atol=1e-5)
+
+    def test_dty_offsets_match_histogram(self):
+        """Offsets and exposure leave out the frames past the scan's ends, as the histogram does, not wrap them."""
+        omega = jnp.array([[-0.25, 0.25, 0.75, 1.25, 1.75, 360.25]])
+        dty = np.array([[0.99, 0.2, 0.4, 0.6, 0.8, 0.99]])
+        x = jnp.stack([jnp.full(omega.size, 5.0), jnp.zeros(omega.size), omega.ravel()], 1)
+        counts = ix.data.histogram(x, jnp.ones(omega.size), jnp.zeros(omega.size, jnp.int32), jnp.array([5.0]), 0.1,
+                                   0.0, 360.0, 1.0, 1, 1, 360, 1)  # fmt: skip
+        offsets, exposure = ix.data.dty_offsets(dty, omega, [-0.5, 0.5], 1, 0.0, 1.0, 360, 0.0, 1.0,
+                                               bin_dty=np.zeros_like(dty), return_exposure=True)  # fmt: skip
+        np.testing.assert_allclose(exposure[0], counts / 2)
+        np.testing.assert_allclose(offsets[0, :2], [0.3, 0.7])
+        np.testing.assert_array_equal(offsets[0, 2:], 0.0)
+
     def test_dty_offsets(self):
         """Rows away from their nominal dty: a helical scan's offsets, and system putting a voxel in the right rows."""
         n_rows, n_fr, ystep = 5, 360, 1.0

@@ -459,7 +459,9 @@ def eta_omega_corners(
 ) -> list:
     """Return the 2 x 2 (eta, omega) bins around each angle and their bilinear weights (bin centres on the grid).
 
-    Omega is wrapped into [om0, om0 + 360) (:func:`anri.geom.gonio.wrap_omega`) first.
+    Omega is wrapped into [om0, om0 + 360) (:func:`anri.geom.gonio.wrap_omega`) first. Eta bins wrap around; omega
+    bins wrap only when the histogram is a full turn (n_o b_o = 360), so a partial scan's corners past its ends are
+    outside.
 
     Returns
     -------
@@ -471,10 +473,11 @@ def eta_omega_corners(
     fo = (wrap_omega(om, om0) - om0) / b_o - 0.5
     e0, o0 = jnp.floor(fe).astype(jnp.int32), jnp.floor(fo).astype(jnp.int32)
     te, to = fe - e0, fo - o0
+    full_turn = jnp.abs(b_o * n_o - 360.0) < 1e-4
     corners = []
     for de, we in ((0, 1.0 - te), (1, te)):
         for do, wo in ((0, 1.0 - to), (1, to)):
-            io = o0 + do
+            io = jnp.where(full_turn, (o0 + do) % n_o, o0 + do)
             corners.append(((e0 + de) % n_e, io, we, wo, (io >= 0) & (io < n_o)))
     return corners
 
@@ -762,8 +765,8 @@ def dty_offsets(
     n_rows = -(-(len(edges) - 1) // gridstep)
     bd = np.broadcast_to(np.nanmean(fd, 1, keepdims=True), fd.shape) if bin_dty is None else np.asarray(bin_dty, float)
     kk = dty_to_row(bd, edges, gridstep)  # each frame's row
-    with float64():  # the omega bins of system
-        o = np.asarray(omega_bin(wrap_omega(om, om0), om0, b_o)).astype(int)
+    with float64():  # the omega bins of the histogram: not wrapped, so frames past the scan's ends are left out alike
+        o = np.asarray(omega_bin(jnp.asarray(om), om0, b_o)).astype(int)
     ok = (kk >= 0) & (o >= 0) & (o < n_o) & np.isfinite(fd)
     idx = kk[ok] * n_o + o[ok]
     s = np.bincount(idx, weights=fd[ok] - (dty0 + kk[ok] * ystep), minlength=n_rows * n_o)
