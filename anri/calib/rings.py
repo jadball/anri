@@ -161,7 +161,7 @@ def assign(px: dict, ds: np.ndarray, pars: dict, tol: float, n_eta: int = 360, s
     pars
         Geometry (:func:`anri.calib.fit.base_pars`)
     tol
-        Largest |2theta - ring| (degrees)
+        Largest ``|2theta - ring|`` (degrees)
     n_eta
         Sectors over 360 degrees of eta
     sep
