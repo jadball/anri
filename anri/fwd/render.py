@@ -1,6 +1,9 @@
 """Render peaks from a voxel map into sparse detector pixels, one dty row (one rotation scan) at a time.
 
 A map is a flat list of entries (position, UBI, density), so several orientations per voxel are allowed.
+A grain map (e.g. from DCT: a label volume and one UBI per grain) gives each entry a grain index into a table of UBIs
+instead (:func:`grain_entries`). It renders the same pixels; only the selection of the peaks that reach a row is done
+per grain first, which is where a uniform orientation per grain saves time.
 Each peak is an (entry, hkl, branch) triple. Its (slow, fast, omega) centroid is :func:`anri.fwd.peak.get_centroid`,
 with the voxel at its real position for the row's dty, and its covariance comes from propagating the beam's spreads
 through it with :func:`anri.fwd.peak.make_propagator`.
@@ -44,7 +47,7 @@ from anri.geom.paths import attenuation_map, edge_distances, ray_directions, tra
 from anri.maths.rotation import skew
 from anri.maths.utils import bin_fractions, truncated_moments
 
-from .peak import get_centroid, get_centroid_both, hkl_to_k_omega, make_propagator
+from .peak import get_centroid, get_centroid_both, hkl_to_k_omega, hkl_to_k_omega_both, make_propagator
 
 # Smallest batch per device that render_row compiles (see there)
 _MIN_BATCH = 1024
@@ -153,34 +156,41 @@ def select_peaks(
     """
     dty = row["dty_mid"]
 
-    def one(u: jax.Array, p: jax.Array, h: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    def one(u: jax.Array, p: jax.Array, h: jax.Array) -> jax.Array:
         cens, valid = get_centroid_both(
             u, p, h, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], dty, geom["y0"],
             geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"], jnp.logical_not(geom["voxel_3d"]),
         )  # fmt: skip
-        near_h, near_v = [], []
-        for i in range(2):
-            across, height, _, _ = beam_offsets(
-                sample_to_lab(p, cens[i, 2], geom["wedge"], geom["chi"], dty, geom["y0"]), geom["k_in_lab"]
-            )
-            # within the omega margin an off-axis voxel moves across the beam by up to |p_xy| x margin (radians)
-            near_h.append(jnp.abs(across) < margin[3] + jnp.hypot(p[0], p[1]) * jnp.radians(margin[2]))
-            near_v.append(jnp.abs(height) < margin[4])
-        return cens, valid, jnp.stack(near_h), jnp.stack(near_v)
+        return jnp.stack([_keep(cens[i], valid, p, geom, row, margin, det_shape) for i in range(2)])
 
-    centroids, valid, near_h, near_v = jax.vmap(jax.vmap(one, in_axes=(None, None, 0)), in_axes=(0, 0, None))(
-        ubi, pos, hkls
+    return jax.vmap(jax.vmap(one, in_axes=(None, None, 0)), in_axes=(0, 0, None))(ubi, pos, hkls)
+
+
+def _in_omega(omega: jax.Array, row: dict, margin: jax.Array) -> jax.Array:
+    """Whether a peak at omega (degrees, any turn) is within the row's omega range, give or take margin[2]."""
+    om = nearest_omega(omega, row["omega_mid"])
+    return (om > row["omega_min"] - margin[2]) & (om < row["omega_max"] + margin[2])
+
+
+def _keep(
+    centroid: jax.Array, valid: jax.Array, pos: jax.Array, geom: dict, row: dict, margin: jax.Array,
+    det_shape: tuple[int, int],
+) -> jax.Array:  # fmt: skip
+    """Whether one peak, centroid (sc, fc, omega) of the voxel at pos, can put intensity into the row (see select_peaks)."""
+    sc, fc, om = centroid
+    across, height, _, _ = beam_offsets(
+        sample_to_lab(pos, om, geom["wedge"], geom["chi"], row["dty_mid"], geom["y0"]), geom["k_in_lab"]
     )
-    sc, fc, om = centroids[..., 0], centroids[..., 1], centroids[..., 2]
-    om = nearest_omega(om, row["omega_mid"])
-    keep = (
-        valid[..., None]
+    # within the omega margin an off-axis voxel moves across the beam by up to |p_xy| x margin (radians)
+    near_h = jnp.abs(across) < margin[3] + jnp.hypot(pos[0], pos[1]) * jnp.radians(margin[2])
+    near_v = jnp.abs(height) < margin[4]
+    return (
+        valid
         & (sc > -margin[0]) & (sc < det_shape[0] - 1 + margin[0])
         & (fc > -margin[1]) & (fc < det_shape[1] - 1 + margin[1])
-        & (om > row["omega_min"] - margin[2]) & (om < row["omega_max"] + margin[2])
+        & _in_omega(om, row, margin)
         & near_h & (near_v | ~geom["voxel_3d"])
     )  # fmt: skip
-    return keep
 
 
 @partial(jax.jit, static_argnames=("window", "det_shape"))
@@ -211,7 +221,7 @@ def render_peaks(
     entry, hkl_idx, branch
         [B] int indices of the peaks: map entry, row of ``hkls``, and 0 / 1 for etasign +1 / -1
     entries
-        Dict with "ubi" [N, 3, 3], "pos" [N, 3] and "density" [N]; optionally "sig_rot" [N], see :func:`render_row`
+        Map entries, see :func:`render_row`
     hkls, F2
         [Nh, 3] hkls and [Nh] structure factors squared
     geom, row
@@ -428,7 +438,7 @@ def _render_peaks(
     nf = det_shape[1]
 
     def one(e: jax.Array, h: jax.Array, br: jax.Array, org: tuple | None) -> tuple:
-        ubi, pos, hkl = entries["ubi"][e], entries["pos"][e], hkls[h]
+        ubi, pos, hkl = _entry_ubi(entries, e), entries["pos"][e], hkls[h]
         etasign = 1.0 - 2.0 * br
         sig = entries["sig_rot"][e] if "sig_rot" in entries else None
         mu, shape, valid = _peak_shape(ubi, pos, hkl, etasign, sig, row, geom)
@@ -567,6 +577,45 @@ def make_row(omega: np.ndarray, dty: np.ndarray, transmission: np.ndarray | None
     }
 
 
+def grain_entries(labels: ArrayLike, grain_ubi: ArrayLike, step: float, density: ArrayLike | None = None) -> dict:
+    """Map entries for :func:`render_row` from a grain map: a label volume and one UBI per grain (e.g. from DCT).
+
+    Every voxel of a grain shares its UBI, so the grain has no orientation spread and one strain. The entries hold
+    each voxel's grain index instead of its UBI, and :func:`render_row` finds the peaks that reach a row grain by
+    grain, which is much cheaper than voxel by voxel.
+
+    Parameters
+    ----------
+    labels
+        [nx, ny, nz] (cubes, a 3D map: set ``geom["voxel_3d"]``) or [nx, ny] (columns, a 2D map) int grain label of each
+        voxel, indexing ``grain_ubi``; negative for no grain (empty). Index (i, j, k) is the voxel at sample x, y, z
+        = (i - (nx - 1) / 2, j - (ny - 1) / 2, k - (nz - 1) / 2) x step: the grid is centred on the origin (the
+        rotation axis), and axes are the sample frame's, not ImageD11's reconstruction order
+    grain_ubi
+        [G, 3, 3] UBI of each grain (anri's conventions, as everywhere: :mod:`anri.crystal`)
+    step
+        Voxel size, in the units of dty
+    density
+        Optional [nx, ny, nz] (or [nx, ny]) density of each voxel, default 1
+
+    Returns
+    -------
+    dict
+        "pos" [N, 3], "density" [N], "grain" [N] (int32) for the N labelled voxels, and "grain_ubi" [G, 3, 3]
+    """
+    labels = np.asarray(labels)
+    grain_ubi = np.asarray(grain_ubi, float)
+    if labels.max(initial=-1) >= len(grain_ubi):
+        msg = f"labels go up to {labels.max()}, but there are only {len(grain_ubi)} UBIs"
+        raise ValueError(msg)
+    idx = np.nonzero(labels >= 0)
+    pos = np.zeros((idx[0].size, 3))
+    for ax, (i, n) in enumerate(zip(idx, labels.shape)):
+        pos[:, ax] = (i - (n - 1) / 2) * step
+    dens = np.ones(idx[0].size) if density is None else np.asarray(density, float)[idx]
+    return {"pos": pos, "density": dens, "grain": labels[idx].astype(np.int32), "grain_ubi": grain_ubi}
+
+
 @partial(jax.jit, static_argnames=("det_shape", "mesh"))
 def _select_sharded(
     ubi: jax.Array,
@@ -585,6 +634,98 @@ def _select_sharded(
 
     specs = (P("d"), P("d"), P(), P(), P(), P())
     return shard_map(local, mesh=mesh, in_specs=specs, out_specs=P("d"))(ubi, pos, hkls, geom, row, margin)
+
+
+@jax.jit
+def _grain_candidates(grain_ubi: jax.Array, hkls: jax.Array, geom: dict, row: dict, margin: jax.Array) -> jax.Array:
+    """[G, Nh, 2] whether each (grain, hkl, branch) diffracts within the row's omega range, give or take margin[2].
+
+    A peak's omega does not depend on where its voxel is, so this is select_peaks's omega test for every voxel of the
+    grain at once. One grain at a time (lax.map): a [G, Nh] vmap would hold every intermediate for every pair.
+    """
+
+    def one(u: jax.Array) -> jax.Array:
+        def per_hkl(h: jax.Array) -> jax.Array:
+            _, _, omegas, valid = hkl_to_k_omega_both(
+                u, h, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
+            )
+            return valid & _in_omega(omegas, row, margin)
+
+        return jax.vmap(per_hkl)(hkls)
+
+    return jax.lax.map(one, grain_ubi)
+
+
+@partial(jax.jit, static_argnames=("det_shape", "mesh"))
+def _select_pairs_sharded(
+    entry: jax.Array,
+    hkl_idx: jax.Array,
+    branch: jax.Array,
+    entries: dict,
+    hkls: jax.Array,
+    geom: dict,
+    row: dict,
+    margin: jax.Array,
+    det_shape: tuple[int, int],
+    mesh: Mesh,
+) -> tuple[jax.Array, jax.Array]:
+    """[B] the select_peaks mask of a list of (entry, hkl, branch) peaks, and [B, 2] their (sc, fc), on ``mesh``."""
+
+    def local(e: jax.Array, h: jax.Array, b: jax.Array, ent: dict, hk: jax.Array, g: dict, r: dict, m: jax.Array
+              ) -> tuple[jax.Array, jax.Array]:  # fmt: skip
+        def one(ei: jax.Array, hi: jax.Array, bi: jax.Array) -> tuple[jax.Array, jax.Array]:
+            pos = ent["pos"][ei]
+            cen, valid = _centroid(_entry_ubi(ent, ei), pos, hk[hi], 1.0 - 2.0 * bi, g["wavelength"], 0.0, 0.0,
+                                   r["dty_mid"], g)  # fmt: skip
+            return _keep(cen, valid, pos, g, r, m, det_shape), cen[:2]
+
+        return jax.vmap(one)(e, h, b)
+
+    specs = (P("d"),) * 3 + (P(),) * 5
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"), P("d")))(
+        entry, hkl_idx, branch, entries, hkls, geom, row, margin
+    )
+
+
+def _select_grains(
+    entries: dict, hkls: jax.Array, geom: dict, row: dict, margin: jax.Array, det_shape: tuple[int, int], mesh: Mesh,
+    select_chunk: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:  # fmt: skip
+    """Return the peaks select_peaks keeps, for a grain map: (entry, hkl, branch), each [P] int32.
+
+    First the (grain, hkl, branch)s that diffract within the row's omega range, once per grain; then the detector and
+    beam tests for each voxel of those grains only. The same peaks as select_peaks on every (entry, hkl) pair.
+
+    Also returns each peak's spot [P] (int32: its (grain, hkl, branch), numbered from 0; a spot's peaks are
+    consecutive) and its (sc, fc) [P, 2] at the row's middle dty.
+    """
+    nd = mesh.size
+    grain = np.asarray(entries["grain"])
+    n_grains = entries["grain_ubi"].shape[0]
+    g_c, h_c, b_c = (x.astype(np.int32) for x in np.nonzero(np.asarray(_grain_candidates(
+        entries["grain_ubi"], hkls, geom, row, margin))))  # fmt: skip
+
+    # every voxel of each candidate's grain: entries sorted by grain, so a grain's voxels are one slice
+    order = np.argsort(grain, kind="stable").astype(np.int32)
+    counts = np.bincount(grain, minlength=n_grains)
+    starts = np.cumsum(counts) - counts
+    n_c = counts[g_c]
+    which = np.repeat(np.arange(g_c.size), n_c)  # candidate of each pair
+    local = np.arange(which.size) - np.repeat(np.cumsum(n_c) - n_c, n_c)  # voxel within its grain
+    e, h, b = order[starts[g_c][which] + local], h_c[which], b_c[which]
+
+    ent = {k: entries[k] for k in ("grain", "grain_ubi", "pos")}
+    cp = max(nd, select_chunk // nd * nd)  # a fixed size: one compile
+    keep = np.zeros(e.size, bool)
+    det = np.zeros((e.size, 2))
+    for start in range(0, e.size, cp):
+        stop = min(start + cp, e.size)
+        idx = np.arange(start, start + cp) % e.size  # padding repeats real pairs, then is discarded
+        mask, cen = _select_pairs_sharded(e[idx], h[idx], b[idx], ent, hkls, geom, row, margin, det_shape, mesh)
+        keep[start:stop] = np.asarray(mask)[: stop - start]
+        det[start:stop] = np.asarray(cen)[: stop - start]
+    spot = np.unique(which[keep], return_inverse=True)[1].astype(np.int32).ravel()
+    return e[keep], h[keep], b[keep], spot, det[keep]
 
 
 @partial(jax.jit, static_argnames=("window", "det_shape", "mesh"))
@@ -649,24 +790,14 @@ def _valid_from_shards(x: jax.Array, count: np.ndarray, per_shard: int) -> np.nd
 
 
 @jax.jit
-def _omega_sigma(
-    ubi: jax.Array,
-    pos: jax.Array,
-    hkls: jax.Array,
-    e: jax.Array,
-    h: jax.Array,
-    b: jax.Array,
-    geom: dict,
-    row: dict,
-    sig_rot: jax.Array | None = None,
-) -> jax.Array:
+def _omega_sigma(entries: dict, hkls: jax.Array, e: jax.Array, h: jax.Array, b: jax.Array, geom: dict, row: dict
+                 ) -> jax.Array:  # fmt: skip
     """Return the standard deviation in omega (degrees) of each peak, as render_peaks spreads it."""
     dty_row = row["dty_mid"]
 
     def one(ei: jax.Array, hi: jax.Array, bi: jax.Array) -> jax.Array:
-        cov = _peak_cov(
-            ubi[ei], pos[ei], hkls[hi], 1.0 - 2.0 * bi, dty_row, geom, None if sig_rot is None else sig_rot[ei]
-        )
+        sig = entries["sig_rot"][ei] if "sig_rot" in entries else None
+        cov = _peak_cov(_entry_ubi(entries, ei), entries["pos"][ei], hkls[hi], 1.0 - 2.0 * bi, dty_row, geom, sig)
         return jnp.sqrt(cov[2] + geom.get("sig_omega", 0.0) ** 2 + _VAR_FLOOR[2])
 
     return jax.vmap(one)(e, h, b)
@@ -688,17 +819,29 @@ def _select_margin(window: tuple[int, int, int], row: dict, geom: dict, dtype: j
     return jnp.array([ws // 2 + 1, wf // 2 + 1, (wo // 2 + 1) * ostep, across, vertical], dtype=dtype)
 
 
+def _entry_ubi(entries: dict, e: ArrayLike) -> jax.Array:
+    """UBI of entry e (or entries [B]): its own, or its grain's."""
+    if "grain" in entries:
+        return entries["grain_ubi"][entries["grain"][e]]
+    return entries["ubi"][e]
+
+
 def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict) -> tuple:
     """Convert the renderer's inputs to JAX arrays, in the dtype of the entries' UBIs."""
-    ubi = jnp.asarray(entries["ubi"])
+    if ("ubi" in entries) == ("grain" in entries) or ("grain" in entries) != ("grain_ubi" in entries):
+        msg = 'give entries either "ubi" (one per entry) or "grain" and "grain_ubi" (one per grain), see render_row'
+        raise ValueError(msg)
+    if "grain" in entries:
+        ubi = jnp.asarray(entries["grain_ubi"])
+        out = {"grain_ubi": ubi, "grain": jnp.asarray(entries["grain"], dtype=jnp.int32)}
+    else:
+        ubi = jnp.asarray(entries["ubi"])
+        out = {"ubi": ubi}
     dtype = ubi.dtype
-    out = {
-        "ubi": ubi,
-        "pos": jnp.asarray(entries["pos"], dtype=dtype),
-        "density": jnp.asarray(entries["density"], dtype=dtype),
-    }
+    out["pos"] = jnp.asarray(entries["pos"], dtype=dtype)
+    out["density"] = jnp.asarray(entries["density"], dtype=dtype)
     if "sig_rot" in entries:  # only when given, so renders without it compile and cost the same as before
-        out["sig_rot"] = jnp.broadcast_to(jnp.asarray(entries["sig_rot"], dtype=dtype), ubi.shape[:1])
+        out["sig_rot"] = jnp.broadcast_to(jnp.asarray(entries["sig_rot"], dtype=dtype), out["pos"].shape[:1])
     if "optical_depth" in entries:  # likewise: absorption only when asked for (add_absorption)
         out["optical_depth"] = jnp.asarray(entries["optical_depth"], dtype=jnp.float32)
     entries = out
@@ -730,29 +873,42 @@ def row_peaks(
     """
     mesh = anri.utils.mesh() if mesh is None else mesh
     nd = mesh.size
-    ubi, pos = entries["ubi"], entries["pos"]
-    dtype = ubi.dtype
-    n_entries, n_hkls = ubi.shape[0], hkls.shape[0]
-    wo, ws, wf = window
-    classes = [wo]  # frames per window, smallest first
+    pos = entries["pos"]
+    n_entries, n_hkls = pos.shape[0], hkls.shape[0]
+    classes = _window_classes(window, max_frames)
+    margin = _select_margin((classes[-1],) + tuple(window[1:]), row, geom, pos.dtype)
+    if "grain" in entries:
+        e, h, b = _select_grains(entries, hkls, geom, row, margin, det_shape, mesh, select_chunk)[:3]
+    else:
+        ubi = entries["ubi"]
+        ce = max(nd, (select_chunk // n_hkls) // nd * nd)
+        found = []
+        for start in range(0, n_entries, ce):
+            stop = min(start + ce, n_entries)
+            idx = np.arange(start, start + ce) % n_entries  # padding repeats real entries, then is discarded
+            mask = _select_sharded(ubi[idx], pos[idx], hkls, geom, row, margin, det_shape, mesh)
+            e, h, b = np.nonzero(np.asarray(mask)[: stop - start])
+            found.append((e + start, h, b))
+        e = np.concatenate([f[0] for f in found]).astype(np.int32)
+        h = np.concatenate([f[1] for f in found]).astype(np.int32)
+        b = np.concatenate([f[2] for f in found]).astype(np.int32)
+    return e, h, b, _peak_classes(entries, hkls, e, h, b, geom, row, classes), classes
+
+
+def _window_classes(window: tuple[int, int, int], max_frames: int | None) -> list:
+    """Frames per window, smallest first: window[0], 2 window[0] + 1, ... up to max_frames (see render_row)."""
+    classes = [window[0]]
     if max_frames is not None:
         while 2 * classes[-1] + 1 <= max_frames:
             classes.append(2 * classes[-1] + 1)
-    margin = _select_margin((classes[-1], ws, wf), row, geom, dtype)
-    ce = max(nd, (select_chunk // n_hkls) // nd * nd)
-    found = []
-    for start in range(0, n_entries, ce):
-        stop = min(start + ce, n_entries)
-        idx = np.arange(start, start + ce) % n_entries  # padding repeats real entries, then is discarded
-        mask = _select_sharded(ubi[idx], pos[idx], hkls, geom, row, margin, det_shape, mesh)
-        e, h, b = np.nonzero(np.asarray(mask)[: stop - start])
-        found.append((e + start, h, b))
-    e = np.concatenate([f[0] for f in found]).astype(np.int32)
-    h = np.concatenate([f[1] for f in found]).astype(np.int32)
-    b = np.concatenate([f[2] for f in found]).astype(np.int32)
-    n_peaks = e.size
+    return classes
 
-    # Window size class of each peak: the fewest frames that hold +-3.5 sigma of it in omega
+
+def _peak_classes(
+    entries: dict, hkls: jax.Array, e: np.ndarray, h: np.ndarray, b: np.ndarray, geom: dict, row: dict, classes: list
+) -> np.ndarray:
+    """[P] index into classes of each peak's window: the fewest frames that hold +-3.5 sigma of it in omega."""
+    n_peaks = e.size
     peak_class = np.zeros(n_peaks, np.int32)
     if len(classes) > 1 and n_peaks > 0:
         ostep = float(np.median(np.diff(np.asarray(row["omega_edges"]))))
@@ -762,11 +918,7 @@ def row_peaks(
         sig_frames = (
             np.concatenate(
                 [
-                    np.asarray(
-                        _omega_sigma(
-                            ubi, pos, hkls, *(x[i : i + chunk] for x in ehb), geom, row, entries.get("sig_rot")
-                        )
-                    )
+                    np.asarray(_omega_sigma(entries, hkls, *(x[i : i + chunk] for x in ehb), geom, row))
                     for i in range(0, n_peaks + pad, chunk)
                 ]
             )[:n_peaks]
@@ -774,8 +926,267 @@ def row_peaks(
         )
         needed = 2 * np.ceil(3.5 * sig_frames + 0.5) + 1
         peak_class = np.minimum(np.searchsorted(np.asarray(classes), needed), len(classes) - 1).astype(np.int32)
+    return peak_class
 
-    return e, h, b, peak_class, classes
+
+# Voxel peaks per device per call of _splat_add, and spots per device per call of _splat_kernels: fixed sizes, so
+# the numbers of voxels and spots never compile a new shape
+_SPLAT_CHUNK = 2**15
+_SPLAT_SPOTS = 64
+
+
+@partial(jax.jit, static_argnames=("window", "det_shape", "mesh"))
+def _splat_kernels(
+    spot_entry: jax.Array, spot_hkl: jax.Array, spot_branch: jax.Array, spot_origin: jax.Array, entries: dict,
+    hkls: jax.Array, F2: jax.Array, geom: dict, row: dict, window: tuple[int, int, int], det_shape: tuple[int, int],
+    mesh: Mesh,
+) -> tuple:  # fmt: skip
+    """Each spot's kernel: one peak's window cells, for a point at its tile's cell (0, 0), times |F|^2 and Lorentz x pol.
+
+    A peak's omega and covariance are the same for every voxel of a grain (to ~ voxel offset / detector distance), so
+    one peak, the spot's reference voxel's, stands for all.
+
+    Parameters
+    ----------
+    spot_entry, spot_hkl, spot_branch
+        [nd S] each spot's reference peak: an entry of the grain, hkl and branch
+    spot_origin
+        [nd S, 2] int pixel (slow, fast) of each spot's tile cell (0, 0)
+    window
+        Kernel window (frames, slow, fast), static
+
+    Returns
+    -------
+    tuple
+        kernel [nd S, wo, ws, wf]; each window frame's sorted frame (fclip) and mean omega (om_fr), and first slow and
+        fast pixel of the kernel at cell (0, 0) (i0, j0), [nd S, wo] each; which window frames are in the scan
+        [nd S, wo]; captured and in_range [nd S], as render_peaks gives them
+    """
+    wo = window[0]
+    nfr = row["omega_sorted"].shape[0]
+
+    def local(se: jax.Array, sh: jax.Array, sb: jax.Array, so: jax.Array, ent: dict, hk: jax.Array, f2: jax.Array,
+              g: dict, r: dict) -> tuple:  # fmt: skip
+        def one(e: jax.Array, h: jax.Array, br: jax.Array, o: jax.Array) -> tuple:
+            ubi, hkl, etasign = _entry_ubi(ent, e), hk[h], 1.0 - 2.0 * br
+            sig = ent["sig_rot"][e] if "sig_rot" in ent else None
+            mu, shape, valid = _peak_shape(ubi, ent["pos"][e], hkl, etasign, sig, r, g)
+            mu = jnp.stack([o[0].astype(mu.dtype), o[1].astype(mu.dtype), mu[2]])
+            frac, _, fclip, _, _, om_fr, in_range, (jo, i0, j0) = _window_cells(mu, shape, None, r, window, det_shape)
+            frames = jo + jnp.arange(wo)
+            real = (frames >= 0) & (frames < nfr)
+            captured = jnp.sum(jnp.where(real[:, None, None], frac, 0.0))
+            kernel = jnp.where(real[:, None, None] & valid, frac * f2[h] * _peak_factors(ubi, hkl, etasign, g), 0.0)
+            return kernel, fclip, om_fr, i0, j0, real, captured, in_range
+
+        return jax.vmap(one)(se, sh, sb, so)
+
+    specs = (P("d"),) * 4 + (P(),) * 5
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 8)(
+        spot_entry, spot_hkl, spot_branch, spot_origin, entries, hkls, F2, geom, row
+    )
+
+
+@partial(jax.jit, static_argnames=("shape", "dtype", "mesh"))
+def _splat_tiles(shape: tuple, dtype: Any, mesh: Mesh) -> jax.Array:  # noqa: ANN401
+    """Zeroed tiles [nd S, wo, tile, tile], split across the devices of ``mesh``."""
+    return jax.lax.with_sharding_constraint(jnp.zeros(shape, dtype), jax.sharding.NamedSharding(mesh, P("d")))
+
+
+@partial(jax.jit, static_argnames=("mesh",), donate_argnums=(0,))
+def _splat_add(
+    tiles: jax.Array, spot_hkl: jax.Array, spot_branch: jax.Array, spot_origin: jax.Array, fclip: jax.Array,
+    om_fr: jax.Array, entry: jax.Array, spot: jax.Array, live: jax.Array, entries: dict, hkls: jax.Array, geom: dict,
+    row: dict, mesh: Mesh,
+) -> jax.Array:  # fmt: skip
+    """Add voxel peaks onto their spots' tiles: each voxel's weight in every frame, shared between the 4 pixels around it.
+
+    Bilinear sharing keeps each voxel's intensity and centroid. ``entry``, ``spot`` and ``live`` are [nd x
+    _SPLAT_CHUNK]: each device's voxel peaks, the index of each one's spot among the device's spots, and False for
+    padding. The other per-spot inputs are as from :func:`_splat_kernels`.
+    """
+
+    def local(t: jax.Array, sh: jax.Array, sb: jax.Array, so: jax.Array, fc: jax.Array, om: jax.Array, pe: jax.Array,
+              ps: jax.Array, pl: jax.Array, ent: dict, hk: jax.Array, g: dict, r: dict) -> jax.Array:  # fmt: skip
+        def one(e: jax.Array, k: jax.Array) -> tuple:
+            # where the voxel's peak lands, and its weight in each frame of its spot's window
+            ubi, hkl, etasign, pos = _entry_ubi(ent, e), hk[sh[k]], 1.0 - 2.0 * sb[k], ent["pos"][e]
+            cen, _ = _centroid(ubi, pos, hkl, etasign, g["wavelength"], 0.0, 0.0, r["dty_mid"], g)
+            w = ent["density"][e] * _frame_weights(pos, om[k], fc[k], r, g)
+            if "optical_depth" in ent:
+                w = w * _transmission(ent["optical_depth"][e], ubi, hkl, etasign, om[k], g)
+            u = cen[:2] - so[k].astype(cen.dtype)
+            u0 = jnp.floor(u)
+            return w, u0.astype(jnp.int32), u - u0
+
+        w, u0, d = jax.vmap(one)(pe, ps)
+        w = jnp.where(pl[:, None], w, 0.0)  # [P, wo]
+        fr = jnp.arange(w.shape[1])[None, :]
+        for a in (0, 1):
+            for c in (0, 1):
+                share = (d[:, 0] if a else 1.0 - d[:, 0]) * (d[:, 1] if c else 1.0 - d[:, 1])
+                t = t.at[ps[:, None], fr, (u0[:, 0] + a)[:, None], (u0[:, 1] + c)[:, None]].add(
+                    w * share[:, None], mode="drop"
+                )
+        return t
+
+    specs = (P("d"),) * 9 + (P(),) * 4
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=P("d"))(
+        tiles, spot_hkl, spot_branch, spot_origin, fclip, om_fr, entry, spot, live, entries, hkls, geom, row
+    )
+
+
+@partial(jax.jit, static_argnames=("det_shape", "mesh"))
+def _splat_out(
+    tiles: jax.Array, kernel: jax.Array, i0: jax.Array, j0: jax.Array, fclip: jax.Array, real: jax.Array,
+    spot_live: jax.Array, row: dict, min_value: jax.Array, det_shape: tuple[int, int], mesh: Mesh,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:  # fmt: skip
+    """Convolve every frame of every tile with its spot's kernel, and return the sparse pixels, as _render_sharded does.
+
+    A full convolution (correlation with the kernel flipped): a voxel at tile cell (u, v) puts the kernel's cell
+    (a, b) of frame k at pixel (i0[k] + u + a, j0[k] + v + b).
+    """
+    reduce = _compact if mesh.devices.flat[0].platform == "cpu" else _merge
+    ns, nf = det_shape
+
+    def local(t: jax.Array, kern: jax.Array, i0: jax.Array, j0: jax.Array, fc: jax.Array, re: jax.Array,
+              sl: jax.Array, r: dict, mv: jax.Array) -> tuple:  # fmt: skip
+        n_spots, wo, tile, _ = t.shape
+        ws, wf = kern.shape[2:]
+        out = jax.lax.conv_general_dilated(
+            t.reshape(1, n_spots * wo, tile, tile),
+            kern[:, :, ::-1, ::-1].reshape(n_spots * wo, 1, ws, wf),
+            (1, 1),
+            ((ws - 1, ws - 1), (wf - 1, wf - 1)),
+            dimension_numbers=("NCHW", "OIHW", "NCHW"),
+            feature_group_count=n_spots * wo,
+        ).reshape(n_spots, wo, tile + ws - 1, tile + wf - 1)
+        rows = i0[:, :, None] + jnp.arange(tile + ws - 1)  # [S, wo, H]
+        cols = j0[:, :, None] + jnp.arange(tile + wf - 1)  # [S, wo, W]
+        inside = (
+            (re & sl[:, None])[:, :, None, None]
+            & ((rows >= 0) & (rows < ns))[:, :, :, None]
+            & ((cols >= 0) & (cols < nf))[:, :, None, :]
+        )
+        frame = jnp.where(inside, r["order"][fc][:, :, None, None], -1)
+        pixel = jnp.where(inside, rows[:, :, :, None] * nf + cols[:, :, None, :], 0)
+        frame, pixel, value, count = reduce(frame, pixel, jnp.where(inside, out, 0.0), mv)
+        return frame, pixel, value, count[None]
+
+    specs = (P("d"),) * 7 + (P(), P())
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 4)(
+        tiles, kernel, i0, j0, fclip, real, spot_live, row, min_value
+    )
+
+
+def _render_splat(
+    entries: dict, hkls: jax.Array, F2: jax.Array, geom: dict, row: dict, det_shape: tuple[int, int],
+    window: tuple[int, int, int], batch: int, select_chunk: int, min_value: float, mesh: Mesh, max_frames: int | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:  # fmt: skip
+    """:func:`render_row` with ``splat=True``: a grain map rendered spot by spot (inputs as JAX arrays, see _as_jax).
+
+    Spots of one window class and tile size go nd x S at a time (S a power of 4, few compiles), with about as many
+    window cells as ``batch`` peaks would use without splat. Each device gets S spots: their kernels and tiles
+    (:func:`_splat_kernels`), then their voxel peaks added onto the tiles _SPLAT_CHUNK at a time (:func:`_splat_add`),
+    then the convolution (:func:`_splat_out`). Every shape is fixed by (window class, tile, S), whatever the voxels.
+    """
+    if "grain" not in entries:
+        msg = 'splat needs a grain map: entries with "grain" and "grain_ubi" (grain_entries)'
+        raise ValueError(msg)
+    if "sig_rot" in entries:
+        sig, grain = np.asarray(entries["sig_rot"]), np.asarray(entries["grain"])
+        n_grains = entries["grain_ubi"].shape[0]
+        lo, hi = np.full(n_grains, np.inf), np.full(n_grains, -np.inf)
+        np.minimum.at(lo, grain, sig)
+        np.maximum.at(hi, grain, sig)
+        if np.any(hi > lo):
+            msg = "splat shares one kernel per spot: sig_rot must be the same for every voxel of a grain"
+            raise ValueError(msg)
+    nd = mesh.size
+    dtype = entries["pos"].dtype
+    _, ws, wf = window
+    classes = _window_classes(window, max_frames)
+    margin = _select_margin((classes[-1], ws, wf), row, geom, dtype)
+    e, h, b, spot, det = _select_grains(entries, hkls, geom, row, margin, det_shape, mesh, select_chunk)
+    n_peaks = e.size
+    if n_peaks == 0:
+        empty = np.zeros(0, np.int32)
+        return empty, empty, np.zeros(0), {"n_peaks": 0, "n_spots": 0, "captured": np.zeros(0),
+                                           "in_range": np.zeros(0)}  # fmt: skip
+
+    # Each spot: its peaks (consecutive), reference peak (the first), window class, tile origin and size
+    first = np.flatnonzero(np.r_[True, spot[1:] != spot[:-1]])
+    count = np.diff(np.r_[first, n_peaks])
+    n_spots = first.size
+    spot_class = _peak_classes(entries, hkls, e[first], h[first], b[first], geom, row, classes)
+    origin = np.floor(np.stack([np.minimum.reduceat(det[:, i], first) for i in (0, 1)], 1)).astype(np.int32)
+    extent = np.stack([np.maximum.reduceat(det[:, i], first) for i in (0, 1)], 1) - origin
+    tile = np.maximum(8, 1 << np.ceil(np.log2(np.floor(extent.max(1)) + 2)).astype(int))  # a power of two
+
+    min_value_j = jnp.asarray(min_value, dtype=dtype)
+    frames, pixels, values = [], [], []
+    captured_all, in_range_all = np.zeros(n_peaks), np.zeros(n_peaks)
+    for k, wo_k in enumerate(classes):
+        window_k = (wo_k, ws, wf)
+        # every spot's kernel and per-frame values, _SPLAT_SPOTS per device at a time (on the host: they are small)
+        in_class = np.flatnonzero(spot_class == k)
+        if in_class.size == 0:
+            continue
+        kern = [[] for _ in range(8)]
+        size = nd * _SPLAT_SPOTS
+        for a in range(0, in_class.size, size):
+            these = np.resize(in_class[a : a + size], size)  # padding repeats spots, then is discarded
+            out = _splat_kernels(e[first[these]], h[first[these]], b[first[these]], origin[these], entries, hkls, F2,
+                                 geom, row, window_k, det_shape, mesh)  # fmt: skip
+            for x, y in zip(kern, out):
+                x.append(np.asarray(y)[: min(size, in_class.size - a)])
+        kern = [np.concatenate(x) for x in kern]
+        place = np.zeros(n_spots, int)
+        place[in_class] = np.arange(in_class.size)  # each spot's row in kern
+        for t in np.unique(tile[in_class]).tolist():
+            sel = np.flatnonzero((spot_class == k) & (tile == t))
+            cells = wo_k * (t + ws - 1) * (t + wf - 1)
+            fit = max(1, (batch // nd) * window[0] * ws * wf // cells)  # spots per device the memory allows
+            per_device = 1
+            while per_device < -(-sel.size // nd) and 4 * per_device <= fit:
+                per_device *= 4
+            per_shard = per_device * cells
+            for start in range(0, sel.size, per_device * nd):
+                chunk = sel[start : start + per_device * nd]
+                spots = np.pad(chunk, (0, per_device * nd - chunk.size))  # padding repeats sel[0], not live
+                spot_live = np.arange(spots.size) < chunk.size
+                ref = first[spots]
+                kernel, fclip, om_fr, i0, j0, real, cap, inr = (x[place[spots]] for x in kern)
+                spot_args = (h[ref], b[ref], origin[spots])
+                tiles = _splat_tiles((spots.size, wo_k, t, t), kernel.dtype, mesh)
+                # each device's voxel peaks, numbered by their spot's place on the device, _SPLAT_CHUNK at a time
+                n_c = np.where(spot_live, count[spots], 0)
+                peak_of = np.repeat(ref, n_c) + np.arange(n_c.sum()) - np.repeat(np.cumsum(n_c) - n_c, n_c)
+                local = np.repeat(np.arange(spots.size) % per_device, n_c)
+                per_dev = n_c.reshape(nd, per_device).sum(1)
+                dev_start = np.cumsum(per_dev) - per_dev
+                for c0 in range(0, int(per_dev.max()), _SPLAT_CHUNK):
+                    j = np.arange(_SPLAT_CHUNK)
+                    have = c0 + j[None, :] < per_dev[:, None]  # [nd, chunk]
+                    idx = np.where(have, dev_start[:, None] + c0 + j[None, :], 0).ravel()
+                    tiles = _splat_add(tiles, *spot_args, fclip, om_fr, e[peak_of[idx]], local[idx], have.ravel(),
+                                       entries, hkls, geom, row, mesh)  # fmt: skip
+                fr, px, val, cnt = _splat_out(tiles, kernel, i0, j0, fclip, real, spot_live, row, min_value_j,
+                                              det_shape, mesh)  # fmt: skip
+                cnt = np.asarray(cnt)
+                frames.append(_valid_from_shards(fr, cnt, per_shard))
+                pixels.append(_valid_from_shards(px, cnt, per_shard))
+                values.append(_valid_from_shards(val, cnt, per_shard))
+                captured_all[peak_of] = np.repeat(np.asarray(cap)[: chunk.size], count[chunk])
+                in_range_all[peak_of] = np.repeat(np.asarray(inr)[: chunk.size], count[chunk])
+
+    frame, pixel, value = _merge_host(
+        np.concatenate(frames), np.concatenate(pixels), np.concatenate(values), det_shape[0] * det_shape[1]
+    )
+    stats = {"n_peaks": n_peaks, "n_spots": n_spots, "captured": captured_all, "in_range": in_range_all}
+    if len(classes) > 1:
+        stats["window_frames"] = np.repeat(np.asarray(classes)[spot_class], count)
+    return frame, pixel, value, stats
 
 
 def render_row(
@@ -791,6 +1202,7 @@ def render_row(
     min_value: float = 1e-3,
     mesh: Mesh | None = None,
     max_frames: int | None = None,
+    splat: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """Render all peaks of one phase that reach one dty row into sparse pixels.
 
@@ -801,7 +1213,10 @@ def render_row(
     ----------
     entries
         Dict with "ubi" [N, 3, 3], "pos" [N, 3] (sample frame, same length units as dty)
-        and "density" [N], for map entries of a single phase. Optionally "sig_rot" [N] (or a scalar): each entry's
+        and "density" [N], for map entries of a single phase. A grain map (one orientation per grain, e.g. from DCT)
+        gives "grain" [N] (int, each entry's grain) and "grain_ubi" [G, 3, 3] (each grain's UBI) instead of "ubi",
+        see :func:`grain_entries`: the same pixels as with "ubi" = grain_ubi[grain], with the peaks that reach the row
+        found per grain first. Optionally "sig_rot" [N] (or a scalar): each entry's
         intrinsic orientation spread, the standard deviation (radians) of each component of a small sample-frame
         rotation vector, isotropic. It widens the entry's peaks in omega and on the detector through the same
         linearised propagation as the beam's spreads, so it suits spreads up to a few degrees. Widen ``window``
@@ -832,6 +1247,17 @@ def render_row(
         If set, peaks broad in omega get more frames: each peak's window has the fewest frames out of
         window[0], 2 window[0] + 1, ... (up to max_frames) that hold +-3.5 sigma of it in omega, and each size is
         rendered in its own batches. Default None: every peak gets window[0] frames.
+    splat
+        For a grain map only: render each spot, a (grain, hkl, branch), as a whole. Every voxel's peak in a spot has the
+        same omega and, to ~ (voxel offset / detector distance), the same covariance, so the spot is each voxel's weight
+        (density x beam x absorption, per frame) added bilinearly at its own (sc, fc) onto a tile of pixels, then
+        convolved once with the window (frames, slow, fast) of one peak, taken at the spot's first voxel. Much cheaper
+        per voxel than integrating each peak over its window. The bilinear sharing keeps each voxel's intensity and
+        centroid, and widens it by at most 1/4 pixel^2 (less than a detector's point spread, usually); a voxel larger
+        than a pixel is a point, as without splat (``sig_psf`` stands in for its footprint). sig_rot, if given, must
+        be the same for every voxel of a grain. stats gains "n_spots"; "captured" and "in_range" are each spot's,
+        given to each of its peaks. Tiles are as large as the spot (a power of 2 in pixels): ``batch`` sets how many
+        spots render at once through the window cells they hold, about as many as ``batch`` peaks without splat
 
     Returns
     -------
@@ -846,7 +1272,10 @@ def render_row(
     mesh = anri.utils.mesh() if mesh is None else mesh
     nd = mesh.size
     entries, hkls_j, F2_j, geom, row_j = _as_jax(entries, hkls, F2, geom, row)
-    dtype = entries["ubi"].dtype
+    dtype = entries["pos"].dtype
+    if splat:
+        return _render_splat(entries, hkls_j, F2_j, geom, row_j, det_shape, window, batch, select_chunk, min_value,
+                             mesh, max_frames)  # fmt: skip
 
     # 1. Which peaks can reach this row, and the window size of each
     _, ws, wf = window
@@ -1046,16 +1475,17 @@ def check_render(
     rng = np.random.default_rng(seed)
     n_hkls = np.shape(hkls)[0]
     ents, hkls_j, ones, geom, row_j = _as_jax(
-        {**entries, "density": np.ones(len(entries["ubi"]))}, hkls, np.ones(n_hkls), geom, row
+        {**entries, "density": np.ones(len(entries["pos"]))}, hkls, np.ones(n_hkls), geom, row
     )  # unit density and |F|^2: only the fractions in the cells matter
-    ubi, pos = ents["ubi"], ents["pos"]
-    dtype = ubi.dtype
+    pos = ents["pos"]
+    dtype = pos.dtype
     wo, ws, wf = window
 
     # 1. Peaks of a random subset of entries that reach this row
-    sub = rng.choice(ubi.shape[0], size=min(n_entries, ubi.shape[0]), replace=False)
+    sub = rng.choice(pos.shape[0], size=min(n_entries, pos.shape[0]), replace=False)
     margin = _select_margin(window, row, geom, dtype)
-    e, h, b = np.nonzero(np.asarray(select_peaks(ubi[sub], pos[sub], hkls_j, geom, row_j, margin, det_shape)))
+    ubi = _entry_ubi(ents, jnp.asarray(sub))
+    e, h, b = np.nonzero(np.asarray(select_peaks(ubi, pos[sub], hkls_j, geom, row_j, margin, det_shape)))
     pick = rng.choice(e.size, size=min(n_peaks, e.size), replace=False)
     e, h, b = sub[e[pick]].astype(np.int32), h[pick].astype(np.int32), b[pick].astype(np.int32)
 
@@ -1094,7 +1524,15 @@ def check_render(
         spreads = rng.standard_normal((n_samples, 3)) * sd_beam
         wavelength = float(geom["wavelength"]) + spreads[:, 0]
         x = np.array(
-            sample(ubi[e[i]], pos[e[i]], hkls_j[h[i]], 1.0 - 2.0 * b[i], wavelength, spreads[:, 1], spreads[:, 2])
+            sample(
+                _entry_ubi(ents, e[i]),
+                pos[e[i]],
+                hkls_j[h[i]],
+                1.0 - 2.0 * b[i],
+                wavelength,
+                spreads[:, 1],
+                spreads[:, 2],
+            )
         )
         x += rng.standard_normal((n_samples, 3)) * sd_extra
         x[:, 2] = nearest_omega(x[:, 2], omega_mid)
@@ -1164,7 +1602,7 @@ def guess_batch_size(
     mesh = anri.utils.mesh() if mesh is None else mesh
     nd = mesh.size
     entries, hkls_j, F2_j, geom, row_j = _as_jax(entries, hkls, F2, geom, row)
-    min_value = jnp.asarray(0.0, dtype=entries["ubi"].dtype)
+    min_value = jnp.asarray(0.0, dtype=entries["pos"].dtype)
 
     def sizes(per_device: int) -> tuple[int, int]:
         idx = [jax.ShapeDtypeStruct((per_device * nd,), jnp.int32)] * 3

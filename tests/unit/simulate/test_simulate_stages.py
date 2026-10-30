@@ -128,6 +128,99 @@ class TestRenderStages(unittest.TestCase):
             self.assertEqual(dg.frames_image(obs, range(90)).sum(), obs["value"].sum())
 
 
+class TestGrainMap(unittest.TestCase):
+    def test_prepare_and_render(self):
+        """A grain map .npz (grain, grain_ubi) goes through prepare and render with its grains, absorption included."""
+        from anri.fwd.render import grain_entries
+
+        lp = np.array([2.8665] * 3 + [90.0] * 3)
+        U = anri.maths.rotation.random_rotations(2, np.random.default_rng(3))
+        ubi = np.linalg.inv(np.asarray(U) @ anri.crystal.structure.B_matrix(lp))
+        labels = np.zeros((4, 4), int)
+        labels[:, 2:] = 1
+        labels[0, 0] = -1
+        with tempfile.TemporaryDirectory() as tmp:
+            parfile = os.path.join(tmp, "geometry.par")
+            anri.io.imaged11.write_par(parfile, PARS)
+            map_file = os.path.join(tmp, "grains.npz")
+            np.savez(map_file, **grain_entries(labels, ubi, 2.0), voxel_size=2.0, lattice=lp, space_group=229,
+                     phase="Fe")  # fmt: skip
+            prep = sim.stages.stage_prepare(map_file, parfile, os.path.join(tmp, "g_prepare.h5"), omega_step=2.0,
+                                            dty_step=8.0, margin=0.25, mu=0.01, log=lambda m: None)  # fmt: skip
+            entries = sim.stages.load_prepare(prep)["phases"][0][0]
+            self.assertEqual(sorted(entries), ["density", "grain", "grain_ubi", "optical_depth", "pos"])
+            np.testing.assert_array_equal(entries["grain"], labels[labels >= 0])
+            np.testing.assert_allclose(entries["grain_ubi"], ubi)
+            out = sim.stages.stage_render(prep, rows="1:2", log=lambda m: None)
+            self.assertGreater(anri.io.provenance.read_provenance(out)["results"]["pixels"], 0)
+
+
+class TestFramesPerCall(unittest.TestCase):
+    def test_scanning_row_in_chunks(self):
+        """A scanning row rendered 7 frames at a time (90 frames: a short last call) matches it rendered at once."""
+        with tempfile.TemporaryDirectory() as tmp:
+            parfile = os.path.join(tmp, "geometry.par")
+            anri.io.imaged11.write_par(parfile, PARS)
+            prep = sim.stages.stage_prepare(two_phase_map(tmp), parfile, os.path.join(tmp, "x_prepare.h5"),
+                                            omega_step=2.0, dty_step=8.0, margin=0.25, density=50.0,
+                                            log=lambda m: None)  # fmt: skip
+            scans = []
+            for name, n in (("whole.h5", None), ("parts.h5", 7)):
+                f = sim.stages.stage_render(prep, os.path.join(tmp, name), rows="1:2", cut=0.0, frames_per_call=n,
+                                            log=lambda m: None)  # fmt: skip
+                with h5py.File(f, "r") as h:
+                    g = h["2.1"]
+                    scans.append({"frame": np.repeat(np.arange(len(g["nnz"])), g["nnz"][()]), "row": g["row"][()],
+                                  "col": g["col"][()], "intensity": g["intensity"][()].astype(float)})  # fmt: skip
+            a, b = scans
+            self.assertGreater(a["intensity"].sum(), 0)
+            self.assertAlmostEqual(b["intensity"].sum() / a["intensity"].sum(), 1.0, delta=1e-3)
+            # the pixels holding nearly all the intensity are the same, with the same counts (to rounding)
+            key = [x["frame"].astype(np.int64) * 10**8 + x["row"].astype(np.int64) * 10**4 + x["col"] for x in (a, b)]
+            _, ia, ib = np.intersect1d(key[0], key[1], return_indices=True)
+            self.assertGreater(a["intensity"][ia].sum(), 0.999 * a["intensity"].sum())
+            np.testing.assert_allclose(b["intensity"][ib], a["intensity"][ia], rtol=0, atol=1)  # whole counts
+
+
+class TestBoxBeam(unittest.TestCase):
+    def test_dct_pipeline(self):
+        """A 3D grain map in a box beam: one row of cubes, rendered whole spots at a time in chunks of frames."""
+        from anri.fwd.render import grain_entries
+
+        lp = np.array([2.8665] * 3 + [90.0] * 3)
+        U = anri.maths.rotation.random_rotations(2, np.random.default_rng(5))
+        ubi = np.linalg.inv(np.asarray(U) @ anri.crystal.structure.B_matrix(lp))
+        labels = np.zeros((6, 6, 4), int)
+        labels[:, 3:] = 1
+        with tempfile.TemporaryDirectory() as tmp:
+            parfile = os.path.join(tmp, "geometry.par")
+            anri.io.imaged11.write_par(parfile, PARS)
+            map_file = os.path.join(tmp, "dct.npz")
+            np.savez(map_file, **grain_entries(labels, ubi, 2.0), voxel_size=2.0, lattice=lp, space_group=229,
+                     phase="Fe")  # fmt: skip
+            prep = sim.stages.stage_prepare(map_file, parfile, os.path.join(tmp, "d_prepare.h5"), beam="box",
+                                            omega_step=1.0, density=1e3, log=lambda m: None)  # fmt: skip
+            p = sim.stages.load_prepare(prep)
+            self.assertEqual(p["omega"].shape, (1, 180))  # one rotation at y0
+            self.assertTrue(p["geom"]["voxel_3d"])
+            self.assertEqual((p["geom"]["width_beam"], p["geom"]["width_beam_v"]), (2 * np.hypot(5, 5) + 4, 6 + 6))
+            whole = sim.stages.stage_render(prep, os.path.join(tmp, "whole.h5"), splat=True, log=lambda m: None)
+            parts = sim.stages.stage_render(prep, splat=True, frames_per_call=50, log=lambda m: None)
+            totals = []
+            for f in (whole, parts):
+                with h5py.File(f, "r") as h:
+                    totals.append(h["1.1/intensity"][()].astype(float).sum())
+            self.assertGreater(totals[0], 0)
+            self.assertAlmostEqual(totals[1] / totals[0], 1.0, delta=1e-3)
+            out = sim.stages.stage_assemble(prep, tmp, "s", "d", parts=[parts], log=lambda m: None)
+            ds = anri.io.imaged11.read_dataset(anri.io.provenance.read_provenance(out)["resolved"]["dataset_file"])
+            self.assertEqual(len(ds["ybincens"]), 1)
+            from anri.simulate.__main__ import parse_args
+
+            args = parse_args(shlex.split(sim.stages.run_command(out))[3:])
+            self.assertEqual((args.beam, args.splat, args.frames_per_call), ("box", True, 50))
+
+
 class TestAbsorption(unittest.TestCase):
     def test_mu_per_phase_and_map(self):
         """mu per phase (built from the map) or a mu map file: the same optical depths for the same sample; absorption

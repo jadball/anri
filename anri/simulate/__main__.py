@@ -1,4 +1,4 @@
-"""Simulate a scanning-3DXRD dataset from a map, as ImageD11 files.
+"""Simulate a scanning-3DXRD or box-beam (DCT, 3DXRD) dataset from a map, as ImageD11 files.
 
 A dataset is simulated in three stages, each a subcommand that writes one HDF5 file the next one reads:
 
@@ -9,7 +9,8 @@ A dataset is simulated in three stages, each a subcommand that writes one HDF5 f
     python -m anri.simulate run <map> <pars> <analysisroot> <sample> <dataset> [options]   all three
     python -m anri.simulate show <any stage file> [--log]                  how it was made
 
-The map is an ImageD11 TensorMap (every phase in it) or the entries ``python -m anri.index populations`` writes.
+The map is an ImageD11 TensorMap (every phase in it), the entries ``python -m anri.index populations`` writes, or a
+grain map (``anri.fwd.render.grain_entries``, e.g. from DCT). ``--beam box`` lights the whole sample at once: one row.
 Rows are independent: split them between jobs with ``render --rows``, then ``assemble`` gathers every part made from
 the prepare file.
 """
@@ -63,7 +64,13 @@ def _prepare_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--divergence", type=float, help="the convergence's standard deviation (rad, H and V) instead")
     p.add_argument("--bandwidth", type=float, default=BANDWIDTH,
                    help=f"FWHM of dlambda/lambda (default {BANDWIDTH:g}: ID11's Laue Si(111) monochromator)")  # fmt: skip
-    p.add_argument("--beam-fwhm", type=float, help="FWHM of the beam across dty (default: the dty step)")
+    p.add_argument("--beam", choices=("pencil", "box"), default="pencil", help="pencil: scanning 3DXRD, rows of dty "
+                   "(default); box: a flat-topped beam lighting the whole sample (DCT, 3DXRD), one row at y0, cubes "
+                   "for a 3D map")  # fmt: skip
+    p.add_argument("--beam-size", type=float, nargs=2, metavar=("H", "V"),
+                   help="box beam's flat top, horizontal and vertical (default: the sample, plus two voxels)")  # fmt: skip
+    p.add_argument("--beam-fwhm", type=float, help="FWHM of the beam across dty (default: the dty step); for a box "
+                   "beam, of its edges' blur (default: the voxel size)")  # fmt: skip
     p.add_argument("--psf", type=float, default=0.5, help="detector point spread, sigma in pixels (default 0.5)")
     p.add_argument("--pol-factor", type=float, default=1.0, help="degree of horizontal polarisation (default 1)")
     p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: --dataset's, else 0)")
@@ -94,6 +101,10 @@ def _render_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--max-frames", type=int, default=31,
                    help="widest window in frames, for peaks broad in omega (default 31)")  # fmt: skip
     p.add_argument("--batch", type=int, default=2**16, help="peaks per batch (default 65536)")
+    p.add_argument("--splat", action="store_true", help="grain maps: render whole spots (grain, hkl, branch), each "
+                   "voxel added at its own position, then one peak shape per spot: 10-20x faster for DCT-like maps")  # fmt: skip
+    p.add_argument("--frames-per-call", type=int, help="render each row this many frames at a time (default: all), "
+                   "e.g. a box beam's long rotation that does not fit in memory at once")  # fmt: skip
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -103,7 +114,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--n-cpu", type=int, default=4, help="CPU devices for JAX (default 4)")
     inputs = argparse.ArgumentParser(add_help=False)
-    inputs.add_argument("map", help="an ImageD11 TensorMap (.h5) or python -m anri.index's _entries.npz")
+    inputs.add_argument("map", help="an ImageD11 TensorMap (.h5), python -m anri.index's _entries.npz, or a grain "
+                        "map .npz (anri.fwd.render.grain_entries)")  # fmt: skip
     inputs.add_argument("pars", nargs="?", help="ImageD11 geometry: a .par file or pars.json (default: --dataset's)")
     dataset = argparse.ArgumentParser(add_help=False)
     for a in ("analysisroot", "sample", "dataset"):
@@ -162,7 +174,7 @@ def main() -> None:
         source = sim.stages.stage_prepare(
             args.map, args.pars, out, dataset=args.input_dataset,
             remap=dict(v.split("=", 1) for v in args.remap) if args.remap else None, cif=_cif(args.cif), optics=args.optics, divergence=args.divergence,
-            bandwidth=args.bandwidth, beam_fwhm=args.beam_fwhm, psf=args.psf, pol_factor=args.pol_factor, y0=args.y0,
+            bandwidth=args.bandwidth, beam=args.beam, beam_size=None if args.beam_size is None else tuple(args.beam_size), beam_fwhm=args.beam_fwhm, psf=args.psf, pol_factor=args.pol_factor, y0=args.y0,
             omega_range=tuple(args.omega_range), omega_step=args.omega_step, dty_step=args.dty_step,
             margin=args.margin, density=args.density, det_shape=tuple(args.det_shape), tth_max=args.tth_max,
             absorption=not args.no_absorption, mu=_mu(args.mu), mu_map=args.mu_map, command=command, log=log,
@@ -171,7 +183,8 @@ def main() -> None:
         source = args.source
     if cmd in ("render", "run"):
         sim.stages.stage_render(source, None if cmd == "run" else args.out, rows=getattr(args, "rows", None), cut=args.cut,
-                        window=tuple(args.window), max_frames=args.max_frames, batch=args.batch, command=command,
+                        window=tuple(args.window), max_frames=args.max_frames, batch=args.batch, splat=args.splat,
+                        frames_per_call=args.frames_per_call, command=command,
                         log=log)  # fmt: skip
     if cmd in ("assemble", "run"):
         sim.stages.stage_assemble(source, args.analysisroot, args.sample, args.dataset, None if cmd == "run" else args.out,

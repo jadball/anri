@@ -1161,7 +1161,8 @@ def simulate_sparse(
 def write_rendered_rows(
     hout: h5py.File, phases: list, geom: dict, omega: np.ndarray, dty: np.ndarray, det_shape: tuple[int, int], *,
     rows: range | None = None, cut: float = 1, transmission: np.ndarray | None = None, omega_motor: str = "rot_center",
-    dty_motor: str = "dty", log: Callable | None = None, **render_kwargs: Any,  # noqa: ANN401
+    dty_motor: str = "dty", log: Callable | None = None, frames_per_call: int | None = None,
+    **render_kwargs: Any,  # noqa: ANN401
 ) -> dict:  # fmt: skip
     """Render dty rows of a scan, every phase summed, and write each as an ImageD11 scan group ("<row + 1>.1").
 
@@ -1177,6 +1178,10 @@ def write_rendered_rows(
         The rows to render (default all)
     log
         Called with a line per row rendered, if given
+    frames_per_call
+        Render each row this many frames (file order) at a time, e.g. a DCT scan's one long rotation, whose peaks
+        would not all fit in memory at once. Each call renders only its own frames; a peak on the edge of two calls
+        is rendered by both, each into its own frames, so the parts join without overlap. Default: a row at once
     **render_kwargs
         Passed on to :func:`anri.fwd.render.render_row` (window, batch, max_frames, ...)
 
@@ -1185,7 +1190,8 @@ def write_rendered_rows(
     stats: dict
         Per row of the scan: "n_peaks" rendered, "n_pixels" written, "captured_min", the smallest share of a peak
         within the scan's omega range that its window holds, and "n_outside", the peaks selected beyond the ends of
-        the scan, centred outside its omega range (left out of captured_min). Rows not rendered: 0, 0, 1 and 0
+        the scan, centred outside its omega range (left out of captured_min). Rows not rendered: 0, 0, 1 and 0. With
+        frames_per_call, peaks and peaks outside are counted per call, so a peak on the edge of two calls counts twice
     """
     import time
 
@@ -1194,13 +1200,21 @@ def write_rendered_rows(
              "n_outside": np.zeros(n_rows, int)}  # fmt: skip
     for i in range(n_rows) if rows is None else rows:
         t0 = time.perf_counter()
-        row = make_row(omega[i], dty[i], None if transmission is None else transmission[i])
-        frame, pixel, value, rstats = render_phases(phases, geom, row, det_shape, **render_kwargs)
-        stats["n_peaks"][i] = rstats["n_peaks"]
-        inside = np.asarray(rstats["in_range"]) >= 0.5
-        stats["n_outside"][i] = int(np.sum(~inside))
-        if inside.any():
-            stats["captured_min"][i] = (np.asarray(rstats["captured"])[inside] / rstats["in_range"][inside]).min()
+        n_frames = omega.shape[1]
+        step = n_frames if frames_per_call is None else frames_per_call
+        parts = []
+        for a in range(0, n_frames, step):
+            b = min(a + step, n_frames)
+            row = make_row(omega[i, a:b], dty[i, a:b], None if transmission is None else transmission[i, a:b])
+            frame, pixel, value, rstats = render_phases(phases, geom, row, det_shape, **render_kwargs)
+            parts.append((frame + a, pixel, value))
+            stats["n_peaks"][i] += rstats["n_peaks"]
+            inside = np.asarray(rstats["in_range"]) >= 0.5
+            stats["n_outside"][i] += int(np.sum(~inside))
+            if inside.any():
+                share = (np.asarray(rstats["captured"])[inside] / rstats["in_range"][inside]).min()
+                stats["captured_min"][i] = min(stats["captured_min"][i], share)
+        frame, pixel, value = (np.concatenate(x) for x in zip(*parts))  # frames in order: still sorted
         stats["n_pixels"][i] = write_scan(
             hout, f"{i + 1}.1", frame, pixel, value, omega[i], dty[i], det_shape, cut, omega_motor, dty_motor
         )
