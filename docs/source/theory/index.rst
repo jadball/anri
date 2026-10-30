@@ -4,8 +4,8 @@
 Theory
 ======
 
-These pages state, in order, the physics and statistics behind Anri's forward model and indexer: each equation Anri
-computes, where it comes from, and the function that computes it.
+These pages state, in order, the physics and statistics behind Anri's forward model, indexer and calibration: each
+equation Anri computes, where it comes from, and the function that computes it.
 
 - Every displayed equation is followed by a **Code** line naming the function that computes it. A test
   (``tests/unit/test_theory_docs.py``) imports every name these pages give, so a renamed function fails CI instead of
@@ -15,8 +15,8 @@ computes, where it comes from, and the function that computes it.
 - Each chapter ends with **What is left out**: the approximations made, so that you know when a result can't be
   trusted.
 
-Only the settled parts of Anri are covered: the forward model (:mod:`anri.fwd` and the layers below it) and the
-indexer (:mod:`anri.index`). The :doc:`tutorials <../tutorials/index>` compute the same equations with Anri's functions
+Only the settled parts of Anri are covered: the forward model (:mod:`anri.fwd` and the layers below it), the
+indexer (:mod:`anri.index`) and the calibration of the geometry (:mod:`anri.calib`). The :doc:`tutorials <../tutorials/index>` compute the same equations with Anri's functions
 and check them.
 
 Forward model
@@ -38,6 +38,11 @@ Indexer
 10. :doc:`localsearch`: sharpening each voxel's orientations off the search grid.
 11. :doc:`populations`: from occupancies to orientation populations per voxel, and the sample mask.
 
+Calibration
+===========
+
+12. :doc:`calibration`: the detector and beam geometry from powder rings, then from the indexed scan's peaks.
+
 :doc:`references` lists every work cited.
 
 .. toctree::
@@ -55,6 +60,7 @@ Indexer
     likelihood
     localsearch
     populations
+    calibration
 
 .. toctree::
     :hidden:
