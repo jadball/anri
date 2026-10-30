@@ -284,6 +284,19 @@ class TestOccupancy(unittest.TestCase):
         f, _ = ix.occupancy.candidates(data, pred, ring_j, pos, scan, dims, 1, 1, qc=1, log=lambda _: None)
         np.testing.assert_allclose(f, [[1.0], [0.0]], atol=1e-6)
 
+    def test_full_turn_seam(self):
+        """A full turn wraps omega's corners at the seam; a partial scan drops the corners past its ends."""
+        om0 = 17.25
+        for n_o, b_o in ((360, 1.0), (3600, 0.1)):
+            om = om0 + b_o * jnp.array([0.1, n_o - 0.1])  # 0.4 of a bin either side of the seam
+            corners = ix.data.eta_omega_corners(jnp.zeros(2), om, om0, 1.0, b_o, 360, n_o)
+            np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 1.0, atol=1e-4)
+            np.testing.assert_array_equal(corners[0][1], [n_o - 1, n_o - 1])
+            np.testing.assert_array_equal(corners[1][1], [0, 0])
+        corners = ix.data.eta_omega_corners(jnp.zeros(1), jnp.array([om0 + 0.1]), om0, 1.0, 1.0, 360, 180)
+        np.testing.assert_array_equal(corners[0][1], [-1])  # half a turn: the corner before om0 is outside
+        np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 0.6, atol=1e-5)
+
     def test_dty_offsets(self):
         """Rows away from their nominal dty: a helical scan's offsets, and system putting a voxel in the right rows."""
         n_rows, n_fr, ystep = 5, 360, 1.0
