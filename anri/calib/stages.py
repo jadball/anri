@@ -401,8 +401,9 @@ def stage_rings(
 def write_pars(calib_file: str, folder: str) -> str:
     """Write a calibration (:func:`stage_fit` or :func:`stage_rings`) as ImageD11 parameter files (``geometry.par``, ``<phase>.par``, ``pars.json``) in folder.
 
-    The phase's cell is the reference lattice, scaled by the fitted lattice scale if it was free. Returns the path
-    of ``pars.json``.
+    The phase's cell is the reference lattice, scaled by the fitted lattice scale if it was free. ``pars.json``
+    names the calibration file, so that the indexer's histogram stage, given it, records the calibration as its
+    source (:func:`anri.io.imaged11.write_pars`). Returns the path of ``pars.json``.
     """
     import anri.io.imaged11 as io
 
@@ -417,29 +418,74 @@ def write_pars(calib_file: str, folder: str) -> str:
     key = "cell_lattice_[P,A,B,C,I,F,R]"
     if isinstance(cell.get(key), float) and float(cell[key]).is_integer():
         cell[key] = int(cell[key])  # a space group number, not 227.0
-    return io.write_pars(folder, geometry, {name: cell})
+    return io.write_pars(folder, geometry, {name: cell}, source=calib_file)
 
 
-def run_command(calib_file: str) -> str:
-    """Return the ``python -m anri.calib fit`` command that remakes a calibration file, with every option it recorded.
+def run_command(path: str) -> str:
+    """Return the ``python -m anri.calib`` command that remakes a rings or calibration file, with every option it recorded.
 
     Parameters
     ----------
-    calib_file
-        From :func:`stage_fit`
+    path
+        From :func:`stage_rings` or :func:`stage_fit`
     """
     import shlex
 
-    p = read_provenance(calib_file)
-    cmd = ["python", "-m", "anri.calib", "fit", p["source"]]
-    if os.path.abspath(calib_file) != stage_path(p["source"], "calib"):
-        cmd += ["--out", calib_file]
+    p = read_provenance(path)
+    if p["stage"] == "rings":
+        r = p["resolved"]
+        cmd = ["python", "-m", "anri.calib", "rings", r["dataset_file"] or r["image"], "--out", os.path.abspath(path)]
+        flags = {"n_iter": "iter", "detector_mask": "mask"}
+    else:
+        cmd = ["python", "-m", "anri.calib", "fit", p["source"]]
+        if os.path.abspath(path) != stage_path(p["source"], "calib"):
+            cmd += ["--out", path]
+        flags = {"n_iter": "iter"}
     for k, v in p["options"].items():
-        flag = "--" + {"n_iter": "iter"}.get(k, k).replace("_", "-")
-        if k == "lattice":
+        flag = "--" + flags.get(k, k).replace("_", "-")
+        if k == "source":  # positional, as resolved
+            continue
+        if k == "parfile":  # as resolved: an absolute path
+            cmd += [flag, p["resolved"]["parfile"]]
+        elif k == "search":  # on by default; the command line can only turn it off
+            cmd += [] if v else ["--no-search"]
+        elif k in ("lattice", "span", "spatial"):  # several values
             cmd += [flag, *(str(x) for x in v)]
         elif isinstance(v, list):
             cmd += [flag, ",".join(str(x) for x in v)]
         else:
             cmd += [flag, str(v)]
     return shlex.join(cmd)
+
+
+def commands(path: str) -> list[str]:
+    """Return the commands that remake a rings or calibration file and every file before it, from the dataset, in order.
+
+    A calibration's chain runs back through the indexer to the parameters it indexed with: when those were written
+    by ``python -m anri.calib pars`` (:func:`write_pars`), the indexer's histogram stage records the rings or
+    calibration file they came from as its source. So a calibration made from powder rings gives four commands:
+    ``rings``, ``pars``, the indexer's ``run`` (:func:`anri.index.stages.run_command`, with ``--outdir`` where its
+    files are) and ``fit``.
+
+    Parameters
+    ----------
+    path
+        From :func:`stage_rings` or :func:`stage_fit`
+    """
+    import shlex
+
+    from anri.index.stages import run_command as index_command
+
+    files = list(reversed(chain(path)))  # the first stage first
+    stages = [read_provenance(f)["stage"] for f in files]
+    out = []
+    for i, (f, stage) in enumerate(zip(files, stages)):
+        after = stages[i + 1] if i + 1 < len(files) else None
+        if stage in ("rings", "calib"):
+            out.append(run_command(f))
+            if after == "histogram":  # its parameters, which the indexer read
+                parfile = read_provenance(files[i + 1])["resolved"]["parfile"]
+                out.append(shlex.join(["python", "-m", "anri.calib", "pars", f, os.path.dirname(parfile)]))
+        elif after is None or after in ("rings", "calib"):  # the last file of an indexer's run
+            out.append(f"{index_command(f)} --outdir {shlex.quote(os.path.dirname(os.path.abspath(f)))}")
+    return out

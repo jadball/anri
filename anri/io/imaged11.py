@@ -1039,7 +1039,7 @@ def write_peaks_table(dsfile: str, nproc: int | None = None, algorithm: str = "l
     return load(dsfile).pksfile
 
 
-def write_pars(folder: str, geometry: dict, phases: dict) -> str:
+def write_pars(folder: str, geometry: dict, phases: dict, source: str | None = None) -> str:
     """Write ImageD11 parameter files: ``geometry.par``, one ``<phase>.par`` per phase, and ``pars.json``.
 
     Parameters
@@ -1052,6 +1052,10 @@ def write_pars(folder: str, geometry: dict, phases: dict) -> str:
         0, 0, 0 and 1 (the only ``omegasign`` anri supports).
     phases
         ``{phase_name: {"cell__a": ..., ..., "cell_lattice_[P,A,B,C,I,F,R]": ...}}``
+    source
+        The stage file these parameters come from (e.g. a calibration), recorded in ``pars.json`` with its id as
+        ``"anri_source"`` (:func:`read_pars_source`), so that a stage that reads them can name it as its source.
+        ImageD11 reads only the ``geometry`` and ``phases`` entries
 
     Returns
     -------
@@ -1065,11 +1069,25 @@ def write_pars(folder: str, geometry: dict, phases: dict) -> str:
     write_par(os.path.join(folder, "geometry.par"), geometry)
     for name, cell in phases.items():
         write_par(os.path.join(folder, f"{name}.par"), cell)
-    schema = {"geometry": {"file": "geometry.par"}, "phases": {name: {"file": f"{name}.par"} for name in phases}}
+    schema: dict = {"geometry": {"file": "geometry.par"}, "phases": {name: {"file": f"{name}.par"} for name in phases}}
+    if source is not None:
+        from anri.io.provenance import read_provenance
+
+        schema["anri_source"] = {"file": os.path.abspath(source), "id": read_provenance(source)["id"]}
     path = os.path.join(folder, "pars.json")
     with open(path, "w") as f:
         json.dump(schema, f, indent=2)
     return path
+
+
+def read_pars_source(parfile: str) -> dict | None:
+    """Return the stage file a ``pars.json`` was written from, as {"file", "id"} (:func:`write_pars`), or None."""
+    import json
+
+    if not parfile.endswith(".json"):
+        return None
+    with open(parfile) as f:
+        return json.load(f).get("anri_source")
 
 
 def write_zero_distortion(folder: str, det_shape: tuple[int, int]) -> tuple[str, str]:

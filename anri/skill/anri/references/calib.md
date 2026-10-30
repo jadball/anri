@@ -38,6 +38,7 @@ python -m anri.calib show <any stage file> --log
 | rings | `--span` | the distance search's score: one clear peak. Two of similar height mean the rings could be matched one ring off: narrow `--span` around the right one | `read_rings`; `plot_distance_search` |
 | rings | `--tols`, `--free` | each (ring, η sector)'s offset from its ring before and after: every ring flat at zero after the fit. A sine in η, the same for every ring, is the centre; one growing with 2θ, a tilt; a constant growing with 2θ, the distance. Keep `--tols` a few pixels wide (one Eiger pixel at 150 mm is 0.03°); rings closer than twice the widest to a neighbour are left out. tilt_x moves no ring, and the wavelength cannot be told from the distance by rings: leave both for `fit` | `read_rings`; `plot_ring_offsets` |
 | rings | `--scans`, `--threshold` | a scan's spots fill its rings well enough summed over every frame; fewer scans for speed | |
+| rings | `--merge` | reflections closer in d* than this are one ring; rings the data cannot separate are merged, not split | |
 | fit | `--min-occ` | the histogram of the fit file's occupancies over the largest: the occupied orientations stand apart from a floor of near-zero candidates. Put the cut in the gap; each voxel should keep nearly all its occupancy | `read_occupancy`, `occupancy_kept`; `plot_min_occ` |
 | fit | `--tols`, `--lattice` | each peak's distance of (h, k, l) from integers at the starting geometry: real matches pile up near 0 above a floor of chance matches. The first tolerance takes in the whole pile and little of the floor. No pile: the geometry is too far off, the lattice is wrong, or the peaks are not this scan's | `match_distances` on `anri.calib.stages.load_inputs`; `plot_match` |
 | fit | `--extra-rounds` | the log's line per round of how far each parameter moved, in its error bars. A `WARNING` that the last round still moved one by more than 1 sigma: the errors quoted are too small | |
@@ -73,7 +74,9 @@ python -m anri.calib show <any stage file> --log
 
 ## Report
 
-The calib file, the command that remakes it (`anri.calib.stages.run_command`), the `pars.json` written from it
-(`anri.calib.stages.write_pars`, as `python -m anri.calib pars`), the free parameters with their errors, the
+The calib file, the commands that remake it from the dataset (`anri.calib.stages.commands`: rings, pars, the
+indexer's run and fit; `pars.json` names the file it was written from, so the indexer's histogram stage links the
+rings into the chain), the `pars.json` written from it (`anri.calib.stages.write_pars`, as `python -m anri.calib
+pars`), the free parameters with their errors, the
 residual and strain-left checks above, and any `WARNING` in the log. Then index again with the new `pars.json`
 (`--parfile`): the map was made with the old geometry.

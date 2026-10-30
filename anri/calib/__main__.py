@@ -6,7 +6,9 @@
     python -m anri.calib show <any stage file> [--log]   how it was made, back to the dataset
 
 rings fits the distance, beam centre, tilt_y and tilt_z to a known phase's powder rings (ImageD11's powder
-calibration), so that the sample indexes; ``pars`` turns the result into the pars.json to index with.
+calibration), so that the sample indexes; ``pars`` turns the result into the pars.json to index with. That pars.json
+names the file it came from, and the indexer's histogram stage records it as its source, so ``show`` goes back
+through the indexing and the rings to the dataset.
 
 The map comes from ``python -m anri.index`` (its fit stage), indexed with a geometry good enough to index; the peaks
 from ImageD11's peaks table (the DataSet's). A calibrant frees the wavelength (``--free`` default); any other sample
@@ -71,6 +73,8 @@ def parse_args(argv: list | None = None) -> argparse.Namespace:
     r.add_argument("--iter", type=int, default=30, help="Gauss-Newton iterations per round at most (default 30)")
     r.add_argument("--n-eta", type=int, default=360, help="eta sectors, one residual per ring and sector")
     r.add_argument("--clip", type=float, default=4.0, help="leave out sectors beyond this many sigma (default 4)")
+    r.add_argument("--merge", type=float, default=1e-4, help="reflections within this d* (1/angstrom) are one ring "
+                   "(default 1e-4)")  # fmt: skip
     r.add_argument("--no-search", action="store_true", help="skip the centre and distance search (start close)")
     r.add_argument("--max-shift", type=float, default=200.0, help="centre search range, pixels (default 200)")
     r.add_argument("--span", type=float, nargs=2, default=(0.7, 1.4), metavar=("LO", "HI"),
@@ -111,8 +115,8 @@ def main() -> None:
                     spatial=args.spatial, scans=args.scans, threshold=args.threshold,
                     free=tuple(k for k in args.free.split(",") if k),
                     tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.iter, n_eta=args.n_eta,
-                    clip=args.clip, search=not args.no_search, max_shift=args.max_shift, span=tuple(args.span),
-                    command=cmd, log=log)  # fmt: skip
+                    clip=args.clip, merge=args.merge, search=not args.no_search, max_shift=args.max_shift,
+                    span=tuple(args.span), command=cmd, log=log)  # fmt: skip
         log(f"done in {time.perf_counter() - T0:.0f} s")
         return
     from anri.calib.stages import stage_fit

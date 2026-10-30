@@ -154,6 +154,112 @@ class TestRunCommand(unittest.TestCase):
                 for k in ("n_iter", "clip", "min_occ", "min_peaks"):
                     self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), opts[k], msg=k)
 
+    def test_rings_parses_back(self):
+        """run_command gives every option a rings file recorded, and the command line parses each one back."""
+        import inspect
+        import os
+        import shlex
+        import tempfile
+
+        import h5py
+
+        from anri.calib.__main__ import parse_args
+        from anri.calib.stages import run_command, stage_rings
+        from anri.io.provenance import write_provenance
+
+        values = {"parfile": "start/pars.json", "phase": "Si", "detector_mask": "/m/mask.edf",
+                  "spatial": ["/m/e2dx.edf", "/m/e2dy.edf"], "scans": 5, "threshold": 2.0, "free": ["distance"],
+                  "tols": [0.3, 0.1], "n_iter": 12, "n_eta": 180, "clip": 3.0, "merge": 2e-4, "search": False,
+                  "max_shift": 50.0, "span": [0.8, 1.2]}  # fmt: skip
+        params = inspect.signature(stage_rings).parameters
+        opts = {k: values.get(k, p.default) for k, p in params.items()
+                if p.kind == p.KEYWORD_ONLY and k not in ("command", "log")}  # fmt: skip
+        opts = {k: list(v) if isinstance(v, tuple) else v for k, v in opts.items()}  # as stage_rings records them
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "si_rings.h5")
+            with h5py.File(path, "w") as h:
+                write_provenance(h, "rings", None, {"source": "si.edf", **opts},
+                                 {"dataset_file": "", "image": "/x/si.edf", "parfile": "/x/start/pars.json"})  # fmt: skip
+            args = parse_args(shlex.split(run_command(path))[3:])
+        self.assertEqual((args.command, args.source, args.out), ("rings", "/x/si.edf", path))
+        self.assertEqual(args.parfile, "/x/start/pars.json")  # as resolved: absolute
+        self.assertEqual((args.mask, args.spatial, args.span), (opts["detector_mask"], opts["spatial"], opts["span"]))
+        self.assertEqual(args.free.split(","), opts["free"])
+        self.assertEqual([float(t) for t in args.tols.split(",")], opts["tols"])
+        self.assertIs(args.no_search, True)
+        for k in ("phase", "scans", "threshold", "n_iter", "n_eta", "clip", "merge", "max_shift"):
+            self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), opts[k], msg=k)
+
+
+class TestChain(unittest.TestCase):
+    def test_rings_to_calibration(self):
+        """pars.json names its calibration; the histogram stage links it; commands remakes the whole chain."""
+        import os
+        import shlex
+        import tempfile
+
+        import h5py
+
+        import anri.calib.__main__ as calib_cli
+        import anri.index.__main__ as index_cli
+        import anri.io.imaged11 as io
+        from anri.calib.stages import commands, write_pars
+        from anri.index.stages import STAGES, _pars_source
+        from anri.io.provenance import chain, read_provenance, write_provenance
+
+        cell = {"cell__a": 5.43, "cell__b": 5.43, "cell__c": 5.43, "cell_alpha": 90.0, "cell_beta": 90.0,
+                "cell_gamma": 90.0, "cell_lattice_[P,A,B,C,I,F,R]": 227}  # fmt: skip
+        with tempfile.TemporaryDirectory() as tmp:
+            start = io.write_pars(os.path.join(tmp, "start"), TRUE, {"Si": cell})
+            self.assertIsNone(io.read_pars_source(start))  # written from no stage file
+            rings_file = os.path.join(tmp, "si_x_rings.h5")
+            with h5py.File(rings_file, "w") as h:
+                write_provenance(h, "rings", None, {"source": "x.h5", "tols": [0.2, 0.1], "span": [0.7, 1.4]},
+                                 {"dataset_file": "/d/si_x_dataset.h5", "image": "", "parfile": start, "phase": "Si",
+                                  "lattice": [5.43] * 3 + [90.0] * 3})  # fmt: skip
+                g = h.create_group("geometry")
+                for k, v in TRUE.items():
+                    g.attrs[k] = v
+                g.attrs["lattice_scale"] = 1.0
+            parfile = write_pars(rings_file, os.path.join(tmp, "rings_pars"))
+            self.assertEqual(io.read_pars_source(parfile)["file"], os.path.abspath(rings_file))
+            self.assertEqual(io.read_pars_json(parfile)[1], "Si")  # ImageD11's entries are unchanged
+            logged = []
+            self.assertEqual(_pars_source(parfile, logged.append), os.path.abspath(rings_file))
+            # the indexer's chain, its histogram made from those parameters, then the calibration on its fit
+            source = _pars_source(parfile, logged.append)
+            first = {"analysisroot": "/d", "sample": "si", "dataset": "x", "parfile": parfile}
+            for stage in STAGES[:4]:
+                path = os.path.join(tmp, f"si_x_{stage}.h5")
+                with h5py.File(path, "w") as h:
+                    if stage == "histogram":
+                        write_provenance(h, stage, source, first, {"parfile": parfile})
+                    else:
+                        write_provenance(h, stage, source, {}, {})
+                source = path
+            calib_file = os.path.join(tmp, "si_x_calib.h5")
+            with h5py.File(calib_file, "w") as h:
+                write_provenance(h, "calib", source, {"tols": [0.1, 0.05]}, {})
+            self.assertEqual(chain(calib_file)[-1], os.path.abspath(rings_file))
+            cmds = commands(calib_file)
+            self.assertEqual(len(cmds), 4)
+            rings = calib_cli.parse_args(shlex.split(cmds[0])[3:])
+            self.assertEqual((rings.command, rings.source, rings.out), ("rings", "/d/si_x_dataset.h5", rings_file))
+            self.assertEqual(shlex.split(cmds[1])[3:], ["pars", rings_file, os.path.dirname(parfile)])
+            run = index_cli.parse_args(shlex.split(cmds[2])[3:])  # the indexer's options only, not the rings'
+            self.assertEqual((run.command, run.parfile, run.outdir, run.levels), ("run", parfile, tmp, 0))
+            fit_cmd = calib_cli.parse_args(shlex.split(cmds[3])[3:])
+            self.assertEqual((fit_cmd.command, fit_cmd.source), ("fit", source))
+            # remade since the parameters were written: not linked
+            with h5py.File(rings_file, "w") as h:
+                write_provenance(h, "rings", None, {}, {})
+            self.assertIsNone(_pars_source(parfile, logged.append))
+            self.assertIn("remade since", logged[-1])
+            os.remove(rings_file)
+            self.assertIsNone(_pars_source(parfile, logged.append))
+            self.assertIn("not there", logged[-1])
+            self.assertEqual(read_provenance(calib_file)["stage"], "calib")
+
 
 if __name__ == "__main__":
     unittest.main()

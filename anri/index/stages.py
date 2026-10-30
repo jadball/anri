@@ -62,7 +62,8 @@ def run_command(path: str) -> str:
     Every option recorded along the chain is given, defaults included, so that the command runs the same on another
     dataset (change the dataset's three arguments). Options the command line cannot take (save_model) are left out;
     where two stages recorded different values of one option (censor, in filter and fit), the later stage's is given.
-    A chain with a fit but no local search gets ``--levels 0``.
+    A chain with a fit but no local search gets ``--levels 0``. The chain stops at its (latest) histogram stage: a
+    calibration before it, whose parameters it read, is remade by :func:`anri.calib.stages.commands`.
 
     Parameters
     ----------
@@ -71,9 +72,13 @@ def run_command(path: str) -> str:
     """
     import shlex
 
+    files = chain(path)
+    stages_of = [read_provenance(p)["stage"] for p in files]
+    if "histogram" in stages_of:  # the indexer's own stages: a calibration before them has its own command
+        files = files[: stages_of.index("histogram") + 1]
     opts: dict = {}
     stages = []
-    for p in reversed(chain(path)):  # the first stage first, so that a later stage's value wins
+    for p in reversed(files):  # the first stage first, so that a later stage's value wins
         prov = read_provenance(p)
         opts.update(prov["options"])
         stages.append(prov["stage"])
@@ -288,6 +293,27 @@ def open_dataset(
             "chunk": chunk, "frame_dty": fdty, "dty_source": dty_source, "gridstep": gridstep,
             "spatial_correction": spatial_src, "spatial": spatial, "detector_shape": det_shape,
             "stream": stream}  # fmt: skip
+
+
+def _pars_source(parfile: str, log: Callable) -> str | None:
+    """Return the stage file (e.g. a calibration) a pars.json was written from, if it is there and unchanged.
+
+    The histogram stage records it as its source, so that the chain (:func:`anri.io.provenance.show`) goes back
+    through the calibration to its dataset. A file moved or remade since is logged and not linked.
+    """
+    import anri.io
+
+    src = anri.io.imaged11.read_pars_source(parfile)
+    if src is None:
+        return None
+    if not os.path.exists(src["file"]):
+        log(f"pars {parfile} was written from {src['file']}, which is not there: not linked in the provenance")
+        return None
+    if read_provenance(src["file"])["id"] != src["id"]:
+        log(f"pars {parfile} was written from an earlier {src['file']} (remade since): not linked in the provenance")
+        return None
+    log(f"pars {parfile} written from {src['file']}: its source in the provenance")
+    return src["file"]
 
 
 def sample_groups(groups: list, n: int = 9) -> list:
@@ -545,8 +571,9 @@ def stage_histogram(
                 "n_hkls": len(ring_t["hkls"]), "spatial_correction": d["spatial_correction"],
                 "detector_mask": mask_file}  # fmt: skip
     check_out(out, [d["dsfile"], d["sparsefile"], d["parfile"], mask_file])
+    pars_from = _pars_source(d["parfile"], log)
     with h5py.File(out, "w") as h:
-        write_provenance(h, "histogram", None, options, resolved, command)
+        write_provenance(h, "histogram", pars_from, options, resolved, command)
         write_attrs(h.create_group("geometry"), d["geo"])
         g = h.create_group("rings")
         for k, v in ring_t.items():
