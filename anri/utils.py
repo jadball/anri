@@ -13,6 +13,7 @@ On a GPU machine the CPU device count is unused, and work is sharded over the GP
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 
@@ -21,7 +22,7 @@ import numpy as np
 from jax.sharding import Mesh
 
 
-def setup(n_cpu: int = 4, preallocate: bool = False) -> None:
+def setup(n_cpu: int = 4, preallocate: bool = False, cache_dir: str | None = None) -> None:
     """Configure JAX for this machine. Must run before JAX has computed anything.
 
     Parameters
@@ -34,6 +35,13 @@ def setup(n_cpu: int = 4, preallocate: bool = False) -> None:
     preallocate
         If ``False`` (default), JAX allocates GPU memory as needed instead of reserving 75% of it at start-up.
         Only applied if ``XLA_PYTHON_CLIENT_PREALLOCATE`` is not already set.
+    cache_dir
+        JAX's persistent compilation cache: compiled functions are kept on disk and reused by later runs, which
+        then skip compiling (e.g. 19 of 54 s of ``python -m anri.calib fit`` on the Ni phantom). Default
+        ``JAX_COMPILATION_CACHE_DIR`` if set, else ``~/.cache/anri/jax``; "" turns it off. An entry's key is a hash
+        of the compiled program, its options and the JAX version, so a changed function compiles again. Only
+        compiles over 1 s are kept. The cache is cut to 2 GB (least recently used first) if JAX supports it and the
+        ``filelock`` package is installed; otherwise it grows: delete the folder to empty it.
 
     Notes
     -----
@@ -63,6 +71,15 @@ def setup(n_cpu: int = 4, preallocate: bool = False) -> None:
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", str(preallocate).lower())
     if "JAX_DEFAULT_MATMUL_PRECISION" not in os.environ:
         jax.config.update("jax_default_matmul_precision", "highest")
+    if cache_dir is None:
+        cache_dir = os.environ.get(
+            "JAX_COMPILATION_CACHE_DIR", os.path.join(os.path.expanduser("~"), ".cache", "anri", "jax")
+        )
+    if cache_dir:
+        jax.config.update("jax_compilation_cache_dir", cache_dir)
+        # a size limit needs the filelock package: without it JAX would turn the whole cache off
+        if "jax_compilation_cache_max_size" in jax.config.values and importlib.util.find_spec("filelock"):
+            jax.config.update("jax_compilation_cache_max_size", 2 << 30)
 
 
 def mesh() -> Mesh:

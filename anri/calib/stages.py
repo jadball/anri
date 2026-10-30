@@ -97,7 +97,7 @@ def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = 
 def stage_fit(
     fit_file: str, out: str | None = None, *, peaks: str | None = None, lattice: list | None = None,
     free: tuple = FREE, tols: tuple = (0.1, 0.05, 0.025, 0.025), n_iter: int = 10, clip: float = 4.0,
-    extra_rounds: int = 6,
+    extra_rounds: int = 6, row_step: int = 1,
     min_occ: float = 0.01, min_peaks: int = 20, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Calibrate the geometry on a scan of an indexed sample.
@@ -128,6 +128,9 @@ def stage_fit(
     extra_rounds
         Repeat the last tolerance while a round still moves the geometry by more than its errors, at most this many
         times (:func:`anri.calib.fit.calibrate`)
+    row_step
+        Use the peaks of every row_step-th dty row only, e.g. 10 on a CPU: matching costs in proportion to the
+        peaks (on the Ni phantom every 10th row gave the geometry of all rows, within 1e-6)
     min_occ
         Leave out occupancies below this x the largest
     min_peaks
@@ -144,9 +147,11 @@ def stage_fit(
     from . import fit
 
     options = {"peaks": peaks, "lattice": lattice, "free": list(free), "tols": list(tols), "n_iter": n_iter,
-               "clip": clip, "extra_rounds": extra_rounds, "min_occ": min_occ, "min_peaks": min_peaks}  # fmt: skip
+               "clip": clip, "extra_rounds": extra_rounds, "row_step": row_step, "min_occ": min_occ, "min_peaks": min_peaks}  # fmt: skip
     d = load_inputs(fit_file, peaks, lattice, min_occ)
     hr, pk, B, lpars, pars0 = d["histogram"], d["peaks"], d["B"], d["lattice"], d["pars"]
+    if row_step > 1:
+        pk = {k: v[pk["row"] % row_step == 0] for k, v in pk.items()}
     pks_file, y0, step = d["peaks_file"], pars0["y0"], d["step"]
     out = stage_path(fit_file, "calib", out)
     check_out(out, [*chain(fit_file), hr["dataset_file"], pks_file, hr["parfile"]])
