@@ -140,7 +140,21 @@ the map along each direction and summing it backwards. A ray leaving the plane a
 nearly vertical ray is capped at :math:`1/0.05` times its in-plane path, since a real sample is not an endless prism.
 
 The indexer applies :math:`T` per voxel and per predicted reflection (:doc:`indexing`), so the fitted occupancies are free
-of absorption. The renderer takes only a transmission per frame (e.g. an attenuator), not per path.
+of absorption. Its sample is the fit's mask, of one phase.
+
+The renderer uses the same paths, in optical depths: each map entry gets :math:`\int \mu\,\mathrm{d}l` to the
+sample's edge in every in-plane direction, and each frame of a peak's window is scaled by
+:math:`\exp(-(\tau_{\text{in}} + \tau_{\text{out}}))` at that frame's omega. Its sample is either the map itself, every
+voxel holding entries full of material with its phases' :math:`\mu` weighted by their densities (so a multiphase map
+absorbs phase by phase, and a 3D map gets one slice per layer), or a given map of :math:`\mu`, e.g. from an absorption
+tomography, which also holds what the map does not (pores, unindexed phases).
+
+**Code:** :func:`anri.fwd.render.add_absorption`, :func:`anri.geom.paths.attenuation_map`,
+:func:`anri.fwd.render.render_row`.
+
+A transmission per frame (e.g. an attenuator) can be given as well.
+
+**Code:** :func:`anri.fwd.render.make_row`.
 
 Monitor normalisation
 ---------------------
@@ -154,6 +168,8 @@ What is left out
 ----------------
 
 - **Extinction** (:doc:`crystal`), and multiple scattering.
-- **Absorption in the renderer** along each ray (only a per-frame factor), and absorption in 3D: the sample is a prism
-  of the slice.
+- **Absorption in 3D**: the sample is a prism of its slice (of each layer, in the renderer); paths through the layers
+  above and below are not followed. A sample built from a map is full wherever the map has entries, and empty elsewhere.
+- **Absorption in the global orientation fit** of the filter stage, which has no voxel positions
+  (:ref:`theory_global_fit`).
 - **The detector's efficiency** versus angle of incidence and energy, and its gain: absorbed in the relative scale.

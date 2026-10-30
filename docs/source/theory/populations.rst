@@ -3,9 +3,9 @@
 From occupancies to populations
 ===============================
 
-The voxel fit (:doc:`likelihood`) leaves each voxel with occupancies of up to :math:`K` grid orientations. A single real
-orientation between grid points shares itself among its neighbours on the grid, and a population with a spread
-covers several. This chapter groups them back into a few orientation populations per voxel, each with a fraction, a
+The voxel fit (:doc:`likelihood`) leaves each voxel with occupancies of up to :math:`K` grid orientations, and the local
+search (:doc:`localsearch`) with occupancies of their children. A single real orientation between grid points shares
+itself among its neighbours, and a population with a spread covers several. This chapter groups them back into a few orientation populations per voxel, each with a fraction, a
 mean and a spread, and describes which voxels are fitted at all.
 
 Grouping
@@ -13,7 +13,7 @@ Grouping
 
 A voxel's :math:`m` most occupied candidates (16 by default), above a fraction :math:`\epsilon` (0.02) of its most
 occupied one, are grouped greedily: the most occupied candidate not yet assigned seeds a population, and every
-unassigned candidate within a radius (about 1.8 grid steps) of it joins, the distance being the misorientation over the
+unassigned candidate within a radius (1.8 steps of the search grid) of it joins, the distance being the misorientation over the
 Laue group (:eq:`cry-laue`). Up to :math:`p` (4) populations per voxel, ordered by fraction, largest first: a population
 of several candidates can outweigh the one the most occupied candidate seeded. The cut is relative to the most occupied
 candidate, not the total, so an occupied voxel always has a population, even when its occupancy is spread thinly over
@@ -46,9 +46,23 @@ Each population gets
   stage exports ``sig_rot`` as the spread divided by :math:`\sqrt{3}`.
 
 **Anri's choice:** populations closer than the radius come out as one, with a larger spread. What the data cannot
-separate is reported as a mean and a spread rather than as invented structure. The spread includes the orientation
-grid's own spacing (one orientation between grid points shares itself among them), so it is an upper bound on the
-sample's.
+separate is reported as a mean and a spread rather than as invented structure. The radius is set by the search grid's
+step even after a local search: its children, a ninth of that step apart after two levels, are grouped within the same
+radius, so the local search sharpens each population's mean and spread but does not separate populations closer than
+the search grid could. The spread includes the spacing of the orientations fitted (one orientation between them shares
+itself among its neighbours), so it is an upper bound on the sample's: the search grid's spacing, or the local search's
+finer one.
+
+What is reported
+----------------
+
+A voxel counts as **occupied** when its total occupancy is above ``occupied`` (0.2) times the 99th percentile of the
+total occupancy in the mask (below). In occupied voxels, the populations holding at least ``min_frac`` (0.1) of the
+voxel's occupancy are reported, the largest always. These choose what goes into the map entries and the TensorMap; the
+raw occupancies are kept in the stage file whatever they are.
+
+**Code:** :func:`anri.index.stages.select_populations`, :func:`anri.index.stages.select_occupied`,
+:func:`anri.index.stages.stage_populations`.
 
 Which voxels are fitted
 -----------------------
