@@ -27,8 +27,10 @@ from anri.io.provenance import (
     check_out,
     read_attrs,
     read_provenance,
+    recorder,
     stage_path,
     write_attrs,
+    write_log,
     write_provenance,
     write_results,
 )
@@ -187,6 +189,8 @@ def stage_prepare(
     from anri.io.imaged11 import motor_grid, read_dataset, read_frame_dty, read_geometry
     from anri.maths.utils import fwhm_to_sigma
 
+    log, lines = recorder(log)
+
     ds = None
     if dataset is not None:
         ds = read_dataset(dataset, remap)
@@ -291,6 +295,7 @@ def stage_prepare(
             log(f"phase {p['name']}: {len(p['entries']['ubi'])} entries, {len(hkls)} reflections, "
                 + ("|F|^2 = 1" if path is None else f"|F|^2 from {path}"))  # fmt: skip
     log(f"-> {out}")
+    write_log(out, lines)
     return out
 
 
@@ -368,6 +373,7 @@ def stage_render(
     """
     from anri.io.imaged11 import write_rendered_rows
 
+    log, lines = recorder(log)
     options = {"rows": rows, "cut": cut, "window": list(window), "max_frames": max_frames, "batch": batch}
     p = load_prepare(prepare_file)
     todo = parse_rows(rows, p["omega"].shape[0])
@@ -393,6 +399,7 @@ def stage_render(
                         "window_capture_min": float(stats["captured_min"][idx].min()),
                         "seconds": time.perf_counter() - t0})  # fmt: skip
     log(f"-> {out} ({time.perf_counter() - t0:.0f} s)")
+    write_log(out, lines)
     return out
 
 
@@ -440,6 +447,7 @@ def stage_assemble(
     from anri.io.imaged11 import write_dataset, write_pars, write_peaks_table, write_zero_distortion
 
     analysisroot = os.path.abspath(analysisroot)
+    log, lines = recorder(log)
     options = {"analysisroot": analysisroot, "sample": sample, "dataset": dataset,
                "peaks_table": peaks_table}  # fmt: skip
     p = load_prepare(prepare_file)
@@ -486,6 +494,7 @@ def stage_assemble(
         write_provenance(h, "assemble", prepare_file, options, resolved, command)
     write_results(out, {"rows": n_rows, "pixels": n_pixels})
     log(f"-> {out}")
+    write_log(out, lines)
     return out
 
 
