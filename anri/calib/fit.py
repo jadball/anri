@@ -465,3 +465,30 @@ def strain_left(peaks: dict, matched: dict, ubi: np.ndarray, B: np.ndarray, pars
     E, _ = lattice_strain(ubi_s, B)
     E[n_pk < min_peaks] = np.nan
     return {"strain": E, "n_peaks": n_pk, "chi2_ratio": float(np.sum(d**2) / np.sum(d0**2))}
+
+
+def split_strain(strain: np.ndarray, n_peaks: np.ndarray) -> dict:
+    """Split the strain left (:func:`strain_left`) into hydrostatic and deviatoric parts, and their peak-weighted means.
+
+    Parameters
+    ----------
+    strain, n_peaks
+        From :func:`strain_left`: [G, 3, 3] (NaN for orientations not fitted) and [G]
+
+    Returns
+    -------
+    dict
+        "hydrostatic" [G] (trace / 3), "deviatoric" [G, 3, 3], "fitted" [G] bool; and over the fitted orientations,
+        weighted by their peaks, "mean_hydrostatic" and "mean_deviatoric" [3, 3] (NaN if none was fitted)
+    """
+    strain = np.asarray(strain, float)
+    hydro = np.trace(strain, axis1=1, axis2=2) / 3
+    dev = strain - hydro[:, None, None] * np.eye(3)
+    ok = np.isfinite(hydro)
+    out = {"hydrostatic": hydro, "deviatoric": dev, "fitted": ok, "mean_hydrostatic": np.nan,
+           "mean_deviatoric": np.full((3, 3), np.nan)}  # fmt: skip
+    if ok.any():
+        w = np.asarray(n_peaks)[ok]
+        out["mean_hydrostatic"] = float(np.average(hydro[ok], weights=w))
+        out["mean_deviatoric"] = np.average(dev[ok], axis=0, weights=w)
+    return out

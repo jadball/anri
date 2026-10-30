@@ -11,9 +11,20 @@ import anri.utils
 anri.utils.setup()
 import anri.phantom
 
-ph = anri.phantom.polycrystal(n=203, step=0.5, radius=50.0, n_grains=10, cell_size=1.5, cell_spread_deg=0.1,
-                              twin_grains=1, cell_walk_deg=0.1, cell_sig_deg=0.05, bend_grains=2, bend_deg=2.0,
-                              seed=0)
+ph = anri.phantom.polycrystal(
+    n=203,
+    step=0.5,
+    radius=50.0,
+    n_grains=10,
+    cell_size=1.5,
+    cell_spread_deg=0.1,
+    twin_grains=1,
+    cell_walk_deg=0.1,
+    cell_sig_deg=0.05,
+    bend_grains=2,
+    bend_deg=2.0,
+    seed=0,
+)
 tmap = anri.phantom.tensormap(ph, [3.5966, 3.5966, 3.5966, 90, 90, 90], 225, "316L", 0.5)  # same step
 tmap.to_h5("my_phantom_tmap.h5")
 ```

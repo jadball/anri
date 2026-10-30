@@ -75,6 +75,46 @@ class TestCalibrate(unittest.TestCase):
         np.testing.assert_allclose(U_fit, U, atol=1e-12)
 
 
+class TestDiagnostics(unittest.TestCase):
+    def test_split_strain(self):
+        """The parts add back to the strain; unfitted orientations are left out of the peak-weighted means."""
+        rng = np.random.default_rng(0)
+        E = rng.normal(size=(3, 3, 3)) * 1e-4
+        E = (E + E.transpose(0, 2, 1)) / 2
+        E[2] = np.nan
+        s = fit.split_strain(E, np.array([10, 30, 50]))
+        np.testing.assert_allclose(s["deviatoric"][:2] + s["hydrostatic"][:2, None, None] * np.eye(3), E[:2])
+        np.testing.assert_allclose(np.trace(s["deviatoric"][:2], axis1=1, axis2=2), 0, atol=1e-18)
+        self.assertEqual(s["fitted"].tolist(), [True, True, False])
+        self.assertAlmostEqual(s["mean_hydrostatic"], (10 * s["hydrostatic"][0] + 30 * s["hydrostatic"][1]) / 40)
+        self.assertTrue(np.isnan(fit.split_strain(E[2:], np.array([5]))["mean_hydrostatic"]))
+
+    def test_occupancy_kept(self):
+        """occupancy_kept applies the stage's cut: a voxel keeps its share above min_occ x the largest."""
+        from anri.calib.diagnostics import occupancy_kept
+
+        f = np.array([[1.0, 0.001], [0.5, 0.5], [0.0, 0.0], [0.004, 0.0]])
+        k = occupancy_kept({"f": f, "nr": 2}, 0.01)
+        np.testing.assert_allclose(k["share"].ravel(), [1 / 1.001, 1.0, np.nan, 0.0])
+        self.assertEqual((k["pairs_kept"], k["pairs"], k["voxels"]), (3, 5, 2))
+
+    def test_residual_trends(self):
+        """Residuals over sig, binned against omega, azimuth (about the fitted centre) and dty."""
+        from anri.calib.diagnostics import residual_trends
+
+        n = 400
+        rng = np.random.default_rng(1)
+        omega = np.linspace(0, 180, n)
+        mt = {"residual": np.stack([np.full(n, 0.2), omega / 180 * 0.4, np.zeros(n)], 1), "omega": omega,
+              "dty": rng.uniform(-5, 5, n), "sc": np.full(n, 1100.0), "fc": np.full(n, 1000.0)}  # fmt: skip
+        tr = residual_trends({"matched": mt, "sig": np.array([0.1, 0.2, 1.0]),
+                              "geometry": {"z_center": 1000.0, "y_center": 1000.0}}, n_bins=4)  # fmt: skip
+        np.testing.assert_allclose(tr["r"][:, 0], 2.0)
+        np.testing.assert_allclose(tr["against"]["azimuth"], 90.0)
+        # a residual of 0.4 * omega / 180 over sig 0.2: omega / 90
+        np.testing.assert_allclose(tr["medians"]["omega"][:, 1], tr["centres"]["omega"] / 90, atol=1e-2)
+
+
 class TestRunCommand(unittest.TestCase):
     def test_parses_back(self):
         """run_command gives every option a calibration recorded, and the command line parses each one back."""
