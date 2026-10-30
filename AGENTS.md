@@ -218,10 +218,14 @@ The worst outcome is a good result on disk that nobody knows how to make again.
 - Every stage file has a `provenance` group. Its attributes hold the stage, a unique id, the source file and that
   file's id (checked when read, so a remade upstream file is refused), the anri version, git commit and dirty flag, the
   date, the working directory and the command. Three subgroups hold attributes too: `options` (as given; None
-  omitted), `resolved` (worked out from the data) and `results` (a summary).
+  omitted), `resolved` (worked out from the data) and `results` (a summary). The dataset `provenance/log` holds every
+  message the stage logged, timed from its start: a stage wraps the `log` it is given with
+  `anri.io.provenance.recorder` and stores the list with `write_log` before it returns, so the file holds the same
+  log whatever ran it (command line, notebook, workflow system). Log per iteration where the numbers are on the host
+  already; never add a host sync to log.
 - Use plain HDF5 attributes. Not NeXus: community NeXus definitions for these processes are being worked out, so
   don't pre-empt them. Not TOML sidecars either: one copy of the provenance, in the file it describes. `show` prints
-  the chain for humans.
+  the chain for humans (`--log` adds each stage's log).
 - Variants (the same stage with other options) are separate files (`--out`), each pointing back to its source. Never
   overwrite a source in place.
 

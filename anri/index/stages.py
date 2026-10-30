@@ -20,7 +20,8 @@ cheap to redo without fitting again. The selections that sliders redo are functi
 Each file records how it was made in a ``provenance`` group: the stage, a unique id, the file it was made from and
 that file's id (checked when it is read), the anri version and git commit, the date and command, and as attributes of
 ``provenance/options``, ``provenance/resolved`` and ``provenance/results`` every option given, every value worked out
-from the data, and a summary of the results. :func:`~anri.io.provenance.show` prints the whole chain. Variants (e.g. fits with different
+from the data, and a summary of the results; and as ``provenance/log`` every message the stage logged, with its
+time (:func:`~anri.io.provenance.recorder`). :func:`~anri.io.provenance.show` prints the whole chain. Variants (e.g. fits with different
 options from one filter) are separate files, each pointing back to its input.
 """
 
@@ -38,9 +39,11 @@ from anri.io.provenance import (
     check_out,
     read_attrs,
     read_provenance,
+    recorder,
     stage_path,
     upstream,
     write_attrs,
+    write_log,
     write_provenance,
     write_results,
 )
@@ -430,6 +433,7 @@ def stage_histogram(
 
     from .data import detector_coverage, dty_offsets, histogram_pixels, ring_profile, ring_table
 
+    log, lines = recorder(log)
     options = {"analysisroot": analysisroot, "sample": sample, "dataset": dataset, "phase": phase, "parfile": parfile,
                "rings": rings, "ring_merge": ring_merge, "cif": cif, "tth_tol": tth_tol, "monitor": monitor, "dty_source": dty_source,
                "frame_dty": frame_dty, "gridstep": gridstep, "grid_pad": grid_pad,
@@ -554,6 +558,7 @@ def stage_histogram(
             h.create_dataset("H_saturated", data=sat_bins.astype(np.int64))  # indices into H
     write_results(out, {"bins": int(H.size), "nonempty_fraction": float(jnp.mean(H > 0))})
     log(f"-> {out}")
+    write_log(out, lines)
     return out
 
 
@@ -610,6 +615,7 @@ def stage_powder(
 
     from .data import detector_cake, pixel_angles, pixel_cake, powder_pattern
 
+    log, lines = recorder(log)
     options = {"analysisroot": analysisroot, "sample": sample, "dataset": dataset, "phase": phase, "parfile": parfile,
                "monitor": monitor, "detector_mask": detector_mask, "tth_step": tth_step, "n_eta": n_eta,
                "min_coverage": min_coverage}  # fmt: skip
@@ -669,6 +675,7 @@ def stage_powder(
     xye = write_xye(out, min_coverage=min_coverage)
     write_results(out, {"total_intensity": float(I.sum()), "xye": xye})
     log(f"-> {out}, {xye}")
+    write_log(out, lines)
     return out
 
 
@@ -737,6 +744,7 @@ def stage_search(
 
     from .search import choose_grid, completeness_levels, completeness_of
 
+    log, lines = recorder(log)
     options = {"grid": grid, "max_chance": max_chance, "lit": lit, "etacut": etacut}
     d = load_histogram(histogram_file)
     lm = lit_map(d["H_lit"], d["scan"], d["n_rings"], lit, etacut)
@@ -757,6 +765,7 @@ def stage_search(
         h["completeness"] = np.asarray(comp)
     write_results(out, {"orientations": len(U_grid), "chance_completeness": chance, "completeness_halfway": halfway})
     log(f"-> {out}")
+    write_log(out, lines)
     return out
 
 
@@ -800,6 +809,7 @@ def stage_filter(
     from . import orientations
     from .search import select_by_completeness
 
+    log, lines = recorder(log)
     options = {"prune": prune, "min_comp": min_comp, "min_lr": min_lr, "keep": keep, "censor": censor}
     s_prov = read_provenance(search_file)
     hist_file = upstream(search_file, "histogram")
@@ -841,6 +851,7 @@ def stage_filter(
             h["likelihood_ratio"] = np.asarray(lr)
     write_results(out, {"orientations_kept": len(kept)})
     log(f"-> {out}")
+    write_log(out, lines)
     return out
 
 
@@ -904,6 +915,7 @@ def stage_fit(
     from .occupancy import fit_occupancy
     from .search import predictions
 
+    log, lines = recorder(log)
     options = {"y0": y0, "cand": cand, "n_iter": n_iter, "coarse": coarse, "beam": beam, "mask": mask, "pad": pad,
                "absorption": absorption, "mu": mu, "block_gb": block_gb, "censor": censor,
                "save_model": save_model}  # fmt: skip
@@ -918,6 +930,7 @@ def stage_fit(
     check_out(out, [*chain(filter_file), mask])
     _write_fit(out, "fit", filter_file, options, {}, command, s, f_m, cand_m, model, s["U"], s["comp"], save_model,
                log)  # fmt: skip
+    write_log(out, lines)
     return out
 
 
@@ -1083,6 +1096,7 @@ def stage_localsearch(
     if levels < 1:
         msg = f"levels must be at least 1, not {levels}"
         raise ValueError(msg)
+    log, lines = recorder(log)
     options = {"levels": levels, "cover": cover, "per_voxel": per_voxel}
     fo = read_provenance(fit_file)["options"]
     filter_file = upstream(fit_file, "filter")
@@ -1115,6 +1129,7 @@ def stage_localsearch(
     check_out(out, chain(fit_file))
     _write_fit(out, "localsearch", fit_file, options, {"step": step}, command, s, f_m, cand_m, model, U, comp, False,
                log)  # fmt: skip
+    write_log(out, lines)
     return out
 
 
@@ -1158,6 +1173,7 @@ def stage_populations(
     from . import populations
     from .search import completeness_of
 
+    log, lines = recorder(log)
     options = {"occupied": occupied, "min_frac": min_frac}
     search_file = upstream(fit_file, "search")
     d = load_histogram(upstream(search_file, "histogram"))
@@ -1237,4 +1253,5 @@ def stage_populations(
         log(f"-> {tpath} (and .xdmf for ParaView)")
     except ImportError:
         log("ImageD11 is not installed: no TensorMap written")
+    write_log(out, lines)
     return out

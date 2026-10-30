@@ -300,10 +300,11 @@ class TestOccupancy(unittest.TestCase):
         f_true = jnp.asarray(rng.uniform(size=(32, 4)) * (rng.uniform(size=(32, 4)) > 0.5), jnp.float32)
         d = ix.occupancy.forward(f_true, cand, pred, ring_j, pos, scan, dims, n_cells, 8)
         f0 = jnp.ones((32, 4), jnp.float32)
-        devs = []
-        f = ix.occupancy.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 10, 8, log=lambda m: None,
+        devs, msgs = [], []
+        f = ix.occupancy.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 10, 8, log=msgs.append,
                     callback=lambda it, f_, dev: devs.append(dev))  # fmt: skip
         self.assertEqual(len(devs), 10)
+        self.assertEqual(len(msgs), 10)  # one line per iteration
         self.assertTrue(np.all(np.diff(devs) <= 1e-6 * devs[0]))
         dev_sq = float(
             ix.occupancy.deviance(d, ix.occupancy.forward(f, cand, pred, ring_j, pos, scan, dims, n_cells, 8), 0.0)
@@ -563,6 +564,18 @@ class TestProvenance(unittest.TestCase):
             text = anri.io.provenance.show(paths[-1])
             self.assertLess(text.index("[histogram]"), text.index("[search]"))
             self.assertLess(text.index("[filter]"), text.index("[populations]"))
+            # the log: kept by the recorder as well as passed on, stored in the file, shown on request
+            shown = []
+            log, lines = anri.io.provenance.recorder(shown.append)
+            log("first")
+            log("second")
+            self.assertEqual(shown, ["first", "second"])
+            anri.io.provenance.write_log(paths[1], lines)
+            self.assertEqual(anri.io.provenance.read_provenance(paths[0])["log"], [])  # none written
+            kept = anri.io.provenance.read_provenance(paths[1])["log"]
+            self.assertEqual([k.split("] ", 1)[1] for k in kept], ["first", "second"])
+            self.assertNotIn("[search.log]", text)
+            self.assertIn("] second", anri.io.provenance.show(paths[-1], log=True))
             # moved together to another folder: the sources are found beside each other
             moved = os.path.join(tmp, "moved")
             os.mkdir(moved)
