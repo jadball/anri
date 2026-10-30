@@ -1,6 +1,8 @@
-"""The calibration as a stage: an indexed map (``anri.index fit``) and the scan's peaks in, one HDF5 file out.
+"""The calibration as stages: powder rings first, then an indexed map (``anri.index fit``) and the scan's peaks.
 
-:func:`stage_fit` matches ImageD11's peaks to the map, fits the geometry (:func:`anri.calib.fit.calibrate`) and frees
+:func:`stage_rings` fits the distance, beam centre and two tilts to a known phase's powder rings (a dense image, or
+a scan's sparse pixels summed), to get a geometry good enough to index.
+:func:`stage_fit` then matches ImageD11's peaks to the map, fits the geometry (:func:`anri.calib.fit.calibrate`) and frees
 each orientation's lattice with that geometry (:func:`anri.calib.fit.strain_left`). :func:`write_pars` writes the
 result as ImageD11 parameter files, for anri or ImageD11 to use. :func:`load_inputs` reads what the stage starts
 from, to look at before running it (the calibration guide does), and :func:`run_command` gives the command line
@@ -181,8 +183,153 @@ def stage_fit(
     return out
 
 
+def stage_rings(
+    source: str, out: str | None = None, *, parfile: str | None = None, phase: str | None = None,
+    detector_mask: str | None = None, spatial: tuple | None = None, scans: int | None = None, threshold: float = 0.0,
+    free: tuple = ("distance", "y_center", "z_center", "tilt_y", "tilt_z"), tols: tuple = (0.1, 0.05),
+    n_iter: int = 30, n_eta: int = 360, clip: float = 4.0, merge: float = 1e-4, command: str | None = None,
+    log: Callable = print,
+) -> str:  # fmt: skip
+    """Fit the detector geometry to the powder rings of a known phase, as ImageD11's powder calibration does.
+
+    The first calibration step: from the motors' distance and detector position to a geometry good enough to index
+    (``python -m anri.index``), which :func:`stage_fit` then refines with the wavelength and tilt_x
+    (:mod:`anri.calib.rings`).
+
+    Parameters
+    ----------
+    source
+        An ImageD11 DataSet (``..._dataset.h5``), whose sparse pixels are summed over every frame; or a detector
+        image fabio reads (a powder image, e.g. a calibrant's, background subtracted)
+    out
+        Output file (default: ``<sample>_<dataset>_rings.h5``, or the image's name with ``_rings.h5``, in the working
+        directory)
+    parfile
+        ``pars.json`` with the starting geometry and the phase (default: the DataSet's; needed for an image)
+    phase
+        The phase whose rings are fitted (default: the only one in parfile)
+    detector_mask
+        Detector mask, non-zero for masked pixels (default: the DataSet's maskfile; none: every pixel measured)
+    spatial
+        (e2dx, e2dy) distortion files for an image (a DataSet's own are used for its pixels)
+    scans
+        Sum only this many of the DataSet's scans, spread evenly (default: all)
+    threshold
+        Keep pixels above this, with it subtracted
+    free
+        Free parameters (:data:`anri.calib.fit.GEOMETRY`, not "lattice"); tilt_x moves no ring
+    tols, n_iter, n_eta, clip
+        As :func:`anri.calib.rings.fit_rings`
+    merge
+        Reflections within this d* (1 / angstrom) are one ring
+    command, log
+        The command line, if run from one (recorded), and progress messages
+
+    Returns
+    -------
+    str
+        The file written: the fitted geometry ("geometry", as :func:`stage_fit`'s, for :func:`write_pars`), the
+        covariance of the free parameters, the rings ("tth", "used"), each (ring, eta sector)'s offset from its ring
+        at the start and at the end ("offset_start", "offset", with the summed "intensity"), and the image
+    """
+    import anri.io.imaged11 as io
+
+    from . import fit, rings
+
+    options = {"source": source, "parfile": parfile, "phase": phase, "detector_mask": detector_mask,
+               "spatial": list(spatial) if spatial else None, "scans": scans, "threshold": threshold,
+               "free": list(free), "tols": list(tols), "n_iter": n_iter, "n_eta": n_eta, "clip": clip,
+               "merge": merge}  # fmt: skip
+    is_ds = source.endswith("_dataset.h5")
+    inputs = [source]
+    if is_ds:
+        ds = io.read_dataset(source)
+        parfile = parfile or ds["parfile"]
+        mask_file = detector_mask or ds["maskfile"]
+        with h5py.File(ds["sparsefile"], "r") as h:
+            groups = list(h.keys())
+            a = h[groups[0]].attrs
+            shape = (int(a["shape0"]), int(a["shape1"])) if "shape0" in a and "shape1" in a else None
+        if scans:
+            groups = [groups[i] for i in np.unique(np.linspace(0, len(groups) - 1, scans).round().astype(int))]
+        dmaps = io.read_spatial(ds)
+        spatial_src = ds["detectorh5"] or (f"{ds['e2dxfile']}, {ds['e2dyfile']}" if dmaps is not None else "")
+        inputs.append(ds["sparsefile"])
+        default_out = os.path.basename(source)[: -len("_dataset.h5")] + "_rings.h5"
+    else:
+        import fabio
+
+        if not parfile:
+            msg = "an image needs parfile (pars.json with the starting geometry and the phase)"
+            raise ValueError(msg)
+        mask_file = detector_mask
+        image = np.asarray(fabio.open(source).data, np.float64)
+        shape = image.shape
+        dmaps = None
+        if spatial:
+            dmaps = tuple(np.asarray(fabio.open(f).data, np.float32) for f in spatial)
+        spatial_src = ", ".join(spatial) if spatial else ""
+        default_out = os.path.splitext(os.path.basename(source))[0] + "_rings.h5"
+    good = io.read_mask(mask_file) if mask_file else None
+    shape = shape or (good.shape if good is not None else None)
+    if shape is None:
+        msg = "the detector's shape is unknown (no mask, and none in the sparse file): give detector_mask"
+        raise ValueError(msg)
+    out = out or default_out
+    parfile = os.path.abspath(parfile)
+    check_out(out, [*inputs, parfile, mask_file])
+    geo, phase, cell = io.read_pars_json(parfile, phase)
+    lpars = np.array([cell[k] for k in ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")])
+    sg = int(cell["cell_lattice_[P,A,B,C,I,F,R]"])
+    pars0 = fit.base_pars(geo, 0.0)
+    log(f"pars {parfile}: phase {phase}, lattice {', '.join(f'{v:g}' for v in lpars)}, space group {sg}")
+    log("start: " + ", ".join(f"{k} {pars0[k]:.7g}" for k in (*free, "wavelength")))
+
+    if is_ds:
+        chunks = io.prefetch(io.stream_sparse(ds["sparsefile"], ds["ybinedges"], ds["omegamotor"], ds["dtymotor"],
+                                              1 << 22, groups, dataset_dty=ds["dty"], scans=ds["scans"],
+                                              dataset_omega=ds["omega"]))  # fmt: skip
+        image = rings.sum_frames(chunks, shape)
+        log(f"summed {len(groups)} scans of {ds['sparsefile']}")
+    px = rings.lit_pixels(image, good, dmaps, threshold)
+    log(f"{len(px['sc'])} lit pixels; detector mask {mask_file or 'none'}; spatial correction {spatial_src or 'none'}")
+    corner_s = np.array([0.0, 0.0, shape[0] - 1, shape[0] - 1])
+    corner_f = np.array([0.0, shape[1] - 1, 0.0, shape[1] - 1])
+    tth_max = float(np.max(np.asarray(rings.pixel_tth_eta(corner_s, corner_f, pars0)[0])))
+    ds_r = rings.ring_ds(lpars, sg, pars0["wavelength"], tth_max, merge)
+    log(f"{len(ds_r)} rings up to 2theta {tth_max:.3f} deg")
+    sep = 2 * max(tols)
+    start = rings.ring_offsets(px, ds_r, pars0, tols[0], n_eta, sep)
+    res = rings.fit_rings(px, ds_r, pars0, tuple(free), tuple(tols), n_iter, n_eta, clip, log=log)
+    end = rings.ring_offsets(px, ds_r, res["pars"], tols[-1], n_eta, sep)
+    err = np.sqrt(np.diag(res["cov"]))
+    log("fitted: " + ", ".join(f"{k} {res['pars'][k]:.8g} +- {e:.2g}" for k, e in zip(free, err)))
+
+    resolved = {"dataset_file": os.path.abspath(source) if is_ds else "",
+                "sparsefile": ds["sparsefile"] if is_ds else "", "image": "" if is_ds else os.path.abspath(source),
+                "parfile": parfile, "phase": phase, "space_group": sg, "lattice": lpars.tolist(), "detector_mask": mask_file or "", "spatial_correction": spatial_src,
+                "n_scans": len(groups) if is_ds else 0, "tth_max": tth_max, "n_rings": len(ds_r),
+                **{f"start_{k}": pars0[k] for k in fit.GEOMETRY if k != "lattice"}}  # fmt: skip
+    with h5py.File(out, "w") as h:
+        write_provenance(h, "rings", None, options, resolved, command)
+        g = h.create_group("geometry")
+        for k, v in fit.imaged11_pars(res["pars"]).items():
+            g.attrs[k] = v
+        g.attrs["lattice_scale"] = 1.0
+        h["free"] = np.array(free, dtype="S")
+        h["cov"] = res["cov"]
+        h["tth"], h["used"] = end["tth"], end["used"]
+        h["offset_start"], h["offset"], h["intensity"] = start["offset"], end["offset"], end["intensity"]
+        h["offset"].attrs["eta_edges_deg"] = np.linspace(-180.0, 180.0, n_eta + 1)
+        h.create_dataset("image", data=image.astype(np.float32), compression="lzf", chunks=True)
+    write_results(out, {**{k: res["pars"][k] for k in free}, **{f"{k}_err": float(e) for k, e in zip(free, err)},
+                        "rms_deg": res["rms"], "n_sectors": res["n_sectors"]})  # fmt: skip
+    log(f"-> {out}")
+    return out
+
+
 def write_pars(calib_file: str, folder: str) -> str:
-    """Write a calibration as ImageD11 parameter files (``geometry.par``, ``<phase>.par``, ``pars.json``) in folder.
+    """Write a calibration (:func:`stage_fit` or :func:`stage_rings`) as ImageD11 parameter files (``geometry.par``, ``<phase>.par``, ``pars.json``) in folder.
 
     The phase's cell is the reference lattice, scaled by the fitted lattice scale if it was free. Returns the path
     of ``pars.json``.

@@ -1,8 +1,12 @@
-"""Calibrate the detector and beam geometry on a scanning-3DXRD scan of an indexed sample.
+"""Calibrate the detector and beam geometry on a scanning-3DXRD scan.
 
+    python -m anri.calib rings <..._dataset.h5 | image> [options] -> <...>_rings.h5
     python -m anri.calib fit <..._fit.h5> [options]      -> <...>_calib.h5
     python -m anri.calib pars <..._calib.h5> <folder>    ImageD11 parameter files (geometry.par, <phase>.par, pars.json)
     python -m anri.calib show <any stage file>           how it was made, back to the dataset
+
+rings fits the distance, beam centre, tilt_y and tilt_z to a known phase's powder rings (ImageD11's powder
+calibration), so that the sample indexes; ``pars`` turns the result into the pars.json to index with.
 
 The map comes from ``python -m anri.index`` (its fit stage), indexed with a geometry good enough to index; the peaks
 from ImageD11's peaks table (the DataSet's). A calibrant frees the wavelength (``--free`` default); any other sample
@@ -47,6 +51,24 @@ def parse_args(argv: list | None = None) -> argparse.Namespace:
                    "peaks (the strain left; default 20)")  # fmt: skip
     f.add_argument("--n-cpu", type=int, default=4, help="CPU devices for JAX (default 4)")
 
+    r = sub.add_parser("rings", help="fit the geometry to powder rings, close enough to index")
+    r.add_argument("source", help="ImageD11 DataSet (..._dataset.h5; its sparse pixels are summed) or a detector image")
+    r.add_argument("--out", help="output file (default <sample>_<dataset>_rings.h5 or <image>_rings.h5)")
+    r.add_argument("--parfile", help="pars.json: starting geometry and phase (default: the DataSet's)")
+    r.add_argument("--phase", help="phase whose rings are fitted (default: the only one)")
+    r.add_argument("--mask", help="detector mask, non-zero where masked (default: the DataSet's)")
+    r.add_argument("--spatial", nargs=2, metavar=("E2DX", "E2DY"), help="distortion files for an image")
+    r.add_argument("--scans", type=int, help="sum only this many scans, spread evenly (default: all)")
+    r.add_argument("--threshold", type=float, default=0.0, help="keep pixels above this (default 0)")
+    r.add_argument("--free", default="distance,y_center,z_center,tilt_y,tilt_z", help="comma-separated free "
+                   "parameters (default: distance, centre, tilt_y, tilt_z)")  # fmt: skip
+    r.add_argument("--tols", default="0.1,0.05", help="ring tolerance (deg 2theta) of each round: a few pixels "
+                   "wide at least (each sector's mean is over the pixels within it)")  # fmt: skip
+    r.add_argument("--iter", type=int, default=30, help="Gauss-Newton iterations per round at most (default 30)")
+    r.add_argument("--n-eta", type=int, default=360, help="eta sectors, one residual per ring and sector")
+    r.add_argument("--clip", type=float, default=4.0, help="leave out sectors beyond this many sigma (default 4)")
+    r.add_argument("--n-cpu", type=int, default=4, help="CPU devices for JAX (default 4)")
+
     w = sub.add_parser("pars", help="write a calibration as ImageD11 parameter files")
     w.add_argument("source", help="calibration file")
     w.add_argument("folder", help="where to write geometry.par, <phase>.par and pars.json")
@@ -72,13 +94,24 @@ def main() -> None:
     import anri.utils
 
     anri.utils.setup(n_cpu=args.n_cpu)
+    cmd = "python -m anri.calib " + shlex.join(sys.argv[1:])
+    if args.command == "rings":
+        from anri.calib.stages import stage_rings
+
+        stage_rings(args.source, args.out, parfile=args.parfile, phase=args.phase, detector_mask=args.mask,
+                    spatial=args.spatial, scans=args.scans, threshold=args.threshold,
+                    free=tuple(k for k in args.free.split(",") if k),
+                    tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.iter, n_eta=args.n_eta,
+                    clip=args.clip, command=cmd, log=log)  # fmt: skip
+        log(f"done in {time.perf_counter() - T0:.0f} s")
+        return
     from anri.calib.stages import stage_fit
 
     stage_fit(args.source, args.out, peaks=args.peaks, lattice=args.lattice,
               free=tuple(k for k in args.free.split(",") if k),
               tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.iter, clip=args.clip,
               min_occ=args.min_occ, min_peaks=args.min_peaks,
-              command="python -m anri.calib " + shlex.join(sys.argv[1:]), log=log)  # fmt: skip
+              command=cmd, log=log)  # fmt: skip
     log(f"done in {time.perf_counter() - T0:.0f} s")
 
 
