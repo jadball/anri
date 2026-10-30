@@ -62,11 +62,15 @@ def parse_args(argv: list | None = None) -> argparse.Namespace:
     r.add_argument("--threshold", type=float, default=0.0, help="keep pixels above this (default 0)")
     r.add_argument("--free", default="distance,y_center,z_center,tilt_y,tilt_z", help="comma-separated free "
                    "parameters (default: distance, centre, tilt_y, tilt_z)")  # fmt: skip
-    r.add_argument("--tols", default="0.1,0.05", help="ring tolerance (deg 2theta) of each round: a few pixels "
+    r.add_argument("--tols", default="0.2,0.1", help="ring tolerance (deg 2theta) of each round: a few pixels "
                    "wide at least (each sector's mean is over the pixels within it)")  # fmt: skip
     r.add_argument("--iter", type=int, default=30, help="Gauss-Newton iterations per round at most (default 30)")
     r.add_argument("--n-eta", type=int, default=360, help="eta sectors, one residual per ring and sector")
     r.add_argument("--clip", type=float, default=4.0, help="leave out sectors beyond this many sigma (default 4)")
+    r.add_argument("--no-search", action="store_true", help="skip the centre and distance search (start close)")
+    r.add_argument("--max-shift", type=float, default=200.0, help="centre search range, pixels (default 200)")
+    r.add_argument("--span", type=float, nargs=2, default=(0.7, 1.4), metavar=("LO", "HI"),
+                   help="distance search range, x the start (default 0.7 1.4)")  # fmt: skip
     r.add_argument("--n-cpu", type=int, default=4, help="CPU devices for JAX (default 4)")
 
     w = sub.add_parser("pars", help="write a calibration as ImageD11 parameter files")
@@ -102,7 +106,8 @@ def main() -> None:
                     spatial=args.spatial, scans=args.scans, threshold=args.threshold,
                     free=tuple(k for k in args.free.split(",") if k),
                     tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.iter, n_eta=args.n_eta,
-                    clip=args.clip, command=cmd, log=log)  # fmt: skip
+                    clip=args.clip, search=not args.no_search, max_shift=args.max_shift, span=tuple(args.span),
+                    command=cmd, log=log)  # fmt: skip
         log(f"done in {time.perf_counter() - T0:.0f} s")
         return
     from anri.calib.stages import stage_fit

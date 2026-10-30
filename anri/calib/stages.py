@@ -186,8 +186,9 @@ def stage_fit(
 def stage_rings(
     source: str, out: str | None = None, *, parfile: str | None = None, phase: str | None = None,
     detector_mask: str | None = None, spatial: tuple | None = None, scans: int | None = None, threshold: float = 0.0,
-    free: tuple = ("distance", "y_center", "z_center", "tilt_y", "tilt_z"), tols: tuple = (0.1, 0.05),
-    n_iter: int = 30, n_eta: int = 360, clip: float = 4.0, merge: float = 1e-4, command: str | None = None,
+    free: tuple = ("distance", "y_center", "z_center", "tilt_y", "tilt_z"), tols: tuple = (0.2, 0.1),
+    n_iter: int = 30, n_eta: int = 360, clip: float = 4.0, merge: float = 1e-4, search: bool = True,
+    max_shift: float = 200.0, span: tuple = (0.7, 1.4), command: str | None = None,
     log: Callable = print,
 ) -> str:  # fmt: skip
     """Fit the detector geometry to the powder rings of a known phase, as ImageD11's powder calibration does.
@@ -222,6 +223,12 @@ def stage_rings(
         As :func:`anri.calib.rings.fit_rings`
     merge
         Reflections within this d* (1 / angstrom) are one ring
+    search
+        First search for the centre (:func:`anri.calib.rings.find_centre`, up to ``max_shift`` pixels from the
+        start) and the distance (:func:`anri.calib.rings.find_distance`, over ``span`` x the start), so that a start
+        from the motors far from the answer still converges; the start's tilts are kept until the fit
+    max_shift, span
+        The search's range
     command, log
         The command line, if run from one (recorded), and progress messages
 
@@ -239,7 +246,7 @@ def stage_rings(
     options = {"source": source, "parfile": parfile, "phase": phase, "detector_mask": detector_mask,
                "spatial": list(spatial) if spatial else None, "scans": scans, "threshold": threshold,
                "free": list(free), "tols": list(tols), "n_iter": n_iter, "n_eta": n_eta, "clip": clip,
-               "merge": merge}  # fmt: skip
+               "merge": merge, "search": search, "max_shift": max_shift, "span": list(span)}  # fmt: skip
     is_ds = source.endswith("_dataset.h5")
     inputs = [source]
     if is_ds:
@@ -295,13 +302,24 @@ def stage_rings(
     log(f"{len(px['sc'])} lit pixels; detector mask {mask_file or 'none'}; spatial correction {spatial_src or 'none'}")
     corner_s = np.array([0.0, 0.0, shape[0] - 1, shape[0] - 1])
     corner_f = np.array([0.0, shape[1] - 1, 0.0, shape[1] - 1])
-    tth_max = float(np.max(np.asarray(rings.pixel_tth_eta(corner_s, corner_f, pars0)[0])))
-    ds_r = rings.ring_ds(lpars, sg, pars0["wavelength"], tth_max, merge)
-    log(f"{len(ds_r)} rings up to 2theta {tth_max:.3f} deg")
+
+    def rings_on(p: dict, f: float = 1.0) -> np.ndarray:  # the rings up to the detector's largest 2theta / f
+        t = float(np.max(np.asarray(rings.pixel_tth_eta(corner_s, corner_f, p)[0])))
+        return rings.ring_ds(lpars, sg, p["wavelength"], float(np.degrees(np.arctan(np.tan(np.radians(t)) / f))),
+                             merge)  # fmt: skip
+
     sep = 2 * max(tols)
-    start = rings.ring_offsets(px, ds_r, pars0, tols[0], n_eta, sep)
-    res = rings.fit_rings(px, ds_r, pars0, tuple(free), tuple(tols), n_iter, n_eta, clip, log=log)
+    start = rings.ring_offsets(px, rings_on(pars0), pars0, tols[0], n_eta, sep)["offset"]
+    p1 = pars0
+    if search:
+        p1 = rings.find_centre(px, pars0, max_shift, log=log)
+        p1 = rings.find_distance(px, rings_on(p1, span[0]), p1, tols[0], tuple(span), log=log)
+    ds_r = rings_on(p1)
+    tth_max = float(np.degrees(np.arcsin(ds_r[-1] * p1["wavelength"] / 2) * 2)) if len(ds_r) else 0.0
+    log(f"{len(ds_r)} rings up to 2theta {tth_max:.3f} deg")
+    res = rings.fit_rings(px, ds_r, p1, tuple(free), tuple(tols), n_iter, n_eta, clip, log=log)
     end = rings.ring_offsets(px, ds_r, res["pars"], tols[-1], n_eta, sep)
+    start = np.pad(start, ((0, max(len(ds_r) - len(start), 0)), (0, 0)), constant_values=np.nan)[: len(ds_r)]
     err = np.sqrt(np.diag(res["cov"]))
     log("fitted: " + ", ".join(f"{k} {res['pars'][k]:.8g} +- {e:.2g}" for k, e in zip(free, err)))
 
@@ -319,7 +337,7 @@ def stage_rings(
         h["free"] = np.array(free, dtype="S")
         h["cov"] = res["cov"]
         h["tth"], h["used"] = end["tth"], end["used"]
-        h["offset_start"], h["offset"], h["intensity"] = start["offset"], end["offset"], end["intensity"]
+        h["offset_start"], h["offset"], h["intensity"] = start, end["offset"], end["intensity"]
         h["offset"].attrs["eta_edges_deg"] = np.linspace(-180.0, 180.0, n_eta + 1)
         h.create_dataset("image", data=image.astype(np.float32), compression="lzf", chunks=True)
     write_results(out, {**{k: res["pars"][k] for k in free}, **{f"{k}_err": float(e) for k, e in zip(free, err)},

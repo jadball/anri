@@ -45,6 +45,19 @@ class TestFitRings(unittest.TestCase):
         o = rings.ring_offsets(px, ds, res["pars"], 0.05, sep=0.2)  # straight rings: sectors on their ring
         self.assertLess(np.nansum(np.abs(o["offset"]) * o["intensity"]) / o["intensity"].sum(), 2e-3)
 
+    def test_search_from_far(self):
+        """From a centre 70 pixels and a distance 8% off, beyond any ring assignment, the search comes back."""
+        px = rings.lit_pixels(_image())
+        ds = rings.ring_ds(*SI, TRUE["wavelength"], 30.0)
+        p = dict(fit.base_pars(TRUE, 0.0), y_center=TRUE["y_center"] + 40.0, z_center=TRUE["z_center"] - 60.0,
+                 distance=TRUE["distance"] * 1.08)  # fmt: skip
+        p = rings.find_centre(px, p, log=lambda _: None)
+        self.assertLess(np.hypot(p["y_center"] - TRUE["y_center"], p["z_center"] - TRUE["z_center"]), 1.5)
+        p = rings.find_distance(px, ds, p, log=lambda _: None)
+        self.assertLess(abs(p["distance"] / TRUE["distance"] - 1), 2e-3)
+        res = rings.fit_rings(px, ds, p, log=lambda _: None)
+        self.assertLess(abs(res["pars"]["y_center"] - TRUE["y_center"]), 0.02)
+
     def test_stage_on_an_image(self):
         """stage_rings on a dense image writes a geometry that write_pars turns into a pars.json."""
         import fabio

@@ -13,7 +13,12 @@ Each pixel is assigned to the nearest ring within a tolerance, and the pixels of
 residual: their intensity-weighted mean 2theta minus the ring's. Every sector counts once, as every peak of
 ImageD11's sector-by-sector peak search does; the mean is over the pixels' exact 2theta, so an arc's curvature
 does not bias it. The fit is Gauss-Newton (Levenberg-Marquardt) in rounds of decreasing tolerance, the pixels
-re-assigned each round.
+re-assigned at every iteration.
+
+A ring assignment only works from a start within about one ring gap; the motors' centre can be 100 pixels off. So
+:func:`find_centre` and :func:`find_distance` first search without assigning rings: the centre where the radial
+histogram is sharpest (every ring a circle about it), then the distance whose ring windows catch the most
+intensity.
 """
 
 from __future__ import annotations
@@ -105,6 +110,13 @@ def pixel_tth_eta(sc: jax.Array, fc: jax.Array, p: dict) -> tuple:
     return k_out_to_tth_eta(lab, jnp.asarray(_K_IN, lab.dtype))
 
 
+def _angles(px: dict, pars: dict) -> tuple:
+    """(2theta, eta) of the pixels (degrees, NumPy float64) for the geometry pars."""
+    with float64():
+        p = {k: jnp.float64(v) for k, v in pars.items()}
+        return tuple(np.asarray(a) for a in pixel_tth_eta(jnp.asarray(px["sc"]), jnp.asarray(px["fc"]), p))
+
+
 def _ring_tth(ds: jax.Array, wavelength: jax.Array) -> jax.Array:
     """2theta (degrees) of rings of d* ds."""
     return jnp.degrees(2 * jnp.arcsin(ds * wavelength / 2))
@@ -161,10 +173,9 @@ def assign(px: dict, ds: np.ndarray, pars: dict, tol: float, n_eta: int = 360, s
         "ring" [N] (-1: none), "group" [N] (ring x n_eta + sector, for every pixel), "tth", "eta" [N] (degrees) and
         "used" [Nr] (rings kept)
     """
+    tth, eta = _angles(px, pars)
     with float64():
-        p = {k: jnp.float64(v) for k, v in pars.items()}
-        tth, eta = (np.asarray(a) for a in pixel_tth_eta(jnp.asarray(px["sc"]), jnp.asarray(px["fc"]), p))
-        t = np.asarray(_ring_tth(jnp.asarray(ds), p["wavelength"]))
+        t = np.asarray(_ring_tth(jnp.asarray(ds), jnp.float64(pars["wavelength"])))
     gap = np.diff(t)
     sep = 2 * tol if sep is None else sep
     used = np.ones(len(t), bool)
@@ -203,7 +214,116 @@ def ring_offsets(px: dict, ds: np.ndarray, pars: dict, tol: float, n_eta: int = 
     return {"offset": off.reshape(-1, n_eta), "intensity": W.reshape(-1, n_eta), "tth": t, "used": a["used"]}
 
 
-def fit_rings(px: dict, ds: np.ndarray, pars: dict, free: tuple = FREE, tols: tuple = (0.1, 0.05),
+@partial(jax.jit, static_argnames=("n_r",))
+def _sharpness(centres: jax.Array, sc: jax.Array, fc: jax.Array, w: jax.Array, size: jax.Array, rbin: float,
+               n_r: int) -> jax.Array:  # fmt: skip
+    """[C] sum of squares of the radial histogram about each centre [C, 2] (z_center, y_center; pixels)."""
+
+    def one(c: jax.Array) -> jax.Array:
+        r = jnp.hypot((sc - c[0]) * size[0], (fc - c[1]) * size[1])
+        H = jax.ops.segment_sum(w, jnp.clip((r / rbin).astype(jnp.int32), 0, n_r - 1), n_r)
+        return jnp.sum(H * H)
+
+    return jax.lax.map(one, centres)
+
+
+def find_centre(px: dict, pars: dict, max_shift: float = 200.0, max_pixels: int = 200_000,
+                log: Callable = print) -> dict:  # fmt: skip
+    """Find the beam centre without assigning rings: where the rings' radial histogram is sharpest.
+
+    About the right centre every ring is a circle (to the detector tilts' small ellipticity), so the histogram of
+    the pixels' radii, weighted by the square root of their intensity (so a few strong spots do not decide), is most
+    peaked: its sum of squares is largest, whatever the distance and the rings. The centre is searched on grids
+    of decreasing step (8, 2, 0.5 pixels; bins of half a step), each around the best of the last, the first
+    reaching ``max_shift`` pixels.
+
+    Parameters
+    ----------
+    px
+        From :func:`lit_pixels`
+    pars
+        Starting geometry (:func:`anri.calib.fit.base_pars`); only y_center and z_center change. The beam is at
+        pixel (slow, fast) = (z_center, y_center), as in ImageD11
+    max_shift
+        Largest distance (pixels) from the start searched
+    max_pixels
+        Use at most this many pixels, spread evenly (the brightest are not preferred)
+    log
+        Progress messages
+
+    Returns
+    -------
+    dict
+        pars, with y_center and z_center found
+    """
+    take = np.unique(np.linspace(0, len(px["sc"]) - 1, min(max_pixels, len(px["sc"]))).astype(np.int64))
+    sc, fc = jnp.asarray(px["sc"][take], jnp.float32), jnp.asarray(px["fc"][take], jnp.float32)
+    w = jnp.asarray(np.sqrt(np.maximum(px["intensity"][take], 0.0)), jnp.float32)
+    size = jnp.asarray([pars["z_size"], pars["y_size"]], jnp.float32)
+    pix = float(min(pars["z_size"], pars["y_size"]))
+    r_max = float(np.hypot(np.ptp(px["sc"]) + 2 * max_shift, np.ptp(px["fc"]) + 2 * max_shift)) * pix
+    best = np.array([pars["z_center"], pars["y_center"]])
+    for step, half in ((8.0, max_shift), (2.0, 8.0), (0.5, 2.0)):
+        g = np.arange(-half, half + step / 2, step)
+        grid = best + np.stack(np.meshgrid(g, g, indexing="ij"), -1).reshape(-1, 2)
+        rbin = step / 2 * pix
+        h = np.asarray(_sharpness(jnp.asarray(grid, jnp.float32), sc, fc, w, size, rbin, int(r_max / rbin) + 1))
+        best = grid[np.argmax(h)]
+        log(f"centre search: {len(grid)} centres {step:g} px apart; best z_center {best[0]:.2f}, y_center "
+            f"{best[1]:.2f} (sharpness {h.max() / np.median(h):.3g} x the median)")  # fmt: skip
+    return {**pars, "z_center": float(best[0]), "y_center": float(best[1])}
+
+
+def find_distance(px: dict, ds: np.ndarray, pars: dict, tol: float = 0.1, span: tuple = (0.7, 1.4),
+                  log: Callable = print) -> dict:  # fmt: skip
+    """Find the distance without assigning rings: the one whose ring windows catch the most intensity.
+
+    With the centre found (:func:`find_centre`), a pixel at 2theta seen from distance L0 is at
+    tan(2theta') = tan(2theta) L0 / L from distance L. For each L of a grid over ``span`` x L0 (steps moving the
+    outermost ring by a quarter of tol), the score is the intensity (square root, so a few strong spots do not
+    decide) within tol of a ring, less what a flat background would put in the same windows.
+
+    Parameters
+    ----------
+    px, ds, pars
+        As :func:`assign`
+    tol
+        Ring window (degrees 2theta)
+    span
+        Range searched, as factors of the starting distance
+    log
+        Progress messages
+
+    Returns
+    -------
+    dict
+        pars, with the distance found
+    """
+    tth, _ = _angles(px, pars)
+    w = np.sqrt(np.maximum(px["intensity"], 0.0))
+    u = np.tan(np.radians(tth))  # radius / L0
+    order = np.argsort(u)
+    u, C = u[order], np.concatenate([[0.0], np.cumsum(w[order])])
+    t_ring = np.radians(np.asarray(_ring_tth(jnp.asarray(ds), pars["wavelength"]), float))
+    dstep = np.radians(tol) / 4 / max(np.radians(tth.max()), 1e-6)
+    scale = np.exp(np.arange(np.log(span[0]), np.log(span[1]), dstep))  # L / L0
+    density = C[-1] / (u[-1] - u[0])  # a flat background's intensity per unit u
+    tol_r = np.radians(tol)
+    score = np.zeros(len(scale))
+    for i, f in enumerate(scale):  # a ring at 2theta_r falls at u = tan(2theta_r) L / L0
+        lo, hi = np.tan(t_ring - tol_r) * f, np.tan(t_ring + tol_r) * f
+        inside = (lo > u[0]) & (hi < u[-1])
+        caught = C[np.searchsorted(u, hi[inside])] - C[np.searchsorted(u, lo[inside])]
+        score[i] = np.sum(caught - density * (hi[inside] - lo[inside]))
+    best = int(np.argmax(score))
+    p = {**pars, "distance": pars["distance"] * scale[best]}
+    second = np.max(np.where(np.abs(np.arange(len(scale)) - best) > 8, score, -np.inf))
+    log(f"distance search: {len(scale)} distances {span[0]:g}-{span[1]:g} x {pars['distance']:.6g}; best "
+        f"{p['distance']:.6g} (x {scale[best]:.4f}), score {score[best]:.4g}, next best elsewhere {second:.4g}")  # fmt: skip
+    return p
+
+
+def fit_rings(px: dict, ds: np.ndarray, pars: dict, free: tuple = FREE, tols: tuple = (0.2, 0.1),
               n_iter: int = 30, n_eta: int = 360, clip: float = 4.0, log: Callable = print) -> dict:  # fmt: skip
     """Fit the geometry so that the rings fall at their 2theta: see the module's description.
 
