@@ -5,7 +5,7 @@ Indexing as tomography
 
 The indexer finds, from the data alone, which orientations each voxel of a scanning 3DXRD map holds and how much of
 each. This chapter sets up the model it fits; :doc:`search` chooses the orientations it may use, :doc:`likelihood`
-fits it, and :doc:`populations` reads the result.
+fits it, :doc:`localsearch` sharpens the orientations off the grid, and :doc:`populations` reads the result.
 
 What a voxel is
 ---------------
@@ -110,7 +110,9 @@ The voxel grid
 
 The voxels are an :math:`N \times N` grid of the dty step, centred on the rotation axis and sized from :math:`y_0` and
 the scanned range, as ImageD11 pads its reconstructions. The histogram stage fixes it, so a :math:`y_0` chosen later
-moves no voxel.
+moves no voxel. It can be widened on every side (``grid_pad``) for a sample reaching past the scanned range, whose outer
+part would otherwise pile its intensity onto the grid's edge. With ``gridstep`` :math:`G`, the dty rows are summed in
+groups of :math:`G` and the voxels are :math:`G` dty steps wide.
 
 **Code:** :func:`anri.geom.scan.recon_positions`, :func:`anri.index.stages.voxel_grid`.
 

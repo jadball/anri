@@ -107,5 +107,5 @@ What is left out
 ----------------
 
 - **Orientations off the grid** are represented by their neighbours on it: a single orientation between grid points
-  shares its occupancy among them. :doc:`populations` merges them back.
+  shares its occupancy among them. :doc:`localsearch` refines them, and :doc:`populations` merges them back.
 - **Strain** in the search: predictions use the reference lattice.

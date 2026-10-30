@@ -277,6 +277,7 @@ def stage_prepare(
         resolved["mu"] = [f"{k}={v}" for k, v in mus.items()]
     resolved["absorption"] = mu_grid is not None or bool(mus)
     check_out(out, [map_file, pars_file, dataset, None if ds is None else ds["sparsefile"]])
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with h5py.File(out, "w") as h:
         write_provenance(h, "prepare", None, options, resolved, command)
         write_attrs(h.create_group("pars"), pars)
@@ -387,6 +388,7 @@ def stage_render(
     log(f"rendering rows {todo[0]}..{todo[-1]} of {p['omega'].shape[0]}, {len(p['phases'])} phase(s)")
     t0 = time.perf_counter()
     check_out(out, [prepare_file])
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with h5py.File(out, "w") as h:
         write_provenance(h, "render", prepare_file, options, {"first_row": todo[0], "last_row": todo[-1]}, command)
         stats = write_rendered_rows(h, p["phases"], p["geom"], p["omega"], p["dty"], p["det_shape"], rows=todo,
