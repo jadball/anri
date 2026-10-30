@@ -139,6 +139,16 @@ Anri must scale from a laptop to a cluster.
 - **Laptop target:** ImageD11 can analyse a small(ish) S3DXRD dataset (400 × 400 px) on a laptop with < 64 GB RAM. Anri should match that.
 - **Big problems:** we have a SLURM cluster with multiple GPUs. JAX multi-device and multi-host (`jax.distributed`, sharding) is the preferred route there.
 
+### Multi-host friendly, one code path
+
+Write sharded code so that one process is just the case N = 1 of N processes: the same code runs on a laptop and across nodes, with no second path. Multi-host support itself is not built yet, but new code should not make it harder:
+
+- **Global mesh, local I/O.** Build meshes over `jax.devices()` (all processes' devices), as `anri.utils.mesh()` does. Read and write only what this process holds.
+- **Load in blocks, not whole.** Build sharded inputs from the blocks each device holds (`jax.make_array_from_callback`, reading from HDF5), rather than loading everything on the host and sharding it.
+- **No host gathers of sharded arrays.** `np.asarray`, `float()` or slicing on a sharded result needs every shard on this host. Read big results through `x.addressable_shards`; reduce small ones on device first.
+- **One writer.** Process 0 writes the stage file, its provenance and the log (`jax.process_index() == 0`, always true on one process).
+- **Launching stays outside anri.** No scheduler code in the library: a stage is a command, started by `srun`, `mpirun` or a workflow system, and `jax.distributed.initialize()` reads the cluster from the environment.
+
 ## Shared machines: be a good neighbour
 
 Development happens on shared machines (e.g. an ESRF node with one L40S GPU and other users) and sometimes on a laptop.
