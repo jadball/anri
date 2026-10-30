@@ -30,8 +30,8 @@ def log(msg: str) -> None:
     print(f"[{time.perf_counter() - T0:7.1f} s] {msg}", flush=True)
 
 
-def parse_args(argv: list | None = None) -> argparse.Namespace:
-    """Parse the command line."""
+def parser() -> argparse.ArgumentParser:
+    """Build the command line, one subcommand per stage."""
     p = argparse.ArgumentParser(prog="python -m anri.calib", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
     sub = p.add_subparsers(dest="command", required=True)
@@ -46,7 +46,7 @@ def parse_args(argv: list | None = None) -> argparse.Namespace:
                    help="comma-separated free parameters (default: detector and wavelength); 'lattice' (the lattice "
                    "scale) instead of 'wavelength' for a sample that is not a calibrant")  # fmt: skip
     f.add_argument("--tols", default="0.1,0.05,0.025,0.025", help="(h, k, l) matching tolerance of each round")
-    f.add_argument("--iter", type=int, default=10, help="Gauss-Newton iterations per round (default 10)")
+    f.add_argument("--iter", dest="n_iter", type=int, default=10, help="Gauss-Newton iterations per round (default 10)")
     f.add_argument("--clip", type=float, default=4.0, help="leave out peaks beyond this many sigma (default 4)")
     f.add_argument("--extra-rounds", type=int, default=6, help="repeat the last tolerance while a round still "
                    "moves the geometry by more than its errors, at most this many times (default 6)")  # fmt: skip
@@ -62,7 +62,7 @@ def parse_args(argv: list | None = None) -> argparse.Namespace:
     r.add_argument("--out", help="output file (default <sample>_<dataset>_rings.h5 or <image>_rings.h5)")
     r.add_argument("--parfile", help="pars.json: starting geometry and phase (default: the DataSet's)")
     r.add_argument("--phase", help="phase whose rings are fitted (default: the only one)")
-    r.add_argument("--mask", help="detector mask, non-zero where masked (default: the DataSet's)")
+    r.add_argument("--mask", dest="detector_mask", help="detector mask, non-zero where masked (default: the DataSet's)")
     r.add_argument("--spatial", nargs=2, metavar=("E2DX", "E2DY"), help="distortion files for an image")
     r.add_argument("--scans", type=int, help="sum only this many scans, spread evenly (default: all)")
     r.add_argument("--threshold", type=float, default=0.0, help="keep pixels above this (default 0)")
@@ -70,7 +70,9 @@ def parse_args(argv: list | None = None) -> argparse.Namespace:
                    "parameters (default: distance, centre, tilt_y, tilt_z)")  # fmt: skip
     r.add_argument("--tols", default="0.2,0.1", help="ring tolerance (deg 2theta) of each round: a few pixels "
                    "wide at least (each sector's mean is over the pixels within it)")  # fmt: skip
-    r.add_argument("--iter", type=int, default=30, help="Gauss-Newton iterations per round at most (default 30)")
+    r.add_argument(
+        "--iter", dest="n_iter", type=int, default=30, help="Gauss-Newton iterations per round at most (default 30)"
+    )
     r.add_argument("--n-eta", type=int, default=360, help="eta sectors, one residual per ring and sector")
     r.add_argument("--clip", type=float, default=4.0, help="leave out sectors beyond this many sigma (default 4)")
     r.add_argument("--merge", type=float, default=1e-4, help="reflections within this d* (1/angstrom) are one ring "
@@ -88,7 +90,12 @@ def parse_args(argv: list | None = None) -> argparse.Namespace:
     s = sub.add_parser("show", help="how a stage file was made, all the way back to the dataset")
     s.add_argument("file")
     s.add_argument("--log", action="store_true", help="also print what each stage logged")
-    return p.parse_args(argv)
+    return p
+
+
+def parse_args(argv: list | None = None) -> argparse.Namespace:
+    """Parse the command line."""
+    return parser().parse_args(argv)
 
 
 def main() -> None:
@@ -111,10 +118,10 @@ def main() -> None:
     if args.command == "rings":
         from anri.calib.stages import stage_rings
 
-        stage_rings(args.source, args.out, parfile=args.parfile, phase=args.phase, detector_mask=args.mask,
+        stage_rings(args.source, args.out, parfile=args.parfile, phase=args.phase, detector_mask=args.detector_mask,
                     spatial=args.spatial, scans=args.scans, threshold=args.threshold,
                     free=tuple(k for k in args.free.split(",") if k),
-                    tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.iter, n_eta=args.n_eta,
+                    tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.n_iter, n_eta=args.n_eta,
                     clip=args.clip, merge=args.merge, search=not args.no_search, max_shift=args.max_shift,
                     span=tuple(args.span), command=cmd, log=log)  # fmt: skip
         log(f"done in {time.perf_counter() - T0:.0f} s")
@@ -123,7 +130,7 @@ def main() -> None:
 
     stage_fit(args.source, args.out, peaks=args.peaks, lattice=args.lattice,
               free=tuple(k for k in args.free.split(",") if k),
-              tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.iter, clip=args.clip,
+              tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.n_iter, clip=args.clip,
               extra_rounds=args.extra_rounds, row_step=args.row_step, min_occ=args.min_occ, min_peaks=args.min_peaks,
               command=cmd, log=log)  # fmt: skip
     log(f"done in {time.perf_counter() - T0:.0f} s")

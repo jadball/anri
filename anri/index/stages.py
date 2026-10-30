@@ -37,6 +37,7 @@ import numpy as np
 from anri.io.provenance import (
     chain,
     check_out,
+    command_line,
     read_attrs,
     read_provenance,
     recorder,
@@ -74,6 +75,8 @@ def run_command(path: str) -> str:
     """
     import shlex
 
+    from .__main__ import parser
+
     files = chain(path)
     stages_of = [read_provenance(p)["stage"] for p in files]
     if "histogram" in stages_of:  # the indexer's own stages: a calibration before them has its own command
@@ -86,15 +89,9 @@ def run_command(path: str) -> str:
         stages.append(prov["stage"])
     if "fit" in stages and "localsearch" not in stages:  # run would add a local search the chain does not have
         opts["levels"] = 0
-    cmd = ["python", "-m", "anri.index", "run", *(str(opts.pop(k)) for k in ("analysisroot", "sample", "dataset"))]
-    for k, v in opts.items():
-        if k in ("frame_dty", "absorption"):  # on by default; the command line can only turn them off
-            cmd += [] if v else ["--no-" + k.replace("_", "-")]
-        elif k != "save_model" and v is not False:
-            if isinstance(v, (list, tuple, np.ndarray)):  # e.g. ring indices: comma-separated
-                v = ",".join(str(int(x)) for x in np.ravel(v))
-            cmd += ["--" + {"n_iter": "iter"}.get(k, k).replace("_", "-")] + ([] if v is True else [str(v)])
-    return shlex.join(cmd)
+    opts.pop("save_model", None)
+    dataset = [opts.pop(k) for k in ("analysisroot", "sample", "dataset")]
+    return shlex.join(command_line(parser(), "run", dataset, opts))
 
 
 # ----------------------------------------------------------------------------------------- shared setup (one source)

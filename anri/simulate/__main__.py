@@ -107,8 +107,8 @@ def _render_options(p: argparse.ArgumentParser) -> None:
                    "e.g. a box beam's long rotation that does not fit in memory at once")  # fmt: skip
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse the command line (default: ``sys.argv``)."""
+def parser() -> argparse.ArgumentParser:
+    """Build the command line, one subcommand per stage."""
     p = argparse.ArgumentParser(prog="python -m anri.simulate", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="command", required=True)
     common = argparse.ArgumentParser(add_help=False)
@@ -149,7 +149,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     w = sub.add_parser("show", help="how a stage file was made")
     w.add_argument("file")
     w.add_argument("--log", action="store_true", help="also print what each stage logged")
-    return p.parse_args(argv)
+    return p
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the command line (default: ``sys.argv``)."""
+    return parser().parse_args(argv)
 
 
 def main() -> None:

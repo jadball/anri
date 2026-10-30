@@ -25,6 +25,7 @@ import numpy as np
 
 from anri.io.provenance import (
     check_out,
+    command_line,
     read_attrs,
     read_provenance,
     recorder,
@@ -560,22 +561,12 @@ def run_command(assemble_file: str) -> str:
 
     from anri.io.provenance import upstream
 
+    from .__main__ import parser
+
     a = read_provenance(assemble_file)
     prep = read_provenance(upstream(assemble_file, "prepare"))["options"]
     part = read_provenance(a["resolved"]["parts"][0])["options"]
     asm = a["options"]
-    cmd = ["python", "-m", "anri.simulate", "run", prep.pop("map"), prep.pop("pars"),
-           *(str(asm.pop(k)) for k in ("analysisroot", "sample", "dataset"))]  # fmt: skip
+    args = [prep.pop("map"), prep.pop("pars"), *(asm.pop(k) for k in ("analysisroot", "sample", "dataset"))]
     part.pop("rows", None)
-    for k, v in {**prep, **part, **asm}.items():
-        flag = "--" + k.replace("_", "-")
-        if k == "cif":
-            for c in [v] if isinstance(v, str) else v:
-                cmd += [flag, c]
-        elif k == "absorption":  # on by default; the command line can only turn it off
-            cmd += [] if v else ["--no-absorption"]
-        elif v is True:
-            cmd.append(flag)
-        elif v is not False:
-            cmd += [flag, *(str(x) for x in (v if isinstance(v, list) else [v]))]
-    return shlex.join(cmd)
+    return shlex.join(command_line(parser(), "run", args, {**prep, **part, **asm}))

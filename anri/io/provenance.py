@@ -10,6 +10,7 @@ summary). The dataset ``provenance/log`` holds every message the stage logged, t
 
 from __future__ import annotations
 
+import argparse
 import datetime
 import os
 import subprocess
@@ -237,3 +238,54 @@ def stage_path(source: str, stage: str, out: str | None = None) -> str:
     base = os.path.basename(source)
     stem = base[: -len(f"_{prev}.h5")] if base.endswith(f"_{prev}.h5") else os.path.splitext(base)[0]
     return os.path.join(os.path.dirname(os.path.abspath(source)), f"{stem}_{stage}.h5")
+
+
+def command_line(parser: argparse.ArgumentParser, command: str, positionals: list, options: dict) -> list[str]:
+    """Return the command line that gives a stage its recorded options again: the program, command and arguments.
+
+    Each option is the subcommand's ``--name`` (``_`` as ``-``), or its option whose dest is the name; a flag the
+    command line can only turn off (``--no-name``) is given when the option is False. A list is given as its option
+    takes it: separate values (``nargs``), the flag once per value (``append``), or comma-separated (one value).
+
+    Parameters
+    ----------
+    parser
+        The method's command line, with one subcommand per stage
+    command
+        The subcommand, e.g. "run"
+    positionals
+        Its positional arguments, as given (anything else to put first, e.g. "--out", path)
+    options
+        Recorded options (:func:`read_provenance`), each one the subcommand takes
+
+    Returns
+    -------
+    list[str]
+        For ``shlex.join``
+    """
+    subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    actions = [a for a in subparsers.choices[command]._actions if a.option_strings]
+    by_flag = {s: a for a in actions for s in a.option_strings}
+    by_dest = {a.dest: a for a in actions}
+    out = [*parser.prog.split(), command, *(str(x) for x in positionals)]
+    for k, v in options.items():
+        off = "--no-" + k.replace("_", "-")
+        if off in by_flag:  # on by default; the command line can only turn it off
+            out += [] if v else [off]
+            continue
+        a = by_flag.get("--" + k.replace("_", "-"), by_dest.get(k))
+        if a is None:
+            msg = f"{parser.prog} {command} has no option for {k!r}"
+            raise KeyError(msg)
+        flag = a.option_strings[0]
+        if a.nargs == 0:  # a flag
+            out += [flag] if v else []
+            continue
+        values = [str(x) for x in (v if isinstance(v, list) else [v])]
+        if isinstance(a, argparse._AppendAction):
+            out += [x for value in values for x in (flag, value)]
+        elif a.nargs is None:
+            out += [flag, ",".join(values)]
+        else:
+            out += [flag, *values]
+    return out

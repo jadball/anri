@@ -20,6 +20,7 @@ import numpy as np
 from anri.io.provenance import (
     chain,
     check_out,
+    command_line,
     read_provenance,
     recorder,
     stage_path,
@@ -426,31 +427,19 @@ def run_command(path: str) -> str:
     """
     import shlex
 
+    from .__main__ import parser
+
     p = read_provenance(path)
+    opts = {k: v for k, v in p["options"].items() if k != "source"}  # positional, as resolved
     if p["stage"] == "rings":
         r = p["resolved"]
-        cmd = ["python", "-m", "anri.calib", "rings", r["dataset_file"] or r["image"], "--out", os.path.abspath(path)]
-        flags = {"n_iter": "iter", "detector_mask": "mask"}
-    else:
-        cmd = ["python", "-m", "anri.calib", "fit", p["source"]]
-        if os.path.abspath(path) != stage_path(p["source"], "calib"):
-            cmd += ["--out", path]
-        flags = {"n_iter": "iter"}
-    for k, v in p["options"].items():
-        flag = "--" + flags.get(k, k).replace("_", "-")
-        if k == "source":  # positional, as resolved
-            continue
-        if k == "parfile":  # as resolved: an absolute path
-            cmd += [flag, p["resolved"]["parfile"]]
-        elif k == "search":  # on by default; the command line can only turn it off
-            cmd += [] if v else ["--no-search"]
-        elif k in ("lattice", "span", "spatial"):  # several values
-            cmd += [flag, *(str(x) for x in v)]
-        elif isinstance(v, list):
-            cmd += [flag, ",".join(str(x) for x in v)]
-        else:
-            cmd += [flag, str(v)]
-    return shlex.join(cmd)
+        opts["parfile"] = r["parfile"]  # as resolved: an absolute path
+        args = [r["dataset_file"] or r["image"], "--out", os.path.abspath(path)]
+        return shlex.join(command_line(parser(), "rings", args, opts))
+    args = [p["source"]]
+    if os.path.abspath(path) != stage_path(p["source"], "calib"):
+        args += ["--out", path]
+    return shlex.join(command_line(parser(), "fit", args, opts))
 
 
 def commands(path: str) -> list[str]:

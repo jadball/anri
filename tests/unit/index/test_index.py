@@ -700,7 +700,7 @@ class TestProvenance(unittest.TestCase):
             if k in ("frame_dty", "absorption"):  # on by default, turned off on the command line
                 self.assertEqual(getattr(args, "no_" + k), not v, msg=k)
                 continue
-            self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), v, msg=k)
+            self.assertEqual(getattr(args, k), v, msg=k)
 
 
 class TestDiscMask(unittest.TestCase):

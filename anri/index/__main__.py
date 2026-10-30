@@ -132,6 +132,7 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the DataSet's y0)")
     p.add_argument(
         "--iter",
+        dest="n_iter",
         type=int,
         default=10,
         help="MLEM iterations, SQUAREM-accelerated (3 MLEM updates each; default 10: thin features such as twins "
@@ -194,8 +195,8 @@ def _populations_options(p: argparse.ArgumentParser) -> None:
                    "voxel's occupancy (default 0.1)")  # fmt: skip
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse the command line (default: ``sys.argv``)."""
+def parser() -> argparse.ArgumentParser:
+    """Build the command line, one subcommand per stage."""
     p = argparse.ArgumentParser(prog="python -m anri.index", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="command", required=True)
     dataset = argparse.ArgumentParser(add_help=False)
@@ -267,7 +268,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     w = sub.add_parser("show", help="how a stage file was made, all the way back to the dataset")
     w.add_argument("file")
     w.add_argument("--log", action="store_true", help="also print what each stage logged")
-    return p.parse_args(argv)
+    return p
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the command line (default: ``sys.argv``)."""
+    return parser().parse_args(argv)
 
 
 def main() -> None:
@@ -313,7 +319,7 @@ def main() -> None:
         source = ix.stages.stage_filter(source, out, prune=args.prune, min_comp=args.min_comp, min_lr=args.min_lr,
                                  keep=args.keep, censor=args.censor, command=command, log=log)  # fmt: skip
     if cmd in ("fit", "run"):
-        source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.iter, coarse=args.coarse,
+        source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.n_iter, coarse=args.coarse,
                               beam=args.beam, mask=args.mask, pad=args.pad, absorption=not args.no_absorption, mu=args.mu, block_gb=args.block_gb, censor=args.censor,
                               command=command, log=log)  # fmt: skip
     if cmd == "localsearch" or (cmd == "run" and args.levels > 0):
