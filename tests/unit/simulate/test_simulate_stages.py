@@ -113,8 +113,10 @@ class TestRenderStages(unittest.TestCase):
             self.assertEqual(cov["on_detector"][0], 1.0)  # the innermost ring is wholly on the detector
             # the map prepared from the dataset it made, rendered again, matches that dataset's measured row
             dsfile = prov["resolved"]["dataset_file"]
-            again = sim.stages.load_prepare(sim.stages.stage_prepare(map_file, None, os.path.join(tmp, "y_prepare.h5"),
-                                                     dataset=dsfile, density=50.0, log=lambda m: None))  # fmt: skip
+            # (into a folder that does not exist yet: the stage makes it)
+            again = sim.stages.load_prepare(sim.stages.stage_prepare(map_file, None,
+                                                                     os.path.join(tmp, "new", "y_prepare.h5"),
+                                                                     dataset=dsfile, density=50.0, log=lambda m: None))  # fmt: skip
             np.testing.assert_array_equal(again["omega"], p["omega"])
             ds = anri.io.imaged11.read_dataset(dsfile)
             obs, mod = dg.observed_row(ds, 1), dg.model_row(again, 1)
