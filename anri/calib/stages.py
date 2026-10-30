@@ -21,8 +21,10 @@ from anri.io.provenance import (
     chain,
     check_out,
     read_provenance,
+    recorder,
     stage_path,
     upstream,
+    write_log,
     write_provenance,
     write_results,
 )
@@ -151,6 +153,7 @@ def stage_fit(
     """
     from . import fit
 
+    log, lines = recorder(log)
     options = {"peaks": peaks, "lattice": lattice, "free": list(free), "tols": list(tols), "n_iter": n_iter,
                "clip": clip, "extra_rounds": extra_rounds, "row_step": row_step, "min_occ": min_occ, "min_peaks": min_peaks}  # fmt: skip
     d = load_inputs(fit_file, peaks, lattice, min_occ)
@@ -214,6 +217,7 @@ def stage_fit(
         results["strain_left_deviatoric_max"] = float(np.abs(np.average(dev[ok], axis=0, weights=w)).max())
     write_results(out, results)
     log(f"-> {out}")
+    write_log(out, lines)
     return out
 
 
@@ -278,6 +282,7 @@ def stage_rings(
 
     from . import fit, rings
 
+    log, lines = recorder(log)
     options = {"source": source, "parfile": parfile, "phase": phase, "detector_mask": detector_mask,
                "spatial": list(spatial) if spatial else None, "scans": scans, "threshold": threshold,
                "free": list(free), "tols": list(tols), "n_iter": n_iter, "n_eta": n_eta, "clip": clip,
@@ -386,6 +391,7 @@ def stage_rings(
     write_results(out, {**{k: res["pars"][k] for k in free}, **{f"{k}_err": float(e) for k, e in zip(free, err)},
                         "rms_deg": res["rms"], "n_sectors": res["n_sectors"]})  # fmt: skip
     log(f"-> {out}")
+    write_log(out, lines)
     return out
 
 
