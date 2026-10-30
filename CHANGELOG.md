@@ -122,6 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `anri.index.stages.run_command` on a chain with a fit but no local search gives `--levels 0`: `run` would otherwise add a local search the files never had.
 - `anri.maths.rotation.rmat_from_axis_angle` with an integer axis (e.g. `[0, 0, 1]`) no longer truncates the angle to whole degrees: an integer axis is taken as floating point ([#34](https://github.com/jadball/anri/issues/34)).
 - `python -m anri.simulate run`: the positional output dataset name and `--dataset` (an ImageD11 DataSet to simulate) shared one argparse destination, so without `--dataset` the run tried to open the output name as an input DataSet, and with it the output was named after the input path. They are now separate ([#25](https://github.com/jadball/anri/issues/25)).
 - A stage given an output file that is one of its inputs (`--out` naming its source, a file further up the chain, or the DataSet, map or mask it reads) erased it: the file was opened for writing before anything else. Every stage of `anri.index` and `anri.simulate` now refuses such an output first (`anri.io.provenance.check_out`, also through links), and the input is kept ([#26](https://github.com/jadball/anri/issues/26)).

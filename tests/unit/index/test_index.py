@@ -616,6 +616,11 @@ class TestProvenance(unittest.TestCase):
                     write_provenance(h, stage, source, opts, {})
                 source = path
             args = parse_args(shlex.split(ix.stages.run_command(source))[3:])
+            # a chain without a local search: run must not add one
+            path = os.path.join(tmp, "y_populations.h5")
+            with h5py.File(path, "w") as h:
+                write_provenance(h, "populations", os.path.join(tmp, "x_fit.h5"), {}, {})
+            self.assertEqual(parse_args(shlex.split(ix.stages.run_command(path))[3:]).levels, 0)
         self.assertEqual(args.command, "run")
         for k, v in recorded.items():
             if k == "save_model":  # not an option of the command line

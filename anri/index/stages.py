@@ -62,6 +62,7 @@ def run_command(path: str) -> str:
     Every option recorded along the chain is given, defaults included, so that the command runs the same on another
     dataset (change the dataset's three arguments). Options the command line cannot take (save_model) are left out;
     where two stages recorded different values of one option (censor, in filter and fit), the later stage's is given.
+    A chain with a fit but no local search gets ``--levels 0``.
 
     Parameters
     ----------
@@ -71,8 +72,13 @@ def run_command(path: str) -> str:
     import shlex
 
     opts: dict = {}
+    stages = []
     for p in reversed(chain(path)):  # the first stage first, so that a later stage's value wins
-        opts.update(read_provenance(p)["options"])
+        prov = read_provenance(p)
+        opts.update(prov["options"])
+        stages.append(prov["stage"])
+    if "fit" in stages and "localsearch" not in stages:  # run would add a local search the chain does not have
+        opts["levels"] = 0
     cmd = ["python", "-m", "anri.index", "run", *(str(opts.pop(k)) for k in ("analysisroot", "sample", "dataset"))]
     for k, v in opts.items():
         if k in ("frame_dty", "absorption"):  # on by default; the command line can only turn them off
