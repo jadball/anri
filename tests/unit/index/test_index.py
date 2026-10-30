@@ -85,6 +85,38 @@ class TestRings(unittest.TestCase):
         np.testing.assert_allclose(hw, [1.96 * 0.02, 1.96 * 0.04], rtol=0.1)  # 95% of a Gaussian
 
 
+class TestDiagnostics(unittest.TestCase):
+    def test_ring_windows(self):
+        """Windows of chosen rings are measured between every ring's neighbours, as the histogram stage measures them."""
+        tth = np.array([5.0, 5.3, 6.0, 7.0])
+        lo, step = 4.5, 0.002
+        x = lo + (np.arange(1500) + 0.5) * step
+        prof = sum(100 * np.exp(-0.5 * ((x - t) / 0.02) ** 2) for t in tth) + 1.0
+        cake = {"rings": {"tth": tth}, "profile": prof, "tth": x, "lo": lo, "step": step, "gap": np.diff(tth)}
+        w = ix.diagnostics.ring_windows(cake, [2, 0])
+        np.testing.assert_array_equal(w["index"], [0, 2])
+        off, hw = ix.data.ring_widths(prof, lo, step, tth[:3])  # up to the last ring used, ring 1 included
+        np.testing.assert_allclose(w["tolerance"], (np.abs(off) + hw)[[0, 2]])
+        self.assertEqual(w["overlap"], [False, False])
+        self.assertLess(w["fraction"], 0.8)  # ring 1 is in no window
+        np.testing.assert_allclose(ix.diagnostics.ring_windows(cake, 3)["tolerance"], np.abs(off) + hw)
+        self.assertEqual(ix.diagnostics.ring_windows(cake, [0], tth_tol=0.2)["overlap"], [True])  # meets ring 1
+        with self.assertRaises(ValueError):
+            ix.diagnostics.ring_windows(cake, [4])
+
+    def test_orientations_needed(self):
+        """The orientations holding cover of a voxel, before the local search's per_voxel cap; the levels' deviances."""
+        f = np.array([[0.6, 0.3, 0.1, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]], np.float32)
+        cand = np.array([[3, 1, 2, -1], [0, -1, -1, -1], [-1, -1, -1, -1]], np.int32)
+        np.testing.assert_array_equal(ix.diagnostics.orientations_needed(f, cand, 0.95), [3, 1, 0])
+        np.testing.assert_array_equal(ix.diagnostics.orientations_needed(f, cand, 0.8), [2, 1, 0])
+        callback, record = ix.diagnostics.level_recorder()
+        for dev in ([3.0, 2.0, 1.0], [0.9, 0.8]):
+            for it, v in enumerate(dev, 1):
+                callback(it, None, v)
+        self.assertEqual(record["deviance"], [[3.0, 2.0, 1.0], [0.9, 0.8]])
+
+
 class TestTolerances(unittest.TestCase):
     def test_first_order_bound(self):
         """A rotation by delta moves each reflection by at most the tolerances (|sin eta| > 0.3)."""
