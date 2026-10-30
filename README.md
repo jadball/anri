@@ -42,6 +42,13 @@ We currently target all stable releases of Python. Today this is `3.9 - 3.14` on
 # AI usage disclaimer
 Some parts of the code are developed with the assistance of LLMs, such as Claude and Gemini.
 
+# Using Anri with AI agents
+Anri ships an [agent skill](https://agentskills.io) (`anri/skill/anri/SKILL.md`, with reference files beside it) that tells a coding agent how to run the indexer and the simulator: the order of the stages, which diagnostic chooses each option, and what to check before believing a result.
+Link it where your agent looks for skills, in the project you work in: `.claude/skills/` for Claude Code, `.agents/skills/` for most other agents.
+```bash
+mkdir -p .claude/skills && ln -s "$(python -c 'import anri, os; print(os.path.join(os.path.dirname(anri.__file__), "skill", "anri"))')" .claude/skills/anri
+```
+
 # Installation at the ESRF
 ## From source (for developers)
 ### Clone the repository

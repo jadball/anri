@@ -41,7 +41,7 @@ exclude = [
 include-package-data = true
 
 [tool.setuptools.package-data]
-anri = ["py.typed"]
+anri = ["py.typed", "skill/anri/*.md", "skill/anri/references/*.md"]
 
 [tool.setuptools.dynamic]
 version = {attr = "anri.version.VERSION"}
