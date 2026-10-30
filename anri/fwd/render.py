@@ -113,12 +113,14 @@ def _peak_cov(
     return cov
 
 
-def _peak_factors(ubi: jax.Array, hkl: jax.Array, etasign: ArrayLike, geom: dict) -> jax.Array:
-    """Lorentz x polarisation for one peak."""
+def _peak_factors(
+    ubi: jax.Array, hkl: jax.Array, etasign: ArrayLike, geom: dict, ext: tuple | None = None
+) -> jax.Array:
+    """Lorentz x polarisation for one peak; with ext, its reflection's (x, X, gaussian), also extinction."""
     k_in, k_out, _, _ = hkl_to_k_omega(
         ubi, hkl, etasign, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
     )
-    return lorentz_polarisation(k_in, k_out, geom["wedge"], geom["chi"], geom["pol_factor"])
+    return lorentz_polarisation(k_in, k_out, geom["wedge"], geom["chi"], geom["pol_factor"], ext)
 
 
 @partial(jax.jit, static_argnames=("det_shape",))
@@ -465,7 +467,10 @@ def _render_peaks(
         per_frame = _frame_weights(pos, om_fr, fclip, row, geom)
         if "optical_depth" in entries:
             per_frame = per_frame * _transmission(entries["optical_depth"][e], ubi, hkl, etasign, om_fr, geom)
-        amp = entries["density"][e] * F2[h] * _peak_factors(ubi, hkl, etasign, geom)
+        ext = None
+        if "extinction" in entries:  # per reflection of the phase: (x [Nh], X [Nh], gaussian)
+            ext = (entries["extinction"][0][h], entries["extinction"][1][h], entries["extinction"][2])
+        amp = entries["density"][e] * F2[h] * _peak_factors(ubi, hkl, etasign, geom, ext)
         value = amp * per_frame[:, None, None] * frac
         use = inside & valid
         value = jnp.where(use, value, 0.0)
@@ -863,6 +868,9 @@ def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict
         out["sig_rot"] = jnp.broadcast_to(jnp.asarray(entries["sig_rot"], dtype=dtype), out["pos"].shape[:1])
     if "optical_depth" in entries:  # likewise: absorption only when asked for (add_absorption)
         out["optical_depth"] = jnp.asarray(entries["optical_depth"], dtype=jnp.float32)
+    if "extinction" in entries:  # likewise, per reflection of the phase
+        x, X, gaussian = entries["extinction"]
+        out["extinction"] = (jnp.asarray(x, dtype=dtype), jnp.asarray(X, dtype=dtype), jnp.asarray(bool(gaussian)))
     entries = out
     hkls, F2 = jnp.asarray(hkls, dtype=dtype), jnp.asarray(F2, dtype=dtype)
     return entries, hkls, F2, jax.tree.map(jnp.asarray, geom), jax.tree.map(jnp.asarray, row)
@@ -1241,6 +1249,9 @@ def render_row(
         linearised propagation as the beam's spreads, so it suits spreads up to a few degrees. Widen ``window``
         (pixels) for spreads that move spots by several pixels. Optionally "optical_depth" [N, n_phi]
         (:func:`add_absorption`): absorption along the incoming and diffracted paths, at each frame's omega.
+        Optionally "extinction" ``(x [Nh], X [Nh], gaussian)``, per reflection of the phase, not per entry
+        (:func:`anri.diffract.factors.extinction_parameters`, from the absolute ``|F|^2``): each peak's polarisation
+        factor then becomes :func:`anri.diffract.factors.polarisation_extinction`.
     hkls, F2
         [Nh, 3] hkls of that phase and [Nh] their structure factors squared
     geom

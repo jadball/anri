@@ -5,6 +5,10 @@ References
 
 The works the theory pages cite, by label.
 
+.. [BeckerCoppens1974] Becker, P.J., Coppens, P., 1974. Extinction within the limit of validity of the Darwin transfer
+   equations. I. General formalisms for primary and secondary extinction and their application to spherical crystals.
+   Acta Crystallographica Section A 30, 129–147. https://doi.org/10.1107/S0567739474000337
+
 .. [BusingLevy1967] Busing, W.R., Levy, H.A., 1967. Angle calculations for 3- and 4-circle X-ray and neutron
    diffractometers. Acta Crystallographica 22, 457–464. https://doi.org/10.1107/S0365110X67000970
 
@@ -110,3 +114,6 @@ The works the theory pages cite, by label.
 
 .. [XCOM] Berger, M.J., Hubbell, J.H., Seltzer, S.M., Chang, J., Coursey, J.S., Sukumar, R., Zucker, D.S., Olsen, K.,
    n.d. XCOM: Photon Cross Sections Database. NIST. https://physics.nist.gov/xcom
+
+.. [Zachariasen1967] Zachariasen, W.H., 1967. A general theory of X-ray diffraction in crystals. Acta Crystallographica
+   23, 558–564. https://doi.org/10.1107/S0365110X67003202

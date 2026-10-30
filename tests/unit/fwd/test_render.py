@@ -386,6 +386,30 @@ class TestAbsorption(unittest.TestCase):
             add_absorption([], 1.0)
 
 
+class TestExtinction(unittest.TestCase):
+    def test_rendered_peak(self):
+        """With entries' "extinction", a peak is the unextinguished one times polarisation_extinction / polarisation
+        at its wave-vectors, in the same pixels."""
+        from anri.diffract.factors import polarisation, polarisation_extinction
+        from anri.fwd.peak import hkl_to_k_omega
+
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        omega = (np.floor(omega_c / 0.05) + np.arange(-5, 6)) * 0.05 + 0.025
+        row = make_row(omega, np.zeros_like(omega))
+        base = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        ext = {**base, "extinction": (np.array([0.8]), np.array([1.5]), True)}
+        kw = {"window": (5, 7, 7), "min_value": 0.0, "batch": BATCH}
+        a = render_row(base, hkl[None], np.ones(1), geom, row, det_shape, **kw)
+        b = render_row(ext, hkl[None], np.ones(1), geom, row, det_shape, **kw)
+        np.testing.assert_array_equal(a[0], b[0])
+        np.testing.assert_array_equal(a[1], b[1])
+        k_in, k_out, _, _ = hkl_to_k_omega(jnp.asarray(base["ubi"][0]), jnp.asarray(hkl), 1.0, geom["wavelength"],
+                                           geom["k_in_lab"], 0.0, 0.0, 0.0, 0.0)  # fmt: skip
+        p = float(polarisation(k_in, k_out, geom["pol_factor"]))
+        q = float(polarisation_extinction(k_in, k_out, geom["pol_factor"], 0.8, 1.5, True))
+        np.testing.assert_allclose(b[2] / a[2], q / p, rtol=1e-4)
+
+
 class TestWindowClasses(unittest.TestCase):
     def test_broad_peak_gets_more_frames(self):
         """With max_frames, a peak broad in omega is rendered in a larger window and nothing is lost."""

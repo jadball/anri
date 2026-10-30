@@ -84,8 +84,8 @@ Where it is used: :ref:`theory_absorption`.
 What is left out
 ----------------
 
-- **Extinction.** Primary and secondary extinction weaken strong reflections of perfect crystals. Anri ignores it:
-  intensities are kinematic.
+- **Extinction.** Primary and secondary extinction weaken strong reflections of perfect crystals. Intensities are
+  kinematic unless a phase is given extinction parameters (:ref:`theory_extinction`).
 - **Anisotropic displacement.** Only isotropic displacement parameters enter.
 - **Strain in the reflection list.** Reflections and rings come from the reference lattice; a strained voxel still
   diffracts at its own :math:`\text{UBI}^{-1}\vec{h}`, but the list of which :math:`\vec{h}` exist does not change.

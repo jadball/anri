@@ -11,8 +11,9 @@ one frame, is the product
 
     I = \rho\; |F(\vec{h})|^2\; L\; P\; w_{\text{beam}}\; T,
 
-of the structure factor (:eq:`cry-F`), the Lorentz factor :math:`L`, the polarisation factor :math:`P`, the share of the
-voxel the beam lights :math:`w_{\text{beam}}`, and a transmission :math:`T`. The renderer then spreads :math:`I` over
+of the structure factor (:eq:`cry-F`), the Lorentz factor :math:`L`, the polarisation factor :math:`P` (with the
+extinction factor folded in when a phase has one, :ref:`theory_extinction`), the share of the voxel the beam lights
+:math:`w_{\text{beam}}`, and a transmission :math:`T`. The renderer then spreads :math:`I` over
 pixels and frames (:doc:`peak_shape`).
 
 **Code:** :func:`anri.fwd.render.render_peaks`.
@@ -156,6 +157,71 @@ A transmission per frame (e.g. an attenuator) can be given as well.
 
 **Code:** :func:`anri.fwd.render.make_row`.
 
+.. _theory_extinction:
+
+Extinction
+----------
+
+In a perfect crystal the diffracted beam is diffracted back into the incident direction, and the incident beam is
+weakened by what the domains it has already crossed diffracted: strong reflections come out weaker than the
+kinematical :math:`|F|^2` predicts, in the limit only as strong as :math:`|F|`. The integrated intensity is the
+kinematical one times an extinction factor :math:`y \le 1` [Zachariasen1967]_. Anri follows Becker and Coppens'
+treatment of Darwin's mosaic crystal [BeckerCoppens1974]_: perfect spherical domains of radius :math:`r`, misaligned by a
+Gaussian or Lorentzian distribution of width parameter :math:`g`, make up a spherical crystal of radius :math:`R`.
+
+With the diffracting power per unit length ([BeckerCoppens1974]_, equation 5)
+
+.. math::
+    :label: int-ext-q
+
+    Q = \left(\frac{r_e\,|F|\,K}{V}\right)^2 \frac{\lambda^3}{\sin 2\theta},
+
+where :math:`r_e` is the classical electron radius, :math:`V` the cell volume and :math:`K = 1` for the field normal to
+the scattering plane, :math:`\cos 2\theta` in it, and :math:`\bar{a} = 3 r \sin 2\theta / (2\lambda)`, the primary
+(within a domain) and secondary (between domains) extinction parameters are (their equations 35, 40b, 41b and 42)
+
+.. math::
+    :label: int-ext-x
+
+    x = \tfrac{2}{3}\, Q\, \bar{a}\, \tfrac{3r}{2}, \qquad
+    X = \tfrac{2}{3}\, Q\, \alpha\, \tfrac{3R}{2}, \qquad
+    \alpha = \frac{\bar{a}}{\sqrt{1 + \bar{a}^2 / 2g^2}} \;\text{(Gaussian)}, \quad
+    \frac{\bar{a}}{1 + 2\bar{a}/3g} \;\text{(Lorentzian)},
+
+and each factor has the form of their equation 37,
+
+.. math::
+    :label: int-ext-y
+
+    y_p = \left(1 + 2x + \frac{A x^2}{1 + B x}\right)^{-1/2}, \qquad y = y_p\, y_s,
+
+with :math:`A, B` functions of :math:`\cos 2\theta` fitted to their numerical solutions of the Darwin transfer
+equations (equation 38 for :math:`y_p`; 43 and 43a for :math:`y_s`, in :math:`X`, with :math:`2.12 X` for :math:`2X`
+for a Gaussian distribution). The two field components are extinguished separately (their equations 45 and 46). If a
+fraction :math:`w` of the incident intensity has its field normal to the scattering plane, so that
+:math:`P = w + (1 - w)\cos^2 2\theta`, the polarisation factor becomes
+
+.. math::
+    :label: int-ext-pol
+
+    P\,y = w\; y(x, X) + (1 - w)\cos^2 2\theta\; y(x\cos^2 2\theta,\, X\cos^2 2\theta).
+
+With absorption, the mean path through the crystal :math:`3R/2` becomes the absorption-weighted mean path
+:math:`\bar{T}_\mu` (their equations 52 and 53b), which is computed for a sphere by quadrature; :math:`x` is unchanged.
+Becker and Coppens find this first-order correction good for :math:`\mu R` up to about 1 at small Bragg angles (their
+equation 54).
+
+**Code:** :func:`anri.diffract.factors.extinction_parameters`, :func:`anri.diffract.factors.extinction`,
+:func:`anri.diffract.factors.polarisation_extinction`; per phase in the renderer through the entries' "extinction"
+(:func:`anri.fwd.render.render_row`).
+
+**Anri's choice:** one set of parameters (:math:`r`, :math:`R`, :math:`g`, the distribution) per phase, and none unless
+given: in deformed or fine-grained samples extinction is negligible, but a perfect calibrant crystal (an undeformed Si
+cube) is the textbook case. :math:`x` and :math:`X` need the absolute :math:`|F|^2` (electrons per cell), so they are
+computed per reflection where the structure is known; the renderer's :math:`|F|^2` may be relative. The smooth
+:math:`\theta` dependence of :math:`A` and :math:`B` is Becker and Coppens' own fit, within about 4% of their tables for
+:math:`\sin\theta \le 0.5`, and 12% at :math:`\sin\theta = 0.9`, :math:`X = 10`.
+
 Monitor normalisation
 ---------------------
 
@@ -167,7 +233,8 @@ a reference value), as ImageD11's ``DataSet.set_monitor``.
 What is left out
 ----------------
 
-- **Extinction** (:doc:`crystal`), and multiple scattering.
+- **Multiple scattering**, and extinction beyond spherical domains and crystals: other shapes and anisotropic extinction
+  (:ref:`theory_extinction`).
 - **Absorption in 3D**: the sample is a prism of its slice (of each layer, in the renderer); paths through the layers
   above and below are not followed. A sample built from a map is full wherever the map has entries, and empty elsewhere.
 - **Absorption in the global orientation fit** of the filter stage, which has no voxel positions
