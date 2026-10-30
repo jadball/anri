@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `anri.fwd.render.render_row` has one outline for both ways of rendering (select the peaks, give each a window size, render one size at a time, merge): the per-voxel windows (`_render_windows`) and splat (`_render_spots`) differ only in how a batch is rendered. Pixels and stats are unchanged (bit for bit, with and without splat, several window sizes and small batches).
 - `simulate_sparse` and `write_rendered_rows` moved from `anri.io.imaged11` to `anri.simulate.stages`: the loop that renders a scan's rows belongs with the render stage, and `anri.io` no longer imports the renderer. `anri.io.imaged11.write_scan` still writes each row.
 - `anri.index.occupancy.add_cells` and `take_cells`: the masked scatter-add and gather into histogram cells that both MLEMs (the voxel fit and the filter's orientation fit) each wrote out four times.
 - One function turns a stage's recorded options back into its command line: `anri.io.provenance.command_line`, which reads the subcommand's argparse options (separate values, a repeated flag, comma-separated, or `--no-x` for an option on by default). `run_command` in `anri.index.stages`, `anri.calib.stages` and `anri.simulate.stages` each had its own copy of these rules. Each command line is built by a `parser()` function in its `__main__`, and `--iter` (and `anri.calib rings --mask`) now parse to the stage's own option names, `n_iter` (and `detector_mask`).
