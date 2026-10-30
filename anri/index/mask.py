@@ -78,7 +78,7 @@ def backproject(
         def at(k: jax.Array) -> jax.Array:
             return jnp.where((k >= 0) & (k < n_k), row[jnp.clip(k, 0, n_k - 1)], 0.0)
 
-        return acc + (1 - t) * at(k0) + t * at(k0 + 1), None
+        return acc + ((1 - t) * at(k0) + t * at(k0 + 1)).astype(acc.dtype), None
 
     k_in = jnp.asarray((1.0, 0.0, 0.0) if k_in_lab is None else k_in_lab)  # default: along lab x
     acc, _ = jax.lax.scan(step, jnp.zeros(pos.shape[0], jnp.float32), (sino, jnp.asarray(om_deg), dd))
