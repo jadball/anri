@@ -515,6 +515,27 @@ class TestGrainMap(unittest.TestCase):
         np.testing.assert_array_equal(a[1], b[1])
         np.testing.assert_allclose(a[2], b[2], rtol=1e-12)
 
+    def test_splat(self):
+        """Spots rendered whole (splat) match the per-voxel render: intensity, frame by frame and pixel by pixel."""
+        F2 = np.ones(len(self.hkls))
+        kw = {"window": (3, 7, 7), "max_frames": 7, "min_value": 0.0, "batch": BATCH}
+        a = render_row(self.grains, self.hkls, F2, self.geom, self.row, self.det_shape, **kw)
+        b = render_row(self.grains, self.hkls, F2, self.geom, self.row, self.det_shape, splat=True, **kw)
+        self.assertEqual(b[3]["n_peaks"], a[3]["n_peaks"])
+        self.assertGreater(b[3]["n_spots"], 10)
+        npix = self.det_shape[0] * self.det_shape[1]
+        size = len(self.row["order"]) * npix
+        dense = [np.bincount(o[0].astype(np.int64) * npix + o[1], o[2], minlength=size) for o in (a, b)]
+        self.assertAlmostEqual(dense[1].sum() / dense[0].sum(), 1.0, delta=2e-3)
+        per_frame = [d.reshape(-1, npix).sum(1) for d in dense]
+        np.testing.assert_allclose(per_frame[1], per_frame[0], rtol=0, atol=2e-3 * per_frame[0].max())
+        self.assertLess(np.abs(dense[1] - dense[0]).max(), 0.05 * dense[0].max())
+        with self.assertRaises(ValueError):  # one kernel per spot: sig_rot must be the same over a grain
+            render_row({**self.grains, "sig_rot": np.arange(len(self.grains["pos"])) * 1e-5}, self.hkls, F2,
+                       self.geom, self.row, self.det_shape, splat=True)  # fmt: skip
+        with self.assertRaises(ValueError):  # a grain map only
+            render_row(self.voxels, self.hkls, F2, self.geom, self.row, self.det_shape, splat=True)
+
 
 class TestCheckRender(unittest.TestCase):
     """Rendered peaks against a Monte Carlo simulation of the beam spreads through the forward model."""

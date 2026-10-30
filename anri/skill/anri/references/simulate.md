@@ -53,6 +53,9 @@ quartz).
   sums several phases.
 - `anri.fwd.render.grain_entries`: map entries from a label volume and one UBI per grain. The same pixels as giving
   every voxel its grain's UBI, with the peaks that reach a row found grain by grain first (faster).
+  `render_row(..., splat=True)` renders a grain map spot by spot, 10-20x faster: each voxel added at its own detector
+  position onto the spot's tile, then one peak shape per spot. Totals agree with the per-voxel render to ~1e-3, pixels
+  to a few % of the brightest. It needs one `sig_rot` per grain. Use it for DCT-like maps with many voxels per grain.
 - `anri.fwd.render.make_row`: the row dict from one scan's per-frame ω and dty. Frames integrate over their ω (and
   dty) range: never treat a frame as one angle.
 - `anri.fwd.render.guess_batch_size`: the largest `batch` that fits a share of free memory. Use it rather than
