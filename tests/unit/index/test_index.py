@@ -721,6 +721,16 @@ class TestDiscMask(unittest.TestCase):
         inner = np.asarray(anri.geom.scan.recon_positions(wide, 1.0)).reshape(wide, wide, 3)[3:-3, 3:-3]
         np.testing.assert_allclose(inner.reshape(-1, 3), np.asarray(anri.geom.scan.recon_positions(nr, 1.0)))
 
+    def test_back_projection_grid(self):
+        """The back-projection is on the histogram's grid (with --grid-pad), as the disc and the fit; else voxel_grid."""
+        scan = {"dty0": -5.0, "ystep": 1.0, "n_rows": 11, "om0": -90.0}
+        scan.update(n_e=2 * ix.stages.R_E, n_o=8 * ix.stages.R_O)  # 2 x 8 fit bins
+        nr = ix.stages.voxel_grid(scan, 0.0)
+        d = {"H": np.ones(2 * 8 * 11), "n_rings": 1, "scan": scan, "grid": {"n": nr + 6, "step": 1.0}}
+        self.assertEqual(ix.diagnostics.back_projection(d, 0.0).shape, (nr + 6, nr + 6))
+        self.assertEqual(ix.diagnostics.back_projection({**d, "grid": None}, 0.0).shape, (nr, nr))
+        self.assertEqual(ix.diagnostics.back_projection(d, 0.0, nr).shape, (nr, nr))
+
     def test_support(self):
         """A square sample poking out of the disc is recovered from its projections, corners outside the disc too."""
         import jax.numpy as jnp

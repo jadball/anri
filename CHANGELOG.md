@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `anri.index.diagnostics.back_projection` reconstructs by default on the histogram stage's grid (with `--grid-pad`), as the fit and the disc mask do; it used the unpadded grid, so in the indexing guide's mask section (section 3) a padded grid put the sample off-centre and the threshold slider failed (shapes 417 and 469).
 - `anri.simulate.stages.stage_prepare` and `stage_render` make the output's folder if it does not exist, as `stage_powder` does; an `outdir` that did not exist failed in the frame-comparison guide.
 
 ### Removed

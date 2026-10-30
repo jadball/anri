@@ -470,8 +470,8 @@ def back_projection(d: dict, y0: float, nr: int | None = None) -> np.ndarray:
     y0
         dty where the rotation axis is in the beam
     nr
-        Voxels per side (default: the grid the fit uses for this y0, :func:`anri.index.stages.voxel_grid`); fix it to compare
-        y0 values on one grid
+        Voxels per side (default: the grid the fit uses, the histogram stage's ``d["grid"]``, or for files from before
+        that record :func:`anri.index.stages.voxel_grid` for this y0); fix it to compare y0 values on one grid
 
     Returns
     -------
@@ -483,5 +483,6 @@ def back_projection(d: dict, y0: float, nr: int | None = None) -> np.ndarray:
 
     sc = d["scan"]
     scan = {**sc, "y0": y0}
-    nr = voxel_grid(sc, y0) if nr is None else nr
+    if nr is None:  # as the fit stage: the histogram stage's grid (with --grid-pad)
+        nr = d["grid"]["n"] if d.get("grid") is not None else voxel_grid(sc, y0)
     return reconstruct(d["H"], d["n_rings"], sc["n_e"] // R_E, sc["n_o"] // R_O, scan, B_O * R_O, nr)
