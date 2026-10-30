@@ -155,6 +155,33 @@ class TestGrainMap(unittest.TestCase):
             self.assertGreater(anri.io.provenance.read_provenance(out)["results"]["pixels"], 0)
 
 
+class TestFramesPerCall(unittest.TestCase):
+    def test_scanning_row_in_chunks(self):
+        """A scanning row rendered 7 frames at a time (90 frames: a short last call) matches it rendered at once."""
+        with tempfile.TemporaryDirectory() as tmp:
+            parfile = os.path.join(tmp, "geometry.par")
+            anri.io.imaged11.write_par(parfile, PARS)
+            prep = sim.stages.stage_prepare(two_phase_map(tmp), parfile, os.path.join(tmp, "x_prepare.h5"),
+                                            omega_step=2.0, dty_step=8.0, margin=0.25, density=50.0,
+                                            log=lambda m: None)  # fmt: skip
+            scans = []
+            for name, n in (("whole.h5", None), ("parts.h5", 7)):
+                f = sim.stages.stage_render(prep, os.path.join(tmp, name), rows="1:2", cut=0.0, frames_per_call=n,
+                                            log=lambda m: None)  # fmt: skip
+                with h5py.File(f, "r") as h:
+                    g = h["2.1"]
+                    scans.append({"frame": np.repeat(np.arange(len(g["nnz"])), g["nnz"][()]), "row": g["row"][()],
+                                  "col": g["col"][()], "intensity": g["intensity"][()].astype(float)})  # fmt: skip
+            a, b = scans
+            self.assertGreater(a["intensity"].sum(), 0)
+            self.assertAlmostEqual(b["intensity"].sum() / a["intensity"].sum(), 1.0, delta=1e-3)
+            # the pixels holding nearly all the intensity are the same, with the same counts (to rounding)
+            key = [x["frame"].astype(np.int64) * 10**8 + x["row"].astype(np.int64) * 10**4 + x["col"] for x in (a, b)]
+            _, ia, ib = np.intersect1d(key[0], key[1], return_indices=True)
+            self.assertGreater(a["intensity"][ia].sum(), 0.999 * a["intensity"].sum())
+            np.testing.assert_allclose(b["intensity"][ib], a["intensity"][ia], rtol=0, atol=1)  # whole counts
+
+
 class TestBoxBeam(unittest.TestCase):
     def test_dct_pipeline(self):
         """A 3D grain map in a box beam: one row of cubes, rendered whole spots at a time in chunks of frames."""
