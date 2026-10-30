@@ -38,6 +38,14 @@ GEOMETRY = ("distance", "y_center", "z_center", "tilt_x", "tilt_y", "tilt_z", "w
 _K_IN = (1.0, 0.0, 0.0)  # ImageD11's beam, along lab x
 
 
+def _bucket(n: int) -> int:
+    """Return the padded length for n peaks: the next power of two, at least 4096.
+
+    Every round's number of matched peaks changes by tens of thousands; padded, they run the same compiled functions.
+    """
+    return 1 << max(12, int(np.ceil(np.log2(max(n, 1)))))
+
+
 def _pars(x: jax.Array, base: dict, free: tuple) -> dict:
     """Return the parameters, with the free ones taken from x."""
     return {**base, **{k: x[i] for i, k in enumerate(free)}}
@@ -122,14 +130,15 @@ def match(peaks: dict, ubi: np.ndarray, grid_o: np.ndarray, grid_w: np.ndarray, 
     """
     n_grid = round(np.sqrt(len(grid_o)))
     n_t = int(np.ceil(n_grid * np.sqrt(2))) + 2  # the grid's diagonal
-    pk = np.stack([peaks[k] for k in ("sc", "fc", "omega", "dty")], 1)
+    # float32: (h, k, l) to ~1e-6 and origins to ~1e-4 um are plenty to match, and 8x faster on a GPU than float64
+    pk = np.stack([peaks[k] for k in ("sc", "fc", "omega", "dty")], 1).astype(np.float32)
     n = len(pk)
     pk = np.concatenate([pk, np.repeat(pk[:1], -n % chunk, 0)])
-    with float64():
-        args = (jnp.asarray(np.asarray(ubi) * pars["lattice"]), jnp.asarray(grid_o, jnp.int32),
-                jnp.asarray(grid_w, jnp.float64), {k: jnp.float64(v) for k, v in pars.items()}, float(step))  # fmt: skip
-        out = [_match_chunk(jnp.asarray(pk[i : i + chunk]), *args, n_grid, n_t) for i in range(0, len(pk), chunk)]
-        out = [np.concatenate([np.asarray(o[j]) for o in out])[:n] for j in range(5)]
+    args = (jnp.asarray(np.asarray(ubi) * pars["lattice"], jnp.float32), jnp.asarray(grid_o, jnp.int32),
+            jnp.asarray(grid_w, jnp.float32), {k: jnp.float32(v) for k, v in pars.items()}, float(step))  # fmt: skip
+    out = [_match_chunk(jnp.asarray(pk[i : i + chunk]), *args, n_grid, n_t) for i in range(0, len(pk), chunk)]
+    out = [np.concatenate([np.asarray(o[j]) for o in out])[:n] for j in range(5)]
+    out[1], out[3] = out[1].astype(np.float64), out[3].astype(np.float64)  # hkl and origin, for the fit (float64)
     return dict(zip(("orient", "hkl", "err", "origin", "weight"), out))
 
 
@@ -246,7 +255,7 @@ def fit_geometry(peaks: dict, m: dict, ubi: np.ndarray, pars: dict, free: tuple,
         by chi^2 per degree of freedom)
     """
     n = len(m["orient"])
-    pad = -n % 4096  # bucketed: no recompile when the number of matched peaks changes a little
+    pad = _bucket(n) - n  # one shape for every round: no recompile
     obs = np.stack([peaks[k] for k in ("sc", "fc", "omega", "dty")], 1)
     n_a = 9 if strain else 3
 
@@ -301,11 +310,13 @@ def _predict(ubi: jax.Array, origin: jax.Array, hkl: jax.Array, dty: jax.Array, 
 
 def residuals(peaks: dict, m: dict, ubi: np.ndarray, pars: dict) -> tuple:
     """Observed - predicted (sc, fc, omega) of matched peaks for both branches: [P, 2, 3], and validity [P]."""
+    n = len(m["orient"])
+    idx = np.r_[np.arange(n), np.zeros(_bucket(n) - n, int)]  # padded with copies of the first: one compile
     with float64():
-        c, ok = _predict(jnp.asarray(pars["lattice"] * np.asarray(ubi)[m["orient"]]), jnp.asarray(m["origin"]),
-                         jnp.asarray(m["hkl"]), jnp.asarray(peaks["dty"]),
+        c, ok = _predict(jnp.asarray(pars["lattice"] * np.asarray(ubi)[m["orient"][idx]]),
+                         jnp.asarray(m["origin"][idx]), jnp.asarray(m["hkl"][idx]), jnp.asarray(peaks["dty"][idx]),
                          {k: jnp.float64(v) for k, v in pars.items()})  # fmt: skip
-        c, ok = np.asarray(c), np.asarray(ok)
+        c, ok = np.asarray(c)[:n], np.asarray(ok)[:n]
     obs = np.stack([peaks[k] for k in ("sc", "fc", "omega")], 1)
     d = obs[:, None, :] - c
     d[..., 2] = (d[..., 2] + 180.0) % 360.0 - 180.0
@@ -331,7 +342,7 @@ def lattice_strain(ubi: np.ndarray, B: np.ndarray) -> tuple:
 
 def calibrate(peaks: dict, ubi: np.ndarray, grid_o: np.ndarray, grid_w: np.ndarray, step: float, pars: dict,
               free: tuple, tols: tuple = (0.1, 0.05, 0.025, 0.025), n_iter: int = 10, clip: float = 4.0,
-              log: Callable = print, callback: Callable | None = None) -> dict:  # fmt: skip
+              extra_rounds: int = 6, log: Callable = print, callback: Callable | None = None) -> dict:  # fmt: skip
     """Calibrate: match the peaks, fit the geometry, and again with the tolerances in turn.
 
     Parameters
@@ -350,6 +361,9 @@ def calibrate(peaks: dict, ubi: np.ndarray, grid_o: np.ndarray, grid_w: np.ndarr
         Gauss-Newton iterations per round
     clip
         Leave out peaks further than this many (robust) standard deviations from their prediction
+    extra_rounds
+        After the tolerances, repeat the last one while a round still moves a free parameter by more than its
+        standard deviation, at most this many times: each round matches the peaks again with the new geometry
     log
         Progress messages
     callback
@@ -359,15 +373,18 @@ def calibrate(peaks: dict, ubi: np.ndarray, grid_o: np.ndarray, grid_w: np.ndarr
     -------
     dict
         "pars" (fitted), "ubi" (each orientation, rotated), "cov" (of the free parameters), "free", "sig" [3] (the
-        peaks' robust standard deviations in sc, fc, omega) and "matched" (the matched peaks: "index" into peaks,
-        "orient", "hkl", "origin", "branch" and "residual" [P, 3])
+        peaks' robust standard deviations in sc, fc, omega), "matched" (the matched peaks: "index" into peaks,
+        "orient", "hkl", "origin", "branch" and "residual" [P, 3]) and "moved" (how far the last round moved each
+        free parameter, in its standard deviations: large if the rounds had not converged)
     """
     if "wavelength" in free and "lattice" in free:
         msg = "the wavelength and the lattice scale are degenerate: free one of them"
         raise ValueError(msg)
     ubi = np.asarray(ubi, float)
-    cov, sig, keep, d, sub = None, None, None, None, {}
-    for rnd, tol in enumerate(tols):
+    cov, sig, keep, d, sub, before = None, None, None, None, {}, dict(pars)
+    rounds, moved, rnd = list(tols), np.zeros(len(free)), 0
+    while rnd < len(rounds):
+        tol, before = rounds[rnd], dict(pars)
         m = match(peaks, ubi, grid_o, grid_w, step, pars)
         ok = (m["err"] < tol) & (m["weight"] > 0)
         sel = np.flatnonzero(ok)
@@ -395,9 +412,17 @@ def calibrate(peaks: dict, ubi: np.ndarray, grid_o: np.ndarray, grid_w: np.ndarr
             + ", ".join(f"{k} {pars[k]:.7g} +- {e:.2g}" for k, e in zip(free, np.sqrt(np.diag(cov)))))  # fmt: skip
         if callback is not None:
             callback(rnd, pars, ubi, keep)
+        # how far this round moved the geometry, in its standard deviations: re-matching converges slowly when the
+        # map holds orientations closer than the geometry's error (e.g. a local search's children)
+        moved = np.abs([pars[k] - before[k] for k in free]) / np.sqrt(np.diag(cov))
+        log(f"round {rnd}: moved " + ", ".join(f"{k} {v:.2g}" for k, v in zip(free, moved)) + " sigma")
+        if rnd == len(rounds) - 1 and moved.max() > 1 and extra_rounds > 0:
+            rounds.append(rounds[-1])
+            extra_rounds -= 1
+        rnd += 1
     matched = {"index": keep, "orient": sub["orient"], "hkl": sub["hkl"], "origin": sub["origin"],
                "branch": sub["branch"], "residual": d}  # fmt: skip
-    return {"pars": pars, "ubi": ubi, "cov": cov, "free": free, "sig": sig, "matched": matched}
+    return {"pars": pars, "ubi": ubi, "cov": cov, "free": free, "sig": sig, "matched": matched, "moved": moved}
 
 
 def strain_left(peaks: dict, matched: dict, ubi: np.ndarray, B: np.ndarray, pars: dict, sig: np.ndarray,

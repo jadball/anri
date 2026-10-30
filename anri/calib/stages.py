@@ -35,6 +35,11 @@ _IJ = ((0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1))
 def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = None, min_occ: float = 0.01) -> dict:
     """Read what :func:`stage_fit` starts from: the peaks, the indexed map and the starting geometry.
 
+    The map must be an ``anri.index`` fit stage file. A local search's is refused: its orientations, a fraction of a
+    degree apart, let each round's matching pick the one that absorbs part of the geometry's error, so the rounds
+    converge very slowly (on the Ni phantom, distance and wavelength still 1e-4 off after four rounds, against 1e-6
+    from the fit stage's map). :func:`stage_fit` refits each orientation's rotation itself.
+
     Parameters
     ----------
     fit_file, peaks, lattice, min_occ
@@ -53,8 +58,14 @@ def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = 
 
     from . import fit
 
+    prov = read_provenance(fit_file)
+    if prov["stage"] != "fit":
+        msg = (f"{fit_file} is a {prov['stage']} stage file: give the fit stage's ({prov.get('source')}). A local "
+               "search's orientations, a fraction of a degree apart, let each round's matching keep part of the "
+               "geometry's error: the calibration then converges very slowly")  # fmt: skip
+        raise ValueError(msg)
     hr = read_provenance(upstream(fit_file, "histogram"))["resolved"]
-    fr = read_provenance(fit_file)["resolved"]
+    fr = prov["resolved"]
     ds = io.read_dataset(hr["dataset_file"])
     pks_file = peaks or ds["pksfile"]
     if not pks_file:
@@ -65,6 +76,9 @@ def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = 
     with h5py.File(fit_file, "r") as h:
         U, f, cand = h["U"][()], h["f"][()], h["cand"][()]
     grid_o = np.where(f > min_occ * f.max(), cand, -1).astype(np.int32)
+    n_used = max(int((grid_o >= 0).sum(1).max()), 1)  # each voxel's kept entries first, the empty columns dropped
+    order = np.argsort(grid_o < 0, axis=1, kind="stable")[:, :n_used]
+    grid_o, f = np.take_along_axis(grid_o, order, 1), np.take_along_axis(f, order, 1)
     return {
         "peaks": io.read_peaks(pks_file, ds["omega"], ds["dty"], io.read_spatial(ds)),
         "peaks_file": pks_file,
@@ -83,6 +97,7 @@ def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = 
 def stage_fit(
     fit_file: str, out: str | None = None, *, peaks: str | None = None, lattice: list | None = None,
     free: tuple = FREE, tols: tuple = (0.1, 0.05, 0.025, 0.025), n_iter: int = 10, clip: float = 4.0,
+    extra_rounds: int = 6,
     min_occ: float = 0.01, min_peaks: int = 20, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Calibrate the geometry on a scan of an indexed sample.
@@ -94,7 +109,7 @@ def stage_fit(
     Parameters
     ----------
     fit_file
-        From :func:`anri.index.stages.stage_fit`
+        From :func:`anri.index.stages.stage_fit` (not a local search's: see :func:`load_inputs`)
     out
         Output file (default: the input's name with ``_calib``)
     peaks
@@ -110,6 +125,9 @@ def stage_fit(
         Gauss-Newton iterations per round
     clip
         Leave out peaks further than this many (robust) standard deviations from their prediction
+    extra_rounds
+        Repeat the last tolerance while a round still moves the geometry by more than its errors, at most this many
+        times (:func:`anri.calib.fit.calibrate`)
     min_occ
         Leave out occupancies below this x the largest
     min_peaks
@@ -126,7 +144,7 @@ def stage_fit(
     from . import fit
 
     options = {"peaks": peaks, "lattice": lattice, "free": list(free), "tols": list(tols), "n_iter": n_iter,
-               "clip": clip, "min_occ": min_occ, "min_peaks": min_peaks}  # fmt: skip
+               "clip": clip, "extra_rounds": extra_rounds, "min_occ": min_occ, "min_peaks": min_peaks}  # fmt: skip
     d = load_inputs(fit_file, peaks, lattice, min_occ)
     hr, pk, B, lpars, pars0 = d["histogram"], d["peaks"], d["B"], d["lattice"], d["pars"]
     pks_file, y0, step = d["peaks_file"], pars0["y0"], d["step"]
@@ -137,7 +155,7 @@ def stage_fit(
         f"{np.any(d['grid_o'] >= 0, 1).sum()} voxels of {step:g}, y0 {y0:g}; lattice {np.round(lpars, 6).tolist()}")  # fmt: skip
     log("start (" + hr["parfile"] + "): " + ", ".join(f"{k} {pars0[k]:.7g}" for k in free))
     res = fit.calibrate(pk, d["ubi"], d["grid_o"], d["grid_w"], step, pars0, tuple(free), tuple(tols), n_iter,
-                        clip, log=log)  # fmt: skip
+                        clip, extra_rounds, log=log)  # fmt: skip
     st = fit.strain_left(pk, res["matched"], res["ubi"], B, res["pars"], res["sig"], min_peaks, n_iter, log=log)
     E = st["strain"]
     hydro = np.trace(E, axis1=1, axis2=2) / 3
@@ -145,6 +163,10 @@ def stage_fit(
     ok = np.isfinite(hydro)
     err = np.sqrt(np.diag(res["cov"]))
     log("fitted: " + ", ".join(f"{k} {res['pars'][k]:.8g} +- {e:.2g}" for k, e in zip(free, err)))
+    if res["moved"].max() > 1:
+        log(f"WARNING: the last round still moved {free[int(np.argmax(res['moved']))]} by {res['moved'].max():.1f} "
+            f"sigma: the rounds have not converged after {len(tols) + extra_rounds} (raise --extra-rounds); the errors "
+            "above are too small")  # fmt: skip
     if ok.any():
         w = st["n_peaks"][ok]
         log(f"strain left with free lattices ({ok.sum()} orientations, peak-weighted mean, 1e-5): hydrostatic "
@@ -173,7 +195,8 @@ def stage_fit(
             h[f"matched/{k}"] = pk[k][m["index"]]
     results = {**{k: res["pars"][k] for k in free}, **{f"{k}_err": float(e) for k, e in zip(free, err)},
                "peaks_matched": len(m["index"]), "sigma_sc_px": float(res["sig"][0]),
-               "sigma_fc_px": float(res["sig"][1]), "sigma_omega_deg": float(res["sig"][2])}  # fmt: skip
+               "sigma_fc_px": float(res["sig"][1]), "sigma_omega_deg": float(res["sig"][2]),
+               "last_round_moved_sigma": float(res["moved"].max())}  # fmt: skip
     if ok.any():
         w = st["n_peaks"][ok]
         results["strain_left_hydrostatic"] = float(np.average(hydro[ok], weights=w))

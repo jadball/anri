@@ -46,6 +46,8 @@ def parse_args(argv: list | None = None) -> argparse.Namespace:
     f.add_argument("--tols", default="0.1,0.05,0.025,0.025", help="(h, k, l) matching tolerance of each round")
     f.add_argument("--iter", type=int, default=10, help="Gauss-Newton iterations per round (default 10)")
     f.add_argument("--clip", type=float, default=4.0, help="leave out peaks beyond this many sigma (default 4)")
+    f.add_argument("--extra-rounds", type=int, default=6, help="repeat the last tolerance while a round still "
+                   "moves the geometry by more than its errors, at most this many times (default 6)")  # fmt: skip
     f.add_argument("--min-occ", type=float, default=0.01, help="leave out occupancies below this x the largest")
     f.add_argument("--min-peaks", type=int, default=20, help="free the lattice of orientations with this many "
                    "peaks (the strain left; default 20)")  # fmt: skip
@@ -115,7 +117,7 @@ def main() -> None:
     stage_fit(args.source, args.out, peaks=args.peaks, lattice=args.lattice,
               free=tuple(k for k in args.free.split(",") if k),
               tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.iter, clip=args.clip,
-              min_occ=args.min_occ, min_peaks=args.min_peaks,
+              extra_rounds=args.extra_rounds, min_occ=args.min_occ, min_peaks=args.min_peaks,
               command=cmd, log=log)  # fmt: skip
     log(f"done in {time.perf_counter() - T0:.0f} s")
 
