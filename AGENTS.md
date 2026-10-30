@@ -212,9 +212,9 @@ possible. All three share three layers inside anri; a front-end only adds its ow
   never copy library maths or command-line glue.
 - **Agents**: the skill in `anri/skill/anri` (the open Agent Skills format) tells agents that *run* anri the order of
   work, which diagnostic chooses each option, and what to check before believing a result. It covers `anri.index`,
-  `anri.simulate`/`anri.fwd` and `anri.phantom`. When you change a stage's options, a diagnostic or a plot, update
-  the skill too: `tests/unit/test_skill.py` checks that every command, option, function and link it names exists.
-  This file (AGENTS.md) is for agents changing anri's code; the skill is for agents using it.
+  `anri.calib`, `anri.simulate`/`anri.fwd` and `anri.phantom`. When you change a stage's options, a diagnostic or a
+  plot, update the skill too: `tests/unit/test_skill.py` checks that every command, option, function and link it
+  names exists. This file (AGENTS.md) is for agents changing anri's code; the skill is for agents using it.
 
 ### Provenance
 
