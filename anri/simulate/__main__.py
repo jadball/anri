@@ -7,7 +7,7 @@ A dataset is simulated in three stages, each a subcommand that writes one HDF5 f
     python -m anri.simulate assemble <..._prepare.h5> <analysisroot> <sample> <dataset>
                                                                          -> the ImageD11 dataset, and <...>_assemble.h5
     python -m anri.simulate run <map> <pars> <analysisroot> <sample> <dataset> [options]   all three
-    python -m anri.simulate show <any stage file>                          how it was made
+    python -m anri.simulate show <any stage file> [--log]                  how it was made
 
 The map is an ImageD11 TensorMap (every phase in it) or the entries ``python -m anri.index populations`` writes.
 Rows are independent: split them between jobs with ``render --rows``, then ``assemble`` gathers every part made from
@@ -136,6 +136,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     w = sub.add_parser("show", help="how a stage file was made")
     w.add_argument("file")
+    w.add_argument("--log", action="store_true", help="also print what each stage logged")
     return p.parse_args(argv)
 
 
@@ -145,7 +146,7 @@ def main() -> None:
     if args.command == "show":
         from anri.io.provenance import show
 
-        print(show(args.file))
+        print(show(args.file, log=args.log))
         return
     import anri.utils
 

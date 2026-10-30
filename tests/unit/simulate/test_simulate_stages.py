@@ -85,6 +85,9 @@ class TestRenderStages(unittest.TestCase):
             self.assertEqual(n, prov["results"]["pixels"])
             self.assertGreater(n, 0)
             self.assertEqual(anri.io.provenance.chain(out), [out, prep])
+            # each stage keeps its log, though nothing was printed
+            for f in (prep, a, out):
+                self.assertIn(f"-> {f}", anri.io.provenance.read_provenance(f)["log"][-1])
             _, _, cell = anri.io.imaged11.read_pars_json(prov["resolved"]["parfile"], "Ni")
             self.assertEqual(cell["cell_lattice_[P,A,B,C,I,F,R]"], 225)
             # the command line that remakes it parses back to the same options

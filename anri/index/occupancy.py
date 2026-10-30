@@ -409,7 +409,7 @@ def squarem(
     n_iter
         SQUAREM iterations (3 MLEM updates each)
     log
-        Progress messages, every 5 iterations and the first and last
+        Progress messages, one per iteration: its SQUAREM step length, whether the step was taken, and the deviance
     label
         Name of the fit in the messages
     callback
@@ -434,12 +434,13 @@ def squarem(
         del f1  # at most 4 copies of the occupancies at once
         fn, devx = step(fx)
         del fx
-        f, dev = (fn, devx) if devx <= dev1 else (f2, dev1)  # never worse than plain MLEM
+        taken = devx <= dev1
+        f, dev = (fn, devx) if taken else (f2, dev1)  # never worse than plain MLEM
         del fn, f2
         if callback is not None:
             callback(it, f, dev)
-        if it % 5 == 0 or it in (1, n_iter):
-            log(f"  {label} {it} (SQUAREM step {float(-a):.1f}): deviance {dev:.4g}")
+        # every iteration: the deviances are on the host already, and a is a scalar computed before devx
+        log(f"  {label} {it} (SQUAREM step {float(-a):.1f}{'' if taken else ', not taken'}): deviance {dev:.6g}")
     return f
 
 

@@ -4,7 +4,8 @@ A method's stages each write one HDF5 file with a ``provenance`` group. Its attr
 the file it was made from and that file's id (checked when the chain is followed, so a remade or replaced source is
 refused), the anri version, git commit and dirty flag, the date, working directory and command. Three subgroups hold
 attributes too: ``options`` (as given; None left out), ``resolved`` (worked out from the data) and ``results`` (a
-summary). :func:`show` prints the chain back to the first stage.
+summary). The dataset ``provenance/log`` holds every message the stage logged, timed from its start (:func:`recorder`,
+:func:`write_log`), whichever front-end ran it. :func:`show` prints the chain back to the first stage.
 """
 
 from __future__ import annotations
@@ -12,7 +13,9 @@ from __future__ import annotations
 import datetime
 import os
 import subprocess
+import time
 import uuid
+from collections.abc import Callable
 
 import h5py
 import numpy as np
@@ -95,13 +98,43 @@ def write_results(path: str, results: dict) -> None:
         write_attrs(h["provenance/results"], results)
 
 
+def recorder(log: Callable) -> tuple[Callable, list]:
+    """Return a log callable that passes each message on to ``log`` and keeps it, and the list it keeps them in.
+
+    A stage wraps the ``log`` it is given with this, so that its file holds what it logged (:func:`write_log`)
+    whatever ran it: the command line, a notebook or a workflow system. Each message is kept as
+    ``"[  12.3 s] message"``, timed from the call to this function.
+    """
+    lines: list = []
+    t0 = time.perf_counter()
+
+    def record(msg: str) -> None:
+        lines.append(f"[{time.perf_counter() - t0:7.1f} s] {msg}")
+        log(msg)
+
+    return record, lines
+
+
+def write_log(path: str, lines: list) -> None:
+    """Store a stage's log messages (from :func:`recorder`) in its file, as the dataset ``provenance/log``."""
+    with h5py.File(path, "a") as h:
+        p = h["provenance"]
+        if "log" in p:
+            del p["log"]
+        p.create_dataset("log", data=np.asarray(lines, dtype=h5py.string_dtype()))
+
+
 def read_provenance(path: str) -> dict:
-    """Read a stage file's provenance: its attributes, with "options", "resolved" and "results" as dicts."""
+    """Read a stage file's provenance: attributes, with "options", "resolved", "results" as dicts and "log" as a list.
+
+    "log" is empty for a file written before stages kept their log.
+    """
     with h5py.File(path, "r") as h:
         p = h["provenance"]
         out = read_attrs(p)
         for g in ("options", "resolved", "results"):
             out[g] = read_attrs(p[g])
+        out["log"] = [str(x) for x in p["log"].asstr()[()]] if "log" in p else []
     return out
 
 
@@ -145,13 +178,15 @@ def upstream(path: str, stage: str) -> str:
     raise ValueError(msg)
 
 
-def show(path: str) -> str:
+def show(path: str, log: bool = False) -> str:
     """Return how a stage file was made, all the way back to the first stage, as text: one section per stage.
 
     Parameters
     ----------
     path
         Any stage file
+    log
+        Also print each stage's log
     """
     lines = []
     for p in reversed(chain(path)):
@@ -159,12 +194,15 @@ def show(path: str) -> str:
         lines.append(f"[{prov['stage']}]")
         lines.append(f"file = {os.path.abspath(p)!r}")
         for k, v in prov.items():
-            if k not in ("stage", "options", "resolved", "results"):
+            if k not in ("stage", "options", "resolved", "results", "log"):
                 lines.append(f"{k} = {v!r}")
         for g in ("options", "resolved", "results"):
             if prov[g]:
                 lines.append(f"\n[{prov['stage']}.{g}]")
                 lines += [f"{k} = {v!r}" for k, v in prov[g].items()]
+        if log and prov["log"]:
+            lines.append(f"\n[{prov['stage']}.log]")
+            lines += prov["log"]
         lines.append("")
     return "\n".join(lines)
 

@@ -10,7 +10,7 @@ The indexer runs in six stages, each a subcommand that writes one HDF5 file the 
     python -m anri.index populations <..._localsearch.h5> [options]              -> <...>_populations.h5, _entries.npz,
                                                                                     _tmap.h5
     python -m anri.index run <analysisroot> <sample> <dataset> [options]         all six (--levels 0: no local search)
-    python -m anri.index show <any stage file>                                   how it was made, back to the dataset
+    python -m anri.index show <any stage file> [--log]                           how it was made, back to the dataset
     python -m anri.index powder <analysisroot> <sample> <dataset> [options]      -> <sample>_<dataset>_powder.h5, .xye
 
 ``populations`` also takes a fit stage file directly, without a local search.
@@ -266,6 +266,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     w = sub.add_parser("show", help="how a stage file was made, all the way back to the dataset")
     w.add_argument("file")
+    w.add_argument("--log", action="store_true", help="also print what each stage logged")
     return p.parse_args(argv)
 
 
@@ -275,7 +276,7 @@ def main() -> None:
     if args.command == "show":
         from anri.io.provenance import show
 
-        print(show(args.file))
+        print(show(args.file, log=args.log))
         return
     import anri.utils
 
