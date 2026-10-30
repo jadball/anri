@@ -120,13 +120,17 @@ def _tth_max(pars: dict, det_shape: tuple[int, int], margin_px: float = 10.0) ->
 def stage_prepare(
     map_file: str, pars_file: str | None, out: str, *, dataset: str | None = None, remap: dict | None = None,
     cif: str | dict | None = None, optics: str = "al-crl", divergence: float | None = None,
-    bandwidth: float = BANDWIDTH, beam_fwhm: float | None = None, psf: float = 0.5, pol_factor: float = 1.0,
+    bandwidth: float = BANDWIDTH, beam: str = "pencil", beam_size: tuple | None = None,
+    beam_fwhm: float | None = None, psf: float = 0.5, pol_factor: float = 1.0,
     y0: float | None = None, omega_range: tuple = (0.0, 180.0), omega_step: float = 0.05,
     dty_step: float | None = None, margin: float = 3.0, density: float = 1.0, det_shape: tuple = EIGER_4M,
     tth_max: float | None = None, absorption: bool = True, mu: float | dict | None = None, mu_map: str | None = None,
     command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Turn a map and an instrument into everything the renderer needs, without rendering.
+
+    Two kinds of scan: scanning 3DXRD (a pencil beam, rows of dty across the sample) and a box beam lighting the whole
+    sample at once (DCT, or 3DXRD), one rotation at dty = y0.
 
     Parameters
     ----------
@@ -151,8 +155,16 @@ def stage_prepare(
         The convergence's standard deviation (rad, horizontal and vertical), instead of the optics'
     bandwidth
         FWHM of d(lambda) / lambda (default: ID11's Laue monochromator)
+    beam
+        "pencil": a Gaussian beam of FWHM beam_fwhm, scanned across the sample in rows of dty; the voxels are columns
+        (each layer of a 3D map rendered at its own height, as if lit). "box": a flat-topped beam lighting the whole
+        sample, one row at y0; the voxels are cubes if the map has several layers (z), else columns
+    beam_size
+        Box beam only: its flat top's (horizontal, vertical) width (default: the sample's diameter and height, plus
+        two voxels each way)
     beam_fwhm
-        FWHM of the beam across dty (default: the dty step)
+        FWHM of the beam across dty (default: the dty step); for a box beam, of the blur of its edges (default: the
+        voxel size)
     psf
         Standard deviation of the detector's point spread (pixels)
     pol_factor
@@ -210,8 +222,12 @@ def stage_prepare(
         msg = "give pars_file, or a dataset whose parfile to use"
         raise ValueError(msg)
     y0 = 0.0 if y0 is None else y0
+    if beam not in ("pencil", "box"):
+        msg = f'beam must be "pencil" or "box", not {beam!r}'
+        raise ValueError(msg)
     options = {"map": os.path.abspath(map_file), "pars": os.path.abspath(pars_file), "optics": optics,
-               "divergence": divergence, "bandwidth": bandwidth, "beam_fwhm": beam_fwhm, "psf": psf,
+               "divergence": divergence, "bandwidth": bandwidth, "beam": beam,
+               "beam_size": None if beam_size is None else list(beam_size), "beam_fwhm": beam_fwhm, "psf": psf,
                "pol_factor": pol_factor, "y0": y0, "omega_range": list(omega_range), "omega_step": omega_step,
                "dty_step": dty_step, "margin": margin, "density": density, "det_shape": list(det_shape),
                "tth_max": tth_max, "dataset": None if dataset is None else os.path.abspath(dataset),
@@ -232,12 +248,22 @@ def stage_prepare(
         ystep = dty_step
     else:
         ystep = voxel if ds is None else float(np.median(np.diff(ds["ybincens"])))
-    fwhm = ystep if beam_fwhm is None else beam_fwhm
+    if beam_fwhm is not None:
+        fwhm = beam_fwhm
+    else:
+        fwhm = voxel if beam == "box" else ystep
     div = OPTICS[optics] if divergence is None else divergence
     tth = _tth_max(pars, det_shape) if tth_max is None else tth_max
     dsmax = 2 * np.sin(np.radians(tth / 2)) / wl
     radius = max(float(np.linalg.norm(p["entries"]["pos"][:, :2], axis=1).max()) for p in phases)
-    if ds is None:
+    z = np.concatenate([p["entries"]["pos"][:, 2] for p in phases])
+    voxel_3d = beam == "box" and np.unique(np.round(z / voxel)).size > 1
+    size = None
+    if beam == "box":
+        size = (2 * radius + 2 * voxel, float(np.ptp(z)) + 3 * voxel) if beam_size is None else beam_size
+    if ds is None and beam == "box":
+        omega, dty = motor_grid(tuple(omega_range), omega_step, (y0, y0), 1.0)
+    elif ds is None:
         n_side = int(np.ceil((radius + margin * fwhm) / ystep))
         omega, dty = motor_grid(tuple(omega_range), omega_step, (y0 - n_side * ystep, y0 + n_side * ystep), ystep)
     else:  # the dataset's own frames
@@ -246,15 +272,20 @@ def stage_prepare(
     if isinstance(mu, (int, float)) and len(phases) > 1:
         msg = "several phases: give mu per phase, as {name: value} (--mu NAME=VALUE)"
         raise ValueError(msg)
+    shape = (f"box beam {size[0]:g} x {size[1]:g}, edges FWHM {fwhm:g}, {'cubes' if voxel_3d else 'columns'}"
+             if size is not None else f"beam FWHM {fwhm:g}")  # fmt: skip
     log(f"map {map_file}: {len(phases)} phase(s), voxel {voxel:g}, sample radius {radius:.4g}; scan {omega.shape[0]} "
-        f"rows of {ystep:g} x {omega.shape[1]} frames of {omega_step:g} deg; beam FWHM {fwhm:g}, convergence {div:g} "
+        f"rows of {ystep:g} x {omega.shape[1]} frames of {omega_step:g} deg; {shape}, convergence {div:g} "
         f"rad ({optics if divergence is None else 'given'}), bandwidth {bandwidth:g} FWHM; 2theta up to {tth:.2f} "
         f"deg")  # fmt: skip
 
     resolved = {"wavelength": wl, "voxel_size": voxel, "dty_step": ystep, "beam_fwhm": fwhm, "divergence": div,
                 "sig_wavelength": wl * fwhm_to_sigma(bandwidth), "sig_beam": fwhm_to_sigma(fwhm), "tth_max": tth,
                 "n_rows": omega.shape[0], "n_frames": omega.shape[1], "sample_radius": radius,
-                "phases": [p["name"] for p in phases]}  # fmt: skip
+                "phases": [p["name"] for p in phases], "voxel_3d": bool(voxel_3d)}  # fmt: skip
+    if size is not None:
+        resolved.update({"width_beam": float(size[0]), "width_beam_v": float(size[1]),
+                         "sig_beam_v": fwhm_to_sigma(fwhm)})  # fmt: skip
     mus, mu_grid = {}, None  # attenuation: each phase's mu, or the given map
     if absorption and mu_map is not None:
         mu_grid = np.load(mu_map).astype(np.float32)
@@ -341,7 +372,9 @@ def load_prepare(path: str) -> dict:
         mu = np.array([float(mus[n]) for n in r["phases"]]) if mus else None
         phases = add_absorption(phases, r["voxel_size"], mu, mu_map)
     geom = geom_from_pars(pars, o["y0"], r["sig_wavelength"], r["divergence"], r["divergence"], r["sig_beam"],
-                          r["voxel_size"], pol_factor=o["pol_factor"], sig_psf=o["psf"])  # fmt: skip
+                          r["voxel_size"], pol_factor=o["pol_factor"], sig_psf=o["psf"],
+                          width_beam=r.get("width_beam", 0.0), sig_beam_v=r.get("sig_beam_v", 0.0),
+                          width_beam_v=r.get("width_beam_v", 0.0), voxel_3d=r.get("voxel_3d", False))  # fmt: skip
     return {"phases": phases, "names": r["phases"], "cells": cells, "geom": geom, "omega": omega, "dty": dty,
             "det_shape": tuple(o["det_shape"]), "pars": pars, "prov": prov}  # fmt: skip
 
@@ -357,8 +390,8 @@ def parse_rows(rows: str | None, n_rows: int) -> range:
 
 def stage_render(
     prepare_file: str, out: str | None = None, *, rows: str | None = None, cut: float = 1.0,
-    window: tuple = (3, 7, 7), max_frames: int | None = 31, batch: int = 2**16, command: str | None = None,
-    log: Callable = print,
+    window: tuple = (3, 7, 7), max_frames: int | None = 31, batch: int = 2**16, splat: bool = False,
+    frames_per_call: int | None = None, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Render rows of the scan into sparse pixels, every phase summed, as ImageD11 scan groups.
 
@@ -372,8 +405,11 @@ def stage_render(
         "a:b", the rows to render (a Python slice; default every row)
     cut
         Keep counts strictly above this, as ImageD11's segmentation does
-    window, max_frames, batch
-        See :func:`anri.fwd.render.render_row`
+    window, max_frames, batch, splat
+        See :func:`anri.fwd.render.render_row`; splat (every phase a grain map) renders whole spots, for DCT-like maps
+    frames_per_call
+        Render each row this many frames at a time (default: a row at once), see
+        :func:`anri.io.imaged11.write_rendered_rows`: a box beam's one long rotation may not fit in memory at once
 
     Returns
     -------
@@ -383,7 +419,8 @@ def stage_render(
     from anri.io.imaged11 import write_rendered_rows
 
     log, lines = recorder(log)
-    options = {"rows": rows, "cut": cut, "window": list(window), "max_frames": max_frames, "batch": batch}
+    options = {"rows": rows, "cut": cut, "window": list(window), "max_frames": max_frames, "batch": batch,
+               "splat": splat, "frames_per_call": frames_per_call}  # fmt: skip
     p = load_prepare(prepare_file)
     todo = parse_rows(rows, p["omega"].shape[0])
     if len(todo) == 0:
@@ -400,7 +437,8 @@ def stage_render(
     with h5py.File(out, "w") as h:
         write_provenance(h, "render", prepare_file, options, {"first_row": todo[0], "last_row": todo[-1]}, command)
         stats = write_rendered_rows(h, p["phases"], p["geom"], p["omega"], p["dty"], p["det_shape"], rows=todo,
-                                    cut=cut, log=log, window=tuple(window), max_frames=max_frames, batch=batch)  # fmt: skip
+                                    cut=cut, log=log, window=tuple(window), max_frames=max_frames, batch=batch,
+                                    splat=splat, frames_per_call=frames_per_call)  # fmt: skip
         idx = np.asarray(todo)
         h["stats/rows"] = idx
         for k, v in stats.items():

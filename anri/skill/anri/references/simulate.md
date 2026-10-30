@@ -1,6 +1,6 @@
 # Simulating a dataset, and the forward model
 
-`python -m anri.simulate` renders a map into a scanning-3DXRD dataset, as ImageD11 files that ImageD11 and
+`python -m anri.simulate` renders a map into a scanning-3DXRD or box-beam (DCT, 3DXRD) dataset, as ImageD11 files that ImageD11 and
 `python -m anri.index` read. It is the command line over `anri.fwd`. Option defaults are in
 `python -m anri.simulate <stage> -h`. The manual's guides "How to simulate a scanning-3DXRD dataset" and "How to
 compare measured frames with a map's forward model" run the same diagnostics with plots.
@@ -24,12 +24,15 @@ instead of "ubi"; it assumes no orientation spread and one strain per grain, so 
 | Stage | Option | Look at | Function (`anri.simulate.diagnostics`; plot in `anri.simulate.plots`) |
 |---|---|---|---|
 | prepare | `--optics`, `--divergence`, `--bandwidth`, `--beam-fwhm` | the beamline's optics: ask the human (see [physics](physics.md)) | |
+| prepare | `--beam`, `--beam-size` | the experiment: `pencil` scans rows of dty (scanning 3DXRD); `box` lights the whole sample, one rotation at y0, cubes for a 3D map (DCT). Ask the human for a box beam's size if it does not cover the sample | |
 | prepare | `--dty-step`, `--margin` | every voxel inside the radius the rows reach at every ω | `footprint`; `plot_footprint` |
 | prepare | `--tth-max` | the share of each ring on the detector: a ring running off it loses spots an indexer reads as weak reflections | `ring_coverage`; `plot_rings` |
 | prepare | `--dataset` | simulate a measured scan exactly: its frames' ω and dty, detector, y0 and geometry | |
 | prepare | `--cif`, `--mu`, `--mu-map`, `--no-absorption` | absorption along the incoming and diffracted paths, as the indexer's fit models it: from each phase's CIF, a coefficient per phase, or a map (e.g. from absorption tomography). Ask the human for the sample's composition | |
 | render | `--cut`, with prepare's `--density` | how peaks survive the segmentation cut at each density: below the density where peaks stop disappearing, small and thin features vanish | `probe_rows`; `plot_survival` |
 | render | `--window`, `--max-frames` | the share of each peak its window misses; peaks broad in ω (near η = 0 and 180°, or with a spread) need more frames | `probe_rows`; `plot_capture` |
+| render | `--splat` | grain maps only (one UBI per grain, e.g. DCT): renders whole spots, 10-20x faster, totals within ~1e-3 of the per-voxel render | |
+| render | `--frames-per-call` | a box beam's one long rotation: render it in chunks of frames (e.g. 10°) so its peaks fit in memory | |
 | render | `--rows a:b` | rows are independent: split them between jobs, then `assemble` gathers every part and refuses a missing or doubled row | |
 
 Set `--cut` to the threshold the segmentation used on the data you mimic. To compare a map with measured frames,

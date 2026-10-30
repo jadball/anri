@@ -155,6 +155,45 @@ class TestGrainMap(unittest.TestCase):
             self.assertGreater(anri.io.provenance.read_provenance(out)["results"]["pixels"], 0)
 
 
+class TestBoxBeam(unittest.TestCase):
+    def test_dct_pipeline(self):
+        """A 3D grain map in a box beam: one row of cubes, rendered whole spots at a time in chunks of frames."""
+        from anri.fwd.render import grain_entries
+
+        lp = np.array([2.8665] * 3 + [90.0] * 3)
+        U = anri.maths.rotation.random_rotations(2, np.random.default_rng(5))
+        ubi = np.linalg.inv(np.asarray(U) @ anri.crystal.structure.B_matrix(lp))
+        labels = np.zeros((6, 6, 4), int)
+        labels[:, 3:] = 1
+        with tempfile.TemporaryDirectory() as tmp:
+            parfile = os.path.join(tmp, "geometry.par")
+            anri.io.imaged11.write_par(parfile, PARS)
+            map_file = os.path.join(tmp, "dct.npz")
+            np.savez(map_file, **grain_entries(labels, ubi, 2.0), voxel_size=2.0, lattice=lp, space_group=229,
+                     phase="Fe")  # fmt: skip
+            prep = sim.stages.stage_prepare(map_file, parfile, os.path.join(tmp, "d_prepare.h5"), beam="box",
+                                            omega_step=1.0, density=1e3, log=lambda m: None)  # fmt: skip
+            p = sim.stages.load_prepare(prep)
+            self.assertEqual(p["omega"].shape, (1, 180))  # one rotation at y0
+            self.assertTrue(p["geom"]["voxel_3d"])
+            self.assertEqual((p["geom"]["width_beam"], p["geom"]["width_beam_v"]), (2 * np.hypot(5, 5) + 4, 6 + 6))
+            whole = sim.stages.stage_render(prep, os.path.join(tmp, "whole.h5"), splat=True, log=lambda m: None)
+            parts = sim.stages.stage_render(prep, splat=True, frames_per_call=50, log=lambda m: None)
+            totals = []
+            for f in (whole, parts):
+                with h5py.File(f, "r") as h:
+                    totals.append(h["1.1/intensity"][()].astype(float).sum())
+            self.assertGreater(totals[0], 0)
+            self.assertAlmostEqual(totals[1] / totals[0], 1.0, delta=1e-3)
+            out = sim.stages.stage_assemble(prep, tmp, "s", "d", parts=[parts], log=lambda m: None)
+            ds = anri.io.imaged11.read_dataset(anri.io.provenance.read_provenance(out)["resolved"]["dataset_file"])
+            self.assertEqual(len(ds["ybincens"]), 1)
+            from anri.simulate.__main__ import parse_args
+
+            args = parse_args(shlex.split(sim.stages.run_command(out))[3:])
+            self.assertEqual((args.beam, args.splat, args.frames_per_call), ("box", True, 50))
+
+
 class TestAbsorption(unittest.TestCase):
     def test_mu_per_phase_and_map(self):
         """mu per phase (built from the map) or a mu map file: the same optical depths for the same sample; absorption
