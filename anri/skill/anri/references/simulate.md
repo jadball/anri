@@ -65,7 +65,7 @@ quartz).
   guessing on a shared GPU.
 - `anri.fwd.render.check_render`: checks rendered peaks against a Monte Carlo simulation of the beam's spreads.
   Run it after changing the beam or geometry.
-- `anri.fwd.peak.get_centroid_both`: a reflection's two peak centroids (both η branches) in (sc, fc, ω), e.g. to
-  check a grain against ImageD11's peaks.
+- `anri.fwd.peak.get_centroid`: a peak's centroid in (sc, fc, ω), for `etasign` +1 or -1 (vmap over both η
+  branches), e.g. to check a grain against ImageD11's peaks.
 
 Render a few rows first and time them: the first call compiles. Then size the whole job from that.

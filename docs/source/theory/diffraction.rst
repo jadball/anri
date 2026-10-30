@@ -73,9 +73,9 @@ which exist when :math:`|\delta / R| \le 1` [MilchMinor1974]_ [BusingLevy1967]_.
 
 **Anri's choice:** the arcsine's argument is clipped to :math:`\pm(1 - 10^{-6})` and :math:`R^2` floored at
 :math:`10^{-7}`, so that the gradient stays finite at the edge of the Ewald sphere and along the rotation axis. The two
-branches share everything but the last line, so Anri solves for both at once.
+branches share everything but the last line: a vmap over :math:`\pm 1` gives both.
 
-**Code:** :func:`anri.fwd.peak.hkl_to_k_omega_both`.
+**Code:** :func:`anri.fwd.peak.hkl_to_k_omega`.
 
 The diffracted ray, 2θ and η
 ----------------------------
@@ -154,7 +154,7 @@ parameters [FABLEgeom]_.
 Chaining :eq:`frm-g`, :eq:`dif-omega`, the origin and :eq:`dif-raytrace` gives the forward model's one centroid
 function, which the renderer, the box-beam and the scanning models all call.
 
-**Code:** :func:`anri.fwd.peak.get_centroid`, :func:`anri.fwd.peak.get_centroid_both`.
+**Code:** :func:`anri.fwd.peak.get_centroid`.
 
 .. _theory_rotation_motion:
 

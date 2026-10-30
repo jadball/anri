@@ -32,7 +32,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from anri.diffract.scatter import k_to_q_lab, peak_lab_to_k_out, scale_norm_k
-from anri.fwd.peak import get_centroid_both
+from anri.fwd.peak import get_centroid
 from anri.geom.detector import det_to_lab, detector_basis_vectors_lab, detector_transforms
 from anri.geom.gonio import lab_to_sample, origin_lab
 from anri.maths.rotation import rod_to_mat
@@ -162,9 +162,10 @@ def _residual(x: jax.Array, a: jax.Array, ubi: jax.Array, obs: jax.Array, hkl: j
     """(observed - predicted) / sigma in (sc, fc, omega) for one peak, its orientation deformed by a."""
     p = _pars(x, base, free)
     s_step, f_step, det_origin = detector_basis_vectors_lab(*_detector(p))
-    c, _ = get_centroid_both(p["lattice"] * _deform(ubi, a), origin, hkl, p["wavelength"], jnp.asarray(_K_IN, x.dtype),
-                             0.0, 0.0, p["wedge"], p["chi"], obs[3], p["y0"], s_step, f_step, det_origin)  # fmt: skip
-    d = obs[:3] - c[branch]
+    c, _ = get_centroid(p["lattice"] * _deform(ubi, a), origin, hkl, 1.0 - 2.0 * branch, p["wavelength"],
+                        jnp.asarray(_K_IN, x.dtype), 0.0, 0.0, p["wedge"], p["chi"], obs[3], p["y0"], s_step, f_step,
+                        det_origin)  # fmt: skip
+    d = obs[:3] - c
     d = d.at[2].set((d[2] + 180.0) % 360.0 - 180.0)
     return d / sig
 
@@ -236,7 +237,7 @@ def fit_geometry(peaks: dict, m: dict, ubi: np.ndarray, pars: dict, free: tuple,
     peaks
         From :func:`anri.io.imaged11.read_peaks`, the matched ones
     m
-        Their matches, from :func:`match`, with "branch" (0 or 1, see :func:`anri.fwd.peak.get_centroid_both`)
+        Their matches, from :func:`match`, with "branch" (0 for etasign +1, 1 for -1, :func:`anri.fwd.peak.get_centroid`)
     ubi
         [G, 3, 3] (U B)^-1 of each orientation, see :func:`match`
     pars
@@ -308,8 +309,14 @@ def _predict(ubi: jax.Array, origin: jax.Array, hkl: jax.Array, dty: jax.Array, 
     """Both branches' (sc, fc, omega) of peaks [P] of orientations ubi [P, 3, 3], and their validity."""
     s_step, f_step, det_origin = detector_basis_vectors_lab(*_detector(p))
     k_in = jnp.asarray(_K_IN, ubi.dtype)
-    return jax.vmap(lambda u, o, h, y: get_centroid_both(u, o, h, p["wavelength"], k_in, 0.0, 0.0, p["wedge"], p["chi"],
-                                                         y, p["y0"], s_step, f_step, det_origin))(ubi, origin, hkl, dty)  # fmt: skip
+
+    def one(u: jax.Array, o: jax.Array, h: jax.Array, y: jax.Array, etasign: jax.Array) -> tuple:
+        return get_centroid(u, o, h, etasign, p["wavelength"], k_in, 0.0, 0.0, p["wedge"], p["chi"], y, p["y0"], s_step,
+                            f_step, det_origin)  # fmt: skip
+
+    both = jax.vmap(one, in_axes=(None, None, None, None, 0))
+    c, valid = jax.vmap(both, in_axes=(0, 0, 0, 0, None))(ubi, origin, hkl, dty, jnp.array([1.0, -1.0], ubi.dtype))
+    return c, valid[:, 0]
 
 
 def residuals(peaks: dict, m: dict, ubi: np.ndarray, pars: dict) -> tuple:

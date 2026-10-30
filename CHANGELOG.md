@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The forward model's `_both` twins and pre-built vmaps: `anri.fwd.peak.hkl_to_k_omega_both` and `get_centroid_both`, `anri.fwd.box.get_centroid_box_both`, `get_centroid_box_all(_grains)(_both)` and `propagate_cov_box_all(_grains)`, `anri.fwd.scan.get_centroid_scan_both`, `get_centroid_scan_all(_grains)(_both)` and `propagate_cov_scan_all(_grains)(_both)`. Each centroid is now one function of one peak: vmap over `etasign` (`jnp.array([1.0, -1.0])`) for both peaks of a reflection, and over voxels or hkls as needed (the tutorials and examples show how). The renderer and the calibration do so; their outputs are unchanged (bit for bit, on a 27k-voxel box-beam row and the calibration's predictions), and render time too. The calibration's per-peak residual now computes only the peak's own branch.
 - `anri.refine` (and its tutorial), which was never released: refining a map against the pixels will be redone from a design that represents each population's orientation spread.
 
 ### Added

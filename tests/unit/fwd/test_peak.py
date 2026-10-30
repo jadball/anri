@@ -97,8 +97,6 @@ class TestDivergence(unittest.TestCase):
                 args[0], args[2], 1.0, 0.3, jnp.asarray(k), 2e-4, -3e-4, 1.0, -2.0
             )
             np.testing.assert_allclose([k_in @ k_hat, k_in @ e_h, k_in @ e_v], [1.0, 2e-4, -3e-4], atol=1e-14)
-            both = anri.fwd.peak.hkl_to_k_omega_both(args[0], args[2], 0.3, jnp.asarray(k), 2e-4, -3e-4, 1.0, -2.0)
-            np.testing.assert_allclose(both[0], k_in, atol=1e-14)
         # along x, the divergence is the lab y and z components, as before
         k_in_x = anri.fwd.peak.hkl_to_k_omega(
             args[0], args[2], 1.0, 0.3, jnp.array([1.0, 0.0, 0.0]), 2e-4, -3e-4, 1.0, -2.0
@@ -117,12 +115,9 @@ class TestGetCentroid(unittest.TestCase):
             cen, _ = anri.fwd.peak.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, scan[3], y0, *det)
             np.testing.assert_allclose(cen, scan[:3], atol=1e-9)
 
-    def test_both_and_box(self):
+    def test_box(self):
         ubi, origin, hkl, _, wl, k, ky, kz, wedge, chi, *det = _box_args()
-        both, _ = anri.fwd.peak.get_centroid_both(ubi, origin, hkl, wl, k, ky, kz, wedge, chi, 2.0, 0.5, *det)
-        for i, es in enumerate((1.0, -1.0)):
-            one, _ = anri.fwd.peak.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, 2.0, 0.5, *det)
-            np.testing.assert_allclose(both[i], one, atol=1e-12)
+        for es in (1.0, -1.0):
             box, _ = anri.fwd.box.get_centroid_box(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, *det)
             cube, _ = anri.fwd.peak.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, 0.0, 0.0, *det, False)
             np.testing.assert_allclose(box, cube, atol=1e-12)

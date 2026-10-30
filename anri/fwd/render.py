@@ -47,7 +47,7 @@ from anri.geom.paths import attenuation_map, edge_distances, ray_directions, tra
 from anri.maths.rotation import skew
 from anri.maths.utils import bin_fractions, truncated_moments
 
-from .peak import get_centroid, get_centroid_both, hkl_to_k_omega, hkl_to_k_omega_both, make_propagator
+from .peak import get_centroid, hkl_to_k_omega, make_propagator
 
 # Smallest batch per device that render_row compiles (see there)
 _MIN_BATCH = 1024
@@ -158,14 +158,18 @@ def select_peaks(
     """
     dty = row["dty_mid"]
 
-    def one(u: jax.Array, p: jax.Array, h: jax.Array) -> jax.Array:
-        cens, valid = get_centroid_both(
-            u, p, h, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], dty, geom["y0"],
-            geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"], jnp.logical_not(geom["voxel_3d"]),
+    def one(u: jax.Array, p: jax.Array, h: jax.Array, etasign: jax.Array) -> jax.Array:
+        cen, valid = get_centroid(
+            u, p, h, etasign, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], dty,
+            geom["y0"], geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
+            jnp.logical_not(geom["voxel_3d"]),
         )  # fmt: skip
-        return jnp.stack([_keep(cens[i], valid, p, geom, row, margin, det_shape) for i in range(2)])
+        return _keep(cen, valid, p, geom, row, margin, det_shape)
 
-    return jax.vmap(jax.vmap(one, in_axes=(None, None, 0)), in_axes=(0, 0, None))(ubi, pos, hkls)
+    both = jax.vmap(one, in_axes=(None, None, None, 0))
+    return jax.vmap(jax.vmap(both, in_axes=(None, None, 0, None)), in_axes=(0, 0, None, None))(
+        ubi, pos, hkls, jnp.array([1.0, -1.0], pos.dtype)
+    )
 
 
 def _in_omega(omega: jax.Array, row: dict, margin: jax.Array) -> jax.Array:
@@ -670,10 +674,13 @@ def _grain_candidates(grain_ubi: jax.Array, hkls: jax.Array, geom: dict, row: di
 
     def one(u: jax.Array) -> jax.Array:
         def per_hkl(h: jax.Array) -> jax.Array:
-            _, _, omegas, valid = hkl_to_k_omega_both(
-                u, h, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
-            )
-            return valid & _in_omega(omegas, row, margin)
+            def branch(etasign: jax.Array) -> jax.Array:
+                _, _, omega, valid = hkl_to_k_omega(
+                    u, h, etasign, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
+                )
+                return valid & _in_omega(omega, row, margin)
+
+            return jax.vmap(branch)(jnp.array([1.0, -1.0], u.dtype))
 
         return jax.vmap(per_hkl)(hkls)
 
