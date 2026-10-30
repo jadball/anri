@@ -540,7 +540,7 @@ def stage_histogram(
     fdty = d["frame_dty"]
     if frame_dty and fdty is not None:  # fly and helical scans: where the beam really was, per row and omega bin
         ddty, expo = dty_offsets(fdty, ds["omega"], ds["ybinedges"], gridstep, sc["om0"], B_O * R_O, n_o // R_O,
-                                 sc["dty0"], sc["ystep"], fdty if dty_source == "frames" else None,
+                                 sc["dty0"], sc["ystep"], fdty if dty_source == "frames" else ds["dty"],
                                  return_exposure=True)  # fmt: skip
         if np.abs(ddty).max() > 1e-3 * sc["ystep"]:
             log(f"dty moves within the rows: up to {np.abs(ddty).max() / sc['ystep']:.2f} dty steps from each row's "

@@ -765,8 +765,8 @@ def dty_offsets(
     n_rows = -(-(len(edges) - 1) // gridstep)
     bd = np.broadcast_to(np.nanmean(fd, 1, keepdims=True), fd.shape) if bin_dty is None else np.asarray(bin_dty, float)
     kk = dty_to_row(bd, edges, gridstep)  # each frame's row
-    with float64():  # the omega bins of system
-        o = np.asarray(omega_bin(wrap_omega(om, om0), om0, b_o)).astype(int)
+    with float64():  # the omega bins of the histogram: not wrapped, so frames past the scan's ends are left out alike
+        o = np.asarray(omega_bin(jnp.asarray(om), om0, b_o)).astype(int)
     ok = (kk >= 0) & (o >= 0) & (o < n_o) & np.isfinite(fd)
     idx = kk[ok] * n_o + o[ok]
     s = np.bincount(idx, weights=fd[ok] - (dty0 + kk[ok] * ystep), minlength=n_rows * n_o)

@@ -297,6 +297,19 @@ class TestOccupancy(unittest.TestCase):
         np.testing.assert_array_equal(corners[0][1], [-1])  # half a turn: the corner before om0 is outside
         np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 0.6, atol=1e-5)
 
+    def test_dty_offsets_match_histogram(self):
+        """Offsets and exposure leave out the frames past the scan's ends, as the histogram does, not wrap them."""
+        omega = jnp.array([[-0.25, 0.25, 0.75, 1.25, 1.75, 360.25]])
+        dty = np.array([[0.99, 0.2, 0.4, 0.6, 0.8, 0.99]])
+        x = jnp.stack([jnp.full(omega.size, 5.0), jnp.zeros(omega.size), omega.ravel()], 1)
+        counts = ix.data.histogram(x, jnp.ones(omega.size), jnp.zeros(omega.size, jnp.int32), jnp.array([5.0]), 0.1,
+                                   0.0, 360.0, 1.0, 1, 1, 360, 1)  # fmt: skip
+        offsets, exposure = ix.data.dty_offsets(dty, omega, [-0.5, 0.5], 1, 0.0, 1.0, 360, 0.0, 1.0,
+                                               bin_dty=np.zeros_like(dty), return_exposure=True)  # fmt: skip
+        np.testing.assert_allclose(exposure[0], counts / 2)
+        np.testing.assert_allclose(offsets[0, :2], [0.3, 0.7])
+        np.testing.assert_array_equal(offsets[0, 2:], 0.0)
+
     def test_dty_offsets(self):
         """Rows away from their nominal dty: a helical scan's offsets, and system putting a voxel in the right rows."""
         n_rows, n_fr, ystep = 5, 360, 1.0

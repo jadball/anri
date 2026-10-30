@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Padded voxels no longer take intensity in the voxel fit. `anri.index.occupancy.pad_voxels` padded with voxels at (1e6, 1e6), which sit on the rotation axis's ray at omega = 135 and 315 degrees and so took part in candidate selection and MLEM there (without absorption). Padding is now marked by z = NaN and `system` gives it no entries. Reported in [#51](https://github.com/jadball/anri/issues/51).
 - On a full-turn scan, a prediction within half an omega bin of the seam keeps the corner on the other side (`anri.index.data.eta_omega_corners` wraps omega when n_o b_o = 360, as it wraps eta). It lost up to half its weight there, in the filter and the voxel fit. Partial scans still drop the corners past their ends. Reported in [#51](https://github.com/jadball/anri/issues/51).
+- Fly and helical scans: each (row, omega bin)'s dty offset and exposure (`anri.index.data.dty_offsets`) take the same frames as the histogram. Frames past the scan's ends were wrapped into the other end, and the histogram stage put frames in rows by each row's mean dty instead of the DataSet's dty that binned them. Reported in [#51](https://github.com/jadball/anri/issues/51).
 
 ### Changed
 
