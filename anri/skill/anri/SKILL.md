@@ -5,8 +5,9 @@ description: >-
   package (python -m anri.index, python -m anri.simulate, anri.fwd). Read it before running an anri stage on a
   dataset; before choosing the indexer's options (rings, y0, sample mask, lit cut, orientation grid, pruning,
   occupancy fit, local search, populations); before judging an anri stage file or the map it holds; before rendering
-  a phantom or an indexed map back into detector frames; and before comparing anri's maps with ImageD11's. Not for
-  changing anri's own code: that is the repository's AGENTS.md.
+  a phantom or an indexed map back into detector frames; before making a phantom (anri.phantom) to test a method;
+  and before comparing anri's maps with ImageD11's. Not for changing anri's own code: that is the repository's
+  AGENTS.md.
 license: GPL-3.0
 compatibility: >-
   Requires the anri package (JAX, h5py; ImageD11 to read and write ImageD11 datasets). Runs on CPU, or on a GPU when
@@ -25,6 +26,7 @@ are the record of what you did. This file is the order of work, and the checks t
 |---|---|
 | choosing an indexer option, or reading what a stage wrote | [index](references/index.md) |
 | simulating a dataset, rendering a map or phantom, calling `anri.fwd` | [simulate](references/simulate.md) |
+| making a phantom to test a method (`anri.phantom`), and judging a method on it | [phantom](references/phantom.md) |
 | what a peak, a population or a spread can and cannot tell you | [physics](references/physics.md) |
 
 Read options and signatures from the installed code, never from memory: `python -m anri.index <stage> -h`,
@@ -109,7 +111,8 @@ are known.
     model's noise floor. Put `--min-frac` above that floor, and say where you put it.
 17. **A good-looking map is not a check.** To back a claim about a method, index a phantom whose truth you know:
     [simulate](references/simulate.md) renders one with cells and twins, and `python -m anri.index` reads the
-    dataset back. Orientation shifts shrunk towards each grain's mean are path averaging, the failure to look for.
+    dataset back; [phantom](references/phantom.md) says how to build one for the microstructure at hand.
+    Orientation shifts shrunk towards each grain's mean are path averaging, the failure to look for.
 18. **An input is not a result.** A value a stage took as a default (y0 from the DataSet, the automatic grid step)
     is an assumption you made. Say so.
 19. **Report** the files, the command that remakes them (`anri.index.stages.run_command(path)` gives a `run` command

@@ -38,10 +38,12 @@ prepare with `--dataset` and the y0 the map's fit used (`show` prints it), then 
 
 `anri.phantom.polycrystal` makes a 2D polycrystal of grains split into misoriented cells, with twin lamellae and,
 optionally, cell orientations that accumulate like a random walk, a spread inside each cell, and bent grains;
-`anri.phantom.tensormap` turns it into a TensorMap to render. Use a phantom with orientation spread along the rays
-to test a method: a uniform orientation per voxel turns a gradient into an unphysical ladder of sub-peaks. Before
-using a phantom to judge a method, check that its peaks render as single-maximum arcs (bananas). The repository's
-`tests/data/phantoms` holds phantom TensorMaps ready to render (an AM-like 316L, a deformed 316L, quartz).
+`anri.phantom.tensormap` turns it into a TensorMap to render. [phantom](phantom.md) says how to choose its options
+for a microstructure, what it cannot make, and what to check before using it. Use a phantom with orientation spread
+along the rays to test a method: a uniform orientation per voxel turns a gradient into an unphysical ladder of
+sub-peaks. Before using a phantom to judge a method, check that its peaks render as single-maximum arcs (bananas).
+The repository's `tests/data/phantoms` holds phantom TensorMaps ready to render (an AM-like 316L, a deformed 316L,
+quartz).
 
 ## The forward model from Python (`anri.fwd`)
 
