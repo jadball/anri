@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Padded voxels no longer take intensity in the voxel fit. `anri.index.occupancy.pad_voxels` padded with voxels at (1e6, 1e6), which sit on the rotation axis's ray at omega = 135 and 315 degrees and so took part in candidate selection and MLEM there (without absorption). Padding is now marked by z = NaN and `system` gives it no entries. Reported in [#51](https://github.com/jadball/anri/issues/51).
+
 ### Changed
 
 - Figures that survive a restart of the Jupyter server: the Guides page says how (JupyterLab's *Save Widget State Automatically*, `"saveState": true`). ipympl then saves each figure as last drawn in the notebook, and after a restart it shows as a picture where "Error displaying widget: model not found" was; checked in JupyterLab 4.6 with ipympl 0.10 (it fixes ImageD11's notebooks too). Every guide notebook with widgets also has a static mode for the docs: `interactive = False` (now also in the calibration and indexing-parameters guides, as in the rendering and frame-comparison guides) draws each figure once at the parameters' values as an inline image, with no widgets. Drawing a mask by hand still needs `interactive = True`.
