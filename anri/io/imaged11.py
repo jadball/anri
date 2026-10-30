@@ -10,8 +10,8 @@ ImageD11 itself is only imported by the functions that need it.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterable, Iterator
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterable, Iterator
+from typing import TYPE_CHECKING
 
 import h5py
 import jax.numpy as jnp
@@ -19,7 +19,6 @@ import numpy as np
 from jax.typing import ArrayLike
 
 import anri.geom
-from anri.fwd.render import make_row, render_phases
 
 if TYPE_CHECKING:
     from ImageD11.sinograms.tensor_map import TensorMap
@@ -994,7 +993,7 @@ def write_dataset(
     Parameters
     ----------
     sparse_path
-        Sparse pixels file, e.g. from :func:`simulate_sparse`. It can live anywhere.
+        Sparse pixels file, e.g. from :func:`anri.simulate.stages.simulate_sparse`. It can live anywhere.
     analysisroot, sample, dset
         Where the DataSet goes, and its name
     y0
@@ -1130,119 +1129,3 @@ def write_zero_distortion(folder: str, det_shape: tuple[int, int]) -> tuple[str,
     for path in paths:
         EdfImage(data=np.zeros(det_shape, np.float32)).write(path)
     return paths
-
-
-def simulate_sparse(
-    path: str,
-    entries: dict,
-    hkls: np.ndarray,
-    F2: np.ndarray,
-    geom: dict,
-    omega: np.ndarray,
-    dty: np.ndarray,
-    det_shape: tuple[int, int],
-    cut: float = 1,
-    transmission: np.ndarray | None = None,
-    omega_motor: str = "rot_center",
-    dty_motor: str = "dty",
-    window: tuple[int, int, int] = (3, 7, 7),
-    batch: int = 2**16,
-    max_frames: int | None = None,
-) -> dict:
-    """Render every dty row of a scan and write the sparse pixels file, one row at a time.
-
-    Parameters
-    ----------
-    path
-        Output HDF5 file; must not exist
-    entries, hkls, F2, geom
-        See :func:`anri.fwd.render.render_row`, for a single phase
-    omega, dty
-        [n_rows, n_frames] motor positions, e.g. from :func:`motor_grid` or an ImageD11 DataSet
-    det_shape
-        (n_slow, n_fast)
-    cut
-        Keep counts strictly above this
-    transmission
-        Optional [n_rows, n_frames] transmission factor per frame
-    omega_motor, dty_motor
-        Motor names written to the file
-    window, batch, max_frames
-        Passed on to :func:`anri.fwd.render.render_row`
-
-    Returns
-    -------
-    stats: dict
-        Per row: as :func:`write_rendered_rows`
-    """
-    with h5py.File(path, "w-") as hout:
-        return write_rendered_rows(hout, [(entries, hkls, F2)], geom, omega, dty, det_shape, cut=cut,
-                                   transmission=transmission, omega_motor=omega_motor, dty_motor=dty_motor,
-                                   window=window, batch=batch, max_frames=max_frames)  # fmt: skip
-
-
-def write_rendered_rows(
-    hout: h5py.File, phases: list, geom: dict, omega: np.ndarray, dty: np.ndarray, det_shape: tuple[int, int], *,
-    rows: range | None = None, cut: float = 1, transmission: np.ndarray | None = None, omega_motor: str = "rot_center",
-    dty_motor: str = "dty", log: Callable | None = None, frames_per_call: int | None = None,
-    **render_kwargs: Any,  # noqa: ANN401
-) -> dict:  # fmt: skip
-    """Render dty rows of a scan, every phase summed, and write each as an ImageD11 scan group ("<row + 1>.1").
-
-    Parameters
-    ----------
-    hout
-        Open, writable HDF5 file
-    phases
-        [(entries, hkls, F2), ...] one per phase, see :func:`anri.fwd.render.render_phases`
-    geom, omega, dty, det_shape, cut, transmission, omega_motor, dty_motor
-        See :func:`simulate_sparse`
-    rows
-        The rows to render (default all)
-    log
-        Called with a line per row rendered, if given
-    frames_per_call
-        Render each row this many frames (file order) at a time, e.g. a DCT scan's one long rotation, whose peaks
-        would not all fit in memory at once. Each call renders only its own frames; a peak on the edge of two calls
-        is rendered by both, each into its own frames, so the parts join without overlap. Default: a row at once
-    **render_kwargs
-        Passed on to :func:`anri.fwd.render.render_row` (window, batch, max_frames, ...)
-
-    Returns
-    -------
-    stats: dict
-        Per row of the scan: "n_peaks" rendered, "n_pixels" written, "captured_min", the smallest share of a peak
-        within the scan's omega range that its window holds, and "n_outside", the peaks selected beyond the ends of
-        the scan, centred outside its omega range (left out of captured_min). Rows not rendered: 0, 0, 1 and 0. With
-        frames_per_call, peaks and peaks outside are counted per call, so a peak on the edge of two calls counts twice
-    """
-    import time
-
-    n_rows = omega.shape[0]
-    stats = {"n_peaks": np.zeros(n_rows, int), "n_pixels": np.zeros(n_rows, int), "captured_min": np.ones(n_rows),
-             "n_outside": np.zeros(n_rows, int)}  # fmt: skip
-    for i in range(n_rows) if rows is None else rows:
-        t0 = time.perf_counter()
-        n_frames = omega.shape[1]
-        step = n_frames if frames_per_call is None else frames_per_call
-        parts = []
-        for a in range(0, n_frames, step):
-            b = min(a + step, n_frames)
-            row = make_row(omega[i, a:b], dty[i, a:b], None if transmission is None else transmission[i, a:b])
-            frame, pixel, value, rstats = render_phases(phases, geom, row, det_shape, **render_kwargs)
-            parts.append((frame + a, pixel, value))
-            stats["n_peaks"][i] += rstats["n_peaks"]
-            inside = np.asarray(rstats["in_range"]) >= 0.5
-            stats["n_outside"][i] += int(np.sum(~inside))
-            if inside.any():
-                share = (np.asarray(rstats["captured"])[inside] / rstats["in_range"][inside]).min()
-                stats["captured_min"][i] = min(stats["captured_min"][i], share)
-        frame, pixel, value = (np.concatenate(x) for x in zip(*parts))  # frames in order: still sorted
-        stats["n_pixels"][i] = write_scan(
-            hout, f"{i + 1}.1", frame, pixel, value, omega[i], dty[i], det_shape, cut, omega_motor, dty_motor
-        )
-        if log is not None:
-            log(f"row {i} (dty {float(np.mean(dty[i])):.4g}): {stats['n_peaks'][i]} peaks ({stats['n_outside'][i]} "
-                f"outside the omega range), {stats['n_pixels'][i]} pixels above {cut:g}, window capture >= "
-                f"{stats['captured_min'][i]:.4f} ({time.perf_counter() - t0:.1f} s)")  # fmt: skip
-    return stats

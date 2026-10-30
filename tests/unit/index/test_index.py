@@ -11,6 +11,7 @@ import anri.geom
 import anri.index as ix
 import anri.io
 import anri.maths.rotation
+import anri.simulate
 
 PARS = {
     "y_center": 1049.9, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1116.5, "z_size": 75.0, "tilt_z": 0.0,
@@ -525,7 +526,7 @@ class TestEndToEnd(unittest.TestCase):
                 "cell_lattice_[P,A,B,C,I,F,R]": 229}  # fmt: skip
         with tempfile.TemporaryDirectory() as tmp:
             sparse = os.path.join(tmp, "sparse.h5")
-            anri.io.imaged11.simulate_sparse(sparse, entries, rings["hkls"], np.ones(len(rings["hkls"])), geom, omega, dty,
+            anri.simulate.stages.simulate_sparse(sparse, entries, rings["hkls"], np.ones(len(rings["hkls"])), geom, omega, dty,
                                     (2162, 2068), window=(5, 9, 9))  # fmt: skip
             parfile = anri.io.imaged11.write_pars(os.path.join(tmp, "pars"), PARS, {"Fe": cell})
             dsfile = anri.io.imaged11.write_dataset(sparse, tmp, "fe", "sim", y0=0.0, parfile=parfile)
