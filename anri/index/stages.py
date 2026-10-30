@@ -52,7 +52,6 @@ STAGES = ("histogram", "search", "filter", "fit", "localsearch", "populations")
 B_E, B_O = 0.5, 0.25  # lit histogram bins (deg): eta, omega
 R_E, R_O = 2, 4  # fit histogram bins = lit bins x these (1 x 1 deg)
 N_POP = 4  # populations per voxel at most
-_LATTICE_KEYS = ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")
 
 
 # ------------------------------------------------------------------------------------------------------- provenance
@@ -229,12 +228,7 @@ def open_dataset(
             root = os.path.dirname(root)
         parfile = os.path.join(os.path.dirname(root), "pars", "pars.json")
     geo, phase, cell = anri.io.imaged11.read_pars_json(parfile, phase)
-    lpars = np.array([cell[k] for k in _LATTICE_KEYS])
-    sg = cell["cell_lattice_[P,A,B,C,I,F,R]"]
-    if not isinstance(sg, float):
-        msg = f"{phase}: cell_lattice_[P,A,B,C,I,F,R] = {sg} is a centring letter; a space-group number is needed"
-        raise ValueError(msg)  # noqa: TRY004 (a wrong value in a file, not a wrong argument type)
-    sg = int(sg)
+    lpars, sg = anri.io.imaged11.lattice_from_cell(cell)
 
     ybin, yedge, oedge = ds["ybincens"], ds["ybinedges"], ds["obinedges"]
     ystep0 = float(np.median(np.diff(ybin)))

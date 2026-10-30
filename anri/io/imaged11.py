@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 _GEOMETRY_KEYS = ("y_center", "y_size", "tilt_y", "z_center", "z_size", "tilt_z", "tilt_x", "distance")
 _ORIENTATION_KEYS = ("o11", "o12", "o21", "o22")
+_CELL_KEYS = ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")
+_SPACE_GROUP_KEY = "cell_lattice_[P,A,B,C,I,F,R]"
 
 
 def detector_from_pars(pars: dict) -> dict:
@@ -211,6 +213,27 @@ def read_par(path: str) -> dict:
                 except ValueError:
                     out[parts[0]] = parts[1]
     return out
+
+
+def lattice_from_cell(cell: dict) -> tuple[np.ndarray, int]:
+    """Return the lattice parameters [a, b, c, alpha, beta, gamma] and the space-group number of an ImageD11 phase.
+
+    Parameters
+    ----------
+    cell
+        The phase's parameters, e.g. from :func:`read_pars_json`. Its ``cell_lattice_[P,A,B,C,I,F,R]`` must be a
+        space-group number, not a centring letter.
+    """
+    sg = cell[_SPACE_GROUP_KEY]
+    if isinstance(sg, str):
+        msg = f"{_SPACE_GROUP_KEY} = {sg} is a centring letter; a space-group number is needed"
+        raise ValueError(msg)  # noqa: TRY004 (a wrong value in a file, not a wrong argument type)
+    return np.array([float(cell[k]) for k in _CELL_KEYS]), int(sg)
+
+
+def cell_from_lattice(lattice: ArrayLike, space_group: int) -> dict:
+    """Return an ImageD11 phase's parameters from lattice parameters [a, b, c, alpha, beta, gamma] and a space group."""
+    return {**{k: float(v) for k, v in zip(_CELL_KEYS, np.ravel(lattice))}, _SPACE_GROUP_KEY: int(space_group)}
 
 
 def read_dataset(dsfile: str, remap: dict | None = None) -> dict:

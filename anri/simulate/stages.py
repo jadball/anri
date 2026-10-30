@@ -40,7 +40,6 @@ from anri.io.provenance import (
 OPTICS = {"al-crl": 8e-5, "si-nanolens": 1.5e-4}
 BANDWIDTH = 2e-3  # FWHM of d(lambda) / lambda: ID11's double Laue Si(111) monochromator
 EIGER_4M = (2162, 2068)
-_LATTICE_KEYS = ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")
 _SCAN = re.compile(r"^\d+\.1$")
 _ENTRY_KEYS = ("ubi", "grain", "grain_ubi", "pos", "density", "sig_rot")  # what a map's entries may hold
 
@@ -350,7 +349,7 @@ def load_prepare(path: str) -> dict:
         "phases" [(entries, hkls, F2), ...], "names", "cells" (ImageD11 lattice parameters per phase), "geom"
         (:func:`anri.io.imaged11.geom_from_pars`), "omega", "dty", "det_shape", "pars", "prov"
     """
-    from anri.io.imaged11 import geom_from_pars
+    from anri.io.imaged11 import cell_from_lattice, geom_from_pars
 
     prov = read_provenance(path)
     o, r = prov["options"], prov["resolved"]
@@ -363,7 +362,7 @@ def load_prepare(path: str) -> dict:
             a = read_attrs(g)
             entries = {k: g[k][()] for k in _ENTRY_KEYS if k in g}
             phases.append((entries, g["hkls"][()], g["F2"][()]))
-            cells[name] = {**dict(zip(_LATTICE_KEYS, a["lattice"])), "cell_lattice_[P,A,B,C,I,F,R]": a["space_group"]}
+            cells[name] = cell_from_lattice(a["lattice"], a["space_group"])
         mu_map = h["absorption/mu_map"][()] if "absorption/mu_map" in h else None
     if r.get("absorption"):
         from anri.fwd.render import add_absorption
