@@ -16,6 +16,10 @@ only by the radii of the rings, which leave it degenerate with the wavelength.
 
 :func:`strain_left` then frees each orientation's lattice with the geometry fixed: the strain left on a strain-free
 calibrant measures the calibration (as ImageD11's silicon notebook estimates its precision).
+
+It is meant for calibrants and little-deformed samples: each peak is matched to the orientation that predicts it
+best at the current geometry, so orientations closer to one another than the geometry's error absorb part of it,
+and the rounds of :func:`calibrate` converge slowly. A deformed sample's geometry is refined with its strains.
 """
 
 from __future__ import annotations

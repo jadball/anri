@@ -106,6 +106,11 @@ def stage_fit(
     Its orientations and occupancies place each peak's scattering origin; each orientation is refitted with the
     geometry. Wedge, chi and y0 stay fixed.
 
+    For a calibrant or a little-deformed sample. Where a voxel holds orientations closer to one another than the
+    geometry's error (cells, subgrains), matching each peak to the one that predicts it best absorbs part of that
+    error, and the rounds converge slowly (on the 316L phantom's cells, a few tenths of a degree, the distance was
+    still 6e-4 out after ten rounds): the stage warns. A deformed sample's geometry is refined with its strains.
+
     Parameters
     ----------
     fit_file
@@ -170,8 +175,9 @@ def stage_fit(
     log("fitted: " + ", ".join(f"{k} {res['pars'][k]:.8g} +- {e:.2g}" for k, e in zip(free, err)))
     if res["moved"].max() > 1:
         log(f"WARNING: the last round still moved {free[int(np.argmax(res['moved']))]} by {res['moved'].max():.1f} "
-            f"sigma: the rounds have not converged after {len(tols) + extra_rounds} (raise --extra-rounds); the errors "
-            "above are too small")  # fmt: skip
+            f"sigma: the rounds have not converged after {len(tols) + extra_rounds}, and the errors above are too "
+            "small. A deformed sample (orientations within a voxel closer than the geometry's error) converges "
+            "slowly: calibrate on a calibrant or a little-deformed sample, or raise --extra-rounds")  # fmt: skip
     if ok.any():
         w = st["n_peaks"][ok]
         log(f"strain left with free lattices ({ok.sum()} orientations, peak-weighted mean, 1e-5): hydrostatic "
@@ -265,7 +271,8 @@ def stage_rings(
     str
         The file written: the fitted geometry ("geometry", as :func:`stage_fit`'s, for :func:`write_pars`), the
         covariance of the free parameters, the rings ("tth", "used"), each (ring, eta sector)'s offset from its ring
-        at the start and at the end ("offset_start", "offset", with the summed "intensity"), and the image
+        at the start and at the end ("offset_start", "offset", with the summed "intensity"), the image, and the
+        searches' curves ("search"; :func:`anri.calib.diagnostics.read_rings` reads them all)
     """
     import anri.io.imaged11 as io
 
@@ -338,10 +345,10 @@ def stage_rings(
 
     sep = 2 * max(tols)
     start = rings.ring_offsets(px, rings_on(pars0), pars0, tols[0], n_eta, sep)["offset"]
-    p1 = pars0
+    p1, centre, dist = pars0, None, None
     if search:
-        p1 = rings.find_centre(px, pars0, max_shift, log=log)
-        p1 = rings.find_distance(px, rings_on(p1, span[0]), p1, tols[0], tuple(span), log=log)
+        p1, centre = rings.find_centre(px, pars0, max_shift, log=log)
+        p1, dist = rings.find_distance(px, rings_on(p1, span[0]), p1, tols[0], tuple(span), log=log)
     ds_r = rings_on(p1)
     tth_max = float(np.degrees(np.arcsin(ds_r[-1] * p1["wavelength"] / 2) * 2)) if len(ds_r) else 0.0
     log(f"{len(ds_r)} rings up to 2theta {tth_max:.3f} deg")
@@ -368,6 +375,14 @@ def stage_rings(
         h["offset_start"], h["offset"], h["intensity"] = start, end["offset"], end["intensity"]
         h["offset"].attrs["eta_edges_deg"] = np.linspace(-180.0, 180.0, n_eta + 1)
         h.create_dataset("image", data=image.astype(np.float32), compression="lzf", chunks=True)
+        if centre is not None and dist is not None:  # the searches' curves (anri.calib.plots)
+            g = h.create_group("search")
+            g["centre_start"] = centre["start"]
+            for i, lv in enumerate(centre["levels"]):
+                c = g.create_group(f"centre/{i}")
+                c.attrs["step"] = lv["step"]
+                c["centres"], c["sharpness"] = lv["centres"], lv["sharpness"]
+            g["distance"], g["score"] = dist["distance"], dist["score"]
     write_results(out, {**{k: res["pars"][k] for k in free}, **{f"{k}_err": float(e) for k, e in zip(free, err)},
                         "rms_deg": res["rms"], "n_sectors": res["n_sectors"]})  # fmt: skip
     log(f"-> {out}")

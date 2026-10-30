@@ -228,7 +228,7 @@ def _sharpness(centres: jax.Array, sc: jax.Array, fc: jax.Array, w: jax.Array, s
 
 
 def find_centre(px: dict, pars: dict, max_shift: float = 200.0, max_pixels: int = 200_000,
-                log: Callable = print) -> dict:  # fmt: skip
+                log: Callable = print) -> tuple:  # fmt: skip
     """Find the beam centre without assigning rings: where the rings' radial histogram is sharpest.
 
     About the right centre every ring is a circle (to the detector tilts' small ellipticity), so the histogram of
@@ -253,8 +253,11 @@ def find_centre(px: dict, pars: dict, max_shift: float = 200.0, max_pixels: int 
 
     Returns
     -------
-    dict
-        pars, with y_center and z_center found
+    pars: dict
+        With y_center and z_center found
+    diag: dict
+        "start" (z_center, y_center) and "levels": per grid, "step" (pixels), "centres" [C, 2] (z_center,
+        y_center) and "sharpness" [C]
     """
     take = np.unique(np.linspace(0, len(px["sc"]) - 1, min(max_pixels, len(px["sc"]))).astype(np.int64))
     sc, fc = jnp.asarray(px["sc"][take], jnp.float32), jnp.asarray(px["fc"][take], jnp.float32)
@@ -263,19 +266,21 @@ def find_centre(px: dict, pars: dict, max_shift: float = 200.0, max_pixels: int 
     pix = float(min(pars["z_size"], pars["y_size"]))
     r_max = float(np.hypot(np.ptp(px["sc"]) + 2 * max_shift, np.ptp(px["fc"]) + 2 * max_shift)) * pix
     best = np.array([pars["z_center"], pars["y_center"]])
+    diag: dict = {"start": best.copy(), "levels": []}
     for step, half in ((8.0, max_shift), (2.0, 8.0), (0.5, 2.0)):
         g = np.arange(-half, half + step / 2, step)
         grid = best + np.stack(np.meshgrid(g, g, indexing="ij"), -1).reshape(-1, 2)
         rbin = step / 2 * pix
         h = np.asarray(_sharpness(jnp.asarray(grid, jnp.float32), sc, fc, w, size, rbin, int(r_max / rbin) + 1))
         best = grid[np.argmax(h)]
+        diag["levels"].append({"step": step, "centres": grid, "sharpness": h})
         log(f"centre search: {len(grid)} centres {step:g} px apart; best z_center {best[0]:.2f}, y_center "
             f"{best[1]:.2f} (sharpness {h.max() / np.median(h):.3g} x the median)")  # fmt: skip
-    return {**pars, "z_center": float(best[0]), "y_center": float(best[1])}
+    return {**pars, "z_center": float(best[0]), "y_center": float(best[1])}, diag
 
 
 def find_distance(px: dict, ds: np.ndarray, pars: dict, tol: float = 0.1, span: tuple = (0.7, 1.4),
-                  log: Callable = print) -> dict:  # fmt: skip
+                  log: Callable = print) -> tuple:  # fmt: skip
     """Find the distance without assigning rings: the one whose ring windows catch the most intensity.
 
     With the centre found (:func:`find_centre`), a pixel at 2theta seen from distance L0 is at
@@ -296,8 +301,10 @@ def find_distance(px: dict, ds: np.ndarray, pars: dict, tol: float = 0.1, span: 
 
     Returns
     -------
-    dict
-        pars, with the distance found
+    pars: dict
+        With the distance found
+    diag: dict
+        "distance" [L] (the distances tried) and "score" [L]
     """
     tth, _ = _angles(px, pars)
     w = np.sqrt(np.maximum(px["intensity"], 0.0))
@@ -320,7 +327,7 @@ def find_distance(px: dict, ds: np.ndarray, pars: dict, tol: float = 0.1, span: 
     second = np.max(np.where(np.abs(np.arange(len(scale)) - best) > 8, score, -np.inf))
     log(f"distance search: {len(scale)} distances {span[0]:g}-{span[1]:g} x {pars['distance']:.6g}; best "
         f"{p['distance']:.6g} (x {scale[best]:.4f}), score {score[best]:.4g}, next best elsewhere {second:.4g}")  # fmt: skip
-    return p
+    return p, {"distance": pars["distance"] * scale, "score": score}
 
 
 def fit_rings(px: dict, ds: np.ndarray, pars: dict, free: tuple = FREE, tols: tuple = (0.2, 0.1),

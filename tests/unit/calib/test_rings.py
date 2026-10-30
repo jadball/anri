@@ -51,9 +51,9 @@ class TestFitRings(unittest.TestCase):
         ds = rings.ring_ds(*SI, TRUE["wavelength"], 30.0)
         p = dict(fit.base_pars(TRUE, 0.0), y_center=TRUE["y_center"] + 40.0, z_center=TRUE["z_center"] - 60.0,
                  distance=TRUE["distance"] * 1.08)  # fmt: skip
-        p = rings.find_centre(px, p, log=lambda _: None)
+        p, _ = rings.find_centre(px, p, log=lambda _: None)
         self.assertLess(np.hypot(p["y_center"] - TRUE["y_center"], p["z_center"] - TRUE["z_center"]), 1.5)
-        p = rings.find_distance(px, ds, p, log=lambda _: None)
+        p, _ = rings.find_distance(px, ds, p, log=lambda _: None)
         self.assertLess(abs(p["distance"] / TRUE["distance"] - 1), 2e-3)
         res = rings.fit_rings(px, ds, p, log=lambda _: None)
         self.assertLess(abs(res["pars"]["y_center"] - TRUE["y_center"]), 0.02)
@@ -63,6 +63,7 @@ class TestFitRings(unittest.TestCase):
         import fabio
 
         import anri.io.imaged11 as io
+        from anri.calib.diagnostics import read_rings
         from anri.calib.stages import stage_rings, write_pars
 
         cell = {"cell__a": SI[0][0], "cell__b": SI[0][1], "cell__c": SI[0][2], "cell_alpha": 90.0,
@@ -74,6 +75,10 @@ class TestFitRings(unittest.TestCase):
             fabio.edfimage.EdfImage(data=_image().astype(np.float32)).write(img)
             out = stage_rings(img, os.path.join(tmp, "si_rings.h5"), parfile=parfile, log=lambda _: None)
             pars = io.read_pars_json(write_pars(out, os.path.join(tmp, "fitted")))[0]
+            d = read_rings(out)  # what the plots draw: the searches and the rings' offsets
+        self.assertEqual(len(d["centre"]["levels"]), 3)
+        self.assertAlmostEqual(d["distance"][np.argmax(d["score"])] / TRUE["distance"], 1.0, delta=0.01)
+        self.assertEqual(d["offset"].shape, (len(d["tth"]), 360))
         self.assertLess(abs(pars["distance"] / TRUE["distance"] - 1), 2e-5)
         self.assertLess(abs(pars["y_center"] - TRUE["y_center"]), 0.02)
         self.assertEqual(pars["wavelength"], TRUE["wavelength"])  # not fitted
