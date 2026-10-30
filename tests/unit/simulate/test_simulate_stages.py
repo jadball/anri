@@ -128,6 +128,33 @@ class TestRenderStages(unittest.TestCase):
             self.assertEqual(dg.frames_image(obs, range(90)).sum(), obs["value"].sum())
 
 
+class TestGrainMap(unittest.TestCase):
+    def test_prepare_and_render(self):
+        """A grain map .npz (grain, grain_ubi) goes through prepare and render with its grains, absorption included."""
+        from anri.fwd.render import grain_entries
+
+        lp = np.array([2.8665] * 3 + [90.0] * 3)
+        U = anri.maths.rotation.random_rotations(2, np.random.default_rng(3))
+        ubi = np.linalg.inv(np.asarray(U) @ anri.crystal.structure.B_matrix(lp))
+        labels = np.zeros((4, 4), int)
+        labels[:, 2:] = 1
+        labels[0, 0] = -1
+        with tempfile.TemporaryDirectory() as tmp:
+            parfile = os.path.join(tmp, "geometry.par")
+            anri.io.imaged11.write_par(parfile, PARS)
+            map_file = os.path.join(tmp, "grains.npz")
+            np.savez(map_file, **grain_entries(labels, ubi, 2.0), voxel_size=2.0, lattice=lp, space_group=229,
+                     phase="Fe")  # fmt: skip
+            prep = sim.stages.stage_prepare(map_file, parfile, os.path.join(tmp, "g_prepare.h5"), omega_step=2.0,
+                                            dty_step=8.0, margin=0.25, mu=0.01, log=lambda m: None)  # fmt: skip
+            entries = sim.stages.load_prepare(prep)["phases"][0][0]
+            self.assertEqual(sorted(entries), ["density", "grain", "grain_ubi", "optical_depth", "pos"])
+            np.testing.assert_array_equal(entries["grain"], labels[labels >= 0])
+            np.testing.assert_allclose(entries["grain_ubi"], ubi)
+            out = sim.stages.stage_render(prep, rows="1:2", log=lambda m: None)
+            self.assertGreater(anri.io.provenance.read_provenance(out)["results"]["pixels"], 0)
+
+
 class TestAbsorption(unittest.TestCase):
     def test_mu_per_phase_and_map(self):
         """mu per phase (built from the map) or a mu map file: the same optical depths for the same sample; absorption

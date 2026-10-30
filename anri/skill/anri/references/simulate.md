@@ -14,8 +14,10 @@ python -m anri.simulate show <any stage file> --log
 ```
 
 The map is an ImageD11 TensorMap (every phase in it; each needs a space group) or the `_entries.npz` the indexer's
-populations stage writes, so an indexed map can be rendered back and compared with its data. `<pars>` is an ImageD11
-`.par` file or `pars.json`.
+populations stage writes, so an indexed map can be rendered back and compared with its data. A grain map (one UBI per
+grain, e.g. from DCT: `anri.fwd.render.grain_entries` from a label volume) is an `.npz` with "grain" and "grain_ubi"
+instead of "ubi"; it assumes no orientation spread and one strain per grain, so use it only where that holds.
+`<pars>` is an ImageD11 `.par` file or `pars.json`.
 
 ## Choices
 
@@ -49,6 +51,8 @@ quartz).
 
 - `anri.fwd.render.render_row`: every peak of one phase that reaches one dty row, as sparse pixels; `render_phases`
   sums several phases.
+- `anri.fwd.render.grain_entries`: map entries from a label volume and one UBI per grain. The same pixels as giving
+  every voxel its grain's UBI, with the peaks that reach a row found grain by grain first (faster).
 - `anri.fwd.render.make_row`: the row dict from one scan's per-frame ω and dty. Frames integrate over their ω (and
   dty) range: never treat a frame as one angle.
 - `anri.fwd.render.guess_batch_size`: the largest `batch` that fits a share of free memory. Use it rather than

@@ -17,10 +17,12 @@ from anri.fwd.render import (
     _valid_from_shards,
     add_absorption,
     check_render,
+    grain_entries,
     guess_batch_size,
     make_row,
     render_peaks,
     render_row,
+    row_peaks,
     select_peaks,
 )
 from anri.fwd.scan import get_centroid_scan
@@ -452,6 +454,66 @@ class TestLargeBatch(unittest.TestCase):
         small = np.concatenate([np.asarray(render_peaks(e[i : i + 256], h[i : i + 256], b[i : i + 256], *args)[2])
                                 for i in range(0, 4096, 256)])  # fmt: skip
         np.testing.assert_allclose(big, small, rtol=0, atol=1e-9 * small.max())
+
+
+class TestGrainMap(unittest.TestCase):
+    """A grain map (one UBI per grain) renders as the same map with every voxel given its grain's UBI."""
+
+    def setUp(self):
+        # a small DCT-like case: 12^3 cubes of 2 um in three grains, box beam, 1 um pixels 5 mm behind the sample
+        rng = np.random.default_rng(1)
+        n, step = 12, 2.0
+        idx = np.stack(np.meshgrid(*[np.arange(n)] * 3, indexing="ij"), -1)
+        labels = np.argmin(((idx[..., None, :] - rng.uniform(0, n, (3, 3))) ** 2).sum(-1), -1)
+        labels[0, 0, :] = -1  # some empty voxels
+        B = np.asarray(anri.crystal.lattice.lpars_to_B(jnp.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
+        U = np.stack([np.asarray(anri.maths.rotation.rot_z(a) @ anri.maths.rotation.rot_x(b))
+                      for a, b in ((10, 20), (70, -35), (130, 50))])  # fmt: skip
+        self.grains = grain_entries(labels, np.linalg.inv(U @ B), step)
+        g = self.grains
+        g["sig_rot"] = np.where(g["grain"] == 1, 2e-3, 0.0)  # per entry, as for any map
+        self.voxels = {"ubi": g["grain_ubi"][g["grain"]], **{k: g[k] for k in ("pos", "density", "sig_rot")}}
+        from anri.io.imaged11 import geom_from_pars
+
+        wl = 12.398419843320026 / 43.0
+        pars = {"y_center": 255.5, "y_size": 1.0, "tilt_y": 0.0, "z_center": 255.5, "z_size": 1.0, "tilt_z": 0.0,
+                "tilt_x": 0.0, "distance": 1000.0, "o11": -1, "o12": 0, "o21": 0, "o22": -1, "wavelength": wl}  # fmt: skip
+        self.geom = geom_from_pars(pars, 0.0, wl * 1e-4, 1e-4, 1e-4, sig_beam=0.5, voxel_size=step, sig_psf=1.0,
+                                   width_beam=60.0, sig_beam_v=0.5, width_beam_v=60.0, voxel_3d=True)  # fmt: skip
+        hkls = np.array(list(np.ndindex(5, 5, 5)), dtype=float) - 2
+        self.hkls = hkls[(np.abs(hkls).sum(1) > 0) & (hkls.sum(1) % 2 == 0)]  # bcc
+        self.det_shape = (512, 512)
+        omega = np.arange(0.0, 30.0, 0.1) + 0.05
+        self.row = make_row(omega, np.zeros_like(omega))
+
+    def test_positions(self):
+        g = self.grains
+        self.assertEqual(len(g["pos"]), 12**3 - 12)
+        np.testing.assert_allclose(g["pos"].min(0), [-11.0, -11.0, -11.0])
+        np.testing.assert_allclose(g["pos"].max(0), [11.0, 11.0, 11.0])
+        with self.assertRaises(ValueError):
+            render_row({**self.voxels, "grain": g["grain"], "grain_ubi": g["grain_ubi"]}, self.hkls,
+                       np.ones(len(self.hkls)), self.geom, self.row, self.det_shape)  # fmt: skip
+
+    def test_same_peaks_and_pixels(self):
+        from anri.fwd.render import _as_jax
+
+        F2 = np.ones(len(self.hkls))
+        kw = {"window": (3, 7, 7), "max_frames": 7}
+        peaks = []
+        for ent in (self.grains, self.voxels):
+            ej, hk, _, geom, row = _as_jax(ent, self.hkls, F2, self.geom, self.row)
+            e, h, b, cls, _ = row_peaks(ej, hk, geom, row, self.det_shape, kw["window"], kw["max_frames"])
+            order = np.lexsort((b, h, e))
+            peaks.append(np.stack([e, h, b, cls])[:, order])
+        self.assertGreater(peaks[0].shape[1], 1000)
+        np.testing.assert_array_equal(peaks[0], peaks[1])
+
+        a = render_row(self.grains, self.hkls, F2, self.geom, self.row, self.det_shape, batch=BATCH, **kw)
+        b = render_row(self.voxels, self.hkls, F2, self.geom, self.row, self.det_shape, batch=BATCH, **kw)
+        np.testing.assert_array_equal(a[0], b[0])
+        np.testing.assert_array_equal(a[1], b[1])
+        np.testing.assert_allclose(a[2], b[2], rtol=1e-12)
 
 
 class TestCheckRender(unittest.TestCase):

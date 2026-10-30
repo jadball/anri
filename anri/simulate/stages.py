@@ -42,6 +42,7 @@ BANDWIDTH = 2e-3  # FWHM of d(lambda) / lambda: ID11's double Laue Si(111) monoc
 EIGER_4M = (2162, 2068)
 _LATTICE_KEYS = ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")
 _SCAN = re.compile(r"^\d+\.1$")
+_ENTRY_KEYS = ("ubi", "grain", "grain_ubi", "pos", "density", "sig_rot")  # what a map's entries may hold
 
 
 def read_map(map_file: str) -> tuple[list[dict], float]:
@@ -51,7 +52,8 @@ def read_map(map_file: str) -> tuple[list[dict], float]:
     ----------
     map_file
         An ImageD11 TensorMap (``.h5``; every phase in it), or the entries the indexer writes (``_entries.npz``, one
-        phase, with its voxel size, lattice, space group and name)
+        phase, with its voxel size, lattice, space group and name). A ``.npz`` grain map has "grain" and "grain_ubi"
+        (:func:`anri.fwd.render.grain_entries`) instead of "ubi"
 
     Returns
     -------
@@ -59,13 +61,18 @@ def read_map(map_file: str) -> tuple[list[dict], float]:
     """
     if map_file.endswith(".npz"):
         z = np.load(map_file)
-        missing = [k for k in ("ubi", "pos", "density", "voxel_size", "lattice", "space_group", "phase") if k not in z]
+        orient = ("grain", "grain_ubi") if "grain" in z else ("ubi",)
+        need = (*orient, "pos", "density", "voxel_size", "lattice", "space_group", "phase")
+        missing = [k for k in need if k not in z]
         if missing:
             msg = (
-                f"{map_file} lacks {missing}: give a TensorMap, or entries written by python -m anri.index populations"
+                f"{map_file} lacks {missing}: give a TensorMap, entries written by python -m anri.index populations, "
+                f"or a grain map (anri.fwd.render.grain_entries)"
             )
             raise ValueError(msg)
-        entries = {k: np.asarray(z[k], float) for k in ("ubi", "pos", "density", "sig_rot") if k in z}
+        entries = {k: np.asarray(z[k], float) for k in _ENTRY_KEYS if k in z}
+        if "grain" in entries:
+            entries["grain"] = entries["grain"].astype(np.int32)
         phase = {"name": str(z["phase"]), "entries": entries, "lattice": [float(v) for v in z["lattice"]],
                  "space_group": int(z["space_group"])}  # fmt: skip
         return [phase], float(z["voxel_size"])
@@ -293,7 +300,8 @@ def stage_prepare(
             for k, v in p["entries"].items():
                 g.create_dataset(k, data=v * density if k == "density" else v, compression="lzf")
             g["hkls"], g["F2"] = hkls, F2
-            log(f"phase {p['name']}: {len(p['entries']['ubi'])} entries, {len(hkls)} reflections, "
+            n_grains = f" in {len(p['entries']['grain_ubi'])} grains" if "grain" in p["entries"] else ""
+            log(f"phase {p['name']}: {len(p['entries']['pos'])} entries{n_grains}, {len(hkls)} reflections, "
                 + ("|F|^2 = 1" if path is None else f"|F|^2 from {path}"))  # fmt: skip
     log(f"-> {out}")
     write_log(out, lines)
@@ -322,7 +330,7 @@ def load_prepare(path: str) -> dict:
         for name in r["phases"]:
             g = h[f"phases/{name}"]
             a = read_attrs(g)
-            entries = {k: g[k][()] for k in ("ubi", "pos", "density", "sig_rot") if k in g}
+            entries = {k: g[k][()] for k in _ENTRY_KEYS if k in g}
             phases.append((entries, g["hkls"][()], g["F2"][()]))
             cells[name] = {**dict(zip(_LATTICE_KEYS, a["lattice"])), "cell_lattice_[P,A,B,C,I,F,R]": a["space_group"]}
         mu_map = h["absorption/mu_map"][()] if "absorption/mu_map" in h else None
