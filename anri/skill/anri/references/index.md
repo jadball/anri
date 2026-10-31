@@ -17,7 +17,7 @@ d = ix.stages.load_histogram("<sample>_<dataset>_histogram.h5")
 The plots (`anri.index.plots`) draw them: `update = plot_x(fig, diag)` draws once, and `update(**values)` redraws
 for other option values. Save the figure with `fig.savefig` and look at it.
 
-## 1. histogram: `--rings`, `--tth-tol`, `--cif`, `--monitor`, `--gridstep`, `--saturation`, `--detector-mask`
+## 1. histogram: `--rings`, `--tth-tol`, `--cif`, `--monitor`, `--gridstep`, `--saturation`, `--detector-mask`, `--pol-factor`
 
 The one pass over the whole dataset: every pixel binned into the lit histogram and the fit's histogram. Re-run it
 after changing the rings.
@@ -31,6 +31,7 @@ after changing the rings.
 | `--gridstep` | the number of voxels the fit can afford: rows summed in groups make voxels larger and the fit much cheaper | the log's `memory:` line |
 | `--saturation` | the detector's saturation count; saturated bins become lower bounds in the fit | ask the human |
 | `--cif` | structure factors for intensities, and the attenuation the fit's absorption uses | ask the human for the phase |
+| `--pol-factor` | the beam's degree of horizontal polarisation, in the predicted intensities (default 1, a synchrotron) | ask the human for a lab source |
 
 Six to eight rings are usually enough; more help small grains and lower symmetry, and each ring costs time in every
 later stage. `--grid-pad` widens the voxel grid for a sample reaching past the scanned range. The grid is fixed here

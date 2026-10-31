@@ -90,6 +90,8 @@ def _histogram_options(p: argparse.ArgumentParser) -> None:
         help="widen the voxel grid by this on every side (sample "
         "units, e.g. um), for a sample reaching past the scanned range; fixed here for every later stage",
     )
+    p.add_argument("--pol-factor", type=float, default=1.0, help="degree of horizontal polarisation of the beam, for "
+                   "the predicted intensities (default 1)")  # fmt: skip
     p.add_argument("--gridstep", type=int, default=1, help="voxel = gridstep x dty step; data rows are summed in groups "
                    "of gridstep to match (default 1)")  # fmt: skip
     p.add_argument("--check", action="store_true", help="print the resolved paths and parameters, then stop")
@@ -305,7 +307,7 @@ def main() -> None:
         source = ix.stages.stage_histogram(
             args.analysisroot, args.sample, args.dataset, out, phase=args.phase, parfile=args.parfile,
             rings=args.rings, ring_merge=args.ring_merge, cif=args.cif, tth_tol=args.tth_tol, monitor=args.monitor, dty_source=args.dty_source,
-            frame_dty=not args.no_frame_dty, gridstep=args.gridstep, grid_pad=args.grid_pad, saturation=args.saturation, detector_mask=args.detector_mask, check=args.check, command=command, log=log,
+            frame_dty=not args.no_frame_dty, gridstep=args.gridstep, grid_pad=args.grid_pad, saturation=args.saturation, detector_mask=args.detector_mask, pol_factor=args.pol_factor, check=args.check, command=command, log=log,
         )  # fmt: skip
         if args.check or cmd == "histogram":
             return
