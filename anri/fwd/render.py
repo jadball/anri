@@ -490,16 +490,14 @@ def _render_peaks(
 
 
 @jax.jit
-def _compact(
-    frame: jax.Array, pixel: jax.Array, value: jax.Array, min_value: jax.Array
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Move the contributions that are kept (value >= min_value) to the front, without sorting.
+def _compact(frame: jax.Array, pixel: jax.Array, value: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Move the contributions that are kept (frame >= 0, value > 0) to the front, without sorting.
 
     Returns fixed-size arrays plus the number of kept leading entries. Duplicates are not merged here. Used on CPUs,
     where XLA's sort is several times slower than NumPy's, so :func:`_merge` would cost more than it saves.
     """
     frame, pixel, value = frame.ravel(), pixel.ravel(), value.ravel()
-    keep = (frame >= 0) & (value >= min_value)
+    keep = (frame >= 0) & (value > 0)
     n = frame.shape[0]
     target = jnp.where(keep, jnp.cumsum(keep) - 1, n)  # n is out of bounds, so dropped
     frame = jnp.zeros_like(frame).at[target].set(frame, mode="drop")
@@ -509,10 +507,8 @@ def _compact(
 
 
 @jax.jit
-def _merge(
-    frame: jax.Array, pixel: jax.Array, value: jax.Array, min_value: jax.Array
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Drop contributions below min_value, then sum duplicate (frame, pixel)s: sorted, unique ones first.
+def _merge(frame: jax.Array, pixel: jax.Array, value: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Drop unused cells and zeros, then sum duplicate (frame, pixel)s: sorted, unique ones first.
 
     The merge on the device (GPUs), per batch; :func:`_merge_host` is the same merge on the host, across batches and
     devices (and the only one on CPUs, where XLA's sort is ~3x slower than NumPy's). The two must agree (tested).
@@ -521,7 +517,7 @@ def _merge(
     that are used.
     """
     frame, pixel, value = frame.ravel(), pixel.ravel(), value.ravel()
-    keep = (frame >= 0) & (value >= min_value)
+    keep = (frame >= 0) & (value > 0)
     last = jnp.iinfo(jnp.int32).max  # dropped entries sort to the end
     frame, pixel, value = jax.lax.sort(
         (jnp.where(keep, frame, last), jnp.where(keep, pixel, last), jnp.where(keep, value, 0.0)), num_keys=2
@@ -546,7 +542,7 @@ def _merge_host(
     Parameters
     ----------
     frame, pixel, value
-        [N] contributions (all kept: :func:`_compact` or :func:`_merge` has dropped the rest)
+        [N] contributions (all used: :func:`_compact` or :func:`_merge` has dropped the rest)
     npix
         Pixels per frame (n_slow x n_fast)
 
@@ -770,7 +766,6 @@ def _render_sharded(
     F2: jax.Array,
     geom: dict,
     row: dict,
-    min_value: jax.Array,
     window: tuple[int, int, int],
     det_shape: tuple[int, int],
     mesh: Mesh,
@@ -791,16 +786,15 @@ def _render_sharded(
         f2: jax.Array,
         g: dict,
         r: dict,
-        mv: jax.Array,
     ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
         frame, pixel, value, captured, in_range, _ = _render_peaks(e, h, b, ent, hk, f2, g, r, window, det_shape, None)
         value = jnp.where(lv[:, None], value, 0.0)
-        frame, pixel, value, count = reduce(frame, pixel, value, mv)
+        frame, pixel, value, count = reduce(frame, pixel, value)
         return frame, pixel, value, count[None], captured, in_range
 
-    specs = (P("d"),) * 4 + (P(),) * 6
+    specs = (P("d"),) * 4 + (P(),) * 5
     return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 6)(
-        entry, hkl_idx, branch, live, entries, hkls, F2, geom, row, min_value
+        entry, hkl_idx, branch, live, entries, hkls, F2, geom, row
     )
 
 
@@ -1073,7 +1067,7 @@ def _splat_add(
 @partial(jax.jit, static_argnames=("det_shape", "mesh"))
 def _splat_out(
     tiles: jax.Array, kernel: jax.Array, i0: jax.Array, j0: jax.Array, fclip: jax.Array, real: jax.Array,
-    spot_live: jax.Array, row: dict, min_value: jax.Array, det_shape: tuple[int, int], mesh: Mesh,
+    spot_live: jax.Array, row: dict, det_shape: tuple[int, int], mesh: Mesh,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:  # fmt: skip
     """Convolve every frame of every tile with its spot's kernel, and return the sparse pixels, as _render_sharded does.
 
@@ -1084,7 +1078,7 @@ def _splat_out(
     ns, nf = det_shape
 
     def local(t: jax.Array, kern: jax.Array, i0: jax.Array, j0: jax.Array, fc: jax.Array, re: jax.Array,
-              sl: jax.Array, r: dict, mv: jax.Array) -> tuple:  # fmt: skip
+              sl: jax.Array, r: dict) -> tuple:  # fmt: skip
         n_spots, wo, tile, _ = t.shape
         ws, wf = kern.shape[2:]
         out = jax.lax.conv_general_dilated(
@@ -1104,13 +1098,19 @@ def _splat_out(
         )
         frame = jnp.where(inside, r["order"][fc][:, :, None, None], -1)
         pixel = jnp.where(inside, rows[:, :, :, None] * nf + cols[:, :, None, :], 0)
-        frame, pixel, value, count = reduce(frame, pixel, jnp.where(inside, out, 0.0), mv)
+        frame, pixel, value, count = reduce(frame, pixel, jnp.where(inside, out, 0.0))
         return frame, pixel, value, count[None]
 
-    specs = (P("d"),) * 7 + (P(), P())
+    specs = (P("d"),) * 7 + (P(),)
     return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 4)(
-        tiles, kernel, i0, j0, fclip, real, spot_live, row, min_value
+        tiles, kernel, i0, j0, fclip, real, spot_live, row
     )
+
+
+def _at_least(frame: np.ndarray, pixel: np.ndarray, value: np.ndarray, min_value: float) -> tuple:
+    """Return the sparse pixels whose value is at least min_value."""
+    keep = value >= min_value
+    return frame[keep], pixel[keep], value[keep]
 
 
 def _check_splat(entries: dict) -> None:
@@ -1137,7 +1137,7 @@ def _shard_pixels(frame: jax.Array, pixel: jax.Array, value: jax.Array, count: j
 
 def _render_windows(
     sel: np.ndarray, window: tuple[int, int, int], peaks: tuple, entries: dict, hkls: jax.Array, F2: jax.Array,
-    geom: dict, row: dict, min_value: jax.Array, det_shape: tuple[int, int], mesh: Mesh, batch: int, stats: dict,
+    geom: dict, row: dict, det_shape: tuple[int, int], mesh: Mesh, batch: int, stats: dict,
 ) -> list:  # fmt: skip
     """Render the peaks sel (indices into peaks, (entry, hkl, branch)), each integrated over its own window.
 
@@ -1158,7 +1158,7 @@ def _render_windows(
         idx = [np.pad(x[these], (0, size - these.size)) for x in peaks]
         live = np.arange(size) < these.size
         fr, px, val, count, cap, inr = _render_sharded(
-            *idx, live, entries, hkls, F2, geom, row, min_value, window, det_shape, mesh
+            *idx, live, entries, hkls, F2, geom, row, window, det_shape, mesh
         )
         parts.append(_shard_pixels(fr, px, val, count, per_device * window[0] * window[1] * window[2]))
         stats["captured"][these] = np.asarray(cap)[: these.size]
@@ -1168,8 +1168,8 @@ def _render_windows(
 
 def _render_spots(
     sel: np.ndarray, window: tuple[int, int, int], cells_per_peak: int, peaks: tuple, spots: tuple, entries: dict,
-    hkls: jax.Array, F2: jax.Array, geom: dict, row: dict, min_value: jax.Array, det_shape: tuple[int, int],
-    mesh: Mesh, batch: int, stats: dict,
+    hkls: jax.Array, F2: jax.Array, geom: dict, row: dict, det_shape: tuple[int, int], mesh: Mesh, batch: int,
+    stats: dict,
 ) -> list:  # fmt: skip
     """Render the spots sel (indices into spots) whole, as render_row's splat, with one window size.
 
@@ -1226,8 +1226,7 @@ def _render_spots(
                 idx = np.where(have, dev_start[:, None] + c0 + j[None, :], 0).ravel()
                 tiles = _splat_add(tiles, *spot_args, fclip, om_fr, e[peak_of[idx]], local[idx], have.ravel(),
                                    entries, hkls, geom, row, mesh)  # fmt: skip
-            fr, px, val, cnt = _splat_out(tiles, kernel, i0, j0, fclip, real, spot_live, row, min_value, det_shape,
-                                          mesh)  # fmt: skip
+            fr, px, val, cnt = _splat_out(tiles, kernel, i0, j0, fclip, real, spot_live, row, det_shape, mesh)
             parts.append(_shard_pixels(fr, px, val, cnt, per_shard))
             stats["captured"][peak_of] = np.repeat(np.asarray(cap)[: chunk.size], count[chunk])
             stats["in_range"][peak_of] = np.repeat(np.asarray(inr)[: chunk.size], count[chunk])
@@ -1288,7 +1287,8 @@ def render_row(
     select_chunk
         Approximate number of (entry, hkl) pairs per call to :func:`select_peaks`
     min_value
-        Contributions below this are dropped
+        Pixels whose value, summed over every peak of the row, is below this are dropped. Each peak's own share of a
+        pixel is never cut: many weak voxels can light one pixel well above it
     mesh
         Devices to use, default :func:`anri.utils.mesh`
     max_frames
@@ -1348,8 +1348,7 @@ def render_row(
         stats["n_spots"] = first.size
 
     # 2. Render one window size at a time
-    min_value_j = jnp.asarray(min_value, dtype=dtype)
-    args = (entries, hkls_j, F2_j, geom, row_j, min_value_j, det_shape, mesh, batch, stats)
+    args = (entries, hkls_j, F2_j, geom, row_j, det_shape, mesh, batch, stats)
     parts = []
     for k, wo_k in enumerate(classes):
         sel = np.flatnonzero(cls == k)
@@ -1361,8 +1360,9 @@ def render_row(
         else:
             parts += _render_windows(sel, (wo_k, ws, wf), (e, h, b), *args)
 
-    # 3. Merge batches and devices: sort by (frame, pixel) and sum duplicates
+    # 3. Merge batches and devices: sort by (frame, pixel), sum duplicates, then drop the pixels below min_value
     frame, pixel, value = _merge_host(*(np.concatenate(x) for x in zip(*parts)), det_shape[0] * det_shape[1])
+    frame, pixel, value = _at_least(frame, pixel, value, min_value)
     if len(classes) > 1:
         frames = np.asarray(classes)[cls]
         stats["window_frames"] = np.repeat(frames, count) if splat else frames
@@ -1437,6 +1437,7 @@ def render_phases(
     geom: dict,
     row: dict,
     det_shape: tuple[int, int],
+    min_value: float = 1e-3,
     **kwargs: Any,  # noqa: ANN401
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """Render the peaks of several phases that reach one dty row, summed into one set of sparse pixels.
@@ -1449,6 +1450,8 @@ def render_phases(
         [(entries, hkls, F2), ...] one per phase, as :func:`render_row` takes them
     geom, row, det_shape
         See :func:`render_row`
+    min_value
+        Pixels whose value, summed over every phase, is below this are dropped (see :func:`render_row`)
     **kwargs
         Passed on to :func:`render_row` (window, max_frames, batch, ...)
 
@@ -1458,11 +1461,12 @@ def render_phases(
         As :func:`render_row`, over every phase: "n_peaks" summed, "captured", "in_range" (and "window_frames")
         concatenated, phase by phase
     """
-    out = [render_row(entries, hkls, F2, geom, row, det_shape, **kwargs) for entries, hkls, F2 in phases]
-    if len(out) == 1:
-        return out[0]
+    if len(phases) == 1:
+        return render_row(*phases[0], geom, row, det_shape, min_value=min_value, **kwargs)
+    out = [render_row(entries, hkls, F2, geom, row, det_shape, min_value=0.0, **kwargs) for entries, hkls, F2 in phases]
     frame, pixel, value = _merge_host(np.concatenate([o[0] for o in out]), np.concatenate([o[1] for o in out]),
                                       np.concatenate([o[2] for o in out]), det_shape[0] * det_shape[1])  # fmt: skip
+    frame, pixel, value = _at_least(frame, pixel, value, min_value)
     stats = {"n_peaks": sum(o[3]["n_peaks"] for o in out)}
     for k in ("captured", "in_range"):
         stats[k] = np.concatenate([o[3][k] for o in out])
@@ -1643,13 +1647,12 @@ def guess_batch_size(
     mesh = anri.utils.mesh() if mesh is None else mesh
     nd = mesh.size
     entries, hkls_j, F2_j, geom, row_j = _as_jax(entries, hkls, F2, geom, row)
-    min_value = jnp.asarray(0.0, dtype=entries["pos"].dtype)
 
     def sizes(per_device: int) -> tuple[int, int]:
         idx = [jax.ShapeDtypeStruct((per_device * nd,), jnp.int32)] * 3
         live = jax.ShapeDtypeStruct((per_device * nd,), jnp.bool_)
         compiled = _render_sharded.lower(
-            *idx, live, entries, hkls_j, F2_j, geom, row_j, min_value, window, det_shape, mesh
+            *idx, live, entries, hkls_j, F2_j, geom, row_j, window, det_shape, mesh
         ).compile()
         m = compiled.memory_analysis()
         if m is None:

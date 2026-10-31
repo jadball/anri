@@ -678,9 +678,9 @@ class TestMerge(unittest.TestCase):
         frame = rng.integers(-1, 6, n).astype(np.int32)  # -1: unused cell
         pixel = rng.integers(0, npix, n).astype(np.int32)  # few pixels, so many duplicates
         value = rng.exponential(1.0, n)
-        min_value = jnp.asarray(0.5)
-        fr, px, val, count = (np.asarray(x) for x in _merge(frame, pixel, value, min_value))
-        c_fr, c_px, c_val, c_count = (np.asarray(x) for x in _compact(frame, pixel, value, min_value))
+        value[::7] = 0.0  # zeros are dropped
+        fr, px, val, count = (np.asarray(x) for x in _merge(frame, pixel, value))
+        c_fr, c_px, c_val, c_count = (np.asarray(x) for x in _compact(frame, pixel, value))
         h_fr, h_px, h_val = _merge_host(c_fr[:c_count], c_px[:c_count], c_val[:c_count], npix)
         np.testing.assert_array_equal(fr[:count], h_fr)
         np.testing.assert_array_equal(px[:count], h_px)
