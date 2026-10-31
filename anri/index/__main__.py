@@ -90,6 +90,8 @@ def _histogram_options(p: argparse.ArgumentParser) -> None:
         help="widen the voxel grid by this on every side (sample "
         "units, e.g. um), for a sample reaching past the scanned range; fixed here for every later stage",
     )
+    p.add_argument("--pol-factor", type=float, default=1.0, help="degree of horizontal polarisation of the beam, for "
+                   "the predicted intensities (default 1)")  # fmt: skip
     p.add_argument("--gridstep", type=int, default=1, help="voxel = gridstep x dty step; data rows are summed in groups "
                    "of gridstep to match (default 1)")  # fmt: skip
     p.add_argument("--check", action="store_true", help="print the resolved paths and parameters, then stop")
@@ -132,6 +134,7 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the DataSet's y0)")
     p.add_argument(
         "--iter",
+        dest="n_iter",
         type=int,
         default=10,
         help="MLEM iterations, SQUAREM-accelerated (3 MLEM updates each; default 10: thin features such as twins "
@@ -194,8 +197,8 @@ def _populations_options(p: argparse.ArgumentParser) -> None:
                    "voxel's occupancy (default 0.1)")  # fmt: skip
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse the command line (default: ``sys.argv``)."""
+def parser() -> argparse.ArgumentParser:
+    """Build the command line, one subcommand per stage."""
     p = argparse.ArgumentParser(prog="python -m anri.index", description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="command", required=True)
     dataset = argparse.ArgumentParser(add_help=False)
@@ -267,7 +270,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     w = sub.add_parser("show", help="how a stage file was made, all the way back to the dataset")
     w.add_argument("file")
     w.add_argument("--log", action="store_true", help="also print what each stage logged")
-    return p.parse_args(argv)
+    return p
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the command line (default: ``sys.argv``)."""
+    return parser().parse_args(argv)
 
 
 def main() -> None:
@@ -299,7 +307,7 @@ def main() -> None:
         source = ix.stages.stage_histogram(
             args.analysisroot, args.sample, args.dataset, out, phase=args.phase, parfile=args.parfile,
             rings=args.rings, ring_merge=args.ring_merge, cif=args.cif, tth_tol=args.tth_tol, monitor=args.monitor, dty_source=args.dty_source,
-            frame_dty=not args.no_frame_dty, gridstep=args.gridstep, grid_pad=args.grid_pad, saturation=args.saturation, detector_mask=args.detector_mask, check=args.check, command=command, log=log,
+            frame_dty=not args.no_frame_dty, gridstep=args.gridstep, grid_pad=args.grid_pad, saturation=args.saturation, detector_mask=args.detector_mask, pol_factor=args.pol_factor, check=args.check, command=command, log=log,
         )  # fmt: skip
         if args.check or cmd == "histogram":
             return
@@ -313,7 +321,7 @@ def main() -> None:
         source = ix.stages.stage_filter(source, out, prune=args.prune, min_comp=args.min_comp, min_lr=args.min_lr,
                                  keep=args.keep, censor=args.censor, command=command, log=log)  # fmt: skip
     if cmd in ("fit", "run"):
-        source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.iter, coarse=args.coarse,
+        source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.n_iter, coarse=args.coarse,
                               beam=args.beam, mask=args.mask, pad=args.pad, absorption=not args.no_absorption, mu=args.mu, block_gb=args.block_gb, censor=args.censor,
                               command=command, log=log)  # fmt: skip
     if cmd == "localsearch" or (cmd == "run" and args.levels > 0):

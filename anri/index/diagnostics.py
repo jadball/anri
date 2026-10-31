@@ -11,10 +11,9 @@ from collections.abc import Callable
 import jax.numpy as jnp
 import numpy as np
 
-from .data import pixel_cake, ring_table, ring_widths
+from .data import B_E, B_O, R_E, R_O, pixel_cake, ring_table, ring_widths, sample_groups
 from .local import covering
 from .search import GRID_STEPS, grid_chance, prune
-from .stages import B_E, B_O, R_E, R_O, sample_groups
 
 
 def ring_profile_cake(dset: dict, n_rings: int = 10, cif: str | None = None, step: float = 0.002,
@@ -228,7 +227,7 @@ def grid_chances(d: dict, lit: dict, steps: tuple = GRID_STEPS, max_orientations
     d
         From :func:`anri.index.stages.load_histogram`
     lit
-        From :func:`anri.index.stages.lit_map`
+        From :func:`anri.index.search.lit_map`
     steps
         Grid steps (degrees), coarsest first
     max_orientations
@@ -471,15 +470,14 @@ def back_projection(d: dict, y0: float, nr: int | None = None) -> np.ndarray:
         dty where the rotation axis is in the beam
     nr
         Voxels per side (default: the grid the fit uses, the histogram stage's ``d["grid"]``, or for files from before
-        that record :func:`anri.index.stages.voxel_grid` for this y0); fix it to compare y0 values on one grid
+        that record :func:`anri.index.mask.voxel_grid` for this y0); fix it to compare y0 values on one grid
 
     Returns
     -------
     np.ndarray
         [nr, nr] image in reconstruction order
     """
-    from .mask import reconstruct
-    from .stages import voxel_grid
+    from .mask import reconstruct, voxel_grid
 
     sc = d["scan"]
     scan = {**sc, "y0": y0}

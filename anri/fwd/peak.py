@@ -16,25 +16,6 @@ from anri.geom.gonio import lab_to_sample, origin_lab, sample_to_lab
 from anri.maths.utils import inv3
 
 
-def _ewald_setup(
-    ubi: jax.Array, hkl: jax.Array, wavelength: float, k_in_lab: jax.Array, ky: float, kz: float, wedge: float,
-    chi: float,
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:  # fmt: skip
-    """Compute the part of the Ewald solution shared by both omega branches.
-
-    Returns Q in the sample frame, the beam direction after divergence (``k_in_lab``, not normalised) and normalised
-    to 1 / wavelength, and :func:`anri.diffract.scatter.omega_solns_core`'s (asin_term, phi, valid).
-    """
-    q_sample = inv3(ubi) @ hkl
-    # perturb k_in_lab by divergence
-    k_hat, e_h, e_v = beam_basis(k_in_lab)
-    k_in_lab = k_hat + ky * e_h + kz * e_v
-    k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
-    k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
-    asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample_norm)
-    return q_sample, k_in_lab, k_in_lab_norm, asin_term, phi, valid
-
-
 @jax.jit
 def hkl_to_k_omega(
     ubi: jax.Array,  # grain stuff
@@ -85,81 +66,16 @@ def hkl_to_k_omega(
     valid: bool
         Boolean indicating if a valid solution exists
     """
-    q_sample, k_in_lab, k_in_lab_norm, asin_term, phi, valid = _ewald_setup(
-        ubi, hkl, wavelength, k_in_lab, ky, kz, wedge, chi
-    )
+    q_sample = inv3(ubi) @ hkl
+    # perturb k_in_lab by divergence
+    k_hat, e_h, e_v = beam_basis(k_in_lab)
+    k_in_lab = k_hat + ky * e_h + kz * e_v
+    k_in_lab_norm = scale_norm_k(k_in_lab, wavelength)
+    k_in_sample_norm = lab_to_sample(k_in_lab_norm, 0.0, wedge, chi, 0.0, 0.0)
+    asin_term, phi, valid = omega_solns_core(q_sample, k_in_sample_norm)
     omega = omega_from_core(asin_term, phi, etasign)
     k_out_lab = q_lab_to_k_out(sample_to_lab(q_sample, omega, wedge, chi, 0.0, 0.0), k_in_lab_norm)
     return k_in_lab, k_out_lab, omega, valid
-
-
-@jax.jit
-def hkl_to_k_omega_both(
-    ubi: jax.Array,
-    hkl: jax.Array,
-    wavelength: float,
-    k_in_lab: jax.Array,
-    ky: float,
-    kz: float,
-    wedge: float,
-    chi: float,
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    r"""Forward-project (h,k,l) into k-vectors and omega angles for both Friedel solutions.
-
-    Parameters
-    ----------
-    ubi:
-        [3,3] (U.B)^(-1) matrix of the grain/voxel
-    hkl:
-        [3] (h,k,l) reciprocal space vector
-    wavelength:
-        Wavelength in angstroms
-    k_in_lab:
-        [3] Direction of the incoming beam before divergence, lab frame (any length, not vertical)
-    ky:
-        Horizontal beam divergence: small tilt of the beam (radians) along the horizontal across it, see
-        :func:`anri.geom.beam.beam_basis`. Usually zero.
-    kz:
-        Vertical beam divergence: small tilt of the beam (radians) along the vertical across it, see
-        :func:`anri.geom.beam.beam_basis`. Usually zero.
-    wedge:
-        Wedge motor value (degrees)
-    chi:
-        Chi motor value (degrees)
-
-    Returns
-    -------
-    k_in_lab: jax.Array
-        [3] k-in vector in laboratory frame (incoming beam) - not scaled or normalised!
-    k_out_lab: jax.Array
-        [2,3] k_out vectors in laboratory frame, index 0 for ``etasign = +1``
-    omega: jax.Array
-        [2] Omega angles in degrees, index 0 for ``etasign = +1``
-    valid: jax.Array
-        Boolean indicating if a valid solution exists, shared by both branches
-
-    Notes
-    -----
-    Q in the sample frame, the beam normalisation and the sample-frame beam
-    vector are all properties of the geometry rather than of the branch, as is
-    everything :func:`anri.diffract.scatter.omega_solns_core` computes. Producing both
-    solutions together evaluates that shared part once. Only the omega rotation
-    of Q and the resulting k_out differ per branch.
-
-    See Also
-    --------
-    hkl_to_k_omega : Single-solution version, taking an ``etasign`` argument.
-    """
-    q_sample, k_in_lab, k_in_lab_norm, asin_term, phi, valid = _ewald_setup(
-        ubi, hkl, wavelength, k_in_lab, ky, kz, wedge, chi
-    )
-    omegas = jnp.stack([omega_from_core(asin_term, phi, 1.0), omega_from_core(asin_term, phi, -1.0)])
-
-    k_outs = jnp.stack(
-        [q_lab_to_k_out(sample_to_lab(q_sample, omegas[i], wedge, chi, 0.0, 0.0), k_in_lab_norm) for i in range(2)]
-    )
-
-    return k_in_lab, k_outs, omegas, valid
 
 
 @jax.jit
@@ -185,7 +101,7 @@ def get_centroid(
 
     This is the forward model's one centroid: the renderer uses it, :func:`anri.fwd.box.get_centroid_box` is it at
     dty = y0 for a cube, and :func:`anri.fwd.scan.get_centroid_scan` instead solves for the dty that puts the voxel on a
-    pencil beam's centre line.
+    pencil beam's centre line. For both peaks of a reflection, vmap over ``etasign`` (``jnp.array([1.0, -1.0])``).
 
     Parameters
     ----------
@@ -228,45 +144,6 @@ def get_centroid(
     origin = origin_lab(origin_sample, k_in_lab, omega, wedge, chi, dty, y0, column)
     sc, fc = raytrace_to_det(k_out_lab, origin, s_step_lab, f_step_lab, det_origin_lab)
     return jnp.array([sc, fc, omega]), valid
-
-
-@jax.jit
-def get_centroid_both(
-    ubi: jax.Array,  # grain stuff
-    origin_sample: jax.Array,
-    hkl: jax.Array,  # peak stuff
-    wavelength: float,  # beam
-    k_in_lab: jax.Array,
-    ky: float,
-    kz: float,
-    wedge: float,  # gonio
-    chi: float,
-    dty: float,
-    y0: float,
-    s_step_lab: jax.Array,  # detector
-    f_step_lab: jax.Array,
-    det_origin_lab: jax.Array,
-    column: bool = True,
-) -> tuple[jax.Array, jax.Array]:
-    """Both Friedel peak centroids of :func:`get_centroid` from one call.
-
-    Parameters are those of :func:`get_centroid`, without ``etasign``.
-
-    Returns
-    -------
-    centroids: jax.Array
-        [2,3] Peak centres of mass in (sc, fc, omega). Index 0 is the ``etasign = +1`` solution, index 1 is
-        ``etasign = -1``.
-    valid: jax.Array
-        Boolean indicating if a valid solution exists, shared by both branches
-    """
-    _, k_out_labs, omegas, valid = hkl_to_k_omega_both(ubi, hkl, wavelength, k_in_lab, ky, kz, wedge, chi)
-    centroids = []
-    for i in range(2):
-        origin = origin_lab(origin_sample, k_in_lab, omegas[i], wedge, chi, dty, y0, column)
-        sc, fc = raytrace_to_det(k_out_labs[i], origin, s_step_lab, f_step_lab, det_origin_lab)
-        centroids.append(jnp.array([sc, fc, omegas[i]]))
-    return jnp.stack(centroids), valid
 
 
 @jax.jit

@@ -113,7 +113,7 @@ over observed bins, with :math:`a_{qb}` the orientation's system entries (empty 
 degree of freedom [Wilks1938]_, so ``min_lr = 25`` is about 5σ. A small grain with clean spots scores well; a decoy that
 only borrows intensity from real grains does not.
 
-**Code:** :func:`anri.index.orientations.fit`, :func:`anri.index.stages.select_by_likelihood`.
+**Code:** :func:`anri.index.orientations.fit`, :func:`anri.index.orientations.select_by_likelihood`.
 
 Two caveats on reading 25 as 5σ. An occupancy cannot be negative, so the null sits on the boundary and its
 distribution is half :math:`\chi^2_1`, half zero [Chernoff1954]_: the tail is smaller than assumed. Holding the other

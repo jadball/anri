@@ -26,7 +26,8 @@ jobs:
       run:
         shell: bash -l {0}
     # Pushes and PRs test on Ubuntu only. Release tags run the full sweep, with more time for the slow macOS runners.
-    timeout-minutes: ${{ startsWith(github.ref, 'refs/tags/') && 30 || 15 }}
+    # The test step has its own, shorter limit, so that the compile cache is saved even when it runs out of time.
+    timeout-minutes: ${{ startsWith(github.ref, 'refs/tags/') && 40 || 25 }}
     strategy:
       fail-fast: false
       matrix:
@@ -123,20 +124,29 @@ jobs:
           conda list
 
       # Compiled XLA programs, kept between runs: most of the tests' time is compiling (see conftest.py). Each run
-      # saves the cache it ends with; bump CACHE_PREFIX to start from an empty one.
-      - name: Cache compiled JAX programs
+      # saves the cache it ends with, also when the tests fail or run out of time, so that a re-run of a change to
+      # compiled code starts warm; bump CACHE_PREFIX to start from an empty one.
+      - name: Restore compiled JAX programs
         if: matrix.task.name == 'Test'
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/jax-cache
           key: jax-${{ env.CACHE_PREFIX }}-${{ runner.os }}-py${{ matrix.python-version }}-${{ github.sha }}
           restore-keys: jax-${{ env.CACHE_PREFIX }}-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: ${{ matrix.task.name }}
+        timeout-minutes: ${{ startsWith(github.ref, 'refs/tags/') && 35 || 20 }}
         env:
           JAX_COMPILATION_CACHE_DIR: ${{ runner.temp }}/jax-cache
         run: |
           ${{ matrix.task.run }}
+
+      - name: Save compiled JAX programs
+        if: always() && matrix.task.name == 'Test'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/jax-cache
+          key: jax-${{ env.CACHE_PREFIX }}-${{ runner.os }}-py${{ matrix.python-version }}-${{ github.sha }}-${{ github.run_attempt }}
       
       - name: Upload coverage reports to Codecov
         if: matrix.task.name == 'Test'

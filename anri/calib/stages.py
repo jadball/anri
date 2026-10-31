@@ -20,6 +20,7 @@ import numpy as np
 from anri.io.provenance import (
     chain,
     check_out,
+    command_line,
     read_provenance,
     recorder,
     stage_path,
@@ -329,8 +330,7 @@ def stage_rings(
     parfile = os.path.abspath(parfile)
     check_out(out, [*inputs, parfile, mask_file])
     geo, phase, cell = io.read_pars_json(parfile, phase)
-    lpars = np.array([cell[k] for k in ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")])
-    sg = int(cell["cell_lattice_[P,A,B,C,I,F,R]"])
+    lpars, sg = io.lattice_from_cell(cell)
     pars0 = fit.base_pars(geo, 0.0)
     log(f"pars {parfile}: phase {phase}, lattice {', '.join(f'{v:g}' for v in lpars)}, space group {sg}")
     log("start: " + ", ".join(f"{k} {pars0[k]:.7g}" for k in (*free, "wavelength")))
@@ -412,12 +412,8 @@ def write_pars(calib_file: str, folder: str) -> str:
         geometry = {k: (v.item() if hasattr(v, "item") else v) for k, v in h["geometry"].attrs.items()}
     scale = float(geometry.pop("lattice_scale"))
     _, name, cell = io.read_pars_json(r["parfile"], r["phase"])
-    a = np.asarray(r["lattice"], float)
-    cell = {**cell, "cell__a": a[0] * scale, "cell__b": a[1] * scale, "cell__c": a[2] * scale,
-            "cell_alpha": a[3], "cell_beta": a[4], "cell_gamma": a[5]}  # fmt: skip
-    key = "cell_lattice_[P,A,B,C,I,F,R]"
-    if isinstance(cell.get(key), float) and float(cell[key]).is_integer():
-        cell[key] = int(cell[key])  # a space group number, not 227.0
+    a = np.asarray(r["lattice"], float) * np.r_[scale, scale, scale, 1.0, 1.0, 1.0]
+    cell = {**cell, **io.cell_from_lattice(a, io.lattice_from_cell(cell)[1])}
     return io.write_pars(folder, geometry, {name: cell}, source=calib_file)
 
 
@@ -431,31 +427,19 @@ def run_command(path: str) -> str:
     """
     import shlex
 
+    from .__main__ import parser
+
     p = read_provenance(path)
+    opts = {k: v for k, v in p["options"].items() if k != "source"}  # positional, as resolved
     if p["stage"] == "rings":
         r = p["resolved"]
-        cmd = ["python", "-m", "anri.calib", "rings", r["dataset_file"] or r["image"], "--out", os.path.abspath(path)]
-        flags = {"n_iter": "iter", "detector_mask": "mask"}
-    else:
-        cmd = ["python", "-m", "anri.calib", "fit", p["source"]]
-        if os.path.abspath(path) != stage_path(p["source"], "calib"):
-            cmd += ["--out", path]
-        flags = {"n_iter": "iter"}
-    for k, v in p["options"].items():
-        flag = "--" + flags.get(k, k).replace("_", "-")
-        if k == "source":  # positional, as resolved
-            continue
-        if k == "parfile":  # as resolved: an absolute path
-            cmd += [flag, p["resolved"]["parfile"]]
-        elif k == "search":  # on by default; the command line can only turn it off
-            cmd += [] if v else ["--no-search"]
-        elif k in ("lattice", "span", "spatial"):  # several values
-            cmd += [flag, *(str(x) for x in v)]
-        elif isinstance(v, list):
-            cmd += [flag, ",".join(str(x) for x in v)]
-        else:
-            cmd += [flag, str(v)]
-    return shlex.join(cmd)
+        opts["parfile"] = r["parfile"]  # as resolved: an absolute path
+        args = [r["dataset_file"] or r["image"], "--out", os.path.abspath(path)]
+        return shlex.join(command_line(parser(), "rings", args, opts))
+    args = [p["source"]]
+    if os.path.abspath(path) != stage_path(p["source"], "calib"):
+        args += ["--out", path]
+    return shlex.join(command_line(parser(), "fit", args, opts))
 
 
 def commands(path: str) -> list[str]:

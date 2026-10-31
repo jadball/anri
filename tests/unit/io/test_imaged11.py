@@ -14,13 +14,13 @@ from anri.io.imaged11 import (
     geom_from_pars,
     gonio_from_pars,
     motor_grid,
-    simulate_sparse,
     write_dataset,
     write_pars,
     write_peaks_table,
     write_scan,
     write_zero_distortion,
 )
+from anri.simulate.stages import simulate_sparse
 
 jax.config.update("jax_enable_x64", True)
 

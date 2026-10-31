@@ -11,8 +11,6 @@ from collections.abc import Callable
 import h5py
 import numpy as np
 
-from .stages import _LATTICE_KEYS
-
 
 def footprint(p: dict) -> dict:
     """Return where the sample is against the scanned dty range, to check the rows cover it (``dty_step``, ``margin``).
@@ -62,12 +60,13 @@ def ring_coverage(p: dict, n_tth: int = 300, n_eta: int = 720) -> dict:
     from anri.crystal.structure import B_matrix
     from anri.diffract.scatter import tth_eta_to_k_out
     from anri.geom.detector import raytrace_to_det
+    from anri.io.imaged11 import lattice_from_cell
 
     g, wl = p["geom"], float(p["pars"]["wavelength"])
     ns, nf = p["det_shape"]
     refl = []
     for name, (_, hkls, _) in zip(p["names"], p["phases"]):
-        B = B_matrix(np.array([p["cells"][name][k] for k in _LATTICE_KEYS]))
+        B = B_matrix(lattice_from_cell(p["cells"][name])[0])
         ds = np.linalg.norm(np.asarray(hkls) @ B.T, axis=1)
         refl.append(np.degrees(2 * np.arcsin(np.clip(ds * wl / 2, 0, 1))))
     top = max(max(float(r.max()) for r in refl), float(p["prov"]["resolved"]["tth_max"])) * 1.15

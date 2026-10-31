@@ -21,7 +21,7 @@ from jax.typing import ArrayLike
 from scipy.ndimage import median_filter
 
 from anri.geom.gonio import find_dty_for_beam_xy
-from anri.geom.scan import recon_positions, regrid
+from anri.geom.scan import recon_positions, regrid, sino_shift_and_pad
 
 from .data import scan_beam
 
@@ -261,7 +261,7 @@ def disc_mask(scan: dict, y0: float, nr: int, pad: float = 0.0) -> np.ndarray:
     y0
         dty where the rotation axis is in the beam
     nr
-        Voxels per side (:func:`anri.index.stages.voxel_grid`)
+        Voxels per side (:func:`anri.index.mask.voxel_grid`)
     pad
         Grow the disc by this (sample units): a sample a little larger than the disc is then fitted whole, instead of
         its outer part's intensity piling onto the disc's edge. A voxel at radius r is in the beam over a fraction
@@ -357,3 +357,14 @@ def draw_mask(image: ArrayLike, ax: Axes | None = None) -> Callable[[], np.ndarr
     # the selector must stay alive as long as the figure
     get_mask.selector = selector  # ty: ignore[unresolved-attribute]
     return get_mask
+
+
+def voxel_grid(scan: dict, y0: float, grid_pad: float = 0.0) -> int:
+    """Return NR: the indexer's voxel grid is NR x NR, centred on the rotation axis, as ImageD11 pads its recons.
+
+    ``grid_pad`` (sample units) adds voxels on every side, for a sample reaching past the scanned dty range: its
+    outer part is in the beam over part of the rotation only, but it exists, and would otherwise pile its intensity
+    onto the grid's edge. An ImageD11 mask on the unpadded grid lines up with the padded one's middle.
+    """
+    _, pad = sino_shift_and_pad(y0, scan["n_rows"], scan["dty0"], scan["ystep"])
+    return scan["n_rows"] + pad + 2 * int(np.ceil(grid_pad / scan["ystep"] - 1e-9))

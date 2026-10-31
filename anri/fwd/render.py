@@ -47,7 +47,7 @@ from anri.geom.paths import attenuation_map, edge_distances, ray_directions, tra
 from anri.maths.rotation import skew
 from anri.maths.utils import bin_fractions, truncated_moments
 
-from .peak import get_centroid, get_centroid_both, hkl_to_k_omega, hkl_to_k_omega_both, make_propagator
+from .peak import get_centroid, hkl_to_k_omega, make_propagator
 
 # Smallest batch per device that render_row compiles (see there)
 _MIN_BATCH = 1024
@@ -158,14 +158,18 @@ def select_peaks(
     """
     dty = row["dty_mid"]
 
-    def one(u: jax.Array, p: jax.Array, h: jax.Array) -> jax.Array:
-        cens, valid = get_centroid_both(
-            u, p, h, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], dty, geom["y0"],
-            geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"], jnp.logical_not(geom["voxel_3d"]),
+    def one(u: jax.Array, p: jax.Array, h: jax.Array, etasign: jax.Array) -> jax.Array:
+        cen, valid = get_centroid(
+            u, p, h, etasign, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"], dty,
+            geom["y0"], geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
+            jnp.logical_not(geom["voxel_3d"]),
         )  # fmt: skip
-        return jnp.stack([_keep(cens[i], valid, p, geom, row, margin, det_shape) for i in range(2)])
+        return _keep(cen, valid, p, geom, row, margin, det_shape)
 
-    return jax.vmap(jax.vmap(one, in_axes=(None, None, 0)), in_axes=(0, 0, None))(ubi, pos, hkls)
+    both = jax.vmap(one, in_axes=(None, None, None, 0))
+    return jax.vmap(jax.vmap(both, in_axes=(None, None, 0, None)), in_axes=(0, 0, None, None))(
+        ubi, pos, hkls, jnp.array([1.0, -1.0], pos.dtype)
+    )
 
 
 def _in_omega(omega: jax.Array, row: dict, margin: jax.Array) -> jax.Array:
@@ -486,16 +490,14 @@ def _render_peaks(
 
 
 @jax.jit
-def _compact(
-    frame: jax.Array, pixel: jax.Array, value: jax.Array, min_value: jax.Array
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Move the contributions that are kept (value >= min_value) to the front, without sorting.
+def _compact(frame: jax.Array, pixel: jax.Array, value: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Move the contributions that are kept (frame >= 0, value > 0) to the front, without sorting.
 
     Returns fixed-size arrays plus the number of kept leading entries. Duplicates are not merged here. Used on CPUs,
     where XLA's sort is several times slower than NumPy's, so :func:`_merge` would cost more than it saves.
     """
     frame, pixel, value = frame.ravel(), pixel.ravel(), value.ravel()
-    keep = (frame >= 0) & (value >= min_value)
+    keep = (frame >= 0) & (value > 0)
     n = frame.shape[0]
     target = jnp.where(keep, jnp.cumsum(keep) - 1, n)  # n is out of bounds, so dropped
     frame = jnp.zeros_like(frame).at[target].set(frame, mode="drop")
@@ -505,10 +507,8 @@ def _compact(
 
 
 @jax.jit
-def _merge(
-    frame: jax.Array, pixel: jax.Array, value: jax.Array, min_value: jax.Array
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Drop contributions below min_value, then sum duplicate (frame, pixel)s: sorted, unique ones first.
+def _merge(frame: jax.Array, pixel: jax.Array, value: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Drop unused cells and zeros, then sum duplicate (frame, pixel)s: sorted, unique ones first.
 
     The merge on the device (GPUs), per batch; :func:`_merge_host` is the same merge on the host, across batches and
     devices (and the only one on CPUs, where XLA's sort is ~3x slower than NumPy's). The two must agree (tested).
@@ -517,7 +517,7 @@ def _merge(
     that are used.
     """
     frame, pixel, value = frame.ravel(), pixel.ravel(), value.ravel()
-    keep = (frame >= 0) & (value >= min_value)
+    keep = (frame >= 0) & (value > 0)
     last = jnp.iinfo(jnp.int32).max  # dropped entries sort to the end
     frame, pixel, value = jax.lax.sort(
         (jnp.where(keep, frame, last), jnp.where(keep, pixel, last), jnp.where(keep, value, 0.0)), num_keys=2
@@ -542,7 +542,7 @@ def _merge_host(
     Parameters
     ----------
     frame, pixel, value
-        [N] contributions (all kept: :func:`_compact` or :func:`_merge` has dropped the rest)
+        [N] contributions (all used: :func:`_compact` or :func:`_merge` has dropped the rest)
     npix
         Pixels per frame (n_slow x n_fast)
 
@@ -670,10 +670,13 @@ def _grain_candidates(grain_ubi: jax.Array, hkls: jax.Array, geom: dict, row: di
 
     def one(u: jax.Array) -> jax.Array:
         def per_hkl(h: jax.Array) -> jax.Array:
-            _, _, omegas, valid = hkl_to_k_omega_both(
-                u, h, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
-            )
-            return valid & _in_omega(omegas, row, margin)
+            def branch(etasign: jax.Array) -> jax.Array:
+                _, _, omega, valid = hkl_to_k_omega(
+                    u, h, etasign, geom["wavelength"], geom["k_in_lab"], 0.0, 0.0, geom["wedge"], geom["chi"]
+                )
+                return valid & _in_omega(omega, row, margin)
+
+            return jax.vmap(branch)(jnp.array([1.0, -1.0], u.dtype))
 
         return jax.vmap(per_hkl)(hkls)
 
@@ -763,7 +766,6 @@ def _render_sharded(
     F2: jax.Array,
     geom: dict,
     row: dict,
-    min_value: jax.Array,
     window: tuple[int, int, int],
     det_shape: tuple[int, int],
     mesh: Mesh,
@@ -784,16 +786,15 @@ def _render_sharded(
         f2: jax.Array,
         g: dict,
         r: dict,
-        mv: jax.Array,
     ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
         frame, pixel, value, captured, in_range, _ = _render_peaks(e, h, b, ent, hk, f2, g, r, window, det_shape, None)
         value = jnp.where(lv[:, None], value, 0.0)
-        frame, pixel, value, count = reduce(frame, pixel, value, mv)
+        frame, pixel, value, count = reduce(frame, pixel, value)
         return frame, pixel, value, count[None], captured, in_range
 
-    specs = (P("d"),) * 4 + (P(),) * 6
+    specs = (P("d"),) * 4 + (P(),) * 5
     return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 6)(
-        entry, hkl_idx, branch, live, entries, hkls, F2, geom, row, min_value
+        entry, hkl_idx, branch, live, entries, hkls, F2, geom, row
     )
 
 
@@ -857,10 +858,10 @@ def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict
         raise ValueError(msg)
     if "grain" in entries:
         ubi = jnp.asarray(entries["grain_ubi"])
-        out = {"grain_ubi": ubi, "grain": jnp.asarray(entries["grain"], dtype=jnp.int32)}
+        out: dict = {"grain_ubi": ubi, "grain": jnp.asarray(entries["grain"], dtype=jnp.int32)}
     else:
         ubi = jnp.asarray(entries["ubi"])
-        out = {"ubi": ubi}
+        out: dict = {"ubi": ubi}
     dtype = ubi.dtype
     out["pos"] = jnp.asarray(entries["pos"], dtype=dtype)
     out["density"] = jnp.asarray(entries["density"], dtype=dtype)
@@ -1066,7 +1067,7 @@ def _splat_add(
 @partial(jax.jit, static_argnames=("det_shape", "mesh"))
 def _splat_out(
     tiles: jax.Array, kernel: jax.Array, i0: jax.Array, j0: jax.Array, fclip: jax.Array, real: jax.Array,
-    spot_live: jax.Array, row: dict, min_value: jax.Array, det_shape: tuple[int, int], mesh: Mesh,
+    spot_live: jax.Array, row: dict, det_shape: tuple[int, int], mesh: Mesh,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:  # fmt: skip
     """Convolve every frame of every tile with its spot's kernel, and return the sparse pixels, as _render_sharded does.
 
@@ -1077,7 +1078,7 @@ def _splat_out(
     ns, nf = det_shape
 
     def local(t: jax.Array, kern: jax.Array, i0: jax.Array, j0: jax.Array, fc: jax.Array, re: jax.Array,
-              sl: jax.Array, r: dict, mv: jax.Array) -> tuple:  # fmt: skip
+              sl: jax.Array, r: dict) -> tuple:  # fmt: skip
         n_spots, wo, tile, _ = t.shape
         ws, wf = kern.shape[2:]
         out = jax.lax.conv_general_dilated(
@@ -1097,26 +1098,23 @@ def _splat_out(
         )
         frame = jnp.where(inside, r["order"][fc][:, :, None, None], -1)
         pixel = jnp.where(inside, rows[:, :, :, None] * nf + cols[:, :, None, :], 0)
-        frame, pixel, value, count = reduce(frame, pixel, jnp.where(inside, out, 0.0), mv)
+        frame, pixel, value, count = reduce(frame, pixel, jnp.where(inside, out, 0.0))
         return frame, pixel, value, count[None]
 
-    specs = (P("d"),) * 7 + (P(), P())
+    specs = (P("d"),) * 7 + (P(),)
     return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 4)(
-        tiles, kernel, i0, j0, fclip, real, spot_live, row, min_value
+        tiles, kernel, i0, j0, fclip, real, spot_live, row
     )
 
 
-def _render_splat(
-    entries: dict, hkls: jax.Array, F2: jax.Array, geom: dict, row: dict, det_shape: tuple[int, int],
-    window: tuple[int, int, int], batch: int, select_chunk: int, min_value: float, mesh: Mesh, max_frames: int | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:  # fmt: skip
-    """:func:`render_row` with ``splat=True``: a grain map rendered spot by spot (inputs as JAX arrays, see _as_jax).
+def _at_least(frame: np.ndarray, pixel: np.ndarray, value: np.ndarray, min_value: float) -> tuple:
+    """Return the sparse pixels whose value is at least min_value."""
+    keep = value >= min_value
+    return frame[keep], pixel[keep], value[keep]
 
-    Spots of one window class and tile size go nd x S at a time (S a power of 4, few compiles), with about as many
-    window cells as ``batch`` peaks would use without splat. Each device gets S spots: their kernels and tiles
-    (:func:`_splat_kernels`), then their voxel peaks added onto the tiles _SPLAT_CHUNK at a time (:func:`_splat_add`),
-    then the convolution (:func:`_splat_out`). Every shape is fixed by (window class, tile, S), whatever the voxels.
-    """
+
+def _check_splat(entries: dict) -> None:
+    """Raise unless the entries (as JAX arrays) can be rendered with splat: a grain map, one sig_rot per grain."""
     if "grain" not in entries:
         msg = 'splat needs a grain map: entries with "grain" and "grain_ubi" (grain_entries)'
         raise ValueError(msg)
@@ -1129,91 +1127,110 @@ def _render_splat(
         if np.any(hi > lo):
             msg = "splat shares one kernel per spot: sig_rot must be the same for every voxel of a grain"
             raise ValueError(msg)
+
+
+def _shard_pixels(frame: jax.Array, pixel: jax.Array, value: jax.Array, count: jax.Array, per_shard: int) -> tuple:
+    """Return the sparse pixels each device kept, on the host (see :func:`_valid_from_shards`)."""
+    counts = np.asarray(count)
+    return tuple(_valid_from_shards(x, counts, per_shard) for x in (frame, pixel, value))
+
+
+def _render_windows(
+    sel: np.ndarray, window: tuple[int, int, int], peaks: tuple, entries: dict, hkls: jax.Array, F2: jax.Array,
+    geom: dict, row: dict, det_shape: tuple[int, int], mesh: Mesh, batch: int, stats: dict,
+) -> list:  # fmt: skip
+    """Render the peaks sel (indices into peaks, (entry, hkl, branch)), each integrated over its own window.
+
+    In fixed-size batches split over the devices. Small problems use smaller batches: 1024 peaks per device times a
+    power of 4, so a scan compiles few shapes. Each compile takes seconds, and XLA:GPU takes up to a minute for very
+    small batches. Padding peaks are marked not live. Fills stats "captured" and "in_range" at sel, and returns each
+    batch's sparse pixels.
+    """
     nd = mesh.size
-    dtype = entries["pos"].dtype
-    _, ws, wf = window
-    classes = _window_classes(window, max_frames)
-    margin = _select_margin((classes[-1], ws, wf), row, geom, dtype)
-    e, h, b, spot, det = _select_grains(entries, hkls, geom, row, margin, det_shape, mesh, select_chunk)
-    n_peaks = e.size
-    if n_peaks == 0:
-        empty = np.zeros(0, np.int32)
-        return empty, empty, np.zeros(0), {"n_peaks": 0, "n_spots": 0, "captured": np.zeros(0),
-                                           "in_range": np.zeros(0)}  # fmt: skip
+    per_device = _MIN_BATCH
+    while per_device < -(-sel.size // nd):
+        per_device *= 4
+    per_device = min(max(batch // nd, 1), per_device)
+    size = per_device * nd
+    parts = []
+    for start in range(0, sel.size, size):
+        these = sel[start : start + size]
+        idx = [np.pad(x[these], (0, size - these.size)) for x in peaks]
+        live = np.arange(size) < these.size
+        fr, px, val, count, cap, inr = _render_sharded(
+            *idx, live, entries, hkls, F2, geom, row, window, det_shape, mesh
+        )
+        parts.append(_shard_pixels(fr, px, val, count, per_device * window[0] * window[1] * window[2]))
+        stats["captured"][these] = np.asarray(cap)[: these.size]
+        stats["in_range"][these] = np.asarray(inr)[: these.size]
+    return parts
 
-    # Each spot: its peaks (consecutive), reference peak (the first), window class, tile origin and size
-    first = np.flatnonzero(np.r_[True, spot[1:] != spot[:-1]])
-    count = np.diff(np.r_[first, n_peaks])
-    n_spots = first.size
-    spot_class = _peak_classes(entries, hkls, e[first], h[first], b[first], geom, row, classes)
-    origin = np.floor(np.stack([np.minimum.reduceat(det[:, i], first) for i in (0, 1)], 1)).astype(np.int32)
-    extent = np.stack([np.maximum.reduceat(det[:, i], first) for i in (0, 1)], 1) - origin
-    tile = np.maximum(8, 1 << np.ceil(np.log2(np.floor(extent.max(1)) + 2)).astype(int))  # a power of two
 
-    min_value_j = jnp.asarray(min_value, dtype=dtype)
-    frames, pixels, values = [], [], []
-    captured_all, in_range_all = np.zeros(n_peaks), np.zeros(n_peaks)
-    for k, wo_k in enumerate(classes):
-        window_k = (wo_k, ws, wf)
-        # every spot's kernel and per-frame values, _SPLAT_SPOTS per device at a time (on the host: they are small)
-        in_class = np.flatnonzero(spot_class == k)
-        if in_class.size == 0:
-            continue
-        kern = [[] for _ in range(8)]
-        size = nd * _SPLAT_SPOTS
-        for a in range(0, in_class.size, size):
-            these = np.resize(in_class[a : a + size], size)  # padding repeats spots, then is discarded
-            out = _splat_kernels(e[first[these]], h[first[these]], b[first[these]], origin[these], entries, hkls, F2,
-                                 geom, row, window_k, det_shape, mesh)  # fmt: skip
-            for x, y in zip(kern, out):
-                x.append(np.asarray(y)[: min(size, in_class.size - a)])
-        kern = [np.concatenate(x) for x in kern]
-        place = np.zeros(n_spots, int)
-        place[in_class] = np.arange(in_class.size)  # each spot's row in kern
-        for t in np.unique(tile[in_class]).tolist():
-            sel = np.flatnonzero((spot_class == k) & (tile == t))
-            cells = wo_k * (t + ws - 1) * (t + wf - 1)
-            fit = max(1, (batch // nd) * window[0] * ws * wf // cells)  # spots per device the memory allows
-            per_device = 1
-            while per_device < -(-sel.size // nd) and 4 * per_device <= fit:
-                per_device *= 4
-            per_shard = per_device * cells
-            for start in range(0, sel.size, per_device * nd):
-                chunk = sel[start : start + per_device * nd]
-                spots = np.pad(chunk, (0, per_device * nd - chunk.size))  # padding repeats sel[0], not live
-                spot_live = np.arange(spots.size) < chunk.size
-                ref = first[spots]
-                kernel, fclip, om_fr, i0, j0, real, cap, inr = (x[place[spots]] for x in kern)
-                spot_args = (h[ref], b[ref], origin[spots])
-                tiles = _splat_tiles((spots.size, wo_k, t, t), kernel.dtype, mesh)
-                # each device's voxel peaks, numbered by their spot's place on the device, _SPLAT_CHUNK at a time
-                n_c = np.where(spot_live, count[spots], 0)
-                peak_of = np.repeat(ref, n_c) + np.arange(n_c.sum()) - np.repeat(np.cumsum(n_c) - n_c, n_c)
-                local = np.repeat(np.arange(spots.size) % per_device, n_c)
-                per_dev = n_c.reshape(nd, per_device).sum(1)
-                dev_start = np.cumsum(per_dev) - per_dev
-                for c0 in range(0, int(per_dev.max()), _SPLAT_CHUNK):
-                    j = np.arange(_SPLAT_CHUNK)
-                    have = c0 + j[None, :] < per_dev[:, None]  # [nd, chunk]
-                    idx = np.where(have, dev_start[:, None] + c0 + j[None, :], 0).ravel()
-                    tiles = _splat_add(tiles, *spot_args, fclip, om_fr, e[peak_of[idx]], local[idx], have.ravel(),
-                                       entries, hkls, geom, row, mesh)  # fmt: skip
-                fr, px, val, cnt = _splat_out(tiles, kernel, i0, j0, fclip, real, spot_live, row, min_value_j,
-                                              det_shape, mesh)  # fmt: skip
-                cnt = np.asarray(cnt)
-                frames.append(_valid_from_shards(fr, cnt, per_shard))
-                pixels.append(_valid_from_shards(px, cnt, per_shard))
-                values.append(_valid_from_shards(val, cnt, per_shard))
-                captured_all[peak_of] = np.repeat(np.asarray(cap)[: chunk.size], count[chunk])
-                in_range_all[peak_of] = np.repeat(np.asarray(inr)[: chunk.size], count[chunk])
+def _render_spots(
+    sel: np.ndarray, window: tuple[int, int, int], cells_per_peak: int, peaks: tuple, spots: tuple, entries: dict,
+    hkls: jax.Array, F2: jax.Array, geom: dict, row: dict, det_shape: tuple[int, int], mesh: Mesh, batch: int,
+    stats: dict,
+) -> list:  # fmt: skip
+    """Render the spots sel (indices into spots) whole, as render_row's splat, with one window size.
 
-    frame, pixel, value = _merge_host(
-        np.concatenate(frames), np.concatenate(pixels), np.concatenate(values), det_shape[0] * det_shape[1]
-    )
-    stats = {"n_peaks": n_peaks, "n_spots": n_spots, "captured": captured_all, "in_range": in_range_all}
-    if len(classes) > 1:
-        stats["window_frames"] = np.repeat(np.asarray(classes)[spot_class], count)
-    return frame, pixel, value, stats
+    ``peaks`` is (entry, hkl, branch) of every peak, ``spots`` (first, count, origin, tile): each spot's first peak
+    (its reference), number of peaks, tile origin and tile size. First every spot's kernel and per-frame values,
+    _SPLAT_SPOTS per device at a time (on the host: they are small). Then, for each tile size, nd x S spots at a time
+    (S a power of 4, few compiles), with about as many window cells as ``batch`` peaks of ``cells_per_peak`` cells
+    would use without splat: their tiles (:func:`_splat_tiles`), their voxel peaks added onto the tiles _SPLAT_CHUNK
+    at a time (:func:`_splat_add`), then the convolution (:func:`_splat_out`). Every shape is fixed by (window, tile,
+    S), whatever the voxels. Fills stats "captured" and "in_range" (each spot's, given to its peaks), and returns
+    each batch's sparse pixels.
+    """
+    nd = mesh.size
+    e, h, b = peaks
+    first, count, origin, tile = spots
+    wo, ws, wf = window
+    kern = [[] for _ in range(8)]
+    size = nd * _SPLAT_SPOTS
+    for a in range(0, sel.size, size):
+        these = np.resize(sel[a : a + size], size)  # padding repeats spots, then is discarded
+        out = _splat_kernels(e[first[these]], h[first[these]], b[first[these]], origin[these], entries, hkls, F2, geom,
+                             row, window, det_shape, mesh)  # fmt: skip
+        for x, y in zip(kern, out):
+            x.append(np.asarray(y)[: min(size, sel.size - a)])
+    kern = [np.concatenate(x) for x in kern]
+    place = np.zeros(first.size, int)
+    place[sel] = np.arange(sel.size)  # each spot's row in kern
+    parts = []
+    for t in np.unique(tile[sel]).tolist():
+        sel_t = sel[tile[sel] == t]
+        cells = wo * (t + ws - 1) * (t + wf - 1)
+        fit = max(1, (batch // nd) * cells_per_peak // cells)  # spots per device the memory allows
+        per_device = 1
+        while per_device < -(-sel_t.size // nd) and 4 * per_device <= fit:
+            per_device *= 4
+        per_shard = per_device * cells
+        for start in range(0, sel_t.size, per_device * nd):
+            chunk = sel_t[start : start + per_device * nd]
+            spot = np.pad(chunk, (0, per_device * nd - chunk.size))  # padding repeats spot 0, not live
+            spot_live = np.arange(spot.size) < chunk.size
+            ref = first[spot]
+            kernel, fclip, om_fr, i0, j0, real, cap, inr = (x[place[spot]] for x in kern)
+            spot_args = (h[ref], b[ref], origin[spot])
+            tiles = _splat_tiles((spot.size, wo, t, t), kernel.dtype, mesh)
+            # each device's voxel peaks, numbered by their spot's place on the device, _SPLAT_CHUNK at a time
+            n_c = np.where(spot_live, count[spot], 0)
+            peak_of = np.repeat(ref, n_c) + np.arange(n_c.sum()) - np.repeat(np.cumsum(n_c) - n_c, n_c)
+            local = np.repeat(np.arange(spot.size) % per_device, n_c)
+            per_dev = n_c.reshape(nd, per_device).sum(1)
+            dev_start = np.cumsum(per_dev) - per_dev
+            for c0 in range(0, int(per_dev.max()), _SPLAT_CHUNK):
+                j = np.arange(_SPLAT_CHUNK)
+                have = c0 + j[None, :] < per_dev[:, None]  # [nd, chunk]
+                idx = np.where(have, dev_start[:, None] + c0 + j[None, :], 0).ravel()
+                tiles = _splat_add(tiles, *spot_args, fclip, om_fr, e[peak_of[idx]], local[idx], have.ravel(),
+                                   entries, hkls, geom, row, mesh)  # fmt: skip
+            fr, px, val, cnt = _splat_out(tiles, kernel, i0, j0, fclip, real, spot_live, row, det_shape, mesh)
+            parts.append(_shard_pixels(fr, px, val, cnt, per_shard))
+            stats["captured"][peak_of] = np.repeat(np.asarray(cap)[: chunk.size], count[chunk])
+            stats["in_range"][peak_of] = np.repeat(np.asarray(inr)[: chunk.size], count[chunk])
+    return parts
 
 
 def render_row(
@@ -1270,7 +1287,8 @@ def render_row(
     select_chunk
         Approximate number of (entry, hkl) pairs per call to :func:`select_peaks`
     min_value
-        Contributions below this are dropped
+        Pixels whose value, summed over every peak of the row, is below this are dropped. Each peak's own share of a
+        pixel is never cut: many weak voxels can light one pixel well above it
     mesh
         Devices to use, default :func:`anri.utils.mesh`
     max_frames
@@ -1300,61 +1318,54 @@ def render_row(
         of what the scan sees that the window holds
     """
     mesh = anri.utils.mesh() if mesh is None else mesh
-    nd = mesh.size
     entries, hkls_j, F2_j, geom, row_j = _as_jax(entries, hkls, F2, geom, row)
     dtype = entries["pos"].dtype
-    if splat:
-        return _render_splat(entries, hkls_j, F2_j, geom, row_j, det_shape, window, batch, select_chunk, min_value,
-                             mesh, max_frames)  # fmt: skip
-
-    # 1. Which peaks can reach this row, and the window size of each
     _, ws, wf = window
-    e, h, b, peak_class, classes = row_peaks(entries, hkls_j, geom, row_j, det_shape, window, max_frames, mesh,
-                                             select_chunk)  # fmt: skip
+
+    # 1. Which peaks can reach this row, and the window size of each (with splat, of each spot)
+    if splat:
+        _check_splat(entries)
+        classes = _window_classes(window, max_frames)
+        margin = _select_margin((classes[-1], ws, wf), row_j, geom, dtype)
+        e, h, b, spot, det = _select_grains(entries, hkls_j, geom, row_j, margin, det_shape, mesh, select_chunk)
+    else:
+        e, h, b, cls, classes = row_peaks(entries, hkls_j, geom, row_j, det_shape, window, max_frames, mesh,
+                                          select_chunk)  # fmt: skip
     n_peaks = e.size
+    stats = {"n_peaks": n_peaks, "captured": np.zeros(n_peaks), "in_range": np.zeros(n_peaks)}
+    if splat:
+        stats["n_spots"] = 0
     if n_peaks == 0:
         empty = np.zeros(0, np.int32)
-        return empty, empty, np.zeros(0), {"n_peaks": 0, "captured": np.zeros(0), "in_range": np.zeros(0)}
+        return empty, empty, np.zeros(0), stats
+    if splat:  # each spot: its peaks (consecutive), reference peak (the first), window class, tile origin and size
+        first = np.flatnonzero(np.r_[True, spot[1:] != spot[:-1]])
+        count = np.diff(np.r_[first, n_peaks])
+        cls = _peak_classes(entries, hkls_j, e[first], h[first], b[first], geom, row_j, classes)
+        origin = np.floor(np.stack([np.minimum.reduceat(det[:, i], first) for i in (0, 1)], 1)).astype(np.int32)
+        extent = np.stack([np.maximum.reduceat(det[:, i], first) for i in (0, 1)], 1) - origin
+        tile = np.maximum(8, 1 << np.ceil(np.log2(np.floor(extent.max(1)) + 2)).astype(int))  # a power of two
+        stats["n_spots"] = first.size
 
-    # 2. Render in fixed-size batches split over the devices, one window size at a time. Small problems use smaller
-    # batches: 1024 peaks per device times a power of 4, so a scan compiles few shapes. Each compile takes seconds,
-    # and XLA:GPU takes up to a minute for very small batches. Padding peaks are marked not live.
-    min_value_j = jnp.asarray(min_value, dtype=dtype)
-    frames, pixels, values = [], [], []
-    captured_all, in_range_all = np.zeros(n_peaks), np.zeros(n_peaks)
+    # 2. Render one window size at a time
+    args = (entries, hkls_j, F2_j, geom, row_j, det_shape, mesh, batch, stats)
+    parts = []
     for k, wo_k in enumerate(classes):
-        sel = np.flatnonzero(peak_class == k)
+        sel = np.flatnonzero(cls == k)
         if sel.size == 0:
             continue
-        window_k = (wo_k, ws, wf)
-        per_device = _MIN_BATCH
-        while per_device < -(-sel.size // nd):
-            per_device *= 4
-        per_device = min(max(batch // nd, 1), per_device)
-        batch_k = per_device * nd
-        per_shard = per_device * wo_k * ws * wf
-        for start in range(0, sel.size, batch_k):
-            stop = min(start + batch_k, sel.size)
-            pad = batch_k - (stop - start)
-            idx = [np.pad(x[sel[start:stop]], (0, pad)) for x in (e, h, b)]
-            live = np.arange(batch_k) < stop - start
-            fr, px, val, count, cap, inr = _render_sharded(
-                *idx, live, entries, hkls_j, F2_j, geom, row_j, min_value_j, window_k, det_shape, mesh
-            )
-            count = np.asarray(count)
-            frames.append(_valid_from_shards(fr, count, per_shard))
-            pixels.append(_valid_from_shards(px, count, per_shard))
-            values.append(_valid_from_shards(val, count, per_shard))
-            captured_all[sel[start:stop]] = np.asarray(cap)[: stop - start]
-            in_range_all[sel[start:stop]] = np.asarray(inr)[: stop - start]
+        if splat:
+            parts += _render_spots(sel, (wo_k, ws, wf), window[0] * ws * wf, (e, h, b), (first, count, origin, tile),
+                                   *args)  # fmt: skip
+        else:
+            parts += _render_windows(sel, (wo_k, ws, wf), (e, h, b), *args)
 
-    # 3. Merge batches and devices: sort by (frame, pixel) and sum duplicates
-    frame, pixel, value = _merge_host(
-        np.concatenate(frames), np.concatenate(pixels), np.concatenate(values), det_shape[0] * det_shape[1]
-    )
-    stats = {"n_peaks": n_peaks, "captured": captured_all, "in_range": in_range_all}
+    # 3. Merge batches and devices: sort by (frame, pixel), sum duplicates, then drop the pixels below min_value
+    frame, pixel, value = _merge_host(*(np.concatenate(x) for x in zip(*parts)), det_shape[0] * det_shape[1])
+    frame, pixel, value = _at_least(frame, pixel, value, min_value)
     if len(classes) > 1:
-        stats["window_frames"] = np.asarray(classes)[peak_class]
+        frames = np.asarray(classes)[cls]
+        stats["window_frames"] = np.repeat(frames, count) if splat else frames
     return frame, pixel, value, stats
 
 
@@ -1426,6 +1437,7 @@ def render_phases(
     geom: dict,
     row: dict,
     det_shape: tuple[int, int],
+    min_value: float = 1e-3,
     **kwargs: Any,  # noqa: ANN401
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """Render the peaks of several phases that reach one dty row, summed into one set of sparse pixels.
@@ -1438,6 +1450,8 @@ def render_phases(
         [(entries, hkls, F2), ...] one per phase, as :func:`render_row` takes them
     geom, row, det_shape
         See :func:`render_row`
+    min_value
+        Pixels whose value, summed over every phase, is below this are dropped (see :func:`render_row`)
     **kwargs
         Passed on to :func:`render_row` (window, max_frames, batch, ...)
 
@@ -1447,11 +1461,13 @@ def render_phases(
         As :func:`render_row`, over every phase: "n_peaks" summed, "captured", "in_range" (and "window_frames")
         concatenated, phase by phase
     """
-    out = [render_row(entries, hkls, F2, geom, row, det_shape, **kwargs) for entries, hkls, F2 in phases]
-    if len(out) == 1:
-        return out[0]
+    if len(phases) == 1:
+        entries, hkls, F2 = phases[0]
+        return render_row(entries, hkls, F2, geom, row, det_shape, min_value=min_value, **kwargs)
+    out = [render_row(entries, hkls, F2, geom, row, det_shape, min_value=0.0, **kwargs) for entries, hkls, F2 in phases]
     frame, pixel, value = _merge_host(np.concatenate([o[0] for o in out]), np.concatenate([o[1] for o in out]),
                                       np.concatenate([o[2] for o in out]), det_shape[0] * det_shape[1])  # fmt: skip
+    frame, pixel, value = _at_least(frame, pixel, value, min_value)
     stats = {"n_peaks": sum(o[3]["n_peaks"] for o in out)}
     for k in ("captured", "in_range"):
         stats[k] = np.concatenate([o[3][k] for o in out])
@@ -1632,13 +1648,12 @@ def guess_batch_size(
     mesh = anri.utils.mesh() if mesh is None else mesh
     nd = mesh.size
     entries, hkls_j, F2_j, geom, row_j = _as_jax(entries, hkls, F2, geom, row)
-    min_value = jnp.asarray(0.0, dtype=entries["pos"].dtype)
 
     def sizes(per_device: int) -> tuple[int, int]:
         idx = [jax.ShapeDtypeStruct((per_device * nd,), jnp.int32)] * 3
         live = jax.ShapeDtypeStruct((per_device * nd,), jnp.bool_)
         compiled = _render_sharded.lower(
-            *idx, live, entries, hkls_j, F2_j, geom, row_j, min_value, window, det_shape, mesh
+            *idx, live, entries, hkls_j, F2_j, geom, row_j, window, det_shape, mesh
         ).compile()
         m = compiled.memory_analysis()
         if m is None:

@@ -14,7 +14,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .stages import B_E, B_O, N_POP, R_E, R_O, select_by_likelihood, select_populations
+from .data import B_E, B_O, R_E, R_O
+from .orientations import select_by_likelihood
+from .populations import N_POP, select_populations
 
 if TYPE_CHECKING:
     from matplotlib.colors import Colormap
@@ -434,7 +436,7 @@ def plot_likelihood(fig: Figure, fitted: np.ndarray, lr: np.ndarray, comp: np.nd
                     min_comp: float) -> Callable:  # fmt: skip
     """Draw the likelihood ratios of the orientations fitted, and ``update(min_lr, keep)``'s choice.
 
-    The choice is :func:`anri.index.stages.select_by_likelihood`, as the filter stage makes it.
+    The choice is :func:`anri.index.orientations.select_by_likelihood`, as the filter stage makes it.
 
     Parameters
     ----------
@@ -748,7 +750,7 @@ def plot_populations(fig: Figure, tot: np.ndarray, mask: np.ndarray, frac: np.nd
                      step: float, nr: int) -> Callable:  # fmt: skip
     """Draw the total occupancy and the populations, and ``update(occupied, min_frac)``'s choice.
 
-    The choice is :func:`anri.index.stages.select_populations`, as the populations stage makes it.
+    The choice is :func:`anri.index.populations.select_populations`, as the populations stage makes it.
 
     Parameters
     ----------

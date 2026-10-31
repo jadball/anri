@@ -22,6 +22,9 @@ from anri.geom.gonio import wrap_omega
 from anri.geom.scan import dty_to_row
 from anri.maths.utils import float64
 
+B_E, B_O = 0.5, 0.25  # lit histogram bins (deg): eta, omega
+R_E, R_O = 2, 4  # fit histogram bins = lit bins x these (1 x 1 deg)
+
 
 def ring_table(
     lattice_parameters: ArrayLike,
@@ -775,3 +778,8 @@ def dty_offsets(
     if not return_exposure:
         return off
     return off, (c / max(float(np.median(c[c > 0])), 1.0)).reshape(n_rows, n_o) if np.any(c > 0) else c
+
+
+def sample_groups(groups: list, n: int = 9) -> list:
+    """Return n scans spread evenly over a dataset's scans (the ring profile is measured on these)."""
+    return [groups[i] for i in np.unique(np.linspace(0, len(groups) - 1, min(len(groups), n)).round().astype(int))]

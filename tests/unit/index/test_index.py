@@ -11,6 +11,7 @@ import anri.geom
 import anri.index as ix
 import anri.io
 import anri.maths.rotation
+import anri.simulate
 
 PARS = {
     "y_center": 1049.9, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1116.5, "z_size": 75.0, "tilt_z": 0.0,
@@ -502,9 +503,9 @@ class TestPopulations(unittest.TestCase):
         """IPF colours dimmed by occupancy, full brightness at the 99th percentile of the occupied voxels."""
         occ = np.array([0.0, 0.5, 1.0, 2.0])
         rgb = np.ones((4, 3))
-        w = ix.stages.occupancy_weighted(rgb, occ, percentile=100)
+        w = ix.populations.occupancy_weighted(rgb, occ, percentile=100)
         np.testing.assert_allclose(w[:, 0], [0.0, 0.25, 0.5, 1.0])
-        np.testing.assert_allclose(ix.stages.occupancy_weighted(rgb, np.zeros(4)), 0.0)
+        np.testing.assert_allclose(ix.populations.occupancy_weighted(rgb, np.zeros(4)), 0.0)
 
 
 class TestEndToEnd(unittest.TestCase):
@@ -525,7 +526,7 @@ class TestEndToEnd(unittest.TestCase):
                 "cell_lattice_[P,A,B,C,I,F,R]": 229}  # fmt: skip
         with tempfile.TemporaryDirectory() as tmp:
             sparse = os.path.join(tmp, "sparse.h5")
-            anri.io.imaged11.simulate_sparse(sparse, entries, rings["hkls"], np.ones(len(rings["hkls"])), geom, omega, dty,
+            anri.simulate.stages.simulate_sparse(sparse, entries, rings["hkls"], np.ones(len(rings["hkls"])), geom, omega, dty,
                                     (2162, 2068), window=(5, 9, 9))  # fmt: skip
             parfile = anri.io.imaged11.write_pars(os.path.join(tmp, "pars"), PARS, {"Fe": cell})
             dsfile = anri.io.imaged11.write_dataset(sparse, tmp, "fe", "sim", y0=0.0, parfile=parfile)
@@ -693,6 +694,12 @@ class TestProvenance(unittest.TestCase):
             with h5py.File(path, "w") as h:
                 write_provenance(h, "populations", os.path.join(tmp, "x_fit.h5"), {}, {})
             self.assertEqual(parse_args(shlex.split(ix.stages.run_command(path))[3:]).levels, 0)
+            # one ring is a list of one, not the number of first rings
+            path = os.path.join(tmp, "one_histogram.h5")
+            with h5py.File(path, "w") as h:
+                write_provenance(h, "histogram", None, {"analysisroot": "/a", "sample": "s", "dataset": "d",
+                                                        "rings": [9]}, {})  # fmt: skip
+            self.assertEqual(parse_args(shlex.split(ix.stages.run_command(path))[3:]).rings, [9])
         self.assertEqual(args.command, "run")
         for k, v in recorded.items():
             if k == "save_model":  # not an option of the command line
@@ -700,23 +707,23 @@ class TestProvenance(unittest.TestCase):
             if k in ("frame_dty", "absorption"):  # on by default, turned off on the command line
                 self.assertEqual(getattr(args, "no_" + k), not v, msg=k)
                 continue
-            self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), v, msg=k)
+            self.assertEqual(getattr(args, k), v, msg=k)
 
 
 class TestDiscMask(unittest.TestCase):
     def test_disc(self):
         """The voxels within the scanned dty range all round the axis: a disc, smaller when y0 is off the middle."""
         scan = {"dty0": -5.0, "ystep": 1.0, "n_rows": 11}  # rows -5..5, edges -5.5..5.5
-        nr = ix.stages.voxel_grid(scan, 0.0)
+        nr = ix.mask.voxel_grid(scan, 0.0)
         m = ix.mask.disc_mask(scan, 0.0, nr)
         r = np.hypot(*np.asarray(anri.geom.scan.recon_positions(nr, 1.0))[:, :2].T).reshape(nr, nr)
         np.testing.assert_array_equal(m, r <= 5.5)
         self.assertFalse(m[0, 0])  # a corner
         self.assertTrue(m[nr // 2, nr // 2])
-        off = ix.mask.disc_mask(scan, 2.0, ix.stages.voxel_grid(scan, 2.0))
+        off = ix.mask.disc_mask(scan, 2.0, ix.mask.voxel_grid(scan, 2.0))
         self.assertLess(off.sum(), m.sum())  # 3.5 from the nearer end
         np.testing.assert_array_equal(ix.mask.disc_mask(scan, 0.0, nr, pad=1.5), r <= 7.0)
-        wide = ix.stages.voxel_grid(scan, 0.0, grid_pad=2.5)  # 3 voxels more on every side
+        wide = ix.mask.voxel_grid(scan, 0.0, grid_pad=2.5)  # 3 voxels more on every side
         self.assertEqual(wide, nr + 6)
         inner = np.asarray(anri.geom.scan.recon_positions(wide, 1.0)).reshape(wide, wide, 3)[3:-3, 3:-3]
         np.testing.assert_allclose(inner.reshape(-1, 3), np.asarray(anri.geom.scan.recon_positions(nr, 1.0)))
@@ -724,8 +731,8 @@ class TestDiscMask(unittest.TestCase):
     def test_back_projection_grid(self):
         """The back-projection is on the histogram's grid (with --grid-pad), as the disc and the fit; else voxel_grid."""
         scan = {"dty0": -5.0, "ystep": 1.0, "n_rows": 11, "om0": -90.0}
-        scan.update(n_e=2 * ix.stages.R_E, n_o=8 * ix.stages.R_O)  # 2 x 8 fit bins
-        nr = ix.stages.voxel_grid(scan, 0.0)
+        scan.update(n_e=2 * ix.data.R_E, n_o=8 * ix.data.R_O)  # 2 x 8 fit bins
+        nr = ix.mask.voxel_grid(scan, 0.0)
         d = {"H": np.ones(2 * 8 * 11), "n_rings": 1, "scan": scan, "grid": {"n": nr + 6, "step": 1.0}}
         self.assertEqual(ix.diagnostics.back_projection(d, 0.0).shape, (nr + 6, nr + 6))
         self.assertEqual(ix.diagnostics.back_projection({**d, "grid": None}, 0.0).shape, (nr, nr))
@@ -738,7 +745,7 @@ class TestDiscMask(unittest.TestCase):
         from anri.geom.gonio import find_dty_for_beam_xy
 
         scan = {"y0": 0.0, "dty0": -20.0, "ystep": 1.0, "n_rows": 41, "om0": -90.0}
-        nr, n_o, b_o = ix.stages.voxel_grid(scan, 0.0), 180, 1.0
+        nr, n_o, b_o = ix.mask.voxel_grid(scan, 0.0), 180, 1.0
         pos = np.asarray(anri.geom.scan.recon_positions(nr, 1.0))
         square = ((np.abs(pos[:, 0]) <= 16) & (np.abs(pos[:, 1]) <= 16)).reshape(nr, nr)  # corners at 22.6 > 20.5
         sino = np.zeros((n_o, 41))

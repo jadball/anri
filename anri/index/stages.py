@@ -15,7 +15,8 @@
 Each stage is split where a choice is made by looking at the previous one's output: y0 and the sample mask are read
 off the histogram, so they are options of the fit; the occupied and population cuts are read off the fit, so they are
 cheap to redo without fitting again. The selections that sliders redo are functions of their own
-(:func:`select_by_likelihood`, :func:`select_populations`), used by the stages too.
+(:func:`anri.index.orientations.select_by_likelihood`, :func:`anri.index.populations.select_populations`), used by
+the stages too.
 
 Each file records how it was made in a ``provenance`` group: the stage, a unique id, the file it was made from and
 that file's id (checked when it is read), the anri version and git commit, the date and command, and as attributes of
@@ -37,6 +38,7 @@ import numpy as np
 from anri.io.provenance import (
     chain,
     check_out,
+    command_line,
     read_attrs,
     read_provenance,
     recorder,
@@ -48,11 +50,13 @@ from anri.io.provenance import (
     write_results,
 )
 
+from .data import B_E, B_O, R_E, R_O, sample_groups
+from .mask import voxel_grid
+from .orientations import select_by_likelihood
+from .populations import N_POP, occupancy_weighted, select_populations
+from .search import lit_map
+
 STAGES = ("histogram", "search", "filter", "fit", "localsearch", "populations")
-B_E, B_O = 0.5, 0.25  # lit histogram bins (deg): eta, omega
-R_E, R_O = 2, 4  # fit histogram bins = lit bins x these (1 x 1 deg)
-N_POP = 4  # populations per voxel at most
-_LATTICE_KEYS = ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")
 
 
 # ------------------------------------------------------------------------------------------------------- provenance
@@ -72,6 +76,8 @@ def run_command(path: str) -> str:
     """
     import shlex
 
+    from .__main__ import parser
+
     files = chain(path)
     stages_of = [read_provenance(p)["stage"] for p in files]
     if "histogram" in stages_of:  # the indexer's own stages: a calibration before them has its own command
@@ -84,23 +90,17 @@ def run_command(path: str) -> str:
         stages.append(prov["stage"])
     if "fit" in stages and "localsearch" not in stages:  # run would add a local search the chain does not have
         opts["levels"] = 0
-    cmd = ["python", "-m", "anri.index", "run", *(str(opts.pop(k)) for k in ("analysisroot", "sample", "dataset"))]
-    for k, v in opts.items():
-        if k in ("frame_dty", "absorption"):  # on by default; the command line can only turn them off
-            cmd += [] if v else ["--no-" + k.replace("_", "-")]
-        elif k != "save_model" and v is not False:
-            if isinstance(v, (list, tuple, np.ndarray)):  # e.g. ring indices: comma-separated
-                v = ",".join(str(int(x)) for x in np.ravel(v))
-            cmd += ["--" + {"n_iter": "iter"}.get(k, k).replace("_", "-")] + ([] if v is True else [str(v)])
-    return shlex.join(cmd)
+    opts.pop("save_model", None)
+    dataset = [opts.pop(k) for k in ("analysisroot", "sample", "dataset")]
+    return shlex.join(command_line(parser(), "run", dataset, opts))
 
 
 # ----------------------------------------------------------------------------------------- shared setup (one source)
-def _geometry(geo: dict, y0: float, ystep: float) -> dict:
+def _geometry(geo: dict, y0: float, ystep: float, pol_factor: float) -> dict:
     """Build the indexer's geometry dict (float32 JAX scalars and arrays) from ImageD11 parameters.
 
     y0 does not enter the binning or the predictions (no parallax), only where a voxel is in the beam, which takes
-    its y0 from the scan dict.
+    its y0 from the scan dict. The beam's spreads (wavelength, divergence) are zero: only the renderer uses them.
     """
     import jax.numpy as jnp
 
@@ -108,9 +108,8 @@ def _geometry(geo: dict, y0: float, ystep: float) -> dict:
     from anri.maths.utils import fwhm_to_sigma
 
     geom = anri.io.imaged11.geom_from_pars(
-        geo, y0, fwhm_to_sigma(geo["wavelength"] * 2e-3), 1.5e-4, 1.5e-4, sig_beam=fwhm_to_sigma(ystep),
-        voxel_size=ystep,
-    )  # fmt: skip
+        geo, y0, 0.0, 0.0, 0.0, sig_beam=fwhm_to_sigma(ystep), voxel_size=ystep, pol_factor=pol_factor
+    )
     return {k: jnp.asarray(v, jnp.float32) if np.issubdtype(np.asarray(v).dtype, np.floating) else v
             for k, v in geom.items()}  # fmt: skip
 
@@ -125,43 +124,6 @@ def _lattice(lattice: np.ndarray, sg: int) -> tuple:
         B64,
         anri.crystal.orientation.laue_rotations(anri.crystal.structure.symmetry_matrices(sg), B64),
     )
-
-
-def lit_map(H_lit: np.ndarray, scan: dict, n_rings: int, lit: float, etacut: float) -> dict:
-    """Build the lit map for completeness: bins above lit x the median non-empty bin of the row-summed lit histogram.
-
-    Parameters
-    ----------
-    H_lit
-        The lit histogram of a histogram stage file (:func:`load_histogram`)
-    scan
-        Its scan ("om0", "omega_step", "n_e", "n_o")
-    n_rings
-        Its number of rings
-    lit, etacut
-        The search stage's options (:func:`stage_search`)
-    """
-    import jax.numpy as jnp
-
-    from .data import lit_table
-
-    Hs = jnp.asarray(H_lit).reshape(n_rings, scan["n_e"], scan["n_o"])
-    med = float(jnp.median(Hs[Hs > 0]))
-    return {"table": lit_table(Hs > lit * med), "om0": scan["om0"], "bins": (B_E, B_O, scan["n_e"], scan["n_o"]),
-            "frame_step": scan["omega_step"], "etacut": etacut}  # fmt: skip
-
-
-def voxel_grid(scan: dict, y0: float, grid_pad: float = 0.0) -> int:
-    """Return NR: the indexer's voxel grid is NR x NR, centred on the rotation axis, as ImageD11 pads its recons.
-
-    ``grid_pad`` (sample units) adds voxels on every side, for a sample reaching past the scanned dty range: its
-    outer part is in the beam over part of the rotation only, but it exists, and would otherwise pile its intensity
-    onto the grid's edge. An ImageD11 mask on the unpadded grid lines up with the padded one's middle.
-    """
-    import anri.geom
-
-    _, pad = anri.geom.scan.sino_shift_and_pad(y0, scan["n_rows"], scan["dty0"], scan["ystep"])
-    return scan["n_rows"] + pad + 2 * int(np.ceil(grid_pad / scan["ystep"] - 1e-9))
 
 
 def load_histogram(path: str) -> dict:
@@ -181,7 +143,7 @@ def load_histogram(path: str) -> dict:
         H_lit = jnp.asarray(h["H_lit"][()])
         grid = read_attrs(h["grid"]) if "grid" in h else None  # files from before the grid record: None
         saturated = h["H_saturated"][()] if "H_saturated" in h else None
-    geom = _geometry(geo, r.get("y0_dataset", 0.0), r["voxel_size"])
+    geom = _geometry(geo, r.get("y0_dataset", 0.0), r["voxel_size"], prov["options"].get("pol_factor", 1.0))
     scan.update({"k_in_lab": geom["k_in_lab"], "wedge": geom["wedge"], "chi": geom["chi"]})
     B, B64, ops = _lattice(np.asarray(r["lattice"]), r["space_group"])
     return {"prov": prov, "geom": geom, "rings": rings, "scan": scan, "H": H, "H_lit": H_lit, "B": B, "B64": B64,
@@ -191,7 +153,7 @@ def load_histogram(path: str) -> dict:
 def open_dataset(
     analysisroot: str, sample: str, dataset: str, *, phase: str | None = None, parfile: str | None = None,
     monitor: str | None = None, dty_source: str = "dataset", gridstep: int = 1, saturation: float | None = None,
-    log: Callable = print,
+    pol_factor: float = 1.0, log: Callable = print,
 ) -> dict:  # fmt: skip
     """Open an ImageD11 dataset as the indexer reads it: its files, phase, geometry, rows, and a pixel stream.
 
@@ -229,12 +191,7 @@ def open_dataset(
             root = os.path.dirname(root)
         parfile = os.path.join(os.path.dirname(root), "pars", "pars.json")
     geo, phase, cell = anri.io.imaged11.read_pars_json(parfile, phase)
-    lpars = np.array([cell[k] for k in _LATTICE_KEYS])
-    sg = cell["cell_lattice_[P,A,B,C,I,F,R]"]
-    if not isinstance(sg, float):
-        msg = f"{phase}: cell_lattice_[P,A,B,C,I,F,R] = {sg} is a centring letter; a space-group number is needed"
-        raise ValueError(msg)  # noqa: TRY004 (a wrong value in a file, not a wrong argument type)
-    sg = int(sg)
+    lpars, sg = anri.io.imaged11.lattice_from_cell(cell)
 
     ybin, yedge, oedge = ds["ybincens"], ds["ybinedges"], ds["obinedges"]
     ystep0 = float(np.median(np.diff(ybin)))
@@ -247,7 +204,7 @@ def open_dataset(
     scan = {"dty0": rows["dty0"], "ystep": rows["ystep"], "n_rows": rows["n_rows"], "om0": om0, "voxel": rows["voxel"],
             "width_beam": rows["width_beam"], "n_e": n_e, "n_o": n_o, "omega_step": ostep}  # fmt: skip
     y0_ds = ds["y0"]
-    geom = _geometry(geo, 0.0 if y0_ds is None else y0_ds, rows["ystep"])
+    geom = _geometry(geo, 0.0 if y0_ds is None else y0_ds, rows["ystep"], pol_factor)
     _, _, ops = _lattice(lpars, sg)
 
     with h5py.File(sparsefile, "r") as h:
@@ -316,96 +273,13 @@ def _pars_source(parfile: str, log: Callable) -> str | None:
     return src["file"]
 
 
-def sample_groups(groups: list, n: int = 9) -> list:
-    """Return n scans spread evenly over a dataset's scans (the ring profile is measured on these)."""
-    return [groups[i] for i in np.unique(np.linspace(0, len(groups) - 1, min(len(groups), n)).round().astype(int))]
-
-
-def select_by_likelihood(fitted: np.ndarray, lr: np.ndarray, min_lr: float, keep: int) -> np.ndarray:
-    """Return the orientations kept by likelihood ratio: above min_lr, the most likely first, at most keep.
-
-    Parameters
-    ----------
-    fitted, lr
-        Grid indices of the orientations fitted and their likelihood ratios (a filter stage file)
-    min_lr, keep
-        See :func:`stage_filter`
-    """
-    above = np.flatnonzero(lr > min_lr)
-    return fitted[above[np.argsort(lr[above])[::-1]][:keep]]
-
-
-def select_occupied(tot: np.ndarray, mask: np.ndarray, occupied: float) -> np.ndarray:
-    """Return the voxels in the mask above occupied x the 99th percentile of the total occupancy in the mask.
-
-    Parameters
-    ----------
-    tot
-        [Nv] each voxel's total occupancy
-    mask
-        [Nv] the voxels fitted
-    occupied
-        See :func:`stage_populations`
-    """
-    return mask & (tot > occupied * np.percentile(tot[mask], 99))
-
-
-def occupancy_weighted(rgb: np.ndarray, occupancy: np.ndarray, percentile: float = 99.0) -> np.ndarray:
-    """Colours dimmed by occupancy: rgb x occupancy / its percentile over occupied voxels, clipped to [0, 1].
-
-    Parameters
-    ----------
-    rgb
-        [..., 3] colours, e.g. an IPF map
-    occupancy
-        [...] total occupancy per voxel
-    percentile
-        Occupancy that gets full brightness, as a percentile of the occupied voxels' (default 99)
-
-    Returns
-    -------
-    np.ndarray
-        [..., 3] dimmed colours
-    """
-    occupancy = np.asarray(occupancy, float)
-    scale = np.percentile(occupancy[occupancy > 0], percentile) if np.any(occupancy > 0) else 1.0
-    return np.asarray(rgb, float) * np.clip(occupancy / scale, 0.0, 1.0)[..., None]
-
-
-def select_populations(tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, occupied: float,
-                       min_frac: float) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
-    """Return the occupied voxels and the populations reported in them.
-
-    Parameters
-    ----------
-    tot
-        [Nv] each voxel's total occupancy
-    mask
-        [Nv] the voxels fitted
-    frac
-        [Nv, P] each population's fraction of its voxel (:func:`anri.index.populations.group`)
-    occupied, min_frac
-        See :func:`stage_populations`
-
-    Returns
-    -------
-    occupied, present: np.ndarray
-        [Nv] voxels in the mask above occupied x the 99th percentile of the total occupancy in the mask; [Nv, P]
-        populations holding at least min_frac in occupied voxels (the main one always)
-    """
-    occ = select_occupied(tot, mask, occupied)
-    present = (frac >= min_frac) & occ[:, None]
-    present[:, 0] = occ  # the main population always
-    return occ, present
-
-
 # --------------------------------------------------------------------------------------------------------- 1. histogram
 def stage_histogram(
     analysisroot: str, sample: str, dataset: str, out: str | None = None, *, phase: str | None = None,
     parfile: str | None = None, rings: int | list[int] = 6, ring_merge: float = 1e-4, cif: str | None = None,
     tth_tol: float | None = None,
     monitor: str | None = None, dty_source: str = "dataset", frame_dty: bool = True, gridstep: int = 1,
-    grid_pad: float = 0.0, saturation: float | None = None, detector_mask: str | None = None,
+    grid_pad: float = 0.0, saturation: float | None = None, detector_mask: str | None = None, pol_factor: float = 1.0,
     check: bool = False, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Bin an ImageD11 dataset's sparse pixels into the indexer's histograms (see :func:`open_dataset`).
@@ -438,7 +312,7 @@ def stage_histogram(
         Voxel = gridstep x dty step; rows are summed in groups of gridstep
     grid_pad
         Widen the voxel grid by this on every side (sample units), for a sample reaching past the scanned range
-        (:func:`voxel_grid`). The grid is fixed here, for every later stage
+        (:func:`anri.index.mask.voxel_grid`). The grid is fixed here, for every later stage
     saturation
         Detector counts at which a pixel saturated (e.g. 65535 for a 16-bit Eiger): the bins holding such a pixel
         are recorded, and the fit takes their data as a lower bound (:func:`anri.index.occupancy.censored_ratio`)
@@ -447,6 +321,9 @@ def stage_histogram(
         Default: the DataSet's maskfile. The measured share of each (ring, eta bin), off the detector's edges and
         masked pixels, is recorded ("coverage"); the later stages scale predictions by it, so that a reflection on a
         module gap is not taken as missing
+    pol_factor
+        Degree of horizontal polarisation of the beam, for the predicted intensities of the later stages
+        (:func:`anri.diffract.factors.polarisation`; default 1, a synchrotron's horizontally polarised beam)
     check
         Only resolve and log the setup, write nothing, return ""
     command
@@ -469,9 +346,10 @@ def stage_histogram(
     options = {"analysisroot": analysisroot, "sample": sample, "dataset": dataset, "phase": phase, "parfile": parfile,
                "rings": rings, "ring_merge": ring_merge, "cif": cif, "tth_tol": tth_tol, "monitor": monitor, "dty_source": dty_source,
                "frame_dty": frame_dty, "gridstep": gridstep, "grid_pad": grid_pad,
-               "saturation": saturation, "detector_mask": detector_mask}  # fmt: skip
+               "saturation": saturation, "detector_mask": detector_mask, "pol_factor": pol_factor}  # fmt: skip
     d = open_dataset(analysisroot, sample, dataset, phase=phase, parfile=parfile, monitor=monitor,
-                     dty_source=dty_source, gridstep=gridstep, saturation=saturation, log=log)  # fmt: skip
+                     dty_source=dty_source, gridstep=gridstep, saturation=saturation, pol_factor=pol_factor,
+                     log=log)  # fmt: skip
     sc, geom, stream, ds = d["scan"], d["geom"], d["stream"], d["ds"]
     structure = None
     if cif:
@@ -810,7 +688,7 @@ def stage_filter(
     """Choose the orientations for the fit.
 
     Writes the orientations kept, and for prune="likelihood" every orientation fitted with its likelihood ratio, so
-    that :func:`select_by_likelihood` can redo the choice for other min_lr and keep without fitting again.
+    that :func:`anri.index.orientations.select_by_likelihood` can redo the choice for other min_lr and keep without fitting again.
 
     Parameters
     ----------

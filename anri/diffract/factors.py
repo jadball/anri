@@ -78,7 +78,7 @@ def extinction(x: ArrayLike, X: ArrayLike, tth: ArrayLike, gaussian: ArrayLike) 
        I. General formalisms for primary and secondary extinction and their application to spherical crystals. Acta
        Crystallographica Section A 30, 129–147. https://doi.org/10.1107/S0567739474000337
     """
-    c = jnp.cos(tth)
+    x, X, c = jnp.asarray(x), jnp.asarray(X), jnp.cos(tth)
     y_p = (1 + 2 * x + (0.20 + 0.45 * c) * x**2 / (1 + (0.22 - 0.12 * (0.5 - c) ** 2) * x)) ** -0.5
     y_g = (1 + 2.12 * X + (0.58 + 0.48 * c + 0.24 * c**2) * X**2 / (1 + (0.02 - 0.025 * c) * X)) ** -0.5
     b_l = jnp.where(c > 0, 0.15 - 0.2 * (0.75 - c) ** 2, -0.45 * c)

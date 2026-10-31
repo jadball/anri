@@ -225,6 +225,17 @@ def pad_voxels(pos: ArrayLike, vb: int) -> jax.Array:
     return jnp.concatenate([pos, pad])
 
 
+def add_cells(acc: jax.Array, idx: jax.Array, val: jax.Array) -> jax.Array:
+    """Return acc [n_cells] with val added at the cells idx (any shape, the same as val's); idx -1 is no cell."""
+    n = acc.shape[0]
+    return acc + jax.ops.segment_sum(val.ravel().astype(acc.dtype), jnp.where(idx >= 0, idx, n).ravel(), n + 1)[:-1]
+
+
+def take_cells(r: jax.Array, idx: jax.Array) -> jax.Array:
+    """Return r [n_cells] at the cells idx (any shape); 0 where idx is -1 (no cell)."""
+    return jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0)
+
+
 def _chunks(a: jax.Array, qc: int) -> jax.Array:
     return a.reshape(-1, qc, *a.shape[1:])
 
@@ -238,8 +249,7 @@ def _ones_block(
     def step(acc: jax.Array, ch: tuple) -> tuple:
         e, o, u, w = ch
         idx, wt = system(e[None], o[None], u[None], w[None], ring_j, pos_b, scan, *dims)
-        w_flat = wt.ravel().astype(acc.dtype)  # scan's floats may be float64 (jax_enable_x64)
-        return acc + jax.ops.segment_sum(w_flat, jnp.where(idx >= 0, idx, n_cells).ravel(), n_cells + 1)[:-1], None
+        return add_cells(acc, idx, wt), None  # wt may be float64 (jax_enable_x64): added as acc's dtype
 
     acc, _ = jax.lax.scan(step, jnp.zeros(n_cells, jnp.float32), tuple(_chunks(p, qc) for p in pred))
     return acc
@@ -254,7 +264,7 @@ def _top_block(
     def one(ch: tuple) -> jax.Array:
         e, o, u, w = ch
         idx, wt = system(e[None], o[None], u[None], w[None], ring_j, pos_b, scan, *dims)
-        num = jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (2, 3))
+        num = jnp.sum(wt * take_cells(r, idx), (2, 3))
         return num / jnp.maximum(jnp.sum(wt, (2, 3)), 1e-30)
 
     s = jax.lax.map(one, tuple(_chunks(p, qc) for p in pred))  # [Nq / qc, vb, qc]
@@ -343,10 +353,7 @@ def forward(
         fb, cb, pb = ch
         e, o, u, w = (p[cb] for p in pred)
         idx, wt = system(e, o, u, w, ring_j, pb, scan, *dims)  # [vb, K, Nj, 8]
-        contrib = (fb[:, :, None, None] * wt).astype(acc.dtype)
-        return acc + jax.ops.segment_sum(contrib.ravel(), jnp.where(idx >= 0, idx, n_cells).ravel(), n_cells + 1)[
-            :-1
-        ], None
+        return add_cells(acc, idx, fb[:, :, None, None] * wt), None
 
     xs = (f.reshape(-1, vb, k), cand.reshape(-1, vb, k), pos.reshape(-1, vb, pos.shape[-1]))
     acc, _ = jax.lax.scan(step, jnp.zeros(n_cells, f.dtype), xs)
@@ -379,7 +386,7 @@ def backward(
         cb, pb = ch
         e, o, u, w = (p[cb] for p in pred)
         idx, wt = system(e, o, u, w, ring_j, pb, scan, *dims)
-        return jnp.sum(wt * jnp.where(idx >= 0, r[jnp.clip(idx, 0)], 0.0), (2, 3))
+        return jnp.sum(wt * take_cells(r, idx), (2, 3))
 
     return jax.lax.map(one, (cand.reshape(-1, vb, k), pos.reshape(-1, vb, pos.shape[-1]))).reshape(-1, k)
 

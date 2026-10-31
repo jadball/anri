@@ -143,7 +143,7 @@ peak per (orientation, reflection, branch, dty row), the best matched; the branc
 The fit
 ^^^^^^^
 
-Each kept peak gives three residuals, observed minus predicted (:func:`anri.fwd.peak.get_centroid_both`, the forward
+Each kept peak gives three residuals, observed minus predicted (:func:`anri.fwd.peak.get_centroid`, the forward
 model's own centroid, :doc:`diffraction`), in units of the round's robust standard deviations
 :math:`\vec{\sigma} = 1.4826 \operatorname{MAD}` of each:
 

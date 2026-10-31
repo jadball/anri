@@ -149,10 +149,10 @@ class TestRunCommand(unittest.TestCase):
                 self.assertEqual(args.out, None if out is None else path)
                 self.assertEqual(args.peaks, opts["peaks"])
                 self.assertEqual(args.lattice, opts["lattice"])
-                self.assertEqual(args.free.split(","), opts["free"])
-                self.assertEqual([float(t) for t in args.tols.split(",")], opts["tols"])
+                self.assertEqual([k for k in args.free.split(",") if k], opts["free"])  # as main parses it
+                self.assertEqual([float(t) for t in args.tols.split(",") if t], opts["tols"])
                 for k in ("n_iter", "clip", "min_occ", "min_peaks"):
-                    self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), opts[k], msg=k)
+                    self.assertEqual(getattr(args, k), opts[k], msg=k)
 
     def test_rings_parses_back(self):
         """run_command gives every option a rings file recorded, and the command line parses each one back."""
@@ -183,12 +183,14 @@ class TestRunCommand(unittest.TestCase):
             args = parse_args(shlex.split(run_command(path))[3:])
         self.assertEqual((args.command, args.source, args.out), ("rings", "/x/si.edf", path))
         self.assertEqual(args.parfile, "/x/start/pars.json")  # as resolved: absolute
-        self.assertEqual((args.mask, args.spatial, args.span), (opts["detector_mask"], opts["spatial"], opts["span"]))
-        self.assertEqual(args.free.split(","), opts["free"])
-        self.assertEqual([float(t) for t in args.tols.split(",")], opts["tols"])
+        self.assertEqual(
+            (args.detector_mask, args.spatial, args.span), (opts["detector_mask"], opts["spatial"], opts["span"])
+        )
+        self.assertEqual([k for k in args.free.split(",") if k], opts["free"])  # as main parses it
+        self.assertEqual([float(t) for t in args.tols.split(",") if t], opts["tols"])
         self.assertIs(args.no_search, True)
         for k in ("phase", "scans", "threshold", "n_iter", "n_eta", "clip", "merge", "max_shift"):
-            self.assertEqual(getattr(args, {"n_iter": "iter"}.get(k, k)), opts[k], msg=k)
+            self.assertEqual(getattr(args, k), opts[k], msg=k)
 
 
 class TestChain(unittest.TestCase):
