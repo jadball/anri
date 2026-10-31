@@ -121,7 +121,7 @@ def main() -> None:
         stage_rings(args.source, args.out, parfile=args.parfile, phase=args.phase, detector_mask=args.detector_mask,
                     spatial=args.spatial, scans=args.scans, threshold=args.threshold,
                     free=tuple(k for k in args.free.split(",") if k),
-                    tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.n_iter, n_eta=args.n_eta,
+                    tols=tuple(float(t) for t in args.tols.split(",") if t), n_iter=args.n_iter, n_eta=args.n_eta,
                     clip=args.clip, merge=args.merge, search=not args.no_search, max_shift=args.max_shift,
                     span=tuple(args.span), command=cmd, log=log)  # fmt: skip
         log(f"done in {time.perf_counter() - T0:.0f} s")
@@ -130,7 +130,7 @@ def main() -> None:
 
     stage_fit(args.source, args.out, peaks=args.peaks, lattice=args.lattice,
               free=tuple(k for k in args.free.split(",") if k),
-              tols=tuple(float(t) for t in args.tols.split(",")), n_iter=args.n_iter, clip=args.clip,
+              tols=tuple(float(t) for t in args.tols.split(",") if t), n_iter=args.n_iter, clip=args.clip,
               extra_rounds=args.extra_rounds, row_step=args.row_step, min_occ=args.min_occ, min_peaks=args.min_peaks,
               command=cmd, log=log)  # fmt: skip
     log(f"done in {time.perf_counter() - T0:.0f} s")

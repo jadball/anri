@@ -694,6 +694,12 @@ class TestProvenance(unittest.TestCase):
             with h5py.File(path, "w") as h:
                 write_provenance(h, "populations", os.path.join(tmp, "x_fit.h5"), {}, {})
             self.assertEqual(parse_args(shlex.split(ix.stages.run_command(path))[3:]).levels, 0)
+            # one ring is a list of one, not the number of first rings
+            path = os.path.join(tmp, "one_histogram.h5")
+            with h5py.File(path, "w") as h:
+                write_provenance(h, "histogram", None, {"analysisroot": "/a", "sample": "s", "dataset": "d",
+                                                        "rings": [9]}, {})  # fmt: skip
+            self.assertEqual(parse_args(shlex.split(ix.stages.run_command(path))[3:]).rings, [9])
         self.assertEqual(args.command, "run")
         for k, v in recorded.items():
             if k == "save_model":  # not an option of the command line

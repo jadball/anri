@@ -245,7 +245,8 @@ def command_line(parser: argparse.ArgumentParser, command: str, positionals: lis
 
     Each option is the subcommand's ``--name`` (``_`` as ``-``), or its option whose dest is the name; a flag the
     command line can only turn off (``--no-name``) is given when the option is False. A list is given as its option
-    takes it: separate values (``nargs``), the flag once per value (``append``), or comma-separated (one value).
+    takes it: separate values (``nargs``), the flag once per value (``append``), or comma-separated (one value; a
+    one-item list keeps its comma, ``9,``, so that the command can tell it from a number).
 
     Parameters
     ----------
@@ -285,7 +286,7 @@ def command_line(parser: argparse.ArgumentParser, command: str, positionals: lis
         if isinstance(a, argparse._AppendAction):
             out += [x for value in values for x in (flag, value)]
         elif a.nargs is None:
-            out += [flag, ",".join(values)]
+            out += [flag, ",".join(values) + ("," if isinstance(v, list) and len(values) == 1 else "")]
         else:
             out += [flag, *values]
     return out
