@@ -858,10 +858,10 @@ def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict
         raise ValueError(msg)
     if "grain" in entries:
         ubi = jnp.asarray(entries["grain_ubi"])
-        out = {"grain_ubi": ubi, "grain": jnp.asarray(entries["grain"], dtype=jnp.int32)}
+        out: dict = {"grain_ubi": ubi, "grain": jnp.asarray(entries["grain"], dtype=jnp.int32)}
     else:
         ubi = jnp.asarray(entries["ubi"])
-        out = {"ubi": ubi}
+        out: dict = {"ubi": ubi}
     dtype = ubi.dtype
     out["pos"] = jnp.asarray(entries["pos"], dtype=dtype)
     out["density"] = jnp.asarray(entries["density"], dtype=dtype)
@@ -1462,7 +1462,8 @@ def render_phases(
         concatenated, phase by phase
     """
     if len(phases) == 1:
-        return render_row(*phases[0], geom, row, det_shape, min_value=min_value, **kwargs)
+        entries, hkls, F2 = phases[0]
+        return render_row(entries, hkls, F2, geom, row, det_shape, min_value=min_value, **kwargs)
     out = [render_row(entries, hkls, F2, geom, row, det_shape, min_value=0.0, **kwargs) for entries, hkls, F2 in phases]
     frame, pixel, value = _merge_host(np.concatenate([o[0] for o in out]), np.concatenate([o[1] for o in out]),
                                       np.concatenate([o[2] for o in out]), det_shape[0] * det_shape[1])  # fmt: skip
