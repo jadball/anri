@@ -59,6 +59,9 @@ quartz).
   `render_row(..., splat=True)` renders a grain map spot by spot, 10-20x faster: each voxel added at its own detector
   position onto the spot's tile, then one peak shape per spot. Totals agree with the per-voxel render to ~1e-3, pixels
   to a few % of the brightest. It needs one `sig_rot` per grain. Use it for DCT-like maps with many voxels per grain.
+- `anri.fwd.render.to_device`: a phase's entries, hkls and |F|^2 put on the device once (a grain map's sorted by
+  grain). Use it when calling `render_row` many times (rows, or chunks of frames): with host arrays, every call
+  copies the whole map to the device again and sorts a grain map on the host. `write_rendered_rows` does this.
 - `anri.fwd.render.make_row`: the row dict from one scan's per-frame ω and dty. Frames integrate over their ω (and
   dty) range: never treat a frame as one angle.
 - `anri.fwd.render.guess_batch_size`: the largest `batch` that fits a share of free memory. Use it rather than

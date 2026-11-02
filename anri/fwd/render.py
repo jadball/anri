@@ -727,19 +727,21 @@ def _select_grains(
     consecutive) and its (sc, fc) [P, 2] at the row's middle dty.
     """
     nd = mesh.size
-    grain = np.asarray(entries["grain"])
     n_grains = entries["grain_ubi"].shape[0]
     g_c, h_c, b_c = (x.astype(np.int32) for x in np.nonzero(np.asarray(_grain_candidates(
         entries["grain_ubi"], hkls, geom, row, margin))))  # fmt: skip
 
-    # every voxel of each candidate's grain: entries sorted by grain, so a grain's voxels are one slice
-    order = np.argsort(grain, kind="stable").astype(np.int32)
-    counts = np.bincount(grain, minlength=n_grains)
+    # every voxel of each candidate's grain: entries sorted by grain, so a grain's voxels are one slice. Entries from
+    # to_device are sorted already; others are sorted here, on every call
+    counts, is_sorted = (np.asarray(x) for x in _grain_counts(entries["grain"], n_grains))
     starts = np.cumsum(counts) - counts
     n_c = counts[g_c]
     which = np.repeat(np.arange(g_c.size), n_c)  # candidate of each pair
     local = np.arange(which.size) - np.repeat(np.cumsum(n_c) - n_c, n_c)  # voxel within its grain
-    e, h, b = order[starts[g_c][which] + local], h_c[which], b_c[which]
+    e = (starts[g_c][which] + local).astype(np.int32)
+    if not is_sorted:
+        e = np.argsort(np.asarray(entries["grain"]), kind="stable").astype(np.int32)[e]
+    h, b = h_c[which], b_c[which]
 
     ent = {k: entries[k] for k in ("grain", "grain_ubi", "pos")}
     cp = max(nd, select_chunk // nd * nd)  # a fixed size: one compile
@@ -751,8 +753,18 @@ def _select_grains(
         mask, cen = _select_pairs_sharded(e[idx], h[idx], b[idx], ent, hkls, geom, row, margin, det_shape, mesh)
         keep[start:stop] = np.asarray(mask)[: stop - start]
         det[start:stop] = np.asarray(cen)[: stop - start]
-    spot = np.unique(which[keep], return_inverse=True)[1].astype(np.int32).ravel()
+    # number the spots kept: which is sorted, so a new spot starts wherever it changes (np.unique would sort it)
+    which = which[keep]
+    new = np.ones(which.size, bool)
+    new[1:] = which[1:] != which[:-1]
+    spot = (np.cumsum(new) - 1).astype(np.int32)
     return e[keep], h[keep], b[keep], spot, det[keep]
+
+
+@partial(jax.jit, static_argnames=("n_grains",))
+def _grain_counts(grain: jax.Array, n_grains: int) -> tuple[jax.Array, jax.Array]:
+    """Return the number of entries of each grain [n_grains], and whether the entries are sorted by grain."""
+    return jnp.bincount(grain, length=n_grains), jnp.all(grain[1:] >= grain[:-1])
 
 
 @partial(jax.jit, static_argnames=("window", "det_shape", "mesh"))
@@ -852,7 +864,47 @@ def _entry_ubi(entries: dict, e: ArrayLike) -> jax.Array:
 
 
 def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict) -> tuple:
-    """Convert the renderer's inputs to JAX arrays, in the dtype of the entries' UBIs."""
+    """Convert the renderer's inputs to JAX arrays, in the dtype of the entries' UBIs.
+
+    Arrays already converted (:func:`to_device`) are used as they are: no copy, no transfer.
+    """
+    return (*_phase_jax(entries, hkls, F2), jax.tree.map(jnp.asarray, geom), jax.tree.map(jnp.asarray, row))
+
+
+# Map entry keys with one value per entry (first axis), which to_device reorders
+_PER_ENTRY = ("pos", "density", "grain", "ubi", "sig_rot", "optical_depth")
+
+
+def to_device(entries: dict, hkls: ArrayLike, F2: ArrayLike) -> tuple[dict, jax.Array, jax.Array]:
+    """Put one phase's map entries, hkls and |F|^2 on the device once, for many calls of :func:`render_row`.
+
+    :func:`render_row` takes host arrays too, but then copies the whole map to the device on every call (every row,
+    or every chunk of frames of a box beam's rotation). A grain map's entries are also sorted by grain (stably), so
+    that each grain's voxels are one slice: otherwise every call sorts them on the host. The rendered pixels are
+    the same; only the entries' order (their indices) changes.
+
+    Parameters
+    ----------
+    entries, hkls, F2
+        One phase, as :func:`render_row` takes it
+
+    Returns
+    -------
+    tuple
+        (entries, hkls, F2) as JAX arrays, in the dtype of the entries' UBIs
+    """
+    if "grain" in entries:
+        grain = np.asarray(entries["grain"])
+        if np.any(grain[1:] < grain[:-1]):
+            perm = np.argsort(grain, kind="stable")
+            n = grain.size
+            entries = {k: np.asarray(v)[perm] if k in _PER_ENTRY and np.ndim(v) > 0 and np.shape(v)[0] == n else v
+                       for k, v in entries.items()}  # fmt: skip
+    return _phase_jax(entries, hkls, F2)
+
+
+def _phase_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike) -> tuple[dict, jax.Array, jax.Array]:
+    """One phase's entries, hkls and |F|^2 as JAX arrays, in the dtype of the entries' UBIs (see :func:`_as_jax`)."""
     if ("ubi" in entries) == ("grain" in entries) or ("grain" in entries) != ("grain_ubi" in entries):
         msg = 'give entries either "ubi" (one per entry) or "grain" and "grain_ubi" (one per grain), see render_row'
         raise ValueError(msg)
@@ -872,9 +924,7 @@ def _as_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike, geom: dict, row: dict
     if "extinction" in entries:  # likewise, per reflection of the phase
         x, X, gaussian = entries["extinction"]
         out["extinction"] = (jnp.asarray(x, dtype=dtype), jnp.asarray(X, dtype=dtype), jnp.asarray(bool(gaussian)))
-    entries = out
-    hkls, F2 = jnp.asarray(hkls, dtype=dtype), jnp.asarray(F2, dtype=dtype)
-    return entries, hkls, F2, jax.tree.map(jnp.asarray, geom), jax.tree.map(jnp.asarray, row)
+    return out, jnp.asarray(hkls, dtype=dtype), jnp.asarray(F2, dtype=dtype)
 
 
 def row_peaks(
@@ -1118,15 +1168,18 @@ def _check_splat(entries: dict) -> None:
     if "grain" not in entries:
         msg = 'splat needs a grain map: entries with "grain" and "grain_ubi" (grain_entries)'
         raise ValueError(msg)
-    if "sig_rot" in entries:
-        sig, grain = np.asarray(entries["sig_rot"]), np.asarray(entries["grain"])
-        n_grains = entries["grain_ubi"].shape[0]
-        lo, hi = np.full(n_grains, np.inf), np.full(n_grains, -np.inf)
-        np.minimum.at(lo, grain, sig)
-        np.maximum.at(hi, grain, sig)
-        if np.any(hi > lo):
-            msg = "splat shares one kernel per spot: sig_rot must be the same for every voxel of a grain"
-            raise ValueError(msg)
+    n_grains = entries["grain_ubi"].shape[0]
+    if "sig_rot" in entries and bool(_varies_in_grain(entries["sig_rot"], entries["grain"], n_grains)):
+        msg = "splat shares one kernel per spot: sig_rot must be the same for every voxel of a grain"
+        raise ValueError(msg)
+
+
+@partial(jax.jit, static_argnames=("n_grains",))
+def _varies_in_grain(x: jax.Array, grain: jax.Array, n_grains: int) -> jax.Array:
+    """Whether x [N] differs between two entries of one grain (on the device: the host's np.minimum.at is slow)."""
+    lo = jnp.full(n_grains, jnp.inf, x.dtype).at[grain].min(x)
+    hi = jnp.full(n_grains, -jnp.inf, x.dtype).at[grain].max(x)
+    return jnp.any(hi > lo)
 
 
 def _shard_pixels(frame: jax.Array, pixel: jax.Array, value: jax.Array, count: jax.Array, per_shard: int) -> tuple:
