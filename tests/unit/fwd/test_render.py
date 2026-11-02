@@ -561,6 +561,24 @@ class TestGrainMap(unittest.TestCase):
             render_row(self.voxels, self.hkls, F2, self.geom, self.row, self.det_shape, splat=True)
 
 
+    def test_to_device(self):
+        """Entries put on the device once, sorted by grain, render the same pixels as the host arrays."""
+        from anri.fwd.render import to_device
+
+        F2 = np.ones(len(self.hkls))
+        self.assertTrue(np.any(np.diff(self.grains["grain"]) < 0))  # the labels are not sorted by grain
+        ent, hkls, F2_j = to_device(self.grains, self.hkls, F2)
+        self.assertTrue(np.all(np.diff(np.asarray(ent["grain"])) >= 0))
+        for k in ("pos", "density", "sig_rot"):  # every per-entry array moved with its grain label
+            np.testing.assert_allclose(np.sort(np.asarray(ent[k]), 0), np.sort(self.grains[k], 0), rtol=1e-6)
+        kw = {"window": (3, 7, 7), "max_frames": 7, "batch": BATCH}
+        for splat in (False, True):
+            a = render_row(self.grains, self.hkls, F2, self.geom, self.row, self.det_shape, splat=splat, **kw)
+            b = render_row(ent, hkls, F2_j, self.geom, self.row, self.det_shape, splat=splat, **kw)
+            for x, y in zip(a[:3], b[:3]):
+                np.testing.assert_array_equal(x, y)
+
+
 class TestCheckRender(unittest.TestCase):
     """Rendered peaks against a Monte Carlo simulation of the beam spreads through the forward model."""
 

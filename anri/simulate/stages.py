@@ -620,6 +620,27 @@ def simulate_sparse(
                                    window=window, batch=batch, max_frames=max_frames)  # fmt: skip
 
 
+def _pad_frames(
+    omega_row: np.ndarray, om: np.ndarray, dty: np.ndarray, tr: np.ndarray | None, n: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Pad a call's frames to n: omega goes on by the row's step, dty and transmission keep their last values.
+
+    Only the last call of a row is short. Padded, it has the same shapes as the others, so nothing compiles again;
+    the frames added are rendered and then dropped. Not padded if the call would then span more than 180 degrees,
+    where peaks could be wrapped (nearest_omega) into the padding.
+    """
+    if omega_row.size < 2:
+        return om, dty, tr
+    d = float(np.median(np.diff(omega_row)))
+    if abs(d) * n > 180.0:
+        return om, dty, tr
+    k = n - om.size
+    om = np.concatenate([om, om[-1] + d * np.arange(1, k + 1)])
+    dty = np.concatenate([dty, np.full(k, dty[-1])])
+    tr = None if tr is None else np.concatenate([tr, np.full(k, tr[-1])])
+    return om, dty, tr
+
+
 def write_rendered_rows(
     hout: h5py.File, phases: list, geom: dict, omega: np.ndarray, dty: np.ndarray, det_shape: tuple[int, int], *,
     rows: range | None = None, cut: float = 1, transmission: np.ndarray | None = None, omega_motor: str = "rot_center",
@@ -643,7 +664,8 @@ def write_rendered_rows(
     frames_per_call
         Render each row this many frames (file order) at a time, e.g. a DCT scan's one long rotation, whose peaks
         would not all fit in memory at once. Each call renders only its own frames; a peak on the edge of two calls
-        is rendered by both, each into its own frames, so the parts join without overlap. Default: a row at once
+        is rendered by both, each into its own frames, so the parts join without overlap. A short last call is padded
+        with frames past the end of the row (then dropped), so that it compiles nothing new. Default: a row at once
     **render_kwargs
         Passed on to :func:`anri.fwd.render.render_row` (window, batch, max_frames, ...)
 
@@ -653,11 +675,13 @@ def write_rendered_rows(
         Per row of the scan: "n_peaks" rendered, "n_pixels" written, "captured_min", the smallest share of a peak
         within the scan's omega range that its window holds, and "n_outside", the peaks selected beyond the ends of
         the scan, centred outside its omega range (left out of captured_min). Rows not rendered: 0, 0, 1 and 0. With
-        frames_per_call, peaks and peaks outside are counted per call, so a peak on the edge of two calls counts twice
+        frames_per_call, peaks and peaks outside are counted per call, so a peak on the edge of two calls counts twice,
+        and a padded last call also counts the peaks that reach its padding
     """
-    from anri.fwd.render import make_row, render_phases
+    from anri.fwd.render import make_row, render_phases, to_device
     from anri.io.imaged11 import write_scan
 
+    phases = [to_device(*p) for p in phases]  # once, not on every call of render_phases
     n_rows = omega.shape[0]
     stats = {"n_peaks": np.zeros(n_rows, int), "n_pixels": np.zeros(n_rows, int), "captured_min": np.ones(n_rows),
              "n_outside": np.zeros(n_rows, int)}  # fmt: skip
@@ -668,9 +692,14 @@ def write_rendered_rows(
         parts = []
         for a in range(0, n_frames, step):
             b = min(a + step, n_frames)
-            row = make_row(omega[i, a:b], dty[i, a:b], None if transmission is None else transmission[i, a:b])
+            om, dt = omega[i, a:b], dty[i, a:b]
+            tr = None if transmission is None else transmission[i, a:b]
+            if b - a < step:  # a short last call: pad it to step frames, so that it does not compile again
+                om, dt, tr = _pad_frames(omega[i], om, dt, tr, step)
+            row = make_row(om, dt, tr)
             frame, pixel, value, rstats = render_phases(phases, geom, row, det_shape, **render_kwargs)
-            parts.append((frame + a, pixel, value))
+            real = frame < b - a  # padding frames are dropped (frames are sorted)
+            parts.append((frame[real] + a, pixel[real], value[real]))
             stats["n_peaks"][i] += rstats["n_peaks"]
             inside = np.asarray(rstats["in_range"]) >= 0.5
             stats["n_outside"][i] += int(np.sum(~inside))
