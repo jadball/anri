@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from anri.maths.utils import bin_fractions, fwhm_to_sigma, inv3, sigma_to_fwhm, truncated_moments
+from anri.maths.utils import bin_fractions, exponential_slices, fwhm_to_sigma, inv3, sigma_to_fwhm, truncated_moments
 
 jax.config.update("jax_enable_x64", True)
 
@@ -42,3 +42,23 @@ class TestTailMass(unittest.TestCase):
             self.assertEqual(got.dtype, jnp.float32)
             np.testing.assert_allclose(np.asarray(got, float), expect, rtol=1e-3)
             self.assertTrue(np.all(np.asarray(got) >= 0))
+
+
+class TestExponentialSlices(unittest.TestCase):
+    def test_moments_and_equal_probability(self):
+        """The slices' mixture has the truncated exponential's mean and variance; each slice holds 1 / n of it."""
+        for scale, cut, n in ((1.0, 0.7, 4), (0.3, 5.0, 4), (2.0, 3.0, 7)):
+            x = (np.arange(400000) + 0.5) * cut / 400000  # midpoints: plain sums (no trapz / trapezoid across NumPys)
+            p = np.exp(-x / scale)
+            p /= p.sum()
+            mean = (x * p).sum()
+            var = (x**2 * p).sum() - mean**2
+            m, v = (np.asarray(a) for a in exponential_slices(scale, cut, n))
+            self.assertAlmostEqual(m.mean(), mean, places=6)
+            self.assertAlmostEqual(np.mean(v + m**2) - m.mean() ** 2, var, places=6)
+            # equal probability: the cdf at each slice's upper edge is (k + 1) / n, so the medians lie inside
+            cdf = np.cumsum(p) / p.sum()
+            for k in range(n):
+                q = np.interp((k + 0.5) / n, cdf, x)
+                self.assertTrue(m[k] - 3 * np.sqrt(v[k]) - 1e-9 <= q <= m[k] + 3 * np.sqrt(v[k]) + 1e-9)
+            self.assertTrue(np.all(np.diff(m) > 0))

@@ -123,6 +123,8 @@ def geom_from_pars(
     width_beam_v: float = 0.0,
     voxel_3d: bool = False,
     sig_omega: float = 0.0,
+    psf_mix: tuple | None = None,
+    sensor: tuple | None = None,
 ) -> dict:
     """Build the geometry dict for :func:`anri.fwd.render.render_row` from ImageD11 parameters.
 
@@ -160,6 +162,12 @@ def geom_from_pars(
     sig_omega
         Extra standard deviation of every peak in omega, in degrees (default 0): a simple stand-in for mosaicity,
         and a way to smooth the loss at the start of a refinement.
+    psf_mix
+        ((fraction, sd), ...): a detector point spread that is a mixture of Gaussians (pixels; fractions sum to 1),
+        in place of ``sig_psf``. E.g. ((0.68, 0.29), (0.32, 1.28)): a photon-counting CdTe detector at 43.6 keV
+    sensor
+        (attenuation coefficient, thickness) of a thick sensor, in the lab's length units (1 / um, um), e.g.
+        (1 / 111, 750) for 750 um of CdTe at 43.6 keV: each spot is smeared outward by where its photons stop
     """
     if sig_beam <= 0 or (voxel_3d and sig_beam_v <= 0):
         msg = "the beam's Gaussian widths must be > 0 (a small one gives a sharp-edged flat top)"
@@ -180,6 +188,8 @@ def geom_from_pars(
         "pol_factor": pol_factor,
         "sig_psf": sig_psf,
         "sig_omega": sig_omega,
+        **({} if psf_mix is None else {"psf_mix": tuple(tuple(map(float, c)) for c in psf_mix)}),
+        **({} if sensor is None else {"sensor": tuple(map(float, sensor))}),
     }
 
 

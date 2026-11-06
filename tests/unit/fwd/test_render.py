@@ -215,6 +215,88 @@ class TestPointSpread(unittest.TestCase):
         self.assertGreater(errors[0.0], errors[0.7])
 
 
+class TestPointSpreadMixture(unittest.TestCase):
+    """geom "psf_mix": a point spread that is a mixture of Gaussians, rendered one component at a time."""
+
+    def _render(self, geom_extra):
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        omega = (np.floor(omega_c / 0.05) + np.arange(-10, 11)) * 0.05 + 0.025
+        row = make_row(omega, np.zeros_like(omega))
+        frame, pixel, value, stats = render_row(entries, hkl[None], np.ones(1), {**geom, **geom_extra}, row, det_shape,
+                                                window=(5, 11, 11), min_value=0.0, batch=BATCH)  # fmt: skip
+        return dict(zip(zip(frame.tolist(), pixel.tolist()), value.tolist())), stats
+
+    def test_one_component_is_sig_psf(self):
+        a, sa = self._render({"sig_psf": 0.7})
+        b, sb = self._render({"psf_mix": ((1.0, 0.7),)})
+        self.assertEqual(a.keys(), b.keys())
+        np.testing.assert_allclose([b[k] for k in a], [a[k] for k in a], rtol=1e-12)
+        np.testing.assert_allclose(sb["captured"], sa["captured"], rtol=1e-12)
+
+    def test_mixture_is_weighted_sum(self):
+        core, s1 = self._render({"sig_psf": 0.3})
+        wing, s2 = self._render({"sig_psf": 1.3})
+        mix, sm = self._render({"psf_mix": ((0.7, 0.3), (0.3, 1.3))})
+        keys = set(core) | set(wing)
+        self.assertEqual(set(mix), keys)
+        want = np.array([0.7 * core.get(k, 0.0) + 0.3 * wing.get(k, 0.0) for k in sorted(keys)])
+        np.testing.assert_allclose([mix[k] for k in sorted(keys)], want, rtol=1e-10, atol=1e-14)
+        np.testing.assert_allclose(sm["captured"], 0.7 * s1["captured"] + 0.3 * s2["captured"], rtol=1e-12)
+
+    def test_fractions_must_sum_to_one(self):
+        with self.assertRaises(ValueError):
+            self._render({"psf_mix": ((0.7, 0.3), (0.2, 1.3))})
+
+
+class TestSensorDepth(unittest.TestCase):
+    """geom "sensor": a thick sensor smears each spot outward along its ray by where its photons stop."""
+
+    def _moments(self, geom_extra):
+        pars, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        one = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        omega = (np.floor(omega_c / 0.05) + np.arange(-10, 11)) * 0.05 + 0.025
+        row = make_row(omega, np.zeros_like(omega))
+        _, pixel, value, _ = render_row(one, hkl[None], np.ones(1), {**geom, "sig_psf": 0.7, **geom_extra}, row,
+                                        det_shape, window=(5, 15, 15), min_value=0.0, batch=BATCH)  # fmt: skip
+        x = np.stack([pixel // det_shape[1], pixel % det_shape[1]], 1).astype(float)
+        w = value / value.sum()
+        mean = w @ x
+        d = x - mean
+        return pars, mean, (d * w[:, None]).T @ d
+
+    def test_radial_exponential(self):
+        """A truncated exponential of scale sin(phi) / attenuation and cut thickness tan(phi) (phi: the ray's angle to the
+        sensor normal), along the radial direction (the detector is nearly normal to the beam), its mean removed."""
+        mu_abs, thick = 1.0 / 1000.0, 750.0  # a long absorption length, so the smear is a few tenths of a pixel
+        pars, m0, c0 = self._moments({})
+        _, m1, c1 = self._moments({"sensor": (mu_abs, thick)})
+        _, _, geom, _, _, _ = _single_peak_setup()
+        # the ray's angle to the sensor normal (the tilted detector's: ~0.2 deg more than 2theta here)
+        s_lab, f_lab = np.asarray(geom["s_step_lab"]), np.asarray(geom["f_step_lab"])
+        ray = np.asarray(geom["det_origin_lab"]) + m0[0] * s_lab + m0[1] * f_lab
+        normal = np.cross(s_lab, f_lab)
+        phi = np.arccos(abs(ray @ normal) / np.linalg.norm(ray) / np.linalg.norm(normal))
+        # radial: the direction in which 2theta grows, from a spot rendered at a slightly longer wavelength
+        _, m_long, _ = self._moments({"wavelength": pars["wavelength"] * 1.001})
+        u = (m_long - m0) / np.linalg.norm(m_long - m0)
+        x = np.linspace(0, thick * np.tan(phi) / 75.0, 100001)  # pixels
+        p = np.exp(-x / (np.sin(phi) / mu_abs / 75.0))
+        p /= p.sum()
+        var = (x**2 * p).sum() - ((x * p).sum()) ** 2
+        self.assertGreater(var, 0.02)
+        dc = c1 - c0
+        self.assertAlmostEqual(u @ dc @ u, var, delta=0.03 * var)  # radial: widened by the kernel
+        v = np.array([-u[1], u[0]])
+        self.assertLess(abs(v @ dc @ v), 0.01 * var)  # tangential: not
+        self.assertLess(np.linalg.norm(m1 - m0), 0.01)  # the mean is the calibration's
+
+    def test_thin_sensor_changes_nothing(self):
+        _, m0, c0 = self._moments({})
+        _, m1, c1 = self._moments({"sensor": (1.0, 750.0)})  # absorbed within a micron
+        np.testing.assert_allclose(m1, m0, atol=1e-6)
+        np.testing.assert_allclose(c1, c0, atol=1e-4)
+
+
 class TestOmegaSpread(unittest.TestCase):
     def test_sig_omega_broadens_omega(self):
         """sig_omega adds its variance to every peak's omega variance, and leaves its centroid in place."""

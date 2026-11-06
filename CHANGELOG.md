@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- The renderer models the detector more fully, both optional and off by default. `geom["psf_mix"]` (`anri.io.imaged11.geom_from_pars(psf_mix=...)`): a point spread that is a mixture of Gaussians, ((fraction, sd), ...), in place of `sig_psf`; each component is rendered with its share of the intensity and the pixels summed before `min_value` applies. Measured on isolated spots, an Eiger2 CdTe at 43.6 keV is a sharp core (0.29 px) plus a 1.28 px wing holding a third of the counts, which one Gaussian cannot be. `geom["sensor"]` (`geom_from_pars(sensor=...)`): a thick sensor's depth kernel, (attenuation coefficient, thickness): each spot smeared outward along its ray by where its photons stop, a truncated exponential of scale sin(phi) / attenuation (phi the ray's angle to the sensor normal), rendered as 4 Gaussian slices (`anri.maths.utils.exponential_slices`); its mean shift is left to the calibration, which already holds it. Each costs one render per component or slice.
+
 ### Fixed
 
 - Rendering a big grain map in many calls (`python -m anri.simulate render`, every row of a scan or every `--frames-per-call` chunk of a box beam's rotation) no longer redoes per-map host work on every call, which kept the GPU idle on a DCT-sized map (500 x 500 x 200 voxels: 20 min on an L40S). `write_rendered_rows` puts each phase on the device once, with the new `anri.fwd.render.to_device`, which also sorts a grain map's entries by grain; `render_row` used to copy the whole map to the device, copy its grain labels back and sort them on the host, on every call. Spots are numbered without sorting every (voxel, spot) pair on the host (`np.unique`), and splat's check that `sig_rot` is the same over a grain runs on the device. A short last `--frames-per-call` chunk is padded to the others' length, so it compiles nothing new. Pixels are unchanged.

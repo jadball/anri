@@ -45,7 +45,7 @@ from anri.geom.beam import beam_offsets, beam_weight
 from anri.geom.gonio import nearest_omega, sample_to_lab
 from anri.geom.paths import attenuation_map, edge_distances, ray_directions, transmission
 from anri.maths.rotation import skew
-from anri.maths.utils import bin_fractions, truncated_moments
+from anri.maths.utils import bin_fractions, exponential_slices, truncated_moments
 
 from .peak import get_centroid, hkl_to_k_omega, make_propagator
 
@@ -415,6 +415,73 @@ def _window_cells(
     return (*out, mean, var)
 
 
+SENSOR_SLICES = 4  # Gaussians standing for a thick sensor's depth kernel (anri.maths.utils.exponential_slices)
+
+
+def _sensor_kernel(mu: jax.Array, geom: dict) -> tuple:
+    """Return a thick sensor's depth kernel for a peak at detector position mu[:2] (slow, fast pixels).
+
+    geom "sensor" = (attenuation coefficient, thickness) in the lab's length units (1 / um, um). A photon reaching the sensor at angle phi to its normal is absorbed after a path s ~ Exp(attenuation), or passes
+    through at s = thickness / cos(phi); it is counted where it stops, s sin(phi) further along the in-plane direction
+    of its ray. The diffracted ray is taken from the lab origin (the sample: microns from it, the detector ~0.1 m).
+
+    Returns
+    -------
+    tuple
+        Offsets r [SENSOR_SLICES] and variances v [SENSOR_SLICES] (pixels, along u) of the kernel's slices, the mean
+        removed, and the unit direction u [2] (slow, fast). The mean shift (mean depth x tan(phi), for a detector
+        normal to the beam the same for every spot as moving the detector back by the mean depth) is left out: a
+        geometry calibrated on spots or rings measured with this sensor already holds it.
+    """
+    s_step, f_step = geom["s_step_lab"], geom["f_step_lab"]
+    p = geom["det_origin_lab"] + mu[0] * s_step + mu[1] * f_step
+    k = p / jnp.linalg.norm(p)
+    n = jnp.cross(s_step, f_step)
+    n = n / jnp.linalg.norm(n)
+    cos_phi = jnp.abs(jnp.dot(n, k))
+    d = k - jnp.dot(n, k) * n  # the ray's in-plane part, per unit path (length sin(phi))
+    A = jnp.stack([s_step, f_step], 1)  # [3, 2]: pixels to lab
+    d_pix = jnp.linalg.solve(A.T @ A, A.T @ d)  # pixels per unit path
+    L = jnp.linalg.norm(d_pix)
+    u = d_pix / jnp.maximum(L, 1e-12)
+    mu_abs, thick = geom["sensor"][0], geom["sensor"][1]
+    r, v = exponential_slices(L / mu_abs, L * thick / jnp.maximum(cos_phi, 1e-6), SENSOR_SLICES)
+    return r - jnp.mean(r), v, u
+
+
+def _sensor_cells(
+    mu_det: jax.Array,
+    mu: jax.Array,
+    shape: tuple,
+    org: tuple | None,
+    row: dict,
+    window: tuple[int, int, int],
+    det_shape: tuple[int, int],
+    geom: dict,
+) -> tuple:
+    """:func:`_window_cells`, with the thick sensor's depth kernel when geom has "sensor" (:func:`_sensor_kernel`).
+
+    The kernel is a mixture of SENSOR_SLICES Gaussians, each the peak's shifted by r_k u and widened by v_k u u^T on
+    the detector, all integrated over one window (that of the whole kernel's covariance). mu_det is the peak's own
+    detector position (for the kernel's direction and size); mu is where it is rendered (a splat kernel renders at
+    its tile's origin).
+    """
+    if "sensor" not in geom:
+        return _window_cells(mu, shape, org, row, window, det_shape)
+    r, v, u = _sensor_kernel(mu_det, geom)
+    ss, ff, oo, sf, so, fo = shape
+
+    def widened(var: jax.Array) -> tuple:
+        return (ss + var * u[0] ** 2, ff + var * u[1] ** 2, oo, sf + var * u[0] * u[1], so, fo)
+
+    out = _window_cells(mu, widened(jnp.mean(v + r**2)), org, row, window, det_shape)
+    frac = jnp.zeros_like(out[0])
+    for k in range(SENSOR_SLICES):
+        mk = jnp.stack([mu[0] + r[k] * u[0], mu[1] + r[k] * u[1], mu[2]])
+        frac = frac + _window_cells(mk, widened(v[k]), out[-1], row, window, det_shape)[0] / SENSOR_SLICES
+    return (frac, *out[1:])
+
+
 def _frame_weights(pos: jax.Array, om_fr: jax.Array, fclip: jax.Array, row: dict, geom: dict) -> jax.Array:
     """Per frame of a window: the beam's profile over the voxel at that frame's dty, and transmission.
 
@@ -467,7 +534,8 @@ def _render_peaks(
         etasign = 1.0 - 2.0 * br
         sig = entries["sig_rot"][e] if "sig_rot" in entries else None
         mu, shape, valid = _peak_shape(ubi, pos, hkl, etasign, sig, row, geom)
-        frac, inside, fclip, rows, cols, om_fr, in_range, origin = _window_cells(mu, shape, org, row, window, det_shape)
+        frac, inside, fclip, rows, cols, om_fr, in_range, origin = _sensor_cells(mu, mu, shape, org, row, window,
+                                                                                 det_shape, geom)  # fmt: skip
         per_frame = _frame_weights(pos, om_fr, fclip, row, geom)
         if "optical_depth" in entries:
             per_frame = per_frame * _transmission(entries["optical_depth"][e], ubi, hkl, etasign, om_fr, geom)
@@ -1048,9 +1116,10 @@ def _splat_kernels(
         def one(e: jax.Array, h: jax.Array, br: jax.Array, o: jax.Array) -> tuple:
             ubi, hkl, etasign = _entry_ubi(ent, e), hk[h], 1.0 - 2.0 * br
             sig = ent["sig_rot"][e] if "sig_rot" in ent else None
-            mu, shape, valid = _peak_shape(ubi, ent["pos"][e], hkl, etasign, sig, r, g)
-            mu = jnp.stack([o[0].astype(mu.dtype), o[1].astype(mu.dtype), mu[2]])
-            frac, _, fclip, _, _, om_fr, in_range, (jo, i0, j0) = _window_cells(mu, shape, None, r, window, det_shape)
+            mu_det, shape, valid = _peak_shape(ubi, ent["pos"][e], hkl, etasign, sig, r, g)
+            mu = jnp.stack([o[0].astype(mu_det.dtype), o[1].astype(mu_det.dtype), mu_det[2]])
+            frac, _, fclip, _, _, om_fr, in_range, (jo, i0, j0) = _sensor_cells(mu_det, mu, shape, None, r, window,
+                                                                                det_shape, g)  # fmt: skip
             frames = jo + jnp.arange(wo)
             real = (frames >= 0) & (frames < nfr)
             captured = jnp.sum(jnp.where(real[:, None, None], frac, 0.0))
@@ -1328,7 +1397,15 @@ def render_row(
         Dict with "wavelength", "k_in_lab" [3], "wedge", "chi" (degrees), "y0",
         "s_step_lab", "f_step_lab", "det_origin_lab" [3] (from :func:`anri.geom.detector.detector_basis_vectors_lab`),
         "sig_wavelength", "sig_ky", "sig_kz", "sig_beam", "sig_psf" (detector point spread, pixels), "voxel_size"
-        and "pol_factor"; optionally "sig_omega", an extra spread of every peak in omega (degrees, default 0)
+        and "pol_factor"; optionally "sig_omega", an extra spread of every peak in omega (degrees, default 0),
+        "sensor", (attenuation coefficient, thickness) of a thick sensor in the lab's length units (e.g. 1 / um, um):
+        each spot smeared outward by where its photons stop (:func:`_sensor_kernel`; the mean shift left to the
+        calibration; SENSOR_SLICES renders of each window), and
+        "psf_mix", ((fraction, sd), ...): a detector point spread that is a mixture of Gaussians (fractions summing
+        to 1, sd in pixels), in place of "sig_psf". Rendering is linear in intensity, so each component is rendered
+        with its own sd and its share of the intensity, and the pixels summed before ``min_value`` applies. E.g. a
+        photon-counting CdTe detector: a sharp core and a wing of about a pixel from fluorescence, measured on
+        isolated spots. Each extra component costs one more render
     row
         From :func:`make_row`
     det_shape
@@ -1365,12 +1442,20 @@ def render_row(
     frame, pixel, value: np.ndarray
         Sparse pixels sorted by (frame, pixel), with duplicates summed
     stats: dict
-        "n_peaks" rendered; per peak, "captured" (the fraction of its Gaussian in its window, over the scan's frames)
+        "n_peaks" rendered; per peak, "captured" (the fraction of its Gaussian in its window, over the scan's frames;
+        with "psf_mix", of its mixture)
         and "in_range" (the fraction of its omega profile within the scan's omega range: below 0.5 for the peaks
         selected beyond the ends of the scan); "window_frames" with max_frames. ``captured / in_range`` is the share
         of what the scan sees that the window holds
     """
     mesh = anri.utils.mesh() if mesh is None else mesh
+    psf_mix = geom.get("psf_mix")
+    if psf_mix is not None:
+        psf_mix = [(float(f), float(sd)) for f, sd in psf_mix]
+        if abs(sum(f for f, _ in psf_mix) - 1.0) > 1e-6:
+            msg = f'geom "psf_mix" fractions must sum to 1, not {sum(f for f, _ in psf_mix)}'
+            raise ValueError(msg)
+        geom = {k: v for k, v in geom.items() if k != "psf_mix"}
     entries, hkls_j, F2_j, geom, row_j = _as_jax(entries, hkls, F2, geom, row)
     dtype = entries["pos"].dtype
     _, ws, wf = window
@@ -1400,18 +1485,27 @@ def render_row(
         tile = np.maximum(8, 1 << np.ceil(np.log2(np.floor(extent.max(1)) + 2)).astype(int))  # a power of two
         stats["n_spots"] = first.size
 
-    # 2. Render one window size at a time
-    args = (entries, hkls_j, F2_j, geom, row_j, det_shape, mesh, batch, stats)
+    # 2. Render one window size at a time (and, with "psf_mix", one point-spread component at a time)
     parts = []
-    for k, wo_k in enumerate(classes):
-        sel = np.flatnonzero(cls == k)
-        if sel.size == 0:
-            continue
-        if splat:
-            parts += _render_spots(sel, (wo_k, ws, wf), window[0] * ws * wf, (e, h, b), (first, count, origin, tile),
-                                   *args)  # fmt: skip
-        else:
-            parts += _render_windows(sel, (wo_k, ws, wf), (e, h, b), *args)
+    for frac, sd in psf_mix or [(1.0, None)]:
+        ent_k, geom_k, stats_k = entries, geom, stats
+        if psf_mix is not None:  # the same arrays and shapes: no new compile per component
+            ent_k = {**entries, "density": entries["density"] * frac}
+            geom_k = {**geom, "sig_psf": jnp.asarray(sd, dtype=jnp.asarray(geom["sig_psf"]).dtype)}
+            stats_k = {**stats, "captured": np.zeros(n_peaks), "in_range": np.zeros(n_peaks)}
+        args = (ent_k, hkls_j, F2_j, geom_k, row_j, det_shape, mesh, batch, stats_k)
+        for k, wo_k in enumerate(classes):
+            sel = np.flatnonzero(cls == k)
+            if sel.size == 0:
+                continue
+            if splat:
+                parts += _render_spots(sel, (wo_k, ws, wf), window[0] * ws * wf, (e, h, b),
+                                       (first, count, origin, tile), *args)  # fmt: skip
+            else:
+                parts += _render_windows(sel, (wo_k, ws, wf), (e, h, b), *args)
+        if psf_mix is not None:  # a peak's captured fraction: its components', by their shares of the intensity
+            stats["captured"] += frac * stats_k["captured"]
+            stats["in_range"] = stats_k["in_range"]
 
     # 3. Merge batches and devices: sort by (frame, pixel), sum duplicates, then drop the pixels below min_value
     frame, pixel, value = _merge_host(*(np.concatenate(x) for x in zip(*parts)), det_shape[0] * det_shape[1])
