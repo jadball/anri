@@ -944,7 +944,7 @@ _PER_ENTRY = ("pos", "density", "grain", "ubi", "sig_rot", "optical_depth")
 
 
 def to_device(entries: dict, hkls: ArrayLike, F2: ArrayLike) -> tuple[dict, jax.Array, jax.Array]:
-    """Put one phase's map entries, hkls and |F|^2 on the device once, for many calls of :func:`render_row`.
+    """Put one phase's map entries, hkls and ``|F|^2`` on the device once, for many calls of :func:`render_row`.
 
     :func:`render_row` takes host arrays too, but then copies the whole map to the device on every call (every row,
     or every chunk of frames of a box beam's rotation). A grain map's entries are also sorted by grain (stably), so
