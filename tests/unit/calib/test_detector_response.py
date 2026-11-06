@@ -97,6 +97,24 @@ class TestThickness(unittest.TestCase):
         self.assertGreater(blind["core"], known["core"] + 0.05)
 
 
+class TestConvergence(unittest.TestCase):
+    def test_radial_where_expected(self):
+        """Horizontal convergence (about z) turns the whole pattern about z: radial at eta = +-90 by sigma D / cos^2 2theta,
+        tangential at eta = 0, 180. Vertical convergence the other way round."""
+        rows, cols = np.array([1116, 1116, 400, 1830]), np.array([300, 1800, 1050, 1050])  # left, right, up, down
+        none = spot_terms(rows, cols, PARS, None, None, 1e-9, 1e-3)
+        sig = 1e-4
+        h = spot_terms(rows, cols, PARS, None, None, 1e-9, 1e-3, convergence=(sig, 0.0))
+        v = spot_terms(rows, cols, PARS, None, None, 1e-9, 1e-3, convergence=(0.0, sig))
+        side = np.abs(np.sin(np.radians(none["eta"]))) > 0.99
+        self.assertEqual(side.sum(), 2)
+        want = (sig * PARS["distance"] / np.cos(np.radians(none["tth"])) ** 2 / 75.0) ** 2
+        np.testing.assert_allclose((h["var_known"] - none["var_known"])[side], want[side], rtol=0.03)
+        np.testing.assert_allclose((v["var_known"] - none["var_known"])[~side], want[~side], rtol=0.03)
+        self.assertLess(np.max((h["var_known"] - none["var_known"])[~side]), 1e-3 * want.max())
+        self.assertLess(np.max((v["var_known"] - none["var_known"])[side]), 1e-3 * want.max())
+
+
 class TestProfile(unittest.TestCase):
     def test_profile_and_plot(self):
         """detector_profile bins a stage file's windows by radial offset; plot_detector_profile draws it."""

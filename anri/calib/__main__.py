@@ -98,6 +98,9 @@ def parser() -> argparse.ArgumentParser:
     d.add_argument("--bandwidth", type=float, default=1e-3, help="FWHM of dlambda/lambda (default 1e-3)")
     d.add_argument("--voxel", type=float, help="width across the beam a spot comes from, um (default: the dty step; "
                    "give it for a single rotation)")  # fmt: skip
+    d.add_argument("--convergence", type=float, nargs=2, default=(8e-5, 8e-5), metavar=("H", "V"),
+                   help="the beam direction's standard deviation, horizontal and vertical, rad (default 8e-5 8e-5: Al "
+                   "CRLs; Si nanolenses 1.5e-4)")  # fmt: skip
     d.add_argument("--thickness", type=float, default=0.0, help="its length along the beam, um: a radial box of about "
                    "thickness x tan(2theta), e.g. 112 for a 100 um cube rotating (default 0)")  # fmt: skip
     d.add_argument("--undeformed", action="store_true", help="an undeformed crystal: no radial spread of its own "
@@ -155,7 +158,7 @@ def main() -> None:
         stage_detector(args.source, args.out, parfile=args.parfile, scans=args.scans, min_counts=args.min_counts,
                        max_spots=args.max_spots, window=args.window,
                        sensor=None if args.sensor is None else tuple(args.sensor), bandwidth=args.bandwidth,
-                       voxel=args.voxel, thickness=args.thickness, free_radial=not args.undeformed, split_tth=args.split_tth, command=cmd,
+                       voxel=args.voxel, thickness=args.thickness, convergence=tuple(args.convergence), free_radial=not args.undeformed, split_tth=args.split_tth, command=cmd,
                        log=log)  # fmt: skip
         log(f"done in {time.perf_counter() - T0:.0f} s")
         return

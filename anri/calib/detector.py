@@ -91,7 +91,7 @@ def find_spots(frame: np.ndarray, row: np.ndarray, col: np.ndarray, value: np.nd
 
 
 def spot_terms(rows: np.ndarray, cols: np.ndarray, pars: dict, spatial: tuple | None, sensor: tuple | None,
-               bandwidth: float, voxel: float, thickness: float = 0.0) -> dict:  # fmt: skip
+               bandwidth: float, voxel: float, thickness: float = 0.0, convergence: tuple = (0.0, 0.0)) -> dict:  # fmt: skip
     """Each spot's known radial blurs and directions, at its window centre.
 
     Parameters
@@ -108,6 +108,10 @@ def spot_terms(rows: np.ndarray, cols: np.ndarray, pars: dict, spatial: tuple | 
         FWHM of d(lambda) / lambda
     voxel
         Width of the illuminated volume across the beam (horizontal), um
+    convergence
+        (horizontal, vertical) standard deviation of the incoming beam's direction, rad (the renderer's sig_ky,
+        sig_kz). A tilted beam diffracts at a slightly different omega, within the frame, and moves the spot: radially
+        at eta = +-90 deg for the horizontal one, at eta = 0, 180 for the vertical one
     thickness
         Its length along the beam, um: a source further along the beam lands at another radius (about
         thickness x tan(2theta) for a detector normal to the beam), a box the model convolves exactly
@@ -116,8 +120,8 @@ def spot_terms(rows: np.ndarray, cols: np.ndarray, pars: dict, spatial: tuple | 
     -------
     dict
         "u" [n, 2] radial unit (slow, fast); "tth", "eta" (deg); "r" [n, K] and "v" [n, K] the sensor slices'
-        radial offsets and variances (px^2), K = 1 without a sensor; "var_known" [n] the bandwidth's and the voxel's
-        radial variance (px^2); "box" [n] the thickness's radial width (px)
+        radial offsets and variances (px^2), K = 1 without a sensor; "var_known" [n] the bandwidth's, the voxel's and
+        the convergence's radial variance (px^2); "box" [n] the thickness's radial width (px)
     """
     import anri.io.imaged11 as io
     from anri.calib.fit import base_pars
@@ -155,6 +159,20 @@ def spot_terms(rows: np.ndarray, cols: np.ndarray, pars: dict, spatial: tuple | 
         dp = np.array([1.0, 0.0, 0.0])[None] - k * (n[0] / (k @ n))[:, None]
         along = np.linalg.solve(A.T @ A, (dp @ A).T).T  # [n, 2] pixels per um along the beam
         box = thickness * np.abs(np.sum(along * u, 1))
+        # convergence: the beam tilted by a small rotation d (about lab z: horizontal; about lab y: vertical), the
+        # crystal turned by d_omega about z so that Bragg holds again (|k_in + g| = |k_in|), the ray's change on the
+        # detector
+        k_in, z = np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, 1.0])
+        g = k - k_in[None]  # [n, 3], units of |k|
+        zg = np.cross(z[None], g)
+        rad_conv = []
+        for axis in (z, np.array([0.0, 1.0, 0.0])):
+            dk_in = np.cross(axis, k_in)
+            d_om = -(g @ dk_in) / (zg @ k_in)
+            dk = dk_in[None] + d_om[:, None] * zg
+            dP = np.linalg.norm(p_lab, axis=1, keepdims=True) * (dk - k * ((dk @ n) / (k @ n))[:, None])
+            rad_conv.append(np.sum(np.linalg.solve(A.T @ A, (dP @ A).T).T * u, 1))  # radial px per rad
+        var_known = var_known + (convergence[0] * rad_conv[0]) ** 2 + (convergence[1] * rad_conv[1]) ** 2
         if sensor is None:
             r, v = np.zeros((len(sc), 1)), np.zeros((len(sc), 1))
         else:
