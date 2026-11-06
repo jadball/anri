@@ -23,7 +23,7 @@ instead of "ubi"; it assumes no orientation spread and one strain per grain, so 
 
 | Stage | Option | Look at | Function (`anri.simulate.diagnostics`; plot in `anri.simulate.plots`) |
 |---|---|---|---|
-| prepare | `--optics`, `--divergence`, `--bandwidth`, `--beam-fwhm` | the beamline's optics: ask the human (see [physics](physics.md)) | |
+| prepare | `--optics`, `--divergence`, `--bandwidth`, `--beam-fwhm` | the beamline's optics: ask the human (see [physics](physics.md)). The default bandwidth is the monochromator's nominal 2e-3; spots on an undeformed Si cube show at most ~3e-4 across the ring (not settled) | |
 | prepare | `--psf`, `--psf-wing`, `--sensor` | the detector: a photon-counting CdTe is a sharp core plus a wing of ~1 px (fluorescence counted when the lower threshold, about half the photon energy, is below the Cd / Te K lines), and a thick sensor smears spots outward. Measured on isolated spots of an undeformed crystal; Eiger2 CdTe, 750 um, at 43.6 keV: `--psf 0.29 --psf-wing 0.32 1.28 --sensor 111 750`. Ask the human for the energy and detector | |
 | prepare | `--beam`, `--beam-size` | the experiment: `pencil` scans rows of dty (scanning 3DXRD); `box` lights the whole sample, one rotation at y0, cubes for a 3D map (DCT). Ask the human for a box beam's size if it does not cover the sample | |
 | prepare | `--dty-step`, `--margin` | every voxel inside the radius the rows reach at every ω | `footprint`; `plot_footprint` |
