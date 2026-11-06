@@ -257,5 +257,29 @@ class TestAbsorption(unittest.TestCase):
             self.assertEqual((_mu(args.mu), args.no_absorption), ({"Fe": 0.05, "Ni": 0.05}, True))
 
 
+class TestDetector(unittest.TestCase):
+    def test_psf_wing_and_sensor(self):
+        """prepare's --psf-wing and --sensor reach the renderer's geometry (and only when given)."""
+        quiet = {"omega_step": 2.0, "dty_step": 8.0, "margin": 0.25, "absorption": False, "log": lambda m: None}
+        with tempfile.TemporaryDirectory() as tmp:
+            parfile = os.path.join(tmp, "geometry.par")
+            anri.io.imaged11.write_par(parfile, PARS)
+            map_file = two_phase_map(tmp)
+            plain = sim.stages.load_prepare(sim.stages.stage_prepare(
+                map_file, parfile, os.path.join(tmp, "a_prepare.h5"), **quiet))  # fmt: skip
+            self.assertNotIn("psf_mix", plain["geom"])
+            self.assertNotIn("sensor", plain["geom"])
+            cdte = sim.stages.load_prepare(sim.stages.stage_prepare(
+                map_file, parfile, os.path.join(tmp, "b_prepare.h5"), psf=0.29, psf_wing=(0.32, 1.28),
+                sensor=(111.0, 750.0), **quiet))  # fmt: skip
+            np.testing.assert_allclose(cdte["geom"]["psf_mix"], ((0.68, 0.29), (0.32, 1.28)))
+            np.testing.assert_allclose(cdte["geom"]["sensor"], (1 / 111.0, 750.0))
+        from anri.simulate.__main__ import parse_args
+
+        args = parse_args(["prepare", "m.h5", "p.par", "--psf", "0.29", "--psf-wing", "0.32", "1.28", "--sensor",
+                           "111", "750"])  # fmt: skip
+        self.assertEqual((args.psf, args.psf_wing, args.sensor), (0.29, [0.32, 1.28], [111.0, 750.0]))
+
+
 if __name__ == "__main__":
     unittest.main()

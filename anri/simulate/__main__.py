@@ -71,7 +71,14 @@ def _prepare_options(p: argparse.ArgumentParser) -> None:
                    help="box beam's flat top, horizontal and vertical (default: the sample, plus two voxels)")  # fmt: skip
     p.add_argument("--beam-fwhm", type=float, help="FWHM of the beam across dty (default: the dty step); for a box "
                    "beam, of its edges' blur (default: the voxel size)")  # fmt: skip
-    p.add_argument("--psf", type=float, default=0.5, help="detector point spread, sigma in pixels (default 0.5)")
+    p.add_argument("--psf", type=float, default=0.5, help="detector point spread, sigma in pixels (default 0.5); "
+                   "with --psf-wing, its core")  # fmt: skip
+    p.add_argument("--psf-wing", type=float, nargs=2, metavar=("F", "SD"), help="a wing of the point spread: a "
+                   "fraction F of the counts in a Gaussian of sd SD pixels (e.g. 0.32 1.28 around --psf 0.29: an "
+                   "Eiger2 CdTe at 43.6 keV)")  # fmt: skip
+    p.add_argument("--sensor", type=float, nargs=2, metavar=("LENGTH", "THICKNESS"), help="the detector sensor's "
+                   "absorption length and thickness (um): spots smeared outward by where photons stop (e.g. 111 750: "
+                   "CdTe at 43.6 keV)")  # fmt: skip
     p.add_argument("--pol-factor", type=float, default=1.0, help="degree of horizontal polarisation (default 1)")
     p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: --dataset's, else 0)")
     p.add_argument("--omega-range", type=float, nargs=2, default=(0.0, 180.0), help="rotation, deg (default 0 180)")
@@ -179,7 +186,9 @@ def main() -> None:
         source = sim.stages.stage_prepare(
             args.map, args.pars, out, dataset=args.input_dataset,
             remap=dict(v.split("=", 1) for v in args.remap) if args.remap else None, cif=_cif(args.cif), optics=args.optics, divergence=args.divergence,
-            bandwidth=args.bandwidth, beam=args.beam, beam_size=None if args.beam_size is None else tuple(args.beam_size), beam_fwhm=args.beam_fwhm, psf=args.psf, pol_factor=args.pol_factor, y0=args.y0,
+            bandwidth=args.bandwidth, beam=args.beam, beam_size=None if args.beam_size is None else tuple(args.beam_size), beam_fwhm=args.beam_fwhm, psf=args.psf,
+            psf_wing=None if args.psf_wing is None else tuple(args.psf_wing),
+            sensor=None if args.sensor is None else tuple(args.sensor), pol_factor=args.pol_factor, y0=args.y0,
             omega_range=tuple(args.omega_range), omega_step=args.omega_step, dty_step=args.dty_step,
             margin=args.margin, density=args.density, det_shape=tuple(args.det_shape), tth_max=args.tth_max,
             absorption=not args.no_absorption, mu=_mu(args.mu), mu_map=args.mu_map, command=command, log=log,

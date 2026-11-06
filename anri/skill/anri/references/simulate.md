@@ -24,6 +24,7 @@ instead of "ubi"; it assumes no orientation spread and one strain per grain, so 
 | Stage | Option | Look at | Function (`anri.simulate.diagnostics`; plot in `anri.simulate.plots`) |
 |---|---|---|---|
 | prepare | `--optics`, `--divergence`, `--bandwidth`, `--beam-fwhm` | the beamline's optics: ask the human (see [physics](physics.md)) | |
+| prepare | `--psf`, `--psf-wing`, `--sensor` | the detector: a photon-counting CdTe is a sharp core plus a wing of ~1 px (fluorescence counted when the lower threshold, about half the photon energy, is below the Cd / Te K lines), and a thick sensor smears spots outward. Measured on isolated spots of an undeformed crystal; Eiger2 CdTe, 750 um, at 43.6 keV: `--psf 0.29 --psf-wing 0.32 1.28 --sensor 111 750`. Ask the human for the energy and detector | |
 | prepare | `--beam`, `--beam-size` | the experiment: `pencil` scans rows of dty (scanning 3DXRD); `box` lights the whole sample, one rotation at y0, cubes for a 3D map (DCT). Ask the human for a box beam's size if it does not cover the sample | |
 | prepare | `--dty-step`, `--margin` | every voxel inside the radius the rows reach at every ω | `footprint`; `plot_footprint` |
 | prepare | `--tth-max` | the share of each ring on the detector: a ring running off it loses spots an indexer reads as weak reflections | `ring_coverage`; `plot_rings` |
@@ -62,6 +63,9 @@ quartz).
 - `anri.fwd.render.to_device`: a phase's entries, hkls and |F|^2 put on the device once (a grain map's sorted by
   grain). Use it when calling `render_row` many times (rows, or chunks of frames): with host arrays, every call
   copies the whole map to the device again and sorts a grain map on the host. `write_rendered_rows` does this.
+- The detector, in the geometry dict (`anri.io.imaged11.geom_from_pars`): `sig_psf`, or `psf_mix` ((fraction, sd),
+  ...) for a point spread that is a mixture of Gaussians; `sensor` (attenuation coefficient, thickness) for a thick
+  sensor's depth kernel, its mean shift left to the calibration. Each extra component or slice is one more render.
 - `anri.fwd.render.make_row`: the row dict from one scan's per-frame ω and dty. Frames integrate over their ω (and
   dty) range: never treat a frame as one angle.
 - `anri.fwd.render.guess_batch_size`: the largest `batch` that fits a share of free memory. Use it rather than

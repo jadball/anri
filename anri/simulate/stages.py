@@ -122,7 +122,8 @@ def stage_prepare(
     map_file: str, pars_file: str | None, out: str, *, dataset: str | None = None, remap: dict | None = None,
     cif: str | dict | None = None, optics: str = "al-crl", divergence: float | None = None,
     bandwidth: float = BANDWIDTH, beam: str = "pencil", beam_size: tuple | None = None,
-    beam_fwhm: float | None = None, psf: float = 0.5, pol_factor: float = 1.0,
+    beam_fwhm: float | None = None, psf: float = 0.5, psf_wing: tuple | None = None, sensor: tuple | None = None,
+    pol_factor: float = 1.0,
     y0: float | None = None, omega_range: tuple = (0.0, 180.0), omega_step: float = 0.05,
     dty_step: float | None = None, margin: float = 3.0, density: float = 1.0, det_shape: tuple = EIGER_4M,
     tth_max: float | None = None, absorption: bool = True, mu: float | dict | None = None, mu_map: str | None = None,
@@ -167,7 +168,14 @@ def stage_prepare(
         FWHM of the beam across dty (default: the dty step); for a box beam, of the blur of its edges (default: the
         voxel size)
     psf
-        Standard deviation of the detector's point spread (pixels)
+        Standard deviation of the detector's point spread (pixels); with psf_wing, its core
+    psf_wing
+        (fraction, sd): a wing of the point spread holding this fraction of the counts in a Gaussian of this sd
+        (pixels), around a core of sd psf (``geom["psf_mix"]``, :func:`anri.fwd.render.render_row`). Measured on
+        isolated spots: an Eiger2 CdTe at 43.6 keV is about (0.32, 1.28) around a 0.29 px core
+    sensor
+        (absorption length, thickness) of the detector's sensor, in um (the par file's units): each spot is smeared
+        outward by where its photons stop (``geom["sensor"]``), e.g. (111, 750) for 750 um of CdTe at 43.6 keV
     pol_factor
         Degree of horizontal polarisation
     y0
@@ -229,6 +237,8 @@ def stage_prepare(
     options = {"map": os.path.abspath(map_file), "pars": os.path.abspath(pars_file), "optics": optics,
                "divergence": divergence, "bandwidth": bandwidth, "beam": beam,
                "beam_size": None if beam_size is None else list(beam_size), "beam_fwhm": beam_fwhm, "psf": psf,
+               "psf_wing": None if psf_wing is None else list(psf_wing),
+               "sensor": None if sensor is None else list(sensor),
                "pol_factor": pol_factor, "y0": y0, "omega_range": list(omega_range), "omega_step": omega_step,
                "dty_step": dty_step, "margin": margin, "density": density, "det_shape": list(det_shape),
                "tth_max": tth_max, "dataset": None if dataset is None else os.path.abspath(dataset),
@@ -373,11 +383,20 @@ def load_prepare(path: str) -> dict:
         mu = np.array([float(mus[n]) for n in r["phases"]]) if mus else None
         phases = add_absorption(phases, r["voxel_size"], mu, mu_map)
     geom = geom_from_pars(pars, o["y0"], r["sig_wavelength"], r["divergence"], r["divergence"], r["sig_beam"],
-                          r["voxel_size"], pol_factor=o["pol_factor"], sig_psf=o["psf"],
+                          r["voxel_size"], pol_factor=o["pol_factor"], sig_psf=o["psf"], psf_mix=_psf_mix(o),
+                          sensor=None if o.get("sensor") is None else (1.0 / o["sensor"][0], o["sensor"][1]),
                           width_beam=r.get("width_beam", 0.0), sig_beam_v=r.get("sig_beam_v", 0.0),
                           width_beam_v=r.get("width_beam_v", 0.0), voxel_3d=r.get("voxel_3d", False))  # fmt: skip
     return {"phases": phases, "names": r["phases"], "cells": cells, "geom": geom, "omega": omega, "dty": dty,
             "det_shape": tuple(o["det_shape"]), "pars": pars, "prov": prov}  # fmt: skip
+
+
+def _psf_mix(o: dict) -> tuple | None:
+    """Return a prepare file's point spread as geom "psf_mix" (a core of sd psf and its wing), or None without a wing."""
+    if o.get("psf_wing") is None:
+        return None
+    f, sd = o["psf_wing"]
+    return ((1.0 - f, o["psf"]), (f, sd))
 
 
 # -------------------------------------------------------------------------------------------------------- 2. render
