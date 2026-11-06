@@ -1,4 +1,4 @@
-"""Small numerical helpers: 3x3 inverses, Gaussians (widths and integrals), and float64 evaluation of JAX code.
+"""Small numerical helpers: 3x3 inverses, Gaussians, truncated exponentials, and float64 evaluation of JAX code.
 
 ``inv3`` is written out explicitly: XLA lowers ``jnp.linalg.inv`` to a batched LAPACK/cuSOLVER call that handles
 one tiny matrix at a time. For the 3x3 matrices that Anri uses per voxel and per peak, plain arithmetic is several
@@ -64,6 +64,39 @@ def truncated_moments(lo: ArrayLike, hi: ArrayLike, mu: ArrayLike, sigma: ArrayL
     mean = jnp.where(ok, mu + sigma * r, jnp.clip(mu, lo, hi))
     var = jnp.where(ok, sigma**2 * (1.0 + (a * pa - b * pb) / safe - r**2), 0.0)
     return mass, mean, jnp.maximum(var, 0.0)
+
+
+def exponential_slices(scale: ArrayLike, cut: ArrayLike, n: int) -> tuple:
+    """Mean and variance of each of n equal-probability slices of an exponential distribution truncated at cut.
+
+    x has density exp(-x / scale) / scale on [0, cut], renormalised. Slice k holds the x between the quantiles k / n
+    and (k + 1) / n. A mixture of n Gaussians with these means and variances (weights 1 / n) has exactly the mean
+    and variance of the truncated exponential (law of total variance), and approaches its shape as n grows: e.g. a
+    thick sensor's depth kernel (:mod:`anri.fwd.render`).
+
+    Parameters
+    ----------
+    scale, cut
+        Scale (mean of the untruncated exponential) and truncation, same units, cut > 0
+    n
+        Number of slices (static)
+
+    Returns
+    -------
+    tuple
+        means, variances [..., n]
+    """
+    b = jnp.maximum(jnp.asarray(scale), 1e-9)[..., None]
+    R = jnp.maximum(jnp.asarray(cut), 1e-9)[..., None]
+    P = -jnp.expm1(-R / b)  # untruncated mass below cut
+    edges = -b * jnp.log1p(-(jnp.arange(n) / n) * P)
+    edges = jnp.concatenate([edges, jnp.broadcast_to(R, edges.shape[:-1] + (1,))], -1)  # the last is the cut itself
+    lo, hi = edges[..., :-1], edges[..., 1:]  # (from the formula, -b log(1 - P) = inf when cut >> scale)
+    elo, ehi = jnp.exp(-lo / b), jnp.exp(-hi / b)
+    Z = jnp.maximum(elo - ehi, 1e-30)
+    m = b + (lo * elo - hi * ehi) / Z
+    m2 = (elo * (lo**2 + 2 * lo * b + 2 * b**2) - ehi * (hi**2 + 2 * hi * b + 2 * b**2)) / Z
+    return m, jnp.maximum(m2 - m**2, 0.0)
 
 
 def ramp_integral(x: ArrayLike, sigma: ArrayLike) -> jax.Array:

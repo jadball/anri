@@ -108,6 +108,27 @@ Anri code should use JAX wherever possible: `jit`, `vmap`, `lax.map`/`scan`, sha
 Don't give up on JAX and wrap work in Python multiprocessing or threading instead.
 Keep functions differentiable where it is reasonable to do so.
 
+## Think it through mathematically first
+
+**This comes before everything else here.** Before building or running anything to answer a question about a
+method (does it converge, what do the data determine, why does a result drift), work out what the mathematics says:
+
+- linearise around the solution and count the unknowns against the independent measurements;
+- look for null spaces and degeneracies: the rank of the Jacobian or of the Fisher information, Fourier-slice
+  arguments for anything measured along rays, gauge freedoms (a parameter of the geometry trading with one of the
+  sample);
+- estimate the sizes of the effects (counting noise, parallax, sin θ factors) before measuring them.
+
+Write the derivation down with its assumptions, and tell the maintainer what it predicts. Then use runs to check
+those predictions, never to discover by trial what could have been derived. Building first and thinking later
+wastes the maintainer's time.
+
+Example of what this rule prevents: whether single-axis scanning 3DXRD determines every strain component in every
+voxel took a day of runs, when a Fourier-slice argument answers it in minutes. With g nearly perpendicular to the
+beam, each spatial frequency k ≠ 0 determines the deformation gradient applied to the directions of k and of the
+rotation axis, but not applied to the horizontal direction perpendicular to k. That part is seen only through
+sin θ terms and parallax.
+
 ## Reason through code before running it
 
 The maintainer often runs code on a GPU machine you cannot reach. A broken or slow run costs their time, so **reason
