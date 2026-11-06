@@ -65,6 +65,38 @@ class TestDetectorResponse(unittest.TestCase):
         self.assertGreater(a["nll_one"] - a["nll_two"], 100)  # one Gaussian is clearly worse
 
 
+class TestThickness(unittest.TestCase):
+    def test_box_width(self):
+        """A source's length along the beam: about thickness x tan(2theta) / pixel radially (detector ~ normal)."""
+        rows, cols = np.array([700.0, 1600.0, 1116.0]), np.array([1050.0, 900.0, 1700.0])
+        t = spot_terms(rows.astype(int), cols.astype(int), PARS, None, None, BANDWIDTH, 1e-3, 100.0)
+        np.testing.assert_allclose(t["box"], 100.0 * np.tan(np.radians(t["tth"])) / 75.0, rtol=0.02)
+
+    def test_fit_with_and_without_the_box(self):
+        """Spots smeared by a box: the fit that knows it recovers the point spread; one that does not, a wider core."""
+        from anri.calib.detector import model, model_data
+        from anri.maths.utils import float64
+
+        rng = np.random.default_rng(1)
+        n = 30
+        rows, cols = rng.integers(300, 1800, n), rng.integers(300, 1800, n)
+        t = spot_terms(rows, cols, PARS, None, None, BANDWIDTH, 1e-3, 600.0)  # a ~1 px box
+        theta = np.concatenate([[np.log(CORE), np.log(WING), np.log(FRACTION / (1 - FRACTION))],
+                                np.tile([np.log(3e4), 0.1, -0.2, np.log(0.6), np.log(0.05), 0.0], n)])  # fmt: skip
+        with float64():
+            lam = np.asarray(model(theta, model_data(np.zeros((n, 11, 11)), np.ones((n, 11, 11), bool), t), True,
+                                   False))  # fmt: skip
+        counts = rng.poisson(lam).astype(float)
+        good = np.ones(counts.shape, bool)
+        known = fit_response(counts, good, t, free_radial=False, log=lambda m: None)["all"]
+        blind = fit_response(counts, good, {**t, "box": np.zeros(n)}, free_radial=False, log=lambda m: None)["all"]
+        self.assertGreater(np.median(t["box"]), 0.5)
+        self.assertAlmostEqual(known["core"], CORE, delta=0.04)
+        self.assertAlmostEqual(known["wing"], WING, delta=0.1)
+        self.assertAlmostEqual(known["fraction"], FRACTION, delta=0.03)
+        self.assertGreater(blind["core"], known["core"] + 0.05)
+
+
 class TestProfile(unittest.TestCase):
     def test_profile_and_plot(self):
         """detector_profile bins a stage file's windows by radial offset; plot_detector_profile draws it."""

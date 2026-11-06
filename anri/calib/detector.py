@@ -25,6 +25,7 @@ from collections.abc import Callable
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.scipy.special import ndtr
 from scipy.optimize import minimize
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
@@ -90,7 +91,7 @@ def find_spots(frame: np.ndarray, row: np.ndarray, col: np.ndarray, value: np.nd
 
 
 def spot_terms(rows: np.ndarray, cols: np.ndarray, pars: dict, spatial: tuple | None, sensor: tuple | None,
-               bandwidth: float, voxel: float) -> dict:  # fmt: skip
+               bandwidth: float, voxel: float, thickness: float = 0.0) -> dict:  # fmt: skip
     """Each spot's known radial blurs and directions, at its window centre.
 
     Parameters
@@ -107,13 +108,16 @@ def spot_terms(rows: np.ndarray, cols: np.ndarray, pars: dict, spatial: tuple | 
         FWHM of d(lambda) / lambda
     voxel
         Width of the illuminated volume across the beam (horizontal), um
+    thickness
+        Its length along the beam, um: a source further along the beam lands at another radius (about
+        thickness x tan(2theta) for a detector normal to the beam), a box the model convolves exactly
 
     Returns
     -------
     dict
         "u" [n, 2] radial unit (slow, fast); "tth", "eta" (deg); "r" [n, K] and "v" [n, K] the sensor slices'
         radial offsets and variances (px^2), K = 1 without a sensor; "var_known" [n] the bandwidth's and the voxel's
-        radial variance (px^2)
+        radial variance (px^2); "box" [n] the thickness's radial width (px)
     """
     import anri.io.imaged11 as io
     from anri.calib.fit import base_pars
@@ -144,6 +148,13 @@ def spot_terms(rows: np.ndarray, cols: np.ndarray, pars: dict, spatial: tuple | 
         e_h = np.linalg.solve(A.T @ A, A.T @ np.array([0.0, 1.0, 0.0]))  # lab y (horizontal, across the beam) in px
         horiz = np.abs(u @ (e_h / np.linalg.norm(e_h)))
         var_known = bw**2 + (voxel / float(pars["y_size"]) * horiz) ** 2 / 12  # the voxel's width as a box
+        # a source moved along the beam (lab x) by 1 um: where its ray to this spot meets the detector, in pixels
+        o_lab, n = np.asarray(det["det_origin_lab"]), np.cross(A[:, 0], A[:, 1])
+        p_lab = o_lab[None] + sc[:, None] * A[:, 0] + fc[:, None] * A[:, 1]
+        k = p_lab / np.linalg.norm(p_lab, axis=1, keepdims=True)
+        dp = np.array([1.0, 0.0, 0.0])[None] - k * (n[0] / (k @ n))[:, None]
+        along = np.linalg.solve(A.T @ A, (dp @ A).T).T  # [n, 2] pixels per um along the beam
+        box = thickness * np.abs(np.sum(along * u, 1))
         if sensor is None:
             r, v = np.zeros((len(sc), 1)), np.zeros((len(sc), 1))
         else:
@@ -151,7 +162,7 @@ def spot_terms(rows: np.ndarray, cols: np.ndarray, pars: dict, spatial: tuple | 
             geom["sensor"] = (jnp.float64(1.0 / sensor[0]), jnp.float64(sensor[1]))
             mus = jnp.stack([jnp.asarray(sc), jnp.asarray(fc), jnp.zeros(len(sc))], 1)
             r, v = (np.asarray(a).reshape(-1, SENSOR_SLICES) for a in jax.vmap(lambda m: _sensor_kernel(m, geom)[:2])(mus))
-    return {"u": u, "tth": tth, "eta": eta, "r": r, "v": v, "var_known": var_known}
+    return {"u": u, "tth": tth, "eta": eta, "r": r, "v": v, "var_known": var_known, "box": box}
 
 
 def _sub_offsets(window: int) -> tuple:
@@ -160,6 +171,22 @@ def _sub_offsets(window: int) -> tuple:
     o = (np.arange(window) - h)[:, None] + (np.arange(SUB) + 0.5) / SUB - 0.5  # [w, SUB]
     return (np.broadcast_to(o[:, None, :, None], (window,) * 2 + (SUB,) * 2),
             np.broadcast_to(o[None, :, None, :], (window,) * 2 + (SUB,) * 2))  # fmt: skip
+
+
+def _radial_tangential(u: np.ndarray, window: int) -> tuple:
+    """Every pixel sub-sample's radial and tangential offset from its window's centre: [n, w, w, SUB, SUB] each."""
+    ps, pf = _sub_offsets(window)
+    return (u[:, 0, None, None, None, None] * ps + u[:, 1, None, None, None, None] * pf,
+            -u[:, 1, None, None, None, None] * ps + u[:, 0, None, None, None, None] * pf)  # fmt: skip
+
+
+def model_data(counts: np.ndarray, good: np.ndarray, terms: dict) -> dict:
+    """Return the data :func:`model` takes (inside float64): windows' counts and mask, sub-sample offsets, known terms."""
+    rho, tau = _radial_tangential(terms["u"], counts.shape[1])
+    return {"rho": jnp.asarray(rho), "tau": jnp.asarray(tau), "counts": jnp.asarray(counts, jnp.float64),
+            "good": jnp.asarray(good), "r": jnp.asarray(terms["r"], jnp.float64),
+            "v": jnp.asarray(terms["v"], jnp.float64), "var_known": jnp.asarray(terms["var_known"], jnp.float64),
+            "box": jnp.asarray(terms.get("box", np.zeros(len(counts))), jnp.float64)}  # fmt: skip
 
 
 def _unpack(theta: jax.Array, n: int, two: bool, free_radial: bool) -> tuple:
@@ -182,10 +209,14 @@ def model(theta: jax.Array, d: dict, two: bool, free_radial: bool) -> jax.Array:
         tan = jnp.exp(-0.5 * (d["tau"] - t0[:, None, None, None, None]) ** 2 / b[:, None, None, None, None]) / jnp.sqrt(
             2 * jnp.pi * b)[:, None, None, None, None]  # fmt: skip
         rad = 0.0
+        w = jnp.maximum(d["box"], 1e-3)[:, None, None, None, None]  # the thickness's box, convolved exactly
+        has_box = (d["box"] > 1e-3)[:, None, None, None, None]
         for k in range(d["r"].shape[1]):  # sensor slices
             a = (rad_var + d["v"][:, k] + s_p**2)[:, None, None, None, None]
             x = d["rho"] - (r0 + d["r"][:, k])[:, None, None, None, None]
-            rad = rad + jnp.exp(-0.5 * x**2 / a) / jnp.sqrt(2 * jnp.pi * a) / d["r"].shape[1]
+            gauss = jnp.exp(-0.5 * x**2 / a) / jnp.sqrt(2 * jnp.pi * a)
+            boxed = (ndtr((x + w / 2) / jnp.sqrt(a)) - ndtr((x - w / 2) / jnp.sqrt(a))) / w
+            rad = rad + jnp.where(has_box, boxed, gauss) / d["r"].shape[1]
         out = out + w_p * jnp.mean(rad * tan, (3, 4))
     return I[:, None, None] * out + bg[:, None, None]
 
@@ -222,10 +253,7 @@ def fit_response(counts: np.ndarray, good: np.ndarray, terms: dict, free_radial:
     from anri.maths.utils import float64
 
     n, w, _ = counts.shape
-    ps, pf = _sub_offsets(w)
-    u = terms["u"]
-    rho = u[:, 0, None, None, None, None] * ps + u[:, 1, None, None, None, None] * pf  # [n, w, w, SUB, SUB]
-    tau = -u[:, 1, None, None, None, None] * ps + u[:, 0, None, None, None, None] * pf
+    rho, tau = _radial_tangential(terms["u"], w)
     # start: each window's own moments
     rho_c, tau_c = rho.mean((3, 4)), tau.mean((3, 4))
     bg0 = np.maximum(np.nanmedian(np.where(good, counts, np.nan).reshape(n, -1), 1), 0.05)
@@ -237,9 +265,7 @@ def fit_response(counts: np.ndarray, good: np.ndarray, terms: dict, free_radial:
 
     fits = {}
     with float64():
-        d = {"rho": jnp.asarray(rho), "tau": jnp.asarray(tau), "counts": jnp.asarray(counts, jnp.float64),
-             "good": jnp.asarray(good), "r": jnp.asarray(terms["r"], jnp.float64),
-             "v": jnp.asarray(terms["v"], jnp.float64), "var_known": jnp.asarray(terms["var_known"], jnp.float64)}  # fmt: skip
+        d = model_data(counts, good, terms)
         f1 = jax.jit(jax.value_and_grad(lambda t, m: _nll(t, d, m, False, free_radial)))
         f2 = jax.jit(jax.value_and_grad(lambda t, m: _nll(t, d, m, True, free_radial)))
 

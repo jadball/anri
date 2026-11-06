@@ -402,8 +402,8 @@ def stage_rings(
 def stage_detector(
     source: str, out: str | None = None, *, parfile: str | None = None, scans: int = 2, min_counts: float = 300.0,
     max_spots: int = 400, window: int = 11, sensor: tuple | None = None, bandwidth: float = 1e-3,
-    voxel: float | None = None, free_radial: bool = True, split_tth: float | None = None, seed: int = 0,
-    command: str | None = None, log: Callable = print,
+    voxel: float | None = None, thickness: float = 0.0, free_radial: bool = True, split_tth: float | None = None,
+    seed: int = 0, command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
     """Fit the detector's point spread, a core and a wing, to isolated spots in a scan's raw frames.
 
@@ -432,7 +432,11 @@ def stage_detector(
     bandwidth
         FWHM of d(lambda) / lambda
     voxel
-        Width across the beam of the volume a spot comes from, um (default: the DataSet's dty step)
+        Width across the beam of the volume a spot comes from, um (default: the DataSet's dty step; give it for a
+        single rotation, e.g. the focused beam's width)
+    thickness
+        Its length along the beam, um: a radial box of about thickness x tan(2theta) (e.g. a 100 um cube rotating in a
+        beam through its centre: 100 to 141 um, 112 on average). 0: none (a voxel of a scanning map)
     free_radial
         Each spot its own extra radial spread (a deformed sample); False for an undeformed crystal
     split_tth
@@ -455,14 +459,19 @@ def stage_detector(
     log, lines = recorder(log)
     options = {"source": source, "parfile": parfile, "scans": scans, "min_counts": min_counts,
                "max_spots": max_spots, "window": window, "sensor": list(sensor) if sensor else None,
-               "bandwidth": bandwidth, "voxel": voxel, "free_radial": free_radial, "split_tth": split_tth,
+               "bandwidth": bandwidth, "voxel": voxel, "thickness": thickness, "free_radial": free_radial,
+               "split_tth": split_tth,
                "seed": seed}  # fmt: skip
     ds = io.read_dataset(source)
     parfile = os.path.abspath(parfile or ds["parfile"])
     out = out or os.path.basename(source)[: -len("_dataset.h5")] + "_detector.h5"
     check_out(out, [source, ds["sparsefile"], ds["masterfile"], parfile])
     pars = io.read_geometry(parfile)
-    voxel = float(np.median(np.diff(ds["ybincens"]))) if voxel is None else voxel
+    if voxel is None:
+        if len(ds["ybincens"]) < 2:
+            msg = "one rotation (a single dty row): give voxel, the beam's width across"
+            raise ValueError(msg)
+        voxel = float(np.median(np.diff(ds["ybincens"])))
     spatial = io.read_spatial(ds)
     good_mask = io.read_mask(ds["maskfile"]) if ds["maskfile"] else None
     names = ds["scans"]
@@ -490,11 +499,12 @@ def stage_detector(
                     counts[k] = img[r - h : r + h + 1, c - h : c + h + 1]
                     good[k] = ok[r - h : r + h + 1, c - h : c + h + 1]
     rows, cols = np.array([x[2] for x in found]), np.array([x[3] for x in found])
-    terms = detector.spot_terms(rows, cols, pars, spatial, sensor, bandwidth, voxel)
+    terms = detector.spot_terms(rows, cols, pars, spatial, sensor, bandwidth, voxel, thickness)
     split = float(np.median(terms["tth"])) if split_tth is None else split_tth
     log(f"{len(found)} spots, 2theta {terms['tth'].min():.2f}-{terms['tth'].max():.2f} deg (split at {split:.2f}); "
         f"known radial blurs, median (px): sensor {np.median(np.sqrt(np.mean(terms['v'] + terms['r'] ** 2, 1))):.2f}"
-        f", bandwidth and voxel {np.median(np.sqrt(terms['var_known'])):.2f}")  # fmt: skip
+        f", bandwidth and voxel {np.median(np.sqrt(terms['var_known'])):.2f}, thickness (box) "
+        f"{np.median(terms['box']):.2f}")  # fmt: skip
     fits = detector.fit_response(counts, good, terms, free_radial,
                                  {"low": terms["tth"] < split, "high": terms["tth"] >= split}, log=log)  # fmt: skip
     a = fits["all"]

@@ -96,7 +96,10 @@ def parser() -> argparse.ArgumentParser:
     d.add_argument("--sensor", type=float, nargs=2, metavar=("LENGTH", "THICKNESS"), help="the sensor's absorption "
                    "length and thickness (um), e.g. 111 750 for CdTe at 43.6 keV (default: no depth kernel)")  # fmt: skip
     d.add_argument("--bandwidth", type=float, default=1e-3, help="FWHM of dlambda/lambda (default 1e-3)")
-    d.add_argument("--voxel", type=float, help="width across the beam a spot comes from, um (default: the dty step)")
+    d.add_argument("--voxel", type=float, help="width across the beam a spot comes from, um (default: the dty step; "
+                   "give it for a single rotation)")  # fmt: skip
+    d.add_argument("--thickness", type=float, default=0.0, help="its length along the beam, um: a radial box of about "
+                   "thickness x tan(2theta), e.g. 112 for a 100 um cube rotating (default 0)")  # fmt: skip
     d.add_argument("--undeformed", action="store_true", help="an undeformed crystal: no radial spread of its own "
                    "per spot")  # fmt: skip
     d.add_argument("--split-tth", type=float, help="also fit the spots below and above this 2theta (default: their "
@@ -152,7 +155,7 @@ def main() -> None:
         stage_detector(args.source, args.out, parfile=args.parfile, scans=args.scans, min_counts=args.min_counts,
                        max_spots=args.max_spots, window=args.window,
                        sensor=None if args.sensor is None else tuple(args.sensor), bandwidth=args.bandwidth,
-                       voxel=args.voxel, free_radial=not args.undeformed, split_tth=args.split_tth, command=cmd,
+                       voxel=args.voxel, thickness=args.thickness, free_radial=not args.undeformed, split_tth=args.split_tth, command=cmd,
                        log=log)  # fmt: skip
         log(f"done in {time.perf_counter() - T0:.0f} s")
         return
