@@ -17,6 +17,11 @@ python -m anri.calib pars <..._calib.h5> <folder>                          # the
 python -m anri.calib show <any stage file> --log
 ```
 
+Separately, once per detector and energy: `python -m anri.calib detector <..._dataset.h5> --sensor LENGTH THICKNESS`
+(-> `<sample>_<dataset>_detector.h5`) fits the detector's point spread, a core and a wing, to isolated spots in the raw
+frames, for the renderer (`python -m anri.simulate prepare --psf ... --psf-wing ... --sensor ...`; the log prints
+the options). It needs the geometry only roughly (each spot's radial direction and 2theta).
+
 ## Before you run it
 
 1. **Ask the human** whether the sample is a calibrant (a certified lattice, given with `--lattice`) and what the
@@ -39,6 +44,10 @@ python -m anri.calib show <any stage file> --log
 | rings | `--tols`, `--free` | each (ring, η sector)'s offset from its ring before and after: every ring flat at zero after the fit. A sine in η, the same for every ring, is the centre; one growing with 2θ, a tilt; a constant growing with 2θ, the distance. Keep `--tols` a few pixels wide (one Eiger pixel at 150 mm is 0.03°); rings closer than twice the widest to a neighbour are left out. tilt_x moves no ring, and the wavelength cannot be told from the distance by rings: leave both for `fit` | `read_rings`; `plot_ring_offsets` |
 | rings | `--scans`, `--threshold` | a scan's spots fill its rings well enough summed over every frame; fewer scans for speed | |
 | rings | `--merge` | reflections closer in d* than this are one ring; rings the data cannot separate are merged, not split | |
+| detector | `--sensor`, `--bandwidth` | the instrument: ask the human for the energy, the detector (sensor material and thickness) and the monochromator. CdTe 750 um: absorption length 111 um at 43.6 keV, 328 um at 65.3 keV | |
+| detector | `--undeformed` | an undeformed crystal (e.g. a Si wafer piece): each spot only the instrument's radial width. Otherwise (the default) each spot its own radial spread, and only a tail heavier than a Gaussian is the detector's | |
+| detector | `--min-counts`, `--max-spots`, `--window` | the radial profile: the wing shows as data above the one Gaussian 1-4 px out; a window of about 4 wing sd either side; a few hundred spots | `detector_profile`; `plot_detector_profile` |
+| detector | `--split-tth` | the fits below and above it (the profile plot's title, and `low_*`, `high_*` in the results): a detector's response is the same in pixels on every ring. A wing that grows with 2theta is the sample's (strain spread, thermal diffuse scattering), not the detector's | `detector_profile`; `plot_detector_profile` |
 | fit | `--min-occ` | the histogram of the fit file's occupancies over the largest: the occupied orientations stand apart from a floor of near-zero candidates. Put the cut in the gap; each voxel should keep nearly all its occupancy | `read_occupancy`, `occupancy_kept`; `plot_min_occ` |
 | fit | `--tols`, `--lattice` | each peak's distance of (h, k, l) from integers at the starting geometry: real matches pile up near 0 above a floor of chance matches. The first tolerance takes in the whole pile and little of the floor. No pile: the geometry is too far off, the lattice is wrong, or the peaks are not this scan's | `match_distances` on `anri.calib.stages.load_inputs`; `plot_match` |
 | fit | `--extra-rounds` | the log's line per round of how far each parameter moved, in its error bars. A `WARNING` that the last round still moved one by more than 1 sigma: the errors quoted are too small | |

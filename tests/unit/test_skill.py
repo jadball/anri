@@ -99,7 +99,7 @@ class TestSkill(unittest.TestCase):
         """Each command names a real subcommand and its own options; every other option is one of some subcommand."""
         subs = {"index": ("histogram", "search", "filter", "fit", "localsearch", "populations", "run", "show",
                           "powder"),
-                "calib": ("rings", "fit", "pars", "show"),
+                "calib": ("rings", "detector", "fit", "pars", "show"),
                 "simulate": ("prepare", "render", "assemble", "run", "show")}  # fmt: skip
         known = {(cli, sub): options(cli, sub) for cli, names in subs.items() for sub in names}
         every = set().union(*known.values())

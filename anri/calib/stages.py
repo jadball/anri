@@ -2,6 +2,7 @@
 
 :func:`stage_rings` fits the distance, beam centre and two tilts to a known phase's powder rings (a dense image, or
 a scan's sparse pixels summed), to get a geometry good enough to index.
+:func:`stage_detector` fits the detector's point spread (a core and a wing) to isolated spots in raw frames.
 :func:`stage_fit` then matches ImageD11's peaks to the map, fits the geometry (:func:`anri.calib.fit.calibrate`) and frees
 each orientation's lattice with that geometry (:func:`anri.calib.fit.strain_left`). :func:`write_pars` writes the
 result as ImageD11 parameter files, for anri or ImageD11 to use. :func:`load_inputs` reads what the stage starts
@@ -393,6 +394,137 @@ def stage_rings(
             g["distance"], g["score"] = dist["distance"], dist["score"]
     write_results(out, {**{k: res["pars"][k] for k in free}, **{f"{k}_err": float(e) for k, e in zip(free, err)},
                         "rms_deg": res["rms"], "n_sectors": res["n_sectors"]})  # fmt: skip
+    log(f"-> {out}")
+    write_log(out, lines)
+    return out
+
+
+def stage_detector(
+    source: str, out: str | None = None, *, parfile: str | None = None, scans: int = 2, min_counts: float = 300.0,
+    max_spots: int = 400, window: int = 11, sensor: tuple | None = None, bandwidth: float = 1e-3,
+    voxel: float | None = None, free_radial: bool = True, split_tth: float | None = None, seed: int = 0,
+    command: str | None = None, log: Callable = print,
+) -> str:  # fmt: skip
+    """Fit the detector's point spread, a core and a wing, to isolated spots in a scan's raw frames.
+
+    The spots are found in the sparse pixels and fitted in the raw frames (every pixel, no segmentation cut), each in
+    a window of its frame, around the blurs known from the instrument (:mod:`anri.calib.detector`). An undeformed
+    crystal (e.g. a Si wafer piece) is best; on a deformed sample, ``free_radial`` gives each spot its own radial
+    spread, so only a tail heavier than a Gaussian is taken as the detector's. A response measured once per detector
+    and energy goes to the renderer (``python -m anri.simulate prepare --psf ... --psf-wing ...``).
+
+    Parameters
+    ----------
+    source
+        An ImageD11 DataSet (``..._dataset.h5``) with its raw frames (masterfile)
+    out
+        Output file (default: ``<sample>_<dataset>_detector.h5`` in the working directory)
+    parfile
+        Geometry (``.par`` or ``pars.json``; default: the DataSet's)
+    scans
+        Number of the DataSet's scans to take spots from, spread over its interior
+    min_counts, max_spots, window
+        A spot's least total counts (sparse pixels), how many to fit at most (chosen at random, ``seed``) and its
+        window's side (pixels, odd): wide enough for the wing, about 4 wing sd either side
+    sensor
+        (absorption length, thickness) of the detector's sensor, um (the par file's units), e.g. (111, 750) for CdTe
+        at 43.6 keV; None: no depth kernel
+    bandwidth
+        FWHM of d(lambda) / lambda
+    voxel
+        Width across the beam of the volume a spot comes from, um (default: the DataSet's dty step)
+    free_radial
+        Each spot its own extra radial spread (a deformed sample); False for an undeformed crystal
+    split_tth
+        The response is also fitted to the spots below and above this 2theta (deg; default: their median): a
+        detector's response is the same on both
+    command, log
+        The command line, if run from one (recorded), and progress messages
+
+    Returns
+    -------
+    str
+        The file written: the response ("response" attrs: core, wing, fraction, one and the log-likelihoods; "low"
+        and "high" the same from each half of the spots), each spot ("spots"), and the windows with both fits'
+        models ("windows": :func:`anri.calib.diagnostics.detector_profile` reads them)
+    """
+    import anri.io.imaged11 as io
+
+    from . import detector
+
+    log, lines = recorder(log)
+    options = {"source": source, "parfile": parfile, "scans": scans, "min_counts": min_counts,
+               "max_spots": max_spots, "window": window, "sensor": list(sensor) if sensor else None,
+               "bandwidth": bandwidth, "voxel": voxel, "free_radial": free_radial, "split_tth": split_tth,
+               "seed": seed}  # fmt: skip
+    ds = io.read_dataset(source)
+    parfile = os.path.abspath(parfile or ds["parfile"])
+    out = out or os.path.basename(source)[: -len("_dataset.h5")] + "_detector.h5"
+    check_out(out, [source, ds["sparsefile"], ds["masterfile"], parfile])
+    pars = io.read_geometry(parfile)
+    voxel = float(np.median(np.diff(ds["ybincens"]))) if voxel is None else voxel
+    spatial = io.read_spatial(ds)
+    good_mask = io.read_mask(ds["maskfile"]) if ds["maskfile"] else None
+    names = ds["scans"]
+    picks = [names[i] for i in np.unique(np.linspace(0, len(names) - 1, scans + 2)[1:-1].round().astype(int))]
+    found = []
+    for scan in picks:
+        sp = io.read_sparse_frames(ds["sparsefile"], scan)
+        sp_spots = detector.find_spots(sp["frame"], sp["row"], sp["col"], sp["intensity"], sp["shape"], min_counts,
+                                       window)  # fmt: skip
+        found += [(scan, *x) for x in zip(*(sp_spots[k] for k in ("frame", "row", "col", "counts")))]
+        log(f"scan {scan}: {len(sp_spots['frame'])} isolated spots of {min_counts:g} counts or more")
+    rng = np.random.default_rng(seed)
+    found = [found[i] for i in sorted(rng.permutation(len(found))[:max_spots])]
+    h = window // 2
+    counts = np.zeros((len(found), window, window))
+    good = np.ones((len(found), window, window), bool)
+    for scan in picks:  # each raw frame read once, with all its spots
+        for fr in sorted({f for s, f, *_ in found if s == scan}):
+            img = io.read_raw_frames(ds["masterfile"], scan, range(fr, fr + 1), ds["detector"] or "eiger")
+            ok = (img.sum(1) > 0)[:, None] & (img.sum(0) > 0)[None, :]  # module gaps: whole rows and columns of 0
+            if good_mask is not None:
+                ok &= good_mask
+            for k, (s, f, r, c, _) in enumerate(found):
+                if s == scan and f == fr:
+                    counts[k] = img[r - h : r + h + 1, c - h : c + h + 1]
+                    good[k] = ok[r - h : r + h + 1, c - h : c + h + 1]
+    rows, cols = np.array([x[2] for x in found]), np.array([x[3] for x in found])
+    terms = detector.spot_terms(rows, cols, pars, spatial, sensor, bandwidth, voxel)
+    split = float(np.median(terms["tth"])) if split_tth is None else split_tth
+    log(f"{len(found)} spots, 2theta {terms['tth'].min():.2f}-{terms['tth'].max():.2f} deg (split at {split:.2f}); "
+        f"known radial blurs, median (px): sensor {np.median(np.sqrt(np.mean(terms['v'] + terms['r'] ** 2, 1))):.2f}"
+        f", bandwidth and voxel {np.median(np.sqrt(terms['var_known'])):.2f}")  # fmt: skip
+    fits = detector.fit_response(counts, good, terms, free_radial,
+                                 {"low": terms["tth"] < split, "high": terms["tth"] >= split}, log=log)  # fmt: skip
+    a = fits["all"]
+    log(f"for the renderer: --psf {a['core']:.3f} --psf-wing {a['fraction']:.3f} {a['wing']:.3f}"
+        + (f" --sensor {sensor[0]:g} {sensor[1]:g}" if sensor else ""))  # fmt: skip
+    resolved = {"dataset_file": os.path.abspath(source), "sparsefile": ds["sparsefile"],
+                "masterfile": ds["masterfile"], "parfile": parfile, "scans": picks, "voxel": voxel,
+                "split_tth": split, "detector_mask": ds["maskfile"],
+                "spatial_correction": ds["detectorh5"] or ds["e2dxfile"]}  # fmt: skip
+    with h5py.File(out, "w") as hf:
+        write_provenance(hf, "detector", None, options, resolved, command)
+        for name in ("all", "low", "high"):
+            g = hf.create_group("response" if name == "all" else f"response/{name}")
+            for k, v in fits[name].items():
+                g.attrs[k] = v
+        g = hf.create_group("spots")
+        g["scan"] = np.array([x[0] for x in found], dtype="S")
+        for k, v in (("frame", [x[1] for x in found]), ("row", rows), ("col", cols),
+                     ("counts", [x[4] for x in found])):  # fmt: skip
+            g[k] = np.asarray(v)
+        for k in ("tth", "eta"):
+            g[k] = terms[k]
+        g["radial_sd"] = fits["radial_sd"]
+        g = hf.create_group("windows")
+        g["counts"], g["good"] = counts.astype(np.float32), good
+        g["one"], g["two"] = fits["lam_one"].astype(np.float32), fits["lam_two"].astype(np.float32)
+        g["radial_offset"] = fits["radial_offset"].astype(np.float32)
+    write_results(out, {"core": a["core"], "wing": a["wing"], "fraction": a["fraction"], "one_gaussian": a["one"],
+                        "gain": a["nll_one"] - a["nll_two"], "n_spots": a["n"],
+                        **{f"{n}_{k}": fits[n][k] for n in ("low", "high") for k in ("core", "wing", "fraction")}})  # fmt: skip
     log(f"-> {out}")
     write_log(out, lines)
     return out

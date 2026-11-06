@@ -258,3 +258,29 @@ def plot_strain_left(fig: Figure, st: dict) -> None:
     ax[1].legend(ncol=3)
     for a in ax:
         a.set(xscale="log", xlabel="matched peaks of the orientation", ylabel="strain (1e-5)")
+
+
+def plot_detector_profile(fig: Figure, d: dict) -> None:
+    """Draw the detector fit's radial profile: the data, one Gaussian and the core + wing, on a log scale.
+
+    Parameters
+    ----------
+    fig
+        A matplotlib figure
+    d
+        From :func:`anri.calib.diagnostics.detector_profile`
+    """
+    ax = fig.subplots(1, 2)
+    x = 0.5 * (d["edges"][1:] + d["edges"][:-1])
+    r = d["response"]
+    for a, scale in ((ax[0], "linear"), (ax[1], "log")):
+        a.plot(x, d["data"], "k.", label="data")
+        a.plot(x, d["one"], "-", label=f"one Gaussian, sd {r['one']:.2f} px")
+        a.plot(x, d["two"], "-", label=f"core {r['core']:.2f} px + wing {r['wing']:.2f} px ({r['fraction']:.2f})")
+        a.set(xlabel="radial offset from the spot's centre (px)", ylabel="counts (summed over spots)", yscale=scale)
+    ax[0].legend(fontsize=8)
+    lo, hi = d["low"], d["high"]
+    fig.suptitle(f"detector response; low 2θ: core {lo['core']:.2f}, wing {lo['wing']:.2f} ({lo['fraction']:.2f}); "
+                 f"high 2θ: core {hi['core']:.2f}, wing {hi['wing']:.2f} ({hi['fraction']:.2f}): a detector's are the "
+                 "same", fontsize=10)  # fmt: skip
+

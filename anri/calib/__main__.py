@@ -83,6 +83,26 @@ def parser() -> argparse.ArgumentParser:
                    help="distance search range, x the start (default 0.7 1.4)")  # fmt: skip
     r.add_argument("--n-cpu", type=int, default=4, help="CPU devices for JAX (default 4)")
 
+    d = sub.add_parser("detector", help="fit the detector's point spread (a core and a wing) to isolated spots in "
+                       "raw frames")  # fmt: skip
+    d.add_argument("source", help="ImageD11 DataSet (..._dataset.h5) with its raw frames")
+    d.add_argument("--out", help="output file (default <sample>_<dataset>_detector.h5)")
+    d.add_argument("--parfile", help="geometry, .par or pars.json (default: the DataSet's)")
+    d.add_argument("--scans", type=int, default=2, help="scans to take spots from, spread over the interior "
+                   "(default 2)")  # fmt: skip
+    d.add_argument("--min-counts", type=float, default=300.0, help="a spot's least total counts (default 300)")
+    d.add_argument("--max-spots", type=int, default=400, help="spots fitted at most, chosen at random (default 400)")
+    d.add_argument("--window", type=int, default=11, help="window side, pixels, odd (default 11)")
+    d.add_argument("--sensor", type=float, nargs=2, metavar=("LENGTH", "THICKNESS"), help="the sensor's absorption "
+                   "length and thickness (um), e.g. 111 750 for CdTe at 43.6 keV (default: no depth kernel)")  # fmt: skip
+    d.add_argument("--bandwidth", type=float, default=1e-3, help="FWHM of dlambda/lambda (default 1e-3)")
+    d.add_argument("--voxel", type=float, help="width across the beam a spot comes from, um (default: the dty step)")
+    d.add_argument("--undeformed", action="store_true", help="an undeformed crystal: no radial spread of its own "
+                   "per spot")  # fmt: skip
+    d.add_argument("--split-tth", type=float, help="also fit the spots below and above this 2theta (default: their "
+                   "median)")  # fmt: skip
+    d.add_argument("--n-cpu", type=int, default=4, help="CPU devices for JAX (default 4)")
+
     w = sub.add_parser("pars", help="write a calibration as ImageD11 parameter files")
     w.add_argument("source", help="calibration file")
     w.add_argument("folder", help="where to write geometry.par, <phase>.par and pars.json")
@@ -124,6 +144,16 @@ def main() -> None:
                     tols=tuple(float(t) for t in args.tols.split(",") if t), n_iter=args.n_iter, n_eta=args.n_eta,
                     clip=args.clip, merge=args.merge, search=not args.no_search, max_shift=args.max_shift,
                     span=tuple(args.span), command=cmd, log=log)  # fmt: skip
+        log(f"done in {time.perf_counter() - T0:.0f} s")
+        return
+    if args.command == "detector":
+        from anri.calib.stages import stage_detector
+
+        stage_detector(args.source, args.out, parfile=args.parfile, scans=args.scans, min_counts=args.min_counts,
+                       max_spots=args.max_spots, window=args.window,
+                       sensor=None if args.sensor is None else tuple(args.sensor), bandwidth=args.bandwidth,
+                       voxel=args.voxel, free_radial=not args.undeformed, split_tth=args.split_tth, command=cmd,
+                       log=log)  # fmt: skip
         log(f"done in {time.perf_counter() - T0:.0f} s")
         return
     from anri.calib.stages import stage_fit
