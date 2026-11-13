@@ -710,6 +710,17 @@ class TestProvenance(unittest.TestCase):
             self.assertEqual(getattr(args, k), v, msg=k)
 
 
+class TestDatasetGroups(unittest.TestCase):
+    def test_only_the_datasets_scans(self):
+        """The histogram reads the sparse groups the DataSet names, in its order; a missing one is an error."""
+        keys = ["1.1", "10.1", "2.1", "3.1"]  # h5py order
+        self.assertEqual(ix.stages._dataset_groups(keys, ["1.1", "2.1"], "f.h5"), ["1.1", "2.1"])
+        self.assertEqual(ix.stages._dataset_groups(keys, ["3.1::[0:10]", "3.1::[10:20]", "1.1"], "f.h5"), ["3.1", "1.1"])
+        self.assertEqual(ix.stages._dataset_groups(keys, None, "f.h5"), keys)
+        with self.assertRaises(ValueError):
+            ix.stages._dataset_groups(keys, ["1.1", "4.1"], "f.h5")
+
+
 class TestDiscMask(unittest.TestCase):
     def test_disc(self):
         """The voxels within the scanned dty range all round the axis: a disc, smaller when y0 is off the middle."""

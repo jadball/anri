@@ -150,6 +150,22 @@ def load_histogram(path: str) -> dict:
             "ops": ops, "n_rings": len(rings["tth"]), "grid": grid, "saturated": saturated}  # fmt: skip
 
 
+def _dataset_groups(keys: list, scans: list | None, sparsefile: str) -> list:
+    """Return the sparse file's groups the DataSet holds, in its order (all of them if it names no scans).
+
+    A sparse file may hold more, e.g. for a DataSet of a subset of the rows. A DataSet scan is a group ("1.1") or a
+    slice of one ("1.1::[0:1440]").
+    """
+    if scans is None:
+        return list(keys)
+    groups = list(dict.fromkeys(str(s).partition("::")[0] for s in scans))
+    missing = [g for g in groups if g not in set(keys)]
+    if missing:
+        msg = f"{sparsefile} has no group for the DataSet's scans {missing[:3]}{' ...' if len(missing) > 3 else ''}"
+        raise ValueError(msg)
+    return groups
+
+
 def open_dataset(
     analysisroot: str, sample: str, dataset: str, *, phase: str | None = None, parfile: str | None = None,
     monitor: str | None = None, dty_source: str = "dataset", gridstep: int = 1, saturation: float | None = None,
@@ -208,7 +224,7 @@ def open_dataset(
     _, _, ops = _lattice(lpars, sg)
 
     with h5py.File(sparsefile, "r") as h:
-        groups = list(h.keys())
+        groups = _dataset_groups(list(h.keys()), ds["scans"], sparsefile)
         n_max = max(int(h[g]["nnz"][()].sum()) for g in groups)
         a = h[groups[0]].attrs
         det_shape = (int(a["shape0"]), int(a["shape1"])) if "shape0" in a and "shape1" in a else None
