@@ -114,11 +114,58 @@ def reconstruct(H: ArrayLike, n_rings: int, n_e: int, n_o: int, scan: dict, b_o:
         H4 = H4 / np.where(ex > 0, ex, 1.0)
     sino = np.log1p(H4).sum((0, 1))  # [omega, row]
     om = scan["om0"] + (np.arange(n_o) + 0.5) * b_o
+    dty0, ddty = scan["dty0"], scan.get("ddty")
+    if n_o * b_o >= 360.0 - 1e-6:  # a full turn: one projection per direction, both halves joined
+        sino, om, dty0 = stitch_turn(sino, om, scan["y0"], scan["dty0"], scan["ystep"])
+        ddty = None  # the stitched rows are not the scan's: a fly scan's motion within its rows is not followed
     pos = jnp.asarray(recon_positions(nr, scan["ystep"]), jnp.float32)
     k_in, wedge, chi = scan_beam(scan)
     rec = backproject(jnp.asarray(ramp_filter(sino), jnp.float32), jnp.asarray(om, jnp.float32), pos,
-                      scan["y0"], scan["dty0"], scan["ystep"], scan.get("ddty"), k_in, wedge, chi)  # fmt: skip
+                      scan["y0"], dty0, scan["ystep"], ddty, k_in, wedge, chi)  # fmt: skip
     return np.asarray(rec).reshape(nr, nr)
+
+
+def stitch_turn(sino: ArrayLike, om: ArrayLike, y0: float, dty0: float, ystep: float) -> tuple:
+    """Join a full turn's projections at omega and omega + 180 into one projection per direction, symmetric about y0.
+
+    The ray at row dty and omega is the ray at row 2 y0 - dty and omega + 180, so the two halves of a turn are two
+    measurements of the same projections, mirrored about y0. Filtering each as it is goes wrong when a half does not
+    cover the sample: a half-sample scan (dty from one edge to just past the axis) is cut off sharply near y0, the ramp
+    filter turns the cut into a spike, and back-projecting it from every direction makes a bright centre and radial
+    streaks. Joined, each projection runs from -m to m steps about y0 (m: the farther end of the scan), each row the
+    mean of the measurements there (one past the axis, two where both halves have it), 0 where neither has it.
+
+    Parameters
+    ----------
+    sino
+        [n_o, n_rows] projections over a full turn, rows at dty0 + k ystep
+    om
+        [n_o] their omegas (degrees), evenly spaced
+    y0, dty0, ystep
+        The rotation axis's dty, and the rows'
+
+    Returns
+    -------
+    sino, om, dty0
+        [n_o - k, 2 m + 1] joined projections (k the bins in 180 degrees), their omegas, and their first row's dty
+    """
+    sino, om = np.asarray(sino, float), np.asarray(om, float)
+    n_o, n_rows = sino.shape
+    k = round(180.0 / float(np.median(np.diff(om))))
+    dty = dty0 + np.arange(n_rows) * ystep
+    m = int(np.ceil(np.abs(dty - y0).max() / ystep - 1e-9))
+    full = y0 + np.arange(-m, m + 1) * ystep
+    out = np.zeros((n_o - k, len(full)))
+    cnt = np.zeros_like(out)
+    for o in range(n_o - k):
+        for v in (
+            np.interp(full, dty, sino[o], left=np.nan, right=np.nan),  # this omega
+            np.interp(2 * y0 - full, dty, sino[o + k], left=np.nan, right=np.nan),
+        ):  # omega + 180, mirrored
+            ok = np.isfinite(v)
+            out[o, ok] += v[ok]
+            cnt[o, ok] += 1
+    return np.where(cnt > 0, out / np.maximum(cnt, 1), 0.0), om[: n_o - k], float(full[0])
 
 
 @jax.jit

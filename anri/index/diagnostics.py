@@ -462,6 +462,10 @@ def ring_ratios(H: np.ndarray, model: np.ndarray, n_rings: int, scan: dict, etac
 def back_projection(d: dict, y0: float, nr: int | None = None) -> np.ndarray:
     """Reconstruct the whole sample from a histogram stage file's data, for a y0 (as :func:`anri.index.mask.reconstruct`).
 
+    From the file's sinogram at the frames' omega step (``d["H_sino"]``) where it has one, else the fit's histogram
+    (1 degree bins: about R / ystep views would be needed, so beyond ~ystep / 1 deg from the axis, 14 um for a
+    0.25 um step, the image is streaked by too few views). A full turn is stitched (:func:`anri.index.mask.stitch_turn`).
+
     Parameters
     ----------
     d
@@ -483,4 +487,8 @@ def back_projection(d: dict, y0: float, nr: int | None = None) -> np.ndarray:
     scan = {**sc, "y0": y0}
     if nr is None:  # as the fit stage: the histogram stage's grid (with --grid-pad)
         nr = d["grid"]["n"] if d.get("grid") is not None else voxel_grid(sc, y0)
+    if d.get("H_sino") is not None:  # the frames' omega step: the fit's per-bin exposure and offsets do not apply
+        sino = np.asarray(d["H_sino"])
+        plain = {k: v for k, v in scan.items() if k not in ("exposure", "ddty")}
+        return reconstruct(sino.ravel(), 1, 1, sino.shape[0], plain, d["sino_omega_step"], nr)
     return reconstruct(d["H"], d["n_rings"], sc["n_e"] // R_E, sc["n_o"] // R_O, scan, B_O * R_O, nr)

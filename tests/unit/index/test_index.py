@@ -467,7 +467,9 @@ class TestOccupancy(unittest.TestCase):
         args = (jnp.full((1, 1, 1), 10.0), jnp.full((1, 1, 1), 0.3), jnp.ones((1, 1, 1), bool), jnp.ones((1, 1, 1)),
                 jnp.asarray([0]), pos)  # fmt: skip
         _, w1 = ix.occupancy.system(*args, scan, 1.0, 1.0, 360, 360)
-        _, w2 = ix.occupancy.system(*args, {**scan, "exposure": jnp.asarray([[1.0], [0.25], [1.0]])}, 1.0, 1.0, 360, 360)
+        _, w2 = ix.occupancy.system(
+            *args, {**scan, "exposure": jnp.asarray([[1.0], [0.25], [1.0]])}, 1.0, 1.0, 360, 360
+        )
         self.assertAlmostEqual(float(np.asarray(w2).sum()), 0.25 * float(np.asarray(w1).sum()), places=5)
 
     def test_coarsen_rows(self):
@@ -729,12 +731,44 @@ class TestProvenance(unittest.TestCase):
             self.assertEqual(getattr(args, k), v, msg=k)
 
 
+class TestHalfScanReconstruction(unittest.TestCase):
+    def test_stitch_turn(self):
+        """Omega + 180 is the same ray mirrored about y0: the halves join into one projection per direction."""
+        n_o, rows = 8, np.arange(-6, 3)  # a half scan: rows -6..2 about y0 0
+        om = (np.arange(n_o) + 0.5) * 45.0  # a full turn
+        prof = lambda d: np.maximum(0.0, 25.0 - d**2)  # the same projection at every omega
+        sino = np.tile(prof(rows.astype(float)), (n_o, 1))
+        joined, om_h, dty0 = ix.mask.stitch_turn(sino, om, 0.0, -6.0, 1.0)
+        self.assertEqual(joined.shape, (4, 13))  # 4 directions, rows -6..6
+        np.testing.assert_allclose(om_h, om[:4])
+        self.assertEqual(dty0, -6.0)
+        np.testing.assert_allclose(joined, np.tile(prof(np.arange(-6.0, 7.0)), (4, 1)))
+
+    def test_half_scan_disc(self):
+        """A uniform disc on the axis, scanned to 3 steps past it over a full turn: uniform, no bright centre."""
+        R0, n_o = 20.0, 720
+        rows = np.arange(-24.0, 4.0)  # one edge of the sample to 3 past the axis
+        p = 2 * np.sqrt(np.maximum(R0**2 - rows**2, 0.0))  # the disc's projection, at every omega
+        H = np.expm1(np.tile(p, (n_o, 1)))  # reconstruct takes log1p of its histogram
+        scan = {"y0": 0.0, "dty0": rows[0], "ystep": 1.0, "n_rows": len(rows), "om0": 0.0,
+                "k_in_lab": jnp.array([1.0, 0.0, 0.0]), "wedge": 0.0, "chi": 0.0}  # fmt: skip
+        nr = 51
+        rec = ix.mask.reconstruct(H.ravel(), 1, 1, n_o, scan, 0.5, nr)
+        r = np.hypot(*np.asarray(anri.geom.scan.recon_positions(nr, 1.0))[:, :2].T).reshape(nr, nr)
+        inner, centre = rec[r < 15], rec[r < 3]
+        self.assertLess(inner.std() / inner.mean(), 0.05)
+        self.assertLess(abs(centre.mean() / inner.mean() - 1), 0.03)
+        self.assertLess(np.abs(rec[r > 23]).mean() / inner.mean(), 0.15)  # air: a filtered edge rings a little
+
+
 class TestDatasetGroups(unittest.TestCase):
     def test_only_the_datasets_scans(self):
         """The histogram reads the sparse groups the DataSet names, in its order; a missing one is an error."""
         keys = ["1.1", "10.1", "2.1", "3.1"]  # h5py order
         self.assertEqual(ix.stages._dataset_groups(keys, ["1.1", "2.1"], "f.h5"), ["1.1", "2.1"])
-        self.assertEqual(ix.stages._dataset_groups(keys, ["3.1::[0:10]", "3.1::[10:20]", "1.1"], "f.h5"), ["3.1", "1.1"])
+        self.assertEqual(
+            ix.stages._dataset_groups(keys, ["3.1::[0:10]", "3.1::[10:20]", "1.1"], "f.h5"), ["3.1", "1.1"]
+        )
         self.assertEqual(ix.stages._dataset_groups(keys, None, "f.h5"), keys)
         with self.assertRaises(ValueError):
             ix.stages._dataset_groups(keys, ["1.1", "4.1"], "f.h5")

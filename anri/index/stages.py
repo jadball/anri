@@ -57,6 +57,7 @@ from .populations import N_POP, occupancy_weighted, select_populations
 from .search import lit_map
 
 STAGES = ("histogram", "search", "filter", "fit", "localsearch", "populations")
+SINO_MIN_STEP = 0.1  # deg: the histogram stage's sinogram (H_sino) bins omega at the frames' step, at least this
 
 
 # ------------------------------------------------------------------------------------------------------- provenance
@@ -127,7 +128,11 @@ def _lattice(lattice: np.ndarray, sg: int) -> tuple:
 
 
 def load_histogram(path: str) -> dict:
-    """Read a histogram stage file back: setup, rings, scan and both histograms, ready for the later stages."""
+    """Read a histogram stage file back: setup, rings, scan and the histograms, ready for the later stages.
+
+    "H_sino" [omega, row] is the whole sample's sinogram at the frames' omega step ("sino_omega_step"), rings and
+    eta summed, for back-projections (None in files from before it).
+    """
     import jax.numpy as jnp
 
     prov = read_provenance(path)
@@ -143,11 +148,14 @@ def load_histogram(path: str) -> dict:
         H_lit = jnp.asarray(h["H_lit"][()])
         grid = read_attrs(h["grid"]) if "grid" in h else None  # files from before the grid record: None
         saturated = h["H_saturated"][()] if "H_saturated" in h else None
+        # the sinogram at the frames' omega step (files from before it: None)
+        sino = (h["H_sino"][()], float(h["H_sino"].attrs["omega_step"])) if "H_sino" in h else (None, None)
     geom = _geometry(geo, r.get("y0_dataset", 0.0), r["voxel_size"], prov["options"].get("pol_factor", 1.0))
     scan.update({"k_in_lab": geom["k_in_lab"], "wedge": geom["wedge"], "chi": geom["chi"]})
     B, B64, ops = _lattice(np.asarray(r["lattice"]), r["space_group"])
     return {"prov": prov, "geom": geom, "rings": rings, "scan": scan, "H": H, "H_lit": H_lit, "B": B, "B64": B64,
-            "ops": ops, "n_rings": len(rings["tth"]), "grid": grid, "saturated": saturated}  # fmt: skip
+            "ops": ops, "n_rings": len(rings["tth"]), "grid": grid, "saturated": saturated, "H_sino": sino[0],
+            "sino_omega_step": sino[1]}  # fmt: skip
 
 
 def _dataset_groups(keys: list, scans: list | None, sparsefile: str) -> list:
@@ -417,15 +425,20 @@ def stage_histogram(
         log("detector coverage: not recorded (no mask and no detector shape in the sparse file)")
 
     t1 = time.perf_counter()
-    hists = histogram_pixels(  # one pass: the lit histogram (rows summed, fine bins), and the fit data (per row)
+    # the whole sample's sinogram at the frames' omega step (at least SINO_MIN_STEP), for back-projections: the fit's
+    # 1 deg bins are too few views for a filtered back-projection away from the axis
+    o_s = max(float(sc["omega_step"]), SINO_MIN_STEP)
+    n_os = max(1, round(n_o * B_O / o_s))
+    hists = histogram_pixels(  # one pass: the lit histogram (rows summed, fine bins), the fit data (per row), the sinogram
         stream(groups), geom, ring_t["tth"], tol, sc["om0"],
-        [((B_E, B_O, n_e, n_o), 1), ((B_E * R_E, B_O * R_O, n_e // R_E, n_o // R_O), NK)], chunk,
-        saturated_into=None if saturation is None else 1,
+        [((B_E, B_O, n_e, n_o), 1), ((B_E * R_E, B_O * R_O, n_e // R_E, n_o // R_O), NK), ((360.0, o_s, 1, n_os), NK)],
+        chunk, saturated_into=None if saturation is None else 1,
     )  # fmt: skip
     H_lit, H = hists[0], hists[1]
-    sat_bins = np.flatnonzero(np.asarray(hists[2])) if saturation is not None else None
+    H_sino = np.asarray(hists[2]).reshape(-1, n_os, NK).sum(0)  # [omega, row], rings and eta summed
+    sat_bins = np.flatnonzero(np.asarray(hists[3])) if saturation is not None else None
     if sat_bins is not None:
-        log(f"saturated (>= {saturation:g} counts): {int(np.asarray(hists[2]).sum())} pixels in {len(sat_bins)} of the "
+        log(f"saturated (>= {saturation:g} counts): {int(np.asarray(hists[3]).sum())} pixels in {len(sat_bins)} of the "
             f"fit's bins; the fit takes them as lower bounds")  # fmt: skip
     log(f"histograms: {time.perf_counter() - t1:.0f} s; {H.size / 1e6:.0f}M bins, {float(jnp.mean(H > 0)) * 100:.1f}% "
         "non-empty")  # fmt: skip
@@ -481,6 +494,8 @@ def stage_histogram(
             g["exposure"] = np.asarray(expo, np.float32)
         h.create_dataset("H", data=np.asarray(H), compression="lzf", chunks=True)
         h.create_dataset("H_lit", data=np.asarray(H_lit), compression="lzf", chunks=True)
+        h.create_dataset("H_sino", data=H_sino.astype(np.float32), compression="lzf", chunks=True)
+        h["H_sino"].attrs["omega_step"] = o_s
         if sat_bins is not None:
             h.create_dataset("H_saturated", data=sat_bins.astype(np.int64))  # indices into H
     write_results(out, {"bins": int(H.size), "nonempty_fraction": float(jnp.mean(H > 0))})
