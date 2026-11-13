@@ -761,6 +761,28 @@ class TestHalfScanReconstruction(unittest.TestCase):
         self.assertLess(np.abs(rec[r > 23]).mean() / inner.mean(), 0.15)  # air: a filtered edge rings a little
 
 
+class TestY0FromOverlap(unittest.TestCase):
+    def test_half_scan(self):
+        """A half-sample scan 5 um past the axis over a full turn: y0 from the rows measured twice."""
+        y0, step = 0.3, 0.25
+        dty = np.arange(-20.0, 5.0 + 1e-9, step)
+        om = (np.arange(720) + 0.5) * 0.5
+        rng = np.random.default_rng(0)
+        pts = np.r_[rng.uniform(-1, 1, (400, 2)) * 15, [[3.0, -2.0], [-6.0, 4.0]]]  # a sample and two bright blobs
+        wts = np.r_[np.ones(400), 30.0, 20.0]
+        lab_y = np.sin(np.radians(om))[:, None] * pts[:, 0] + np.cos(np.radians(om))[:, None] * pts[:, 1]  # [o, p]
+        at = y0 - lab_y  # each point's dty at each omega
+        sino = (wts * np.exp(-0.5 * ((dty[None, :, None] - at[:, None, :]) / 0.3) ** 2)).sum(2)
+        scan = {"dty0": dty[0], "ystep": step, "n_rows": len(dty), "om0": 0.0}
+        d = {"scan": scan, "H_sino": sino, "sino_omega_step": 0.5}
+        out = ix.diagnostics.y0_from_overlap(d, 0.0)
+        self.assertAlmostEqual(out["y0_median"], y0, delta=0.02 * step)
+        self.assertLess(out["spread"], 0.05 * step)
+        self.assertAlmostEqual(out["overlap"], 5.0)
+        with self.assertRaises(ValueError):  # half a turn: nothing measured twice
+            ix.diagnostics.y0_from_overlap({**d, "H_sino": sino[:360]}, 0.0)
+
+
 class TestDatasetGroups(unittest.TestCase):
     def test_only_the_datasets_scans(self):
         """The histogram reads the sparse groups the DataSet names, in its order; a missing one is an error."""

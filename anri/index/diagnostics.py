@@ -182,6 +182,81 @@ def y0_from_edges(H: np.ndarray, n_rings: int, scan: dict, frac: float = 0.05) -
             "y0_mean": float(coef_mean[0]), "fit": A @ coef, "edge": float(max(row[0], row[-1]) / row.max())}  # fmt: skip
 
 
+def y0_from_overlap(d: dict, y0_guess: float, search: float = 4.0, resolution: float = 0.02,
+                    min_corr: float = 0.5) -> dict:  # fmt: skip
+    """Measure y0 from the rows a full turn measures twice: dty at omega is 2 y0 - dty at omega + 180.
+
+    Over a full turn, rows within the overlap (from y0 to the nearer end of the scan, on both sides of the axis) are
+    measured at omega and again, mirrored about y0, at omega + 180: a half-sample scan that runs a few um past the
+    axis, or a whole full-turn scan. At each omega the projection is compared with the mirrored one 180 degrees on
+    over the overlap, for trial y0 within ``search`` steps of ``y0_guess``: the best correlation gives that omega's
+    y0. Unlike :func:`y0_from_edges` it needs neither the whole sample in the scan nor its edges; a y0 that varies
+    with omega shows the sample moving across the beam (runout).
+
+    Parameters
+    ----------
+    d
+        From :func:`anri.index.stages.load_histogram`: its sinogram at the frames' omega step (``H_sino``) where it
+        has one, else the fit's histogram
+    y0_guess
+        Where to look (e.g. the DataSet's y0), and which rows form the overlap
+    search, resolution
+        Trial y0 within +-search steps of the guess, every resolution steps
+    min_corr
+        Omegas whose best correlation is below this are left out of the median
+
+    Returns
+    -------
+    dict
+        "omega" [n] (the first half turn's), "y0" [n] and "corr" [n] (NaN where the overlap has too few rows),
+        "y0_median" (over omegas with corr >= min_corr), "spread" (their median absolute deviation, x 1.4826),
+        "overlap" (its half-width, in the units of dty)
+    """
+    sc = d["scan"]
+    step, nk = sc["ystep"], sc["n_rows"]
+    if d.get("H_sino") is not None:
+        sino, b_o = np.asarray(d["H_sino"], float), float(d["sino_omega_step"])
+    else:
+        sino, b_o = _h4(d["H"], d["n_rings"], sc).sum((0, 1)), B_O * R_O
+    n_o = sino.shape[0]
+    if n_o * b_o < 360.0 - 1e-6:
+        msg = f"the scan covers {n_o * b_o:.1f} deg: measuring y0 from its overlap needs a full turn"
+        raise ValueError(msg)
+    dty = sc["dty0"] + np.arange(nk) * step
+    half = min(y0_guess - dty[0], dty[-1] - y0_guess)  # the overlap reaches the nearer end
+    if half < 2 * step:
+        msg = f"the rows reach only {half:.3g} past y0 {y0_guess:.3g}: too little overlap to measure y0"
+        raise ValueError(msg)
+    k = round(180.0 / b_o)
+    om = sc["om0"] + (np.arange(n_o - k) + 0.5) * b_o
+    # rows whose mirror stays within the scan for every trial y0 (a trial moves it by up to 2 search steps)
+    over = np.abs(dty - y0_guess) <= half - 2 * search * step
+    if over.sum() < 3:
+        msg = f"the overlap ({half:.3g} past y0) is too narrow for a search of +-{search:g} steps: lower search"
+        raise ValueError(msg)
+    trials = y0_guess + np.arange(-search, search + 1e-9, resolution) * step
+    y0s = np.full(n_o - k, np.nan)
+    a = sino[: n_o - k][:, over]  # [n, m] this omega's rows in the overlap
+    a = a - a.mean(1, keepdims=True)
+    na = np.sqrt((a**2).sum(1))
+    best = np.full(n_o - k, -np.inf)
+    later = sino[k:]  # omega + 180
+    for t in trials:  # mirrored about the trial y0 onto the same rows, linearly between rows
+        f = (2 * t - dty[over] - dty[0]) / step
+        i0 = np.clip(np.floor(f).astype(int), 0, nk - 2)
+        w = f - i0
+        mirrored = later[:, i0] * (1 - w) + later[:, i0 + 1] * w
+        b = mirrored - mirrored.mean(1, keepdims=True)
+        c = (a * b).sum(1) / np.maximum(na * np.sqrt((b**2).sum(1)), 1e-30)
+        better = c > best
+        best, y0s = np.where(better, c, best), np.where(better, t, y0s)
+    corr = np.where(np.isfinite(best), best, np.nan)
+    good = corr >= min_corr
+    med = float(np.median(y0s[good])) if good.any() else float("nan")
+    spread = float(1.4826 * np.median(np.abs(y0s[good] - med))) if good.any() else float("nan")
+    return {"omega": om, "y0": y0s, "corr": corr, "y0_median": med, "spread": spread, "overlap": float(half)}
+
+
 def lit_curve(H_lit: np.ndarray, n_rings: int, scan: dict, cuts: np.ndarray | None = None) -> dict:
     """Return how much of the lit histogram is lit, and how much intensity it holds, as the lit cut rises.
 
