@@ -101,7 +101,7 @@ def system(
     scan
         "y0", "dty0", "ystep", "n_rows" and "om0": the rows are at dty = dty0 + k ystep; optionally "ddty" [n_rows,
         n_o], each row's offset from that per omega bin (fly, helical scans: :func:`anri.index.data.dty_offsets`), and
-        "exposure" [n_rows, n_o], each (row, omega bin)'s frames relative to a full one; "coverage" [n_rings, n_e],
+        "exposure" [n_rows, n_o] (or [n_rows, 1], per row), each (row, omega bin)'s frames relative to a full one; "coverage" [n_rings, n_e],
         the measured share of each (ring, eta bin) (:func:`anri.index.data.detector_coverage`); with a beam profile also
         "sig_beam", "width_beam" and "voxel" (:func:`beam_rows`)
     b_e, b_o, n_e, n_o
@@ -154,7 +154,8 @@ def system(
             kk = k0 + dk
             good = use & inside & (kk >= 0) & (kk < n_k)
             if "exposure" in scan:  # frames in this (row, omega bin), relative to a full one
-                wk = wk * scan["exposure"][jnp.clip(kk, 0, n_k - 1), jnp.clip(io, 0, n_o - 1)]
+                ex = scan["exposure"]  # [n_k, n_o], or [n_k, 1] per row
+                wk = wk * ex[jnp.clip(kk, 0, n_k - 1), jnp.clip(io, 0, ex.shape[1] - 1)]
             cell = ((ring_j[None, None, :] * n_e + ie) * n_o + io) * n_k + kk
             idx.append(jnp.where(good, cell, -1))
             wt.append(jnp.where(good, w * we * wo * wk, 0.0))

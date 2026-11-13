@@ -451,6 +451,25 @@ class TestOccupancy(unittest.TestCase):
             direct = ix.data.dty_offsets(dty, om, edges, g, 0.0, 1.0, 360, c["dty0"], c["ystep"])
             np.testing.assert_allclose(c["ddty"], direct, atol=1e-6)
 
+    def test_coarsen_scan_partial_group(self):
+        """Without exposure, a partial last group gets the share of g rows it sums, as coarsen_rows sums the data."""
+        for n_rows, g in ((5, 2), (7, 3), (541, 9), (6, 2)):
+            c = ix.data.coarsen_scan({"dty0": 0.0, "ystep": 1.0, "n_rows": n_rows}, g)
+            Hc, _ = ix.data.coarsen_rows(np.ones(n_rows), n_rows, g)
+            if n_rows % g:
+                np.testing.assert_allclose(np.asarray(c["exposure"])[:, 0], np.asarray(Hc) / g)
+            else:
+                self.assertNotIn("exposure", c)  # whole groups: nothing to correct
+        # system() takes a per-row exposure [n_rows, 1]: the weight of a prediction in a row scales with it
+        scan = {"y0": 0.0, "dty0": -1.0, "ystep": 1.0, "n_rows": 3, "om0": -180.0, "k_in_lab": jnp.array([1.0, 0.0, 0.0]),
+                "wedge": 0.0, "chi": 0.0}  # fmt: skip
+        pos = jnp.zeros((1, 3), jnp.float32)  # on the axis: row 1 (dty 0) at every omega
+        args = (jnp.full((1, 1, 1), 10.0), jnp.full((1, 1, 1), 0.3), jnp.ones((1, 1, 1), bool), jnp.ones((1, 1, 1)),
+                jnp.asarray([0]), pos)  # fmt: skip
+        _, w1 = ix.occupancy.system(*args, scan, 1.0, 1.0, 360, 360)
+        _, w2 = ix.occupancy.system(*args, {**scan, "exposure": jnp.asarray([[1.0], [0.25], [1.0]])}, 1.0, 1.0, 360, 360)
+        self.assertAlmostEqual(float(np.asarray(w2).sum()), 0.25 * float(np.asarray(w1).sum()), places=5)
+
     def test_coarsen_rows(self):
         H = np.arange(2 * 7, dtype=float)
         Hc, n = ix.data.coarsen_rows(H, 7, 3)
