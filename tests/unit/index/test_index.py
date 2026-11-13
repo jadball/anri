@@ -723,6 +723,16 @@ class TestDiscMask(unittest.TestCase):
         off = ix.mask.disc_mask(scan, 2.0, ix.mask.voxel_grid(scan, 2.0))
         self.assertLess(off.sum(), m.sum())  # 3.5 from the nearer end
         np.testing.assert_array_equal(ix.mask.disc_mask(scan, 0.0, nr, pad=1.5), r <= 7.0)
+        # a half-sample scan (rows -8..2, 0.5 past the axis edge): over a full turn out to the farther end, over half
+        # a turn to the nearer end
+        half = {"dty0": -8.0, "ystep": 1.0, "n_rows": 11}
+        nh = ix.mask.voxel_grid(half, 0.0)
+        rh = np.hypot(*np.asarray(anri.geom.scan.recon_positions(nh, 1.0))[:, :2].T).reshape(nh, nh)
+        turn = {**half, "n_o": round(360 / ix.data.B_O)}
+        np.testing.assert_array_equal(ix.mask.disc_mask(turn, 0.0, nh), rh <= 8.5)
+        np.testing.assert_array_equal(ix.mask.disc_mask({**half, "n_o": round(180 / ix.data.B_O)}, 0.0, nh), rh <= 2.5)
+        np.testing.assert_array_equal(ix.mask.disc_mask(half, 0.0, nh), rh <= 2.5)  # no omega range: half a turn
+        self.assertFalse(ix.mask.disc_mask(turn, 3.0, nh).any())  # y0 past the scan's end: no voxel seen all round
         wide = ix.mask.voxel_grid(scan, 0.0, grid_pad=2.5)  # 3 voxels more on every side
         self.assertEqual(wide, nr + 6)
         inner = np.asarray(anri.geom.scan.recon_positions(wide, 1.0)).reshape(wide, wide, 3)[3:-3, 3:-3]

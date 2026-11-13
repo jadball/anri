@@ -23,7 +23,7 @@ from scipy.ndimage import median_filter
 from anri.geom.gonio import find_dty_for_beam_xy
 from anri.geom.scan import recon_positions, regrid, sino_shift_and_pad
 
-from .data import scan_beam
+from .data import B_O, scan_beam
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -246,18 +246,21 @@ def threshold_mask(image: ArrayLike, threshold: float | None = None) -> np.ndarr
 
 
 def disc_mask(scan: dict, y0: float, nr: int, pad: float = 0.0) -> np.ndarray:
-    """Mask of the voxels the beam sees at every omega: within the scanned dty range all the way round the axis.
+    """Mask of the voxels the scan sees from every direction: within reach of the scanned dty range round the axis.
 
-    A voxel at distance r from the rotation axis is in the beam at dty = y0 - r cos(omega - phi). It stays within the
-    rows' range, from dty0 - ystep / 2 to dty0 + (n_rows - 1/2) ystep, at every omega when r is at most the distance
-    from y0 to the nearer end. The voxels further out (the corners of the square grid, and more of it when y0 is off
-    the middle of the scan) are seen at some omegas only, so the data hardly constrain them: MLEM can give them large
-    occupancies that explain almost nothing.
+    A voxel at distance r from the rotation axis is in the beam at dty = y0 - r cos(omega - phi). Over half a turn
+    (scan["n_o"] B_O < 360, or no "n_o") it must stay within the rows' range, from dty0 - ystep / 2 to
+    dty0 + (n_rows - 1/2) ystep, at every omega: r at most the distance from y0 to the nearer end. Over a full turn
+    a voxel within the distance from y0 to the farther end is in a scanned row for at least half the turn, every
+    direction once: a half-sample scan (dty from one edge of the sample to just past the axis) reconstructs the
+    whole sample, and the nearer end (a few um past the axis) would leave only the middle. The voxels further out
+    are seen from some directions only, so the data hardly constrain them: MLEM can give them large occupancies that
+    explain almost nothing.
 
     Parameters
     ----------
     scan
-        The histogram's scan ("dty0", "ystep", "n_rows")
+        The histogram's scan ("dty0", "ystep", "n_rows", and "n_o", its omega bins of B_O, for a full turn)
     y0
         dty where the rotation axis is in the beam
     nr
@@ -274,7 +277,9 @@ def disc_mask(scan: dict, y0: float, nr: int, pad: float = 0.0) -> np.ndarray:
         [nr, nr] bool, in reconstruction order
     """
     lo = scan["dty0"] - 0.5 * scan["ystep"]
-    r_max = min(y0 - lo, lo + scan["n_rows"] * scan["ystep"] - y0) + pad
+    near_far = (y0 - lo, lo + scan["n_rows"] * scan["ystep"] - y0)
+    full_turn = scan.get("n_o", 0) * B_O >= 360.0 - 1e-6
+    r_max = (max(near_far) if full_turn and min(near_far) >= 0 else min(near_far)) + pad
     pos = np.asarray(recon_positions(nr, scan["ystep"]))
     return (np.hypot(pos[:, 0], pos[:, 1]) <= r_max).reshape(nr, nr)
 

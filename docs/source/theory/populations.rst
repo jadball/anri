@@ -70,9 +70,12 @@ Which voxels are fitted
 Voxels in air have nothing to fit, and voxels the beam sees at only some omegas are poorly constrained: MLEM can give
 them large occupancies that explain almost nothing. The fit is restricted to a mask (:mod:`anri.index.mask`):
 
-- **disc** (default): the voxels within the scanned dty range at every omega. A voxel at distance :math:`r` from the
+- **disc** (default): the voxels the scan sees from every direction. A voxel at distance :math:`r` from the
   axis is in the beam at :math:`\text{dty} = y_0 - r\cos(\omega - \phi)`, so it stays in range at every omega when
-  :math:`r` is at most the distance from :math:`y_0` to the nearer end of the scan. It can be grown by ``pad`` for a
+  :math:`r` is at most the distance from :math:`y_0` to the nearer end of the scan. Over a full turn a voxel within the
+  distance to the farther end is in a scanned row for at least half the turn, every direction once, so the disc
+  reaches the farther end: a half-sample scan (dty from one edge of the sample to just past the axis) is reconstructed
+  whole, where the nearer end would keep only a few um round the axis. It can be grown by ``pad`` for a
   sample a little larger than the disc: a voxel at :math:`r` is in the beam over a fraction
   :math:`\tfrac{2}{\pi}\arcsin(r_{\text{disc}}/r)` of the rotation.
 

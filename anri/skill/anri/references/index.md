@@ -74,7 +74,7 @@ Fits each voxel's occupancy of its `--cand` best orientations by MLEM, every vox
 | Choice | Look at | Function |
 |---|---|---|
 | `--y0` | the sinogram's middle between the sample's edges at every ω; a back-projection at that y0 (a wrong y0 blurs the edge and doubles grain boundaries) | `y0_from_edges`, `back_projection`; `plot_y0` |
-| `--mask`, `--pad` | `disc` fits the voxels the beam sees at every ω; `auto` the sample's support in the projections; or a mask file (`anri.index.mask.save_mask`, `draw_mask`). A sample a little larger than the disc piles onto its edge without `--pad` | `back_projection`; `plot_mask` |
+| `--mask`, `--pad` | `disc` fits the voxels the scan sees from every direction (over a full turn, out to the scan's farther end: a half-sample scan's whole sample); `auto` the sample's support in the projections; or a mask file (`anri.index.mask.save_mask`, `draw_mask`). A sample a little larger than the disc piles onto its edge without `--pad` | `back_projection`; `plot_mask` |
 | `--iter` | deviance per iteration (logged), and how much occupancy still moves between orientations | `convergence_recorder` (a callback for `stage_fit`); `plot_convergence` |
 | `--cand` | each voxel's sorted occupancy shares: the last candidates should hold little | `candidate_shares` |
 | `--beam` | the beam's FWHM across dty, when wider than the dty step (e.g. overfocused) | ask the human |

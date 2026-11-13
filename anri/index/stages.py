@@ -793,7 +793,8 @@ def stage_fit(
         FWHM of the beam across dty, as dty: each voxel is spread over the rows by this Gaussian profile integrated
         over the voxel. 0: linearly over the 2 nearest rows (close to a beam of FWHM = the dty step)
     mask
-        Fit only the voxels in a sample mask: "disc" (the voxels the beam sees at every omega, grown by pad,
+        Fit only the voxels in a sample mask: "disc" (the voxels the scan sees from every direction, grown by pad;
+        over a full turn out to the scan's farther end, so a half-sample scan's whole sample,
         :func:`~anri.index.mask.disc_mask`), "auto" (the sample's support in the projections, wherever the beam
         reaches it, :func:`~anri.index.mask.support_mask`), a .npy file of [NR, NR] booleans in reconstruction order,
         or None for every voxel
@@ -890,7 +891,7 @@ def _fit_setup(filter_file: str, y0: float | None, beam: float, mask: str | None
         if mask == "disc":
             sel = disc_mask(sc, Y0, NR, pad).ravel()
             if not sel.any():
-                msg = f"y0 {Y0:.6g} is outside the scanned dty range: no voxel is in the beam at every omega"
+                msg = f"y0 {Y0:.6g} is outside the scanned dty range: no voxel is seen from every direction"
                 raise ValueError(msg)
         elif mask == "auto":
             m_auto, rec = support_mask(d["H"], d["n_rings"], sc["n_e"] // R_E, sc["n_o"] // R_O, scan, B_O * R_O, NR)

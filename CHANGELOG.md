@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The voxel fit's default mask (`--mask disc`, `anri.index.mask.disc_mask`) covers a half-sample scan's whole sample. On a scan over a full turn it reaches the scan's farther end from y0: a voxel within it is in a scanned row for at least half the turn, every direction once. It took the nearer end, so a half-sample scan (dty from one edge of the sample to a few um past the axis) kept only those few um round the axis. Scans over half a turn are unchanged.
 - Rendering a big grain map in many calls (`python -m anri.simulate render`, every row of a scan or every `--frames-per-call` chunk of a box beam's rotation) no longer redoes per-map host work on every call, which kept the GPU idle on a DCT-sized map (500 x 500 x 200 voxels: 20 min on an L40S). `write_rendered_rows` puts each phase on the device once, with the new `anri.fwd.render.to_device`, which also sorts a grain map's entries by grain; `render_row` used to copy the whole map to the device, copy its grain labels back and sort them on the host, on every call. Spots are numbered without sorting every (voxel, spot) pair on the host (`np.unique`), and splat's check that `sig_rot` is the same over a grain runs on the device. A short last `--frames-per-call` chunk is padded to the others' length, so it compiles nothing new. Pixels are unchanged.
 
 - `ty check` passes again: `anri.diffract.factors.extinction` takes array-likes as it says, and `anri.fwd.render`'s entries dict is typed as one.

@@ -155,7 +155,8 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
         "--mask",
         default="disc",
         help="fit only the voxels in a sample mask: 'disc' (default: the voxels "
-        "the beam sees at every omega, within the scanned dty range all round the rotation axis, grown by --pad), "
+        "the scan sees from every direction: within the scanned dty range all round the rotation axis, or over a "
+        "full turn within the farther end (a half-sample scan), grown by --pad), "
         "'auto' (the sample's support in the projections: voxels whose row is lit at every omega it is scanned at, "
         "largest region, convex hull; also outside the disc), or a .npy file of [voxels, voxels] booleans in "
         "reconstruction order, e.g. drawn with anri.index.mask.draw_mask or an ImageD11 mask on the same grid",
