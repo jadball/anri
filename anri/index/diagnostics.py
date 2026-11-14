@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from .data import B_E, B_O, R_E, R_O, pixel_cake, ring_table, ring_widths, sample_groups
-from .local import covering
 from .search import GRID_STEPS, grid_chance, prune
 
 
@@ -441,88 +440,6 @@ def candidate_shares(f: np.ndarray, voxels: np.ndarray, max_voxels: int = 200000
     iv = np.flatnonzero(voxels)
     iv = iv[:: max(1, len(iv) // max_voxels)]
     return np.sort(f[iv], 1)[:, ::-1] / np.maximum(f[iv].sum(1, keepdims=True), 1e-30)
-
-
-def orientations_needed(f: np.ndarray, cand: np.ndarray, cover: float) -> np.ndarray:
-    """Return how many of each voxel's most occupied orientations hold cover of its occupancy.
-
-    The local search's count before its ``per_voxel`` cap (:func:`anri.index.local.covering`).
-
-    Parameters
-    ----------
-    f, cand
-        [Nv, K] occupancies and orientation indices (a fit stage file, or the voxels to look at)
-    cover
-        As the local search's
-
-    Returns
-    -------
-    np.ndarray
-        [Nv] counts, 0 for an empty voxel
-    """
-    return covering(np.asarray(f), np.asarray(cand), cover, f.shape[1])[2].sum(1)
-
-
-def level_recorder() -> tuple[Callable, dict]:
-    """Return a callback for :func:`anri.index.stages.stage_localsearch` that records each level's deviance, and its record.
-
-    Returns
-    -------
-    callback, record
-        Pass callback to the local search. record then holds "deviance": one list per level, the deviance before
-        each iteration (the first: the level's start, each parent's occupancy shared among its children)
-    """
-    record: dict = {"deviance": []}
-
-    def callback(it: int, f: object, dev: float) -> None:
-        if it == 1:  # a new level
-            record["deviance"].append([])
-        record["deviance"][-1].append(float(dev))
-
-    return callback, record
-
-
-def local_change(fit_file: str, local_file: str, ops: np.ndarray, radius_deg: float, voxels: np.ndarray) -> dict:
-    """Compare the main population of each voxel before and after the local search.
-
-    Parameters
-    ----------
-    fit_file, local_file
-        A fit stage file and the local search made from it
-    ops
-        [n, 3, 3] Laue-group rotations
-    radius_deg
-        Population radius (:func:`anri.index.populations.group`), as the populations stage: 1.8 grid steps
-    voxels
-        [Nv] the voxels to compare (e.g. the occupied ones)
-
-    Returns
-    -------
-    dict
-        [Nv] each, NaN outside voxels: "angle" (disorientation between the main population's mean orientation
-        before and after, deg; near a twin's misorientation where the main population changed), "frac_fit" and
-        "frac_local" (its fraction of the voxel), "spread_fit" and "spread_local" (its spread, deg)
-    """
-    import h5py
-
-    from anri.crystal.orientation import disorientation
-
-    from .populations import group
-
-    main = {}
-    for name, path in (("fit", fit_file), ("local", local_file)):
-        with h5py.File(path, "r") as h:
-            f, cand, U = h["f"][()][voxels], h["cand"][()][voxels], h["U"][()]
-        frac, U_pop, spread, _ = group(f, cand, U, ops, radius_deg)
-        main[name] = (frac[:, 0], U_pop[:, 0], spread[:, 0])
-    out = {"angle": disorientation(main["fit"][1], main["local"][1], ops)}
-    for name in ("fit", "local"):
-        out[f"frac_{name}"], out[f"spread_{name}"] = main[name][0], main[name][2]
-    full = {}
-    for k, v in out.items():
-        full[k] = np.full(len(voxels), np.nan)
-        full[k][voxels] = v
-    return full
 
 
 def ring_ratios(H: np.ndarray, model: np.ndarray, n_rings: int, scan: dict, etacut: float) -> np.ndarray:

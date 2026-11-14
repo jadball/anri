@@ -3,8 +3,8 @@
 From occupancies to populations
 ===============================
 
-The voxel fit (:doc:`likelihood`) leaves each voxel with occupancies of up to :math:`K` grid orientations, and the local
-search (:doc:`localsearch`) with occupancies of their children. A single real orientation between grid points shares
+The voxel fit (:doc:`likelihood`, :doc:`localsearch`) leaves each voxel with occupancies of up to :math:`K`
+orientations, refined off the search grid. A single real orientation between grid points shares
 itself among its neighbours, and a population with a spread covers several. This chapter groups them back into a few orientation populations per voxel, each with a fraction, a
 mean and a spread, and describes which voxels are fitted at all.
 
@@ -18,7 +18,7 @@ Laue group (:eq:`cry-laue`). Up to :math:`p` (4) populations per voxel, ordered 
 of several candidates can outweigh the one the most occupied candidate seeded. The cut is relative to the most occupied
 candidate, not the total, so an occupied voxel always has a population, even when its occupancy is spread thinly over
 many orientations: it then comes out as one population with a large spread. A population's fraction is its share of
-the voxel's whole occupancy, so every candidate must be grouped: a local search spreads a grain over many children,
+the voxel's whole occupancy, so every candidate must be grouped: the fit's later levels spread a grain over many children,
 and grouping only the 16 most occupied (as before) under-reported the main population (median 0.87 instead of 0.94 on
 a Ni superalloy).
 
@@ -50,11 +50,10 @@ Each population gets
 
 **Anri's choice:** populations closer than the radius come out as one, with a larger spread. What the data cannot
 separate is reported as a mean and a spread rather than as invented structure. The radius is set by the search grid's
-step even after a local search: its children, a ninth of that step apart after two levels, are grouped within the same
-radius, so the local search sharpens each population's mean and spread but does not separate populations closer than
-the search grid could. The spread includes the spacing of the orientations fitted (one orientation between them shares
-itself among its neighbours), so it is an upper bound on the sample's: the search grid's spacing, or the local search's
-finer one.
+step even after the fit refined the orientations: they are a ninth of that step apart or less, and are grouped within
+the same radius, so the refinement sharpens each population's mean and spread but does not separate populations
+closer than the search grid could. The spread includes the spacing of the orientations fitted (one orientation between them shares
+itself among its neighbours), so it is an upper bound on the sample's: the spacing of the fit's last level.
 
 What is reported
 ----------------

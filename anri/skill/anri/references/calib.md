@@ -11,7 +11,7 @@ python -m anri.calib pars <..._rings.h5> <folder>                          # -> 
 python -m anri.index histogram <analysisroot> <sample> <dataset> --parfile <folder>/pars.json
 python -m anri.index search <..._histogram.h5>
 python -m anri.index filter <..._search.h5>
-python -m anri.index fit <..._filter.h5>                                   # no local search
+python -m anri.index fit <..._filter.h5> --refine-to 0 --levels 0          # the grid's orientations
 python -m anri.calib fit <..._fit.h5>                                      # -> <...>_calib.h5
 python -m anri.calib pars <..._calib.h5> <folder>                          # the calibrated pars.json
 python -m anri.calib show <any stage file> --log
@@ -32,8 +32,9 @@ the options). It needs the geometry only roughly (each spot's radial direction a
    closer together than the geometry's error (cells, subgrains), matching absorbs part of that error and the rounds
    converge slowly; the stage warns. A deformed sample's geometry is refined with its strains, not here.
 3. **Wedge, chi and y0 stay fixed.** y0 is the indexing fit's; choose it there ([index](index.md)).
-4. **Index with the fit stage only.** The calibration refuses a local search's file: its orientations, a fraction of
-   a degree apart, let each round's matching absorb part of the geometry's error.
+4. **Index with the grid's orientations.** Fit with `--refine-to 0 --levels 0`. The calibration refuses refined
+   orientations (the fit's defaults): a fraction of a degree apart, they let each round's matching absorb part of
+   the geometry's error.
 
 ## Choices
 

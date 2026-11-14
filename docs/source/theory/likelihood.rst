@@ -140,12 +140,12 @@ orientation) pairs could explain it. Then MLEM with SQUAREM runs on the candidat
 
 **Code:** :func:`anri.index.occupancy.candidates`, :func:`anri.index.occupancy.fit_occupancy`.
 
-**Coarse to fine** (``coarse = G``): the candidate pass and a fit run first on voxels :math:`G` times larger (rows
-summed in groups of :math:`G`), and each fine voxel then scores only the :math:`2K` orientations its 3 × 3 coarse
-neighbourhood occupied most: about :math:`G^2` times cheaper, at the risk of missing a grain the coarse fit missed.
+**Coarse to fine**: the fit stage runs this fit level by level, the first on voxels sized to the orientations' error
+and with every orientation as a candidate, the later ones on finer voxels and orientations, each voxel over what its
+coarser neighbourhood held (:doc:`localsearch`).
 
-**Code:** :func:`anri.index.occupancy.inherit_candidates`, :func:`anri.index.occupancy.candidates_from`,
-:func:`anri.index.data.coarsen_rows`, :func:`anri.index.data.coarsen_scan`.
+**Code:** :func:`anri.index.occupancy.inherit_candidates`, :func:`anri.index.data.coarsen_rows`,
+:func:`anri.index.data.coarsen_scan`.
 
 What is left out
 ----------------

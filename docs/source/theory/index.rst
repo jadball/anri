@@ -35,7 +35,7 @@ Indexer
 7. :doc:`indexing`: the data as a linear tomography of orientation occupancies, and the histogram it is fitted to.
 8. :doc:`search`: which orientations to try: grids over the fundamental zone, and completeness.
 9. :doc:`likelihood`: fitting occupancies: Poisson likelihood, MLEM, SQUAREM, censoring and the likelihood ratio.
-10. :doc:`localsearch`: sharpening each voxel's orientations off the search grid.
+10. :doc:`localsearch`: refining the orientations off the search grid, and fitting the voxels coarse to fine.
 11. :doc:`populations`: from occupancies to orientation populations per voxel, and the sample mask.
 
 Calibration

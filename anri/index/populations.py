@@ -80,7 +80,7 @@ def group(
     m
         Candidates considered per voxel, the most occupied (default: all). Fractions are shares of the voxel's whole
         occupancy, so fewer than a fit leaves per voxel under-reports a population spread over many candidates (a
-        local search spreads a grain over many children)
+        fit's later levels spread a grain over many children)
     eps
         Smallest occupancy considered, as a fraction of the voxel's most occupied candidate
     vb

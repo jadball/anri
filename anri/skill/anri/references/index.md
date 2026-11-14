@@ -67,41 +67,42 @@ the row-summed data and keeps those whose likelihood ratio is above `--min-lr` (
 `anri.index.orientations.select_by_likelihood` redoes the choice for other cuts without fitting again: the file keeps every
 ratio. Writes `kept`, `U`, `completeness`, and for likelihood pruning `fitted` and `likelihood_ratio`.
 
-## 4. fit: `--y0`, `--mask`, `--pad`, `--cand`, `--iter`, `--coarse`, `--beam`, `--mu`, `--censor`, `--block-gb`
+## 4. fit: `--y0`, `--mask`, `--pad`, `--cand`, `--iter`, `--refine-to`, `--levels`, `--min-share`, `--per-voxel`, `--beam`, `--mu`, `--censor`, `--block-gb`
 
-Fits each voxel's occupancy of its `--cand` best orientations by MLEM, every voxel jointly.
+Fits each voxel's occupancy of orientations by MLEM, every voxel jointly, coarse to fine in orientation and space:
+
+1. The filter's orientations are refined on the row-summed data, without tomography, to a worst case of
+   `--refine-to` (27 children a third of the step apart per round, kept by the filter's `--min-lr` and `--keep`). A
+   coarser orientation puts its spots in the wrong 1° bins: on half-sample scans that starved the voxels near the axis
+   and made streaks, and even on full scans left a checkerboard.
+2. Level 0: each voxel's `--cand` best orientations among all of them, on voxels about R × the worst case wide (R
+   the mask's radius: an orientation error e moves a voxel's predicted row by up to R e).
+3. Each of `--levels` more: orientations subdivided by 3 and voxels down to the dty step. A voxel's orientations
+   holding at least `--min-share` of it (at most `--per-voxel`) pass their 27 children to the finer voxels of its
+   3 × 3 neighbourhood, each started at its parent's occupancy / 27; a thin twin lamella keeps its own.
 
 | Choice | Look at | Function |
 |---|---|---|
 | `--y0` | the sinogram's middle between the sample's edges at every ω; a back-projection at that y0 (a wrong y0 blurs the edge and doubles grain boundaries; it uses the histogram's sinogram at the frames' ω step, and joins a full turn's two halves, so a half-sample scan reconstructs whole). Over a full turn, the rows measured twice (dty at ω is 2 y0 − dty at ω + 180°: a half-sample scan's few µm past the axis, or a whole 360° scan) give y0 directly, and show runout if it varies with ω | `y0_from_edges`, `y0_from_overlap`, `back_projection`; `plot_y0` |
 | `--mask`, `--pad` | `disc` fits the voxels the scan sees from every direction (over a full turn, out to the scan's farther end: a half-sample scan's whole sample); `auto` the sample's support in the projections; or a mask file (`anri.index.mask.save_mask`, `draw_mask`). A sample a little larger than the disc piles onto its edge without `--pad` | `back_projection`; `plot_mask` |
-| `--iter` | deviance per iteration (logged), and how much occupancy still moves between orientations | `convergence_recorder` (a callback for `stage_fit`); `plot_convergence` |
+| `--iter` | deviance per iteration of the last level (logged for every level), and how much occupancy still moves between orientations | `convergence_recorder` (a callback for `stage_fit`); `plot_convergence` |
 | `--cand` | each voxel's sorted occupancy shares: the last candidates should hold little | `candidate_shares` |
+| `--refine-to`, `--levels` | the log: each refinement round's orientations kept, each level's voxel size and worst case, and a warning when the last level's orientations still move a voxel at the radius by more than a dty step (add a level). Defaults: 1° grid, refined to 0.29°, one level to 0.096° | the log |
 | `--beam` | the beam's FWHM across dty, when wider than the dty step (e.g. overfocused) | ask the human |
-| `--coarse` | for large maps: fits coarse voxels first (4 is about 16 times cheaper), at the risk of missing a grain the coarse fit missed | the log |
 
-Time grows with voxels × candidates × reflections × iterations. More iterations sharpen thin features; fewer keep
-the populations' means a little closer to the truth between grid points. Absorption is modelled when the histogram
-had `--cif` or the fit gets `--mu`; the log says which.
+`--refine-to 0 --levels 0` fits the filter's grid orientations as they are, on the dty step: the map
+`python -m anri.calib fit` needs (it refuses refined orientations). Time grows with voxels × candidates × reflections
+× iterations, per level; the coarse first level is cheap. More iterations sharpen thin features. Absorption is
+modelled when the histogram had `--cif` or the fit gets `--mu`; the log says which.
 
-Writes `f` and `cand` (occupancies and orientation indices per voxel), `U`, `comp`, `pos`, `mask`, and per dty row
-`row_data`, `row_model` and `row_ratio`; `support` with `--mask auto`; and with `save_model=True` (from Python)
-the fitted histogram `model`. `ring_ratios` compares fitted and measured intensity per ring, `plot_row_ratios` draws
-both, and `plot_residual` draws data, model and residual ring by ring: compact positive spots are intensity no kept
-orientation explains (a missed grain, or another phase), negative ones are predicted where there is nothing.
+Writes `f` and `cand` (occupancies and orientation indices per voxel), `U` (the last level's orientations), `comp`,
+`pos`, `mask`, and per dty row `row_data`, `row_model` and `row_ratio`; `support` with `--mask auto`; and with
+`save_model=True` (from Python) the fitted histogram `model`. `ring_ratios` compares fitted and measured intensity per
+ring, `plot_row_ratios` draws both, and `plot_residual` draws data, model and residual ring by ring: compact positive
+spots are intensity no kept orientation explains (a missed grain, or another phase), negative ones are predicted where
+there is nothing.
 
-## 5. localsearch: `--levels`, `--cover`, `--per-voxel`
-
-Replaces each orientation a voxel uses by 27 children a third of the step apart and fits again, level by level (2
-levels take a 1° grid to 0.11°). It removes the ghost twins a coarse grid makes. Each level costs about one fit.
-Writes a file like the fit's, which the populations stage reads.
-
-| Choice | Look at | Function |
-|---|---|---|
-| `--cover`, `--per-voxel` | before running, on the fit file: how many orientations each occupied voxel needs to hold `cover` of its occupancy; red over whole grains means raise `--per-voxel`. A level predicts 27 children per orientation used | `orientations_needed`; `plot_local_slots` |
-| `--levels`, and whether it worked | the deviance at each level (`level_recorder` as the stage's callback); how far each voxel's main population moved: up to the grid's worst case is expected, a twin's misorientation means the main population changed (a ghost lost, or a thin twin won) | `local_change`; `plot_local` |
-
-## 6. populations: `--occupied`, `--min-frac`
+## 5. populations: `--occupied`, `--min-frac`
 
 Groups each voxel's occupied candidates into populations (within 1.8 grid steps of the most occupied one), each
 with a fraction, mean orientation, spread and completeness.

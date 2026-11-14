@@ -44,10 +44,11 @@ def select_occupancy(f: np.ndarray, min_occ: float) -> np.ndarray:
 def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = None, min_occ: float = 0.01) -> dict:
     """Read what :func:`stage_fit` starts from: the peaks, the indexed map and the starting geometry.
 
-    The map must be an ``anri.index`` fit stage file. A local search's is refused: its orientations, a fraction of a
-    degree apart, let each round's matching pick the one that absorbs part of the geometry's error, so the rounds
-    converge very slowly (on the Ni phantom, distance and wavelength still 1e-4 off after four rounds, against 1e-6
-    from the fit stage's map). :func:`stage_fit` refits each orientation's rotation itself.
+    The map must be an ``anri.index`` fit of the search grid's orientations (``python -m anri.index fit
+    --refine-to 0 --levels 0``). Refined orientations (the fit's defaults, or an earlier version's local search) are
+    refused: a fraction of a degree apart, they let each round's matching pick the one that absorbs part of the
+    geometry's error, so the rounds converge very slowly (on the Ni phantom, distance and wavelength still 1e-4 off
+    after four rounds, against 1e-6 from the grid's). :func:`stage_fit` refits each orientation's rotation itself.
 
     Parameters
     ----------
@@ -68,10 +69,12 @@ def load_inputs(fit_file: str, peaks: str | None = None, lattice: list | None = 
     from . import fit
 
     prov = read_provenance(fit_file)
-    if prov["stage"] != "fit":
-        msg = (f"{fit_file} is a {prov['stage']} stage file: give the fit stage's ({prov.get('source')}). A local "
-               "search's orientations, a fraction of a degree apart, let each round's matching keep part of the "
-               "geometry's error: the calibration then converges very slowly")  # fmt: skip
+    grid_step = float(read_provenance(upstream(fit_file, "search"))["resolved"]["grid_step"])
+    if prov["stage"] != "fit" or prov["resolved"].get("orientation_step", grid_step) < grid_step:
+        msg = (f"{fit_file} holds orientations refined off the search grid: make a fit of the grid's own "
+               "(python -m anri.index fit --refine-to 0 --levels 0). Refined orientations, a fraction of a degree "
+               "apart, let each round's matching keep part of the geometry's error: the calibration then converges "
+               "very slowly")  # fmt: skip
         raise ValueError(msg)
     hr = read_provenance(upstream(fit_file, "histogram"))["resolved"]
     fr = prov["resolved"]
@@ -123,7 +126,7 @@ def stage_fit(
     Parameters
     ----------
     fit_file
-        From :func:`anri.index.stages.stage_fit` (not a local search's: see :func:`load_inputs`)
+        From :func:`anri.index.stages.stage_fit` with ``refine_to=0, levels=0`` (see :func:`load_inputs`)
     out
         Output file (default: the input's name with ``_calib``)
     peaks

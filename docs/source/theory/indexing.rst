@@ -5,7 +5,7 @@ Indexing as tomography
 
 The indexer finds, from the data alone, which orientations each voxel of a scanning 3DXRD map holds and how much of
 each. This chapter sets up the model it fits; :doc:`search` chooses the orientations it may use, :doc:`likelihood`
-fits it, :doc:`localsearch` sharpens the orientations off the grid, and :doc:`populations` reads the result.
+fits it, :doc:`localsearch` refines the orientations off the grid and fits coarse to fine, and :doc:`populations` reads the result.
 
 What a voxel is
 ---------------

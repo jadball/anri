@@ -25,7 +25,7 @@ from anri.geom.gonio import find_dty_for_beam_xy, wrap_omega
 from anri.geom.paths import edge_distances, ray_directions, transmission
 from anri.geom.scan import recon_positions
 
-from .data import coarsen_rows, coarsen_scan, eta_omega_corners, omega_bin, scan_beam
+from .data import eta_omega_corners, omega_bin, scan_beam
 
 
 @jax.jit
@@ -516,23 +516,24 @@ def mlem(
 
 
 @partial(jax.jit, static_argnames=("k2",))
-def _inherit(near9: jax.Array, f_c: jax.Array, cand_c: jax.Array, k2: int) -> jax.Array:
-    def one(nb: jax.Array) -> jax.Array:
+def _inherit(near9: jax.Array, f_c: jax.Array, cand_c: jax.Array, k2: int) -> tuple:
+    def one(nb: jax.Array) -> tuple:
         c, w = cand_c[nb].ravel(), f_c[nb].ravel()  # the neighbourhood's candidates and coarse occupancies
         o = jnp.argsort(c)
         c, w = c[o], w[o]
         dup = jnp.concatenate([jnp.array([False]), c[1:] == c[:-1]])
         seg = jnp.cumsum(~dup) - 1  # which orientation each entry is, in sorted order
         w_max = jax.ops.segment_max(w, seg, num_segments=c.size)[seg]  # its largest occupancy in any neighbour
-        v, i = jax.lax.top_k(jnp.where(dup, -jnp.inf, w_max), k2)  # each orientation once
-        return jnp.where(v > -jnp.inf, c[i], -1)  # -1: fewer than k2 orientations in the neighbourhood
+        v, i = jax.lax.top_k(jnp.where(dup | (c < 0), -jnp.inf, w_max), k2)  # each orientation once, no empty slot
+        ok = v > -jnp.inf  # fewer than k2 orientations in the neighbourhood: -1
+        return jnp.where(ok, c[i], -1), jnp.where(ok, v, 0.0)
 
     return jax.vmap(one)(near9)
 
 
 def inherit_candidates(
     pos: ArrayLike, pos_c: ArrayLike, f_c: ArrayLike, cand_c: ArrayLike, k2: int, vb: int = 1 << 14
-) -> jax.Array:
+) -> tuple[np.ndarray, np.ndarray]:
     """Candidates for fine voxels from a coarse fit: what the nearest coarse voxel and its 8 neighbours occupied.
 
     Parameters
@@ -542,68 +543,63 @@ def inherit_candidates(
     pos_c
         [Nc, 3] coarse voxel positions
     f_c, cand_c
-        [Nc, K] coarse occupancies and orientation indices
+        [Nc, K] coarse occupancies and orientation indices (-1: none)
     k2
         Candidates per fine voxel, the most occupied first (an orientation in several neighbours by its largest
         occupancy)
     vb
-        Fine voxels per call
+        Fine voxels per call (padded: one compile)
 
     Returns
     -------
-    jax.Array
-        [Nv, k2] orientation indices, each once; -1 in the last slots where the neighbourhood holds fewer than k2
+    cand, f0: np.ndarray
+        [Nv, k2] orientation indices, each once (-1 in the last slots where the neighbourhood holds fewer than k2),
+        and each one's largest occupancy in the neighbourhood (0 for an empty slot): starting occupancies for
+        :func:`fit_occupancy`'s given
     """
     from scipy.spatial import KDTree
 
     pos = np.asarray(pos)[:, :2]
-    tree = KDTree(np.asarray(pos_c)[:, :2])  # the 9 nearest by a tree: sorting every distance was minutes on big maps
+    pos_c = np.asarray(pos_c)[:, :2]
+    tree = KDTree(pos_c)  # the 9 nearest by a tree: sorting every distance was minutes on big maps
+    n9 = min(9, len(pos_c))
     f_c, cand_c = jnp.asarray(f_c), jnp.asarray(cand_c)
-    out = []
+    vb = min(vb, len(pos))
+    cs, fs = [], []
     for s0 in range(0, len(pos), vb):
-        _, near9 = tree.query(pos[s0 : s0 + vb], k=9)
-        out.append(np.asarray(_inherit(jnp.asarray(near9, jnp.int32), f_c, cand_c, k2)))
-    return jnp.asarray(np.concatenate(out))
+        _, near = tree.query(pos[s0 : s0 + vb], k=n9)
+        near = np.asarray(near, np.int32).reshape(-1, n9)
+        n = len(near)
+        c, f = _inherit(jnp.asarray(np.pad(near, ((0, vb - n), (0, 0)))), f_c, cand_c, k2)
+        cs.append(np.asarray(c)[:n])
+        fs.append(np.asarray(f)[:n])
+    return np.concatenate(cs), np.concatenate(fs).astype(np.float32)
 
 
-def candidates_from(
-    d: jax.Array, cand_in: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array, scan: dict, dims: tuple,
-    k: int, vb: int, log: Callable = print,
-) -> tuple[jax.Array, jax.Array]:  # fmt: skip
-    """Pick each voxel's k best orientations as :func:`candidates` does, but from its own list only.
+def coarse_positions(pos: ArrayLike, step: float) -> np.ndarray:
+    """Return the voxels of a grid of the given step that lie within 0.75 of a step of any of the given voxels.
+
+    The grid is :func:`anri.geom.scan.recon_positions`'s, centred on the rotation axis, wide enough to cover pos.
 
     Parameters
     ----------
-    d
-        [n_cells] histogram
-    cand_in
-        [Nv, K2] orientations to score per voxel, e.g. from :func:`inherit_candidates`; -1 for none
-    pred, ring_j, pos, scan, dims, vb
-        See :func:`forward`
-    k
-        Candidates kept per voxel
-    log
-        Progress messages
+    pos
+        [Nv, 3] voxel positions (e.g. the fit's voxels in the mask)
+    step
+        The coarse grid's step
 
     Returns
     -------
-    f1, cand: jax.Array
-        [Nv, k] first-update occupancies and orientation indices
+    np.ndarray
+        [Nc, 3] positions
     """
-    t0 = time.perf_counter()
-    n_cells = d.shape[0]
-    ok = cand_in >= 0
-    cand_in = jnp.maximum(cand_in, 0)  # the empty slots: any orientation, with no weight and never picked
-    a1 = forward(ok.astype(jnp.float32), cand_in, pred, ring_j, pos, scan, dims, n_cells, vb)
-    r = jnp.where(a1 > 0, d / jnp.maximum(a1, 1e-30), 0.0)
-    num = backward(r, cand_in, pred, ring_j, pos, scan, dims, vb)
-    f1 = num / jnp.maximum(backward(jnp.ones(n_cells, jnp.float32), cand_in, pred, ring_j, pos, scan, dims, vb), 1e-30)
-    val, i = jax.lax.top_k(jnp.where(ok, f1, -jnp.inf), k)
-    val = jnp.maximum(val, 0.0)  # an empty slot picked (fewer than k orientations): occupancy 0
-    cand = jnp.take_along_axis(cand_in, i, 1)
-    jax.block_until_ready(cand)
-    log(f"  candidates: top {k} of {cand_in.shape[1]} inherited per voxel: {time.perf_counter() - t0:.1f} s")
-    return val, cand
+    from scipy.spatial import KDTree
+
+    xy = np.asarray(pos)[:, :2]
+    n = 2 * int(np.ceil(float(np.abs(xy).max()) / step)) + 3
+    grid = np.asarray(recon_positions(n, step), np.float32)
+    dist, _ = KDTree(xy).query(grid[:, :2])
+    return grid[dist <= 0.75 * step]
 
 
 def fit_occupancy(
@@ -615,7 +611,6 @@ def fit_occupancy(
     dims: tuple,
     k: int = 64,
     n_iter: int = 10,
-    coarse: int = 1,
     block_bytes: float = 1e9,
     qc: int = 16,
     log: Callable = print,
@@ -627,10 +622,6 @@ def fit_occupancy(
     given: tuple | None = None,
 ) -> tuple:
     """Fit sparse occupancies: candidates per voxel, then MLEM.
-
-    With ``coarse = G > 1`` the full candidate pass runs on voxels G times larger (the histogram's rows summed in
-    groups of G), and each voxel then scores only the 2k orientations its 3 x 3 coarse neighbourhood occupied most:
-    about G^2 times cheaper for large maps, at the risk of missing a grain the coarse fit missed.
 
     Parameters
     ----------
@@ -649,8 +640,6 @@ def fit_occupancy(
         Candidates per voxel (at most the number of orientations; fewer orientations, fewer candidates)
     n_iter
         MLEM iterations (SQUAREM, :func:`mlem`)
-    coarse
-        Coarse-to-fine factor (1: off)
     block_bytes
         Memory for one block of voxels' system entries
     qc
@@ -670,7 +659,7 @@ def fit_occupancy(
         Indices of the bins holding a saturated pixel, censored from above in the MLEM (:func:`censored_ratio`)
     given
         ``(f0, cand)``, each [Nv, k]: each voxel's own candidates (-1 for an empty slot) and starting occupancies,
-        instead of picking them (k and coarse are then not used), e.g. from :func:`anri.index.local.inherit`
+        instead of picking them (k is then not used), e.g. from :func:`inherit_candidates`
     log
         Progress messages
 
@@ -715,25 +704,9 @@ def fit_occupancy(
         log(f"candidates: given, {(cand_g[:nv] >= 0).sum(1).mean():.0f} of {k} per voxel on average")
         # an empty slot: orientation 0 at zero occupancy, which MLEM's multiplicative update keeps at zero
         f0, cand = jnp.asarray(np.where(cand_g >= 0, f_g, 0.0)), jnp.asarray(np.maximum(cand_g, 0))
-    elif coarse == 1:
+    else:
         log(f"candidates: {nv} voxels x {pred[0].shape[0]} orientations, the top {k} per voxel")
         f0, cand = candidates(H, pred, ring_j, pos_p, scan, dims, k, vb_all, qc=qc, log=log)
-    else:
-        H_c, _ = coarsen_rows(H, scan["n_rows"], coarse)
-        scan_c = coarsen_scan(scan, coarse)
-        step_c = scan_c["ystep"]
-        extent = float(np.abs(np.asarray(pos)[:, :2]).max())
-        n_c = 2 * int(np.ceil(extent / step_c)) + 3
-        pos_c = np.asarray(recon_positions(n_c, step_c), np.float32)
-        pos_cp = pad_voxels(with_edges(pos_c), vbp)
-        log(f"coarse: {n_c} x {n_c} voxels of {step_c:g} x {pred[0].shape[0]} orientations, the top {k} per voxel")
-        f_c, cand_c = candidates(H_c, pred, ring_j, pos_cp, scan_c, dims, k, vb_all, qc=qc, log=log)
-        f_c = mlem(
-            H_c, cand_c, pred, ring_j, pos_cp, scan_c, dims, f_c, n_iter, vb, log=log, censor=censor
-        )  # rows summed: no saturation index
-        cand_in = inherit_candidates(pos_p[:, :3], pos_c, f_c[: n_c * n_c], cand_c[: n_c * n_c], 2 * k)
-        log(f"fine: {nv} voxels x {2 * k} orientations inherited from the coarse neighbourhood")
-        f0, cand = candidates_from(H, cand_in, pred, ring_j, pos_p, scan, dims, k, max(vb // 2, 1), log=log)
     log(f"candidates: {time.perf_counter() - t0:.1f} s")
     t0 = time.perf_counter()
     f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor, callback=callback,

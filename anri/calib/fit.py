@@ -424,7 +424,7 @@ def calibrate(peaks: dict, ubi: np.ndarray, grid_o: np.ndarray, grid_w: np.ndarr
         if callback is not None:
             callback(rnd, pars, ubi, keep)
         # how far this round moved the geometry, in its standard deviations: re-matching converges slowly when the
-        # map holds orientations closer than the geometry's error (e.g. a local search's children)
+        # map holds orientations closer than the geometry's error (e.g. refined off the grid)
         moved = np.abs([pars[k] - before[k] for k in free]) / np.sqrt(np.diag(cov))
         log(f"round {rnd}: moved " + ", ".join(f"{k} {v:.2g}" for k, v in zip(free, moved)) + " sigma")
         if rnd == len(rounds) - 1 and moved.max() > 1 and extra_rounds > 0:
