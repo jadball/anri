@@ -1,19 +1,20 @@
 """Index an ImageD11 scanning-3DXRD dataset from scratch: orientation populations per voxel.
 
-The indexer runs in six stages, each a subcommand that writes one HDF5 file the next one reads:
+The indexer runs in five stages, each a subcommand that writes one HDF5 file the next one reads:
 
     python -m anri.index histogram <analysisroot> <sample> <dataset> [options]   -> <sample>_<dataset>_histogram.h5
     python -m anri.index search  <..._histogram.h5> [options]                    -> <...>_search.h5
     python -m anri.index filter  <..._search.h5> [options]                       -> <...>_filter.h5
     python -m anri.index fit     <..._filter.h5> [options]                       -> <...>_fit.h5
-    python -m anri.index localsearch <..._fit.h5> [options]                      -> <...>_localsearch.h5
-    python -m anri.index populations <..._localsearch.h5> [options]              -> <...>_populations.h5, _entries.npz,
+    python -m anri.index populations <..._fit.h5> [options]                      -> <...>_populations.h5, _entries.npz,
                                                                                     _tmap.h5
-    python -m anri.index run <analysisroot> <sample> <dataset> [options]         all six (--levels 0: no local search)
+    python -m anri.index run <analysisroot> <sample> <dataset> [options]         all five
     python -m anri.index show <any stage file> [--log]                           how it was made, back to the dataset
     python -m anri.index powder <analysisroot> <sample> <dataset> [options]      -> <sample>_<dataset>_powder.h5, .xye
 
-``populations`` also takes a fit stage file directly, without a local search.
+The fit refines the filter's orientations off the search grid and fits the voxels coarse to fine (``--refine-to``,
+``--levels``); ``--refine-to 0 --levels 0`` fits the grid orientations as they are (for ``python -m anri.calib``).
+``populations`` also takes the local search files of earlier versions.
 ``powder`` is not a stage of the indexer: it exports the whole scan as a powder pattern (e.g. for phase
 identification, or a Rietveld or Le Bail fit in another program).
 
@@ -137,13 +138,22 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
         dest="n_iter",
         type=int,
         default=10,
-        help="MLEM iterations, SQUAREM-accelerated (3 MLEM updates each; default 10: thin features such as twins "
+        help="MLEM iterations at each level, SQUAREM-accelerated (3 MLEM updates each; default 10: thin features such as twins "
         "converge long after the deviance flattens, while fewer keep the populations' means a little closer to the truth "
         "between grid points)",
     )
-    p.add_argument("--cand", type=int, default=64, help="candidate orientations per voxel (default 64)")
-    p.add_argument("--coarse", type=int, default=1, help="first fit voxels this many times larger, then give each voxel "
-                   "the candidates of its coarse neighbourhood (default 1: off; 4 is ~16x cheaper on large maps)")  # fmt: skip
+    p.add_argument("--cand", type=int, default=256, help="candidate orientations per voxel (default 256)")
+    p.add_argument("--refine-to", type=float, default=0.3, help="refine the filter's orientations on the row-summed "
+                   "data until their worst-case error is at most this (deg), before any voxel is fitted (default 0.3, "
+                   "a third of the 1 deg bins; 0: the grid's orientations as they are)")  # fmt: skip
+    p.add_argument("--levels", type=int, default=1, help="levels after the first, each subdividing the orientations "
+                   "by 3 and the voxels towards the dty step (default 1: a 1 deg grid, refined to 0.29 deg, to 0.096 "
+                   "deg; the first level's voxels are about the sample's radius x its worst case wide)")  # fmt: skip
+    p.add_argument("--min-share", type=float, default=0.01, help="at each later level, a voxel's orientations holding "
+                   "at least this share of its occupancy are subdivided (default 0.01: a thin twin lamella keeps "
+                   "its own)")  # fmt: skip
+    p.add_argument("--per-voxel", type=int, default=16, help="at most this many orientations per voxel are subdivided "
+                   "into 27 (default 16)")  # fmt: skip
     p.add_argument(
         "--block-gb", type=float, default=1.0, help="memory for one block of voxels' system entries (default 1 GB)"
     )
@@ -155,7 +165,8 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
         "--mask",
         default="disc",
         help="fit only the voxels in a sample mask: 'disc' (default: the voxels "
-        "the beam sees at every omega, within the scanned dty range all round the rotation axis, grown by --pad), "
+        "the scan sees from every direction: within the scanned dty range all round the rotation axis, or over a "
+        "full turn within the farther end (a half-sample scan), grown by --pad), "
         "'auto' (the sample's support in the projections: voxels whose row is lit at every omega it is scanned at, "
         "largest region, convex hull; also outside the disc), or a .npy file of [voxels, voxels] booleans in "
         "reconstruction order, e.g. drawn with anri.index.mask.draw_mask or an ImageD11 mask on the same grid",
@@ -178,16 +189,6 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="do not model absorption, even with a CIF",
     )
-
-
-def _localsearch_options(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--levels", type=int, default=2, help="local search: levels of subdivision around each voxel's "
-                   "orientations, each a third of the step before (default 2: a 1 deg grid to 0.11 deg; with run, 0 "
-                   "skips the local search)")  # fmt: skip
-    p.add_argument("--cover", type=float, default=0.95, help="local search: a voxel uses its most occupied orientations "
-                   "that together hold this share of its occupancy (default 0.95)")  # fmt: skip
-    p.add_argument("--per-voxel", type=int, default=8, help="local search: at most this many orientations per voxel, "
-                   "each subdivided into 27 (default 8)")  # fmt: skip
 
 
 def _populations_options(p: argparse.ArgumentParser) -> None:
@@ -224,29 +225,23 @@ def parser() -> argparse.ArgumentParser:
     _censor_option(f)
     f.add_argument("--out", help="output file (default: the source's name with _filter)")
 
-    m = sub.add_parser("fit", parents=[common], help="occupancies of the kept orientations per voxel")
+    m = sub.add_parser("fit", parents=[common], help="occupancies of orientations per voxel, coarse to fine")
     m.add_argument("source", help="a filter stage file")
     _fit_options(m)
     _censor_option(m)
     m.add_argument("--out", help="output file (default: the source's name with _fit)")
 
-    ls = sub.add_parser("localsearch", parents=[common], help="sharpen the fit's orientations off the search grid")
-    ls.add_argument("source", help="a fit stage file")
-    _localsearch_options(ls)
-    ls.add_argument("--out", help="output file (default: the source's name with _localsearch)")
-
     q = sub.add_parser("populations", parents=[common], help="orientation populations, TensorMap and entries")
-    q.add_argument("source", help="a fit or localsearch stage file")
+    q.add_argument("source", help="a fit stage file")
     _populations_options(q)
     q.add_argument("--out", help="output file (default: the source's name with _populations)")
 
-    r = sub.add_parser("run", parents=[dataset, common], help="all six stages, into --outdir")
+    r = sub.add_parser("run", parents=[dataset, common], help="all five stages, into --outdir")
     _histogram_options(r)
     _search_options(r)
     _keep_option(r)
     _filter_options(r)
     _fit_options(r)
-    _localsearch_options(r)
     _populations_options(r)
     _censor_option(r)
     r.add_argument("--outdir", default=".")
@@ -321,12 +316,10 @@ def main() -> None:
         source = ix.stages.stage_filter(source, out, prune=args.prune, min_comp=args.min_comp, min_lr=args.min_lr,
                                  keep=args.keep, censor=args.censor, command=command, log=log)  # fmt: skip
     if cmd in ("fit", "run"):
-        source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.n_iter, coarse=args.coarse,
-                              beam=args.beam, mask=args.mask, pad=args.pad, absorption=not args.no_absorption, mu=args.mu, block_gb=args.block_gb, censor=args.censor,
+        source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.n_iter,
+                              refine_to=args.refine_to, levels=args.levels, min_share=args.min_share,
+                              per_voxel=args.per_voxel, beam=args.beam, mask=args.mask, pad=args.pad, absorption=not args.no_absorption, mu=args.mu, block_gb=args.block_gb, censor=args.censor,
                               command=command, log=log)  # fmt: skip
-    if cmd == "localsearch" or (cmd == "run" and args.levels > 0):
-        source = ix.stages.stage_localsearch(source, out, levels=args.levels, cover=args.cover,
-                                             per_voxel=args.per_voxel, command=command, log=log)  # fmt: skip
     if cmd in ("populations", "run"):
         ix.stages.stage_populations(
             source, out, occupied=args.occupied, min_frac=args.min_frac, command=command, log=log

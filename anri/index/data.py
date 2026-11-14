@@ -689,6 +689,8 @@ def coarsen_scan(scan: dict, g: int) -> dict:
     larger and there are ceil(n_rows / g) rows. With a beam profile ("voxel", "width_beam") voxels are g times larger
     and the beam's flat top (g - 1) rows wider. Per-row "exposure" becomes each group's mean (a coarse row is the sum
     of g rows), and "ddty" each group's mean real dty (weighted by exposure) less the coarse row's nominal dty.
+    Without "exposure", a partial last group (n_rows not a multiple of g) gets a per-row exposure [n_c, 1], the share
+    of g rows it holds: its coarse row is the sum of fewer rows than the model's voxels would put there.
 
     Parameters
     ----------
@@ -714,6 +716,8 @@ def coarsen_scan(scan: dict, g: int) -> dict:
 
     if "exposure" in scan:
         out["exposure"] = groups(scan["exposure"]).sum(1) / g
+    elif n % g:  # a partial last group holds fewer rows than the model's g: a per-row exposure [n_c, 1]
+        out["exposure"] = jnp.asarray(np.r_[np.ones(n_c - 1), (n - (n_c - 1) * g) / g][:, None], jnp.float32)
     if "ddty" in scan:
         w = groups(scan.get("exposure", jnp.ones_like(scan["ddty"])))
         real = groups(scan["ddty"] + (jnp.arange(n) * ystep)[:, None])  # each row's real dty, less dty0

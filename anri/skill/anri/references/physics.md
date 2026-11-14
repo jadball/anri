@@ -51,6 +51,13 @@ ask.
 - What widens a peak in ω: horizontal convergence (the same at every η), vertical convergence and an axis tilt
   (|cot η|, zero at 3 and 9 o'clock), orientation spread (1/|sin η|), and the energy bandwidth ((Δλ/λ) tan θ /
   |sin η|, the only term growing with 2θ). An undeformed single crystal separates the instrument from the sample.
+- The energy bandwidth: the Laue Si(111) monochromator's nominal 2e-3 FWHM is not what the spots show across the
+  ring (Δ2θ = 2 (Δλ/λ) tan θ): an undeformed Si cube at 72 keV allows at most ~3e-4 once the sensor's depth kernel is
+  modelled. Not settled (the beam's convergence is not in that fit yet): ask the human, and measure it.
+- The detector (Eiger2 CdTe, 750 µm): a thick sensor smears spots outward along their rays, and its point spread is a
+  core of ~0.2-0.3 px plus a wing of ~1.1-1.5 px, from Cd / Te K fluorescence counted when the lower threshold (about
+  half the photon energy) is below 23-31 keV: ~28% of the counts at 43.6 keV, ~8% at 72 keV. Measure it per energy
+  with `python -m anri.calib detector`; one Gaussian cannot be it.
 - The TDXRD station's rotation stage has ~1 µm radial runout: voxels shift between dty rows, periodically in ω. It
   does not widen peaks in ω.
 - Frames integrate through motion: every frame over its ω step, and over its dty range where dty moves during the

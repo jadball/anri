@@ -23,7 +23,7 @@ from scipy.ndimage import median_filter
 from anri.geom.gonio import find_dty_for_beam_xy
 from anri.geom.scan import recon_positions, regrid, sino_shift_and_pad
 
-from .data import scan_beam
+from .data import B_O, scan_beam
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -114,11 +114,58 @@ def reconstruct(H: ArrayLike, n_rings: int, n_e: int, n_o: int, scan: dict, b_o:
         H4 = H4 / np.where(ex > 0, ex, 1.0)
     sino = np.log1p(H4).sum((0, 1))  # [omega, row]
     om = scan["om0"] + (np.arange(n_o) + 0.5) * b_o
+    dty0, ddty = scan["dty0"], scan.get("ddty")
+    if n_o * b_o >= 360.0 - 1e-6:  # a full turn: one projection per direction, both halves joined
+        sino, om, dty0 = stitch_turn(sino, om, scan["y0"], scan["dty0"], scan["ystep"])
+        ddty = None  # the stitched rows are not the scan's: a fly scan's motion within its rows is not followed
     pos = jnp.asarray(recon_positions(nr, scan["ystep"]), jnp.float32)
     k_in, wedge, chi = scan_beam(scan)
     rec = backproject(jnp.asarray(ramp_filter(sino), jnp.float32), jnp.asarray(om, jnp.float32), pos,
-                      scan["y0"], scan["dty0"], scan["ystep"], scan.get("ddty"), k_in, wedge, chi)  # fmt: skip
+                      scan["y0"], dty0, scan["ystep"], ddty, k_in, wedge, chi)  # fmt: skip
     return np.asarray(rec).reshape(nr, nr)
+
+
+def stitch_turn(sino: ArrayLike, om: ArrayLike, y0: float, dty0: float, ystep: float) -> tuple:
+    """Join a full turn's projections at omega and omega + 180 into one projection per direction, symmetric about y0.
+
+    The ray at row dty and omega is the ray at row 2 y0 - dty and omega + 180, so the two halves of a turn are two
+    measurements of the same projections, mirrored about y0. Filtering each as it is goes wrong when a half does not
+    cover the sample: a half-sample scan (dty from one edge to just past the axis) is cut off sharply near y0, the ramp
+    filter turns the cut into a spike, and back-projecting it from every direction makes a bright centre and radial
+    streaks. Joined, each projection runs from -m to m steps about y0 (m: the farther end of the scan), each row the
+    mean of the measurements there (one past the axis, two where both halves have it), 0 where neither has it.
+
+    Parameters
+    ----------
+    sino
+        [n_o, n_rows] projections over a full turn, rows at dty0 + k ystep
+    om
+        [n_o] their omegas (degrees), evenly spaced
+    y0, dty0, ystep
+        The rotation axis's dty, and the rows'
+
+    Returns
+    -------
+    sino, om, dty0
+        [n_o - k, 2 m + 1] joined projections (k the bins in 180 degrees), their omegas, and their first row's dty
+    """
+    sino, om = np.asarray(sino, float), np.asarray(om, float)
+    n_o, n_rows = sino.shape
+    k = round(180.0 / float(np.median(np.diff(om))))
+    dty = dty0 + np.arange(n_rows) * ystep
+    m = int(np.ceil(np.abs(dty - y0).max() / ystep - 1e-9))
+    full = y0 + np.arange(-m, m + 1) * ystep
+    out = np.zeros((n_o - k, len(full)))
+    cnt = np.zeros_like(out)
+    for o in range(n_o - k):
+        for v in (
+            np.interp(full, dty, sino[o], left=np.nan, right=np.nan),  # this omega
+            np.interp(2 * y0 - full, dty, sino[o + k], left=np.nan, right=np.nan),
+        ):  # omega + 180, mirrored
+            ok = np.isfinite(v)
+            out[o, ok] += v[ok]
+            cnt[o, ok] += 1
+    return np.where(cnt > 0, out / np.maximum(cnt, 1), 0.0), om[: n_o - k], float(full[0])
 
 
 @jax.jit
@@ -246,18 +293,21 @@ def threshold_mask(image: ArrayLike, threshold: float | None = None) -> np.ndarr
 
 
 def disc_mask(scan: dict, y0: float, nr: int, pad: float = 0.0) -> np.ndarray:
-    """Mask of the voxels the beam sees at every omega: within the scanned dty range all the way round the axis.
+    """Mask of the voxels the scan sees from every direction: within reach of the scanned dty range round the axis.
 
-    A voxel at distance r from the rotation axis is in the beam at dty = y0 - r cos(omega - phi). It stays within the
-    rows' range, from dty0 - ystep / 2 to dty0 + (n_rows - 1/2) ystep, at every omega when r is at most the distance
-    from y0 to the nearer end. The voxels further out (the corners of the square grid, and more of it when y0 is off
-    the middle of the scan) are seen at some omegas only, so the data hardly constrain them: MLEM can give them large
-    occupancies that explain almost nothing.
+    A voxel at distance r from the rotation axis is in the beam at dty = y0 - r cos(omega - phi). Over half a turn
+    (scan["n_o"] B_O < 360, or no "n_o") it must stay within the rows' range, from dty0 - ystep / 2 to
+    dty0 + (n_rows - 1/2) ystep, at every omega: r at most the distance from y0 to the nearer end. Over a full turn
+    a voxel within the distance from y0 to the farther end is in a scanned row for at least half the turn, every
+    direction once: a half-sample scan (dty from one edge of the sample to just past the axis) reconstructs the
+    whole sample, and the nearer end (a few um past the axis) would leave only the middle. The voxels further out
+    are seen from some directions only, so the data hardly constrain them: MLEM can give them large occupancies that
+    explain almost nothing.
 
     Parameters
     ----------
     scan
-        The histogram's scan ("dty0", "ystep", "n_rows")
+        The histogram's scan ("dty0", "ystep", "n_rows", and "n_o", its omega bins of B_O, for a full turn)
     y0
         dty where the rotation axis is in the beam
     nr
@@ -274,7 +324,9 @@ def disc_mask(scan: dict, y0: float, nr: int, pad: float = 0.0) -> np.ndarray:
         [nr, nr] bool, in reconstruction order
     """
     lo = scan["dty0"] - 0.5 * scan["ystep"]
-    r_max = min(y0 - lo, lo + scan["n_rows"] * scan["ystep"] - y0) + pad
+    near_far = (y0 - lo, lo + scan["n_rows"] * scan["ystep"] - y0)
+    full_turn = scan.get("n_o", 0) * B_O >= 360.0 - 1e-6
+    r_max = (max(near_far) if full_turn and min(near_far) >= 0 else min(near_far)) + pad
     pos = np.asarray(recon_positions(nr, scan["ystep"]))
     return (np.hypot(pos[:, 0], pos[:, 1]) <= r_max).reshape(nr, nr)
 

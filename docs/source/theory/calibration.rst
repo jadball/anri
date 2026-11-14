@@ -187,9 +187,9 @@ errors are too small, and the stage warns.
 
 **Anri's choice:** for calibrants and little-deformed samples only. Each peak goes to the orientation that predicts it
 best at the current geometry, so where a voxel holds orientations closer together than the geometry's error (cells,
-subgrains, a local search's children, :doc:`localsearch`), the matching absorbs part of that error and each round
+subgrains, orientations refined off the grid, :doc:`localsearch`), the matching absorbs part of that error and each round
 closes only part of the gap: on the 316L phantom's cells the distance was still :math:`6 \times 10^{-4}` out after ten
-rounds. The stage refuses a local search's map.
+rounds. The stage refuses a fit of refined orientations: index with ``--refine-to 0 --levels 0``.
 
 The strain left
 ^^^^^^^^^^^^^^^

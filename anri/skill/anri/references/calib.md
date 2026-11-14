@@ -11,11 +11,16 @@ python -m anri.calib pars <..._rings.h5> <folder>                          # -> 
 python -m anri.index histogram <analysisroot> <sample> <dataset> --parfile <folder>/pars.json
 python -m anri.index search <..._histogram.h5>
 python -m anri.index filter <..._search.h5>
-python -m anri.index fit <..._filter.h5>                                   # no local search
+python -m anri.index fit <..._filter.h5> --refine-to 0 --levels 0          # the grid's orientations
 python -m anri.calib fit <..._fit.h5>                                      # -> <...>_calib.h5
 python -m anri.calib pars <..._calib.h5> <folder>                          # the calibrated pars.json
 python -m anri.calib show <any stage file> --log
 ```
+
+Separately, once per detector and energy: `python -m anri.calib detector <..._dataset.h5> --sensor LENGTH THICKNESS`
+(-> `<sample>_<dataset>_detector.h5`) fits the detector's point spread, a core and a wing, to isolated spots in the raw
+frames, for the renderer (`python -m anri.simulate prepare --psf ... --psf-wing ... --sensor ...`; the log prints
+the options). It needs the geometry only roughly (each spot's radial direction and 2theta).
 
 ## Before you run it
 
@@ -27,8 +32,9 @@ python -m anri.calib show <any stage file> --log
    closer together than the geometry's error (cells, subgrains), matching absorbs part of that error and the rounds
    converge slowly; the stage warns. A deformed sample's geometry is refined with its strains, not here.
 3. **Wedge, chi and y0 stay fixed.** y0 is the indexing fit's; choose it there ([index](index.md)).
-4. **Index with the fit stage only.** The calibration refuses a local search's file: its orientations, a fraction of
-   a degree apart, let each round's matching absorb part of the geometry's error.
+4. **Index with the grid's orientations.** Fit with `--refine-to 0 --levels 0`. The calibration refuses refined
+   orientations (the fit's defaults): a fraction of a degree apart, they let each round's matching absorb part of
+   the geometry's error.
 
 ## Choices
 
@@ -39,6 +45,12 @@ python -m anri.calib show <any stage file> --log
 | rings | `--tols`, `--free` | each (ring, η sector)'s offset from its ring before and after: every ring flat at zero after the fit. A sine in η, the same for every ring, is the centre; one growing with 2θ, a tilt; a constant growing with 2θ, the distance. Keep `--tols` a few pixels wide (one Eiger pixel at 150 mm is 0.03°); rings closer than twice the widest to a neighbour are left out. tilt_x moves no ring, and the wavelength cannot be told from the distance by rings: leave both for `fit` | `read_rings`; `plot_ring_offsets` |
 | rings | `--scans`, `--threshold` | a scan's spots fill its rings well enough summed over every frame; fewer scans for speed | |
 | rings | `--merge` | reflections closer in d* than this are one ring; rings the data cannot separate are merged, not split | |
+| detector | `--sensor`, `--bandwidth` | the instrument: ask the human for the energy, the detector (sensor material and thickness) and the monochromator. CdTe 750 um: absorption length 111 um at 43.6 keV, 328 um at 65.3, 431 um at 72.2. The bandwidth (default 1e-3) is not settled: a Si cube at 72 keV allows at most ~3e-4 across the ring; a high-2theta half whose core collapses to 0 means a known term (often the bandwidth) is too wide | |
+| detector | `--convergence` | the focusing optics: ask the human (Al CRLs ~8e-5 rad, Si nanolenses ~1.5e-4, both H and V; overfocusing upstream can change it). A tilted beam moves spots across the ring by ~0.2 px at 180 mm, radially at eta = +-90 deg for the horizontal, at 0 and 180 deg for the vertical | |
+| detector | `--voxel`, `--thickness` | the source volume: its width across the beam (the dty step of a scan; the focused beam's width for one rotation) and its length along it (a crystal's path through the beam: a 100 um cube rotating, 112 um on average). A length along the beam is a radial box of about thickness x tan(2theta), lighter-tailed than a Gaussian: left out, it biases the core up and the wing down. Ask the human for the crystal's size | |
+| detector | `--undeformed` | an undeformed crystal (e.g. a Si wafer piece): each spot only the instrument's radial width. Otherwise (the default) each spot its own radial spread, and only a tail heavier than a Gaussian is the detector's | |
+| detector | `--min-counts`, `--max-spots`, `--window` | the radial profile: the wing shows as data above the one Gaussian 1-4 px out; a window of about 4 wing sd either side; a few hundred spots | `detector_profile`; `plot_detector_profile` |
+| detector | `--split-tth` | the fits below and above it (the profile plot's title, and `low_*`, `high_*` in the results): a detector's response is the same in pixels on every ring. A wing that grows with 2theta is the sample's (strain spread, thermal diffuse scattering), not the detector's | `detector_profile`; `plot_detector_profile` |
 | fit | `--min-occ` | the histogram of the fit file's occupancies over the largest: the occupied orientations stand apart from a floor of near-zero candidates. Put the cut in the gap; each voxel should keep nearly all its occupancy | `read_occupancy`, `occupancy_kept`; `plot_min_occ` |
 | fit | `--tols`, `--lattice` | each peak's distance of (h, k, l) from integers at the starting geometry: real matches pile up near 0 above a floor of chance matches. The first tolerance takes in the whole pile and little of the floor. No pile: the geometry is too far off, the lattice is wrong, or the peaks are not this scan's | `match_distances` on `anri.calib.stages.load_inputs`; `plot_match` |
 | fit | `--extra-rounds` | the log's line per round of how far each parameter moved, in its error bars. A `WARNING` that the last round still moved one by more than 1 sigma: the errors quoted are too small | |

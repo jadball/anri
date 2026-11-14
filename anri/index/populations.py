@@ -51,13 +51,13 @@ def group(
     ops: ArrayLike,
     radius_deg: float,
     p: int = 4,
-    m: int = 16,
+    m: int | None = None,
     eps: float = 0.02,
-    vb: int = 1 << 14,
+    vb: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Group each voxel's occupied candidate orientations into up to p populations.
 
-    A voxel's m most occupied candidates above ``eps`` x its most occupied one are grouped greedily: the most occupied
+    A voxel's candidates above ``eps`` x its most occupied one are grouped greedily: the most occupied
     free candidate seeds a population, and every free candidate within ``radius_deg`` of it (over the Laue group) joins.
     Each population gets its share of the voxel's occupancy, the occupancy-weighted mean of its members (aligned to
     the seed over the symmetry, then projected back to a rotation) and their weighted rms misorientation from that
@@ -78,11 +78,13 @@ def group(
     p
         Populations per voxel at most
     m
-        Candidates considered per voxel
+        Candidates considered per voxel, the most occupied (default: all). Fractions are shares of the voxel's whole
+        occupancy, so fewer than a fit leaves per voxel under-reports a population spread over many candidates (a
+        fit's later levels spread a grain over many children)
     eps
         Smallest occupancy considered, as a fraction of the voxel's most occupied candidate
     vb
-        Voxels per call
+        Voxels per call (default: 2^18 / m, a few hundred MB)
 
     Returns
     -------
@@ -99,7 +101,8 @@ def group(
     U_list, ops = jnp.asarray(U_list, jnp.float32), jnp.asarray(ops, jnp.float32)
     radius = float(np.radians(radius_deg))
     nv = f.shape[0]
-    m = min(m, f.shape[1])
+    m = f.shape[1] if m is None else min(m, f.shape[1])
+    vb = max(1, (1 << 18) // m) if vb is None else vb
     out = []
     for s0 in range(0, nv, vb):
         fb, cb = f[s0 : s0 + vb], cand[s0 : s0 + vb]

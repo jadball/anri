@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from .data import B_E, B_O, R_E, R_O, pixel_cake, ring_table, ring_widths, sample_groups
-from .local import covering
 from .search import GRID_STEPS, grid_chance, prune
 
 
@@ -180,6 +179,81 @@ def y0_from_edges(H: np.ndarray, n_rings: int, scan: dict, frac: float = 0.05) -
     row = sino.sum(0)
     return {"sinogram": sino, "omega": om_c, "dty": dty_c, "middle": mids, "mean": mean, "y0": float(coef[0]),
             "y0_mean": float(coef_mean[0]), "fit": A @ coef, "edge": float(max(row[0], row[-1]) / row.max())}  # fmt: skip
+
+
+def y0_from_overlap(d: dict, y0_guess: float, search: float = 4.0, resolution: float = 0.02,
+                    min_corr: float = 0.5) -> dict:  # fmt: skip
+    """Measure y0 from the rows a full turn measures twice: dty at omega is 2 y0 - dty at omega + 180.
+
+    Over a full turn, rows within the overlap (from y0 to the nearer end of the scan, on both sides of the axis) are
+    measured at omega and again, mirrored about y0, at omega + 180: a half-sample scan that runs a few um past the
+    axis, or a whole full-turn scan. At each omega the projection is compared with the mirrored one 180 degrees on
+    over the overlap, for trial y0 within ``search`` steps of ``y0_guess``: the best correlation gives that omega's
+    y0. Unlike :func:`y0_from_edges` it needs neither the whole sample in the scan nor its edges; a y0 that varies
+    with omega shows the sample moving across the beam (runout).
+
+    Parameters
+    ----------
+    d
+        From :func:`anri.index.stages.load_histogram`: its sinogram at the frames' omega step (``H_sino``) where it
+        has one, else the fit's histogram
+    y0_guess
+        Where to look (e.g. the DataSet's y0), and which rows form the overlap
+    search, resolution
+        Trial y0 within +-search steps of the guess, every resolution steps
+    min_corr
+        Omegas whose best correlation is below this are left out of the median
+
+    Returns
+    -------
+    dict
+        "omega" [n] (the first half turn's), "y0" [n] and "corr" [n] (NaN where the overlap has too few rows),
+        "y0_median" (over omegas with corr >= min_corr), "spread" (their median absolute deviation, x 1.4826),
+        "overlap" (its half-width, in the units of dty)
+    """
+    sc = d["scan"]
+    step, nk = sc["ystep"], sc["n_rows"]
+    if d.get("H_sino") is not None:
+        sino, b_o = np.asarray(d["H_sino"], float), float(d["sino_omega_step"])
+    else:
+        sino, b_o = _h4(d["H"], d["n_rings"], sc).sum((0, 1)), B_O * R_O
+    n_o = sino.shape[0]
+    if n_o * b_o < 360.0 - 1e-6:
+        msg = f"the scan covers {n_o * b_o:.1f} deg: measuring y0 from its overlap needs a full turn"
+        raise ValueError(msg)
+    dty = sc["dty0"] + np.arange(nk) * step
+    half = min(y0_guess - dty[0], dty[-1] - y0_guess)  # the overlap reaches the nearer end
+    if half < 2 * step:
+        msg = f"the rows reach only {half:.3g} past y0 {y0_guess:.3g}: too little overlap to measure y0"
+        raise ValueError(msg)
+    k = round(180.0 / b_o)
+    om = sc["om0"] + (np.arange(n_o - k) + 0.5) * b_o
+    # rows whose mirror stays within the scan for every trial y0 (a trial moves it by up to 2 search steps)
+    over = np.abs(dty - y0_guess) <= half - 2 * search * step
+    if over.sum() < 3:
+        msg = f"the overlap ({half:.3g} past y0) is too narrow for a search of +-{search:g} steps: lower search"
+        raise ValueError(msg)
+    trials = y0_guess + np.arange(-search, search + 1e-9, resolution) * step
+    y0s = np.full(n_o - k, np.nan)
+    a = sino[: n_o - k][:, over]  # [n, m] this omega's rows in the overlap
+    a = a - a.mean(1, keepdims=True)
+    na = np.sqrt((a**2).sum(1))
+    best = np.full(n_o - k, -np.inf)
+    later = sino[k:]  # omega + 180
+    for t in trials:  # mirrored about the trial y0 onto the same rows, linearly between rows
+        f = (2 * t - dty[over] - dty[0]) / step
+        i0 = np.clip(np.floor(f).astype(int), 0, nk - 2)
+        w = f - i0
+        mirrored = later[:, i0] * (1 - w) + later[:, i0 + 1] * w
+        b = mirrored - mirrored.mean(1, keepdims=True)
+        c = (a * b).sum(1) / np.maximum(na * np.sqrt((b**2).sum(1)), 1e-30)
+        better = c > best
+        best, y0s = np.where(better, c, best), np.where(better, t, y0s)
+    corr = np.where(np.isfinite(best), best, np.nan)
+    good = corr >= min_corr
+    med = float(np.median(y0s[good])) if good.any() else float("nan")
+    spread = float(1.4826 * np.median(np.abs(y0s[good] - med))) if good.any() else float("nan")
+    return {"omega": om, "y0": y0s, "corr": corr, "y0_median": med, "spread": spread, "overlap": float(half)}
 
 
 def lit_curve(H_lit: np.ndarray, n_rings: int, scan: dict, cuts: np.ndarray | None = None) -> dict:
@@ -368,88 +442,6 @@ def candidate_shares(f: np.ndarray, voxels: np.ndarray, max_voxels: int = 200000
     return np.sort(f[iv], 1)[:, ::-1] / np.maximum(f[iv].sum(1, keepdims=True), 1e-30)
 
 
-def orientations_needed(f: np.ndarray, cand: np.ndarray, cover: float) -> np.ndarray:
-    """Return how many of each voxel's most occupied orientations hold cover of its occupancy.
-
-    The local search's count before its ``per_voxel`` cap (:func:`anri.index.local.covering`).
-
-    Parameters
-    ----------
-    f, cand
-        [Nv, K] occupancies and orientation indices (a fit stage file, or the voxels to look at)
-    cover
-        As the local search's
-
-    Returns
-    -------
-    np.ndarray
-        [Nv] counts, 0 for an empty voxel
-    """
-    return covering(np.asarray(f), np.asarray(cand), cover, f.shape[1])[2].sum(1)
-
-
-def level_recorder() -> tuple[Callable, dict]:
-    """Return a callback for :func:`anri.index.stages.stage_localsearch` that records each level's deviance, and its record.
-
-    Returns
-    -------
-    callback, record
-        Pass callback to the local search. record then holds "deviance": one list per level, the deviance before
-        each iteration (the first: the level's start, each parent's occupancy shared among its children)
-    """
-    record: dict = {"deviance": []}
-
-    def callback(it: int, f: object, dev: float) -> None:
-        if it == 1:  # a new level
-            record["deviance"].append([])
-        record["deviance"][-1].append(float(dev))
-
-    return callback, record
-
-
-def local_change(fit_file: str, local_file: str, ops: np.ndarray, radius_deg: float, voxels: np.ndarray) -> dict:
-    """Compare the main population of each voxel before and after the local search.
-
-    Parameters
-    ----------
-    fit_file, local_file
-        A fit stage file and the local search made from it
-    ops
-        [n, 3, 3] Laue-group rotations
-    radius_deg
-        Population radius (:func:`anri.index.populations.group`), as the populations stage: 1.8 grid steps
-    voxels
-        [Nv] the voxels to compare (e.g. the occupied ones)
-
-    Returns
-    -------
-    dict
-        [Nv] each, NaN outside voxels: "angle" (disorientation between the main population's mean orientation
-        before and after, deg; near a twin's misorientation where the main population changed), "frac_fit" and
-        "frac_local" (its fraction of the voxel), "spread_fit" and "spread_local" (its spread, deg)
-    """
-    import h5py
-
-    from anri.crystal.orientation import disorientation
-
-    from .populations import group
-
-    main = {}
-    for name, path in (("fit", fit_file), ("local", local_file)):
-        with h5py.File(path, "r") as h:
-            f, cand, U = h["f"][()][voxels], h["cand"][()][voxels], h["U"][()]
-        frac, U_pop, spread, _ = group(f, cand, U, ops, radius_deg)
-        main[name] = (frac[:, 0], U_pop[:, 0], spread[:, 0])
-    out = {"angle": disorientation(main["fit"][1], main["local"][1], ops)}
-    for name in ("fit", "local"):
-        out[f"frac_{name}"], out[f"spread_{name}"] = main[name][0], main[name][2]
-    full = {}
-    for k, v in out.items():
-        full[k] = np.full(len(voxels), np.nan)
-        full[k][voxels] = v
-    return full
-
-
 def ring_ratios(H: np.ndarray, model: np.ndarray, n_rings: int, scan: dict, etacut: float) -> np.ndarray:
     """Return the fitted / measured intensity of each ring, over the eta bins the fit models."""
     n_e = scan["n_e"] // R_E
@@ -461,6 +453,10 @@ def ring_ratios(H: np.ndarray, model: np.ndarray, n_rings: int, scan: dict, etac
 
 def back_projection(d: dict, y0: float, nr: int | None = None) -> np.ndarray:
     """Reconstruct the whole sample from a histogram stage file's data, for a y0 (as :func:`anri.index.mask.reconstruct`).
+
+    From the file's sinogram at the frames' omega step (``d["H_sino"]``) where it has one, else the fit's histogram
+    (1 degree bins: about R / ystep views would be needed, so beyond ~ystep / 1 deg from the axis, 14 um for a
+    0.25 um step, the image is streaked by too few views). A full turn is stitched (:func:`anri.index.mask.stitch_turn`).
 
     Parameters
     ----------
@@ -483,4 +479,8 @@ def back_projection(d: dict, y0: float, nr: int | None = None) -> np.ndarray:
     scan = {**sc, "y0": y0}
     if nr is None:  # as the fit stage: the histogram stage's grid (with --grid-pad)
         nr = d["grid"]["n"] if d.get("grid") is not None else voxel_grid(sc, y0)
+    if d.get("H_sino") is not None:  # the frames' omega step: the fit's per-bin exposure and offsets do not apply
+        sino = np.asarray(d["H_sino"])
+        plain = {k: v for k, v in scan.items() if k not in ("exposure", "ddty")}
+        return reconstruct(sino.ravel(), 1, 1, sino.shape[0], plain, d["sino_omega_step"], nr)
     return reconstruct(d["H"], d["n_rings"], sc["n_e"] // R_E, sc["n_o"] // R_O, scan, B_O * R_O, nr)

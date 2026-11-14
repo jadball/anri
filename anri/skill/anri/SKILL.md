@@ -4,7 +4,7 @@ description: >-
   Index scanning-3DXRD (S3DXRD) data from scratch, calibrate its geometry, and simulate datasets from a grain map,
   with the anri Python package (python -m anri.index, python -m anri.calib, python -m anri.simulate, anri.fwd). Read
   it before running an anri stage on a dataset; before calibrating the detector and beam geometry; before choosing
-  the indexer's options (rings, y0, sample mask, lit cut, orientation grid, pruning, occupancy fit, local search,
+  the indexer's options (rings, y0, sample mask, lit cut, orientation grid, pruning, coarse-to-fine occupancy fit,
   populations); before judging an anri stage file or the map it holds; before rendering
   a phantom or an indexed map back into detector frames; before making a phantom (anri.phantom) to test a method;
   and before comparing anri's maps with ImageD11's. Not for changing anri's own code: that is the repository's
@@ -65,12 +65,11 @@ python -m anri.index histogram <analysisroot> <sample> <dataset>   # -> <sample>
 python -m anri.index search <sample>_<dataset>_histogram.h5         # -> ..._search.h5
 python -m anri.index filter <sample>_<dataset>_search.h5            # -> ..._filter.h5
 python -m anri.index fit <sample>_<dataset>_filter.h5               # -> ..._fit.h5
-python -m anri.index localsearch <sample>_<dataset>_fit.h5          # -> ..._localsearch.h5
-python -m anri.index populations <sample>_<dataset>_localsearch.h5  # -> ..._populations.h5, _entries.npz, _tmap.h5
+python -m anri.index populations <sample>_<dataset>_fit.h5          # -> ..._populations.h5, _entries.npz, _tmap.h5
 ```
 
 The dataset is ImageD11's layout: `{analysisroot}/{sample}/{sample}_{dataset}/{sample}_{dataset}_dataset.h5`, with
-the geometry and phase from its `pars.json` (`--parfile`, `--phase`). `run` does all six in one go, once the options
+the geometry and phase from its `pars.json` (`--parfile`, `--phase`). `run` does all five in one go, once the options
 are known.
 
 If the geometry is only the motors' first guess, calibrate first ([calib](references/calib.md)): fit the powder
@@ -96,7 +95,7 @@ geometry on the fit stage's file (`python -m anri.calib fit`), and index again w
     saying something was assumed or not modelled: `detector mask: none`, `absorption: not modelled`,
     `spatial correction: none`, `saturated`, `exposure per (row, omega bin) uneven`, `dty moves within the rows`.
     Each changes what the map can be trusted for, and each belongs in your report.
-11. **Measured against fitted intensity per dty row** (logged by fit and localsearch; `row_ratio` in the file,
+11. **Measured against fitted intensity per dty row** (logged by the fit; `row_ratio` in the file,
     `row_ratio_rms` in its results). Steps from row to row mean the flux changed between the rows' scans: use
     `--monitor`. A smooth trend with radius points to the model: absorption, or a mask of the wrong shape.
 12. **Convergence.** Every MLEM iteration is logged with its deviance (`not taken`: SQUAREM's extrapolated step was
@@ -104,8 +103,8 @@ geometry on the fit stage's file (`python -m anri.calib fit`), and index again w
     thick keep changing long after. `anri.index.diagnostics.convergence_recorder` measures how much occupancy still
     moves.
 13. **Enough candidates?** If each voxel's last candidates still hold a noticeable share of its occupancy
-    (`candidate_shares`), raise `--cand`. If the local search's log shows nearly every slot used, raise
-    `--per-voxel`.
+    (`candidate_shares`), raise `--cand`. If the fit's later levels inherit nearly `--cand` orientations per
+    voxel (logged: `candidates: given, … of … per voxel`), raise `--cand`.
 14. **Low completeness inside the sample** (`comp_pop`) means a wrong orientation, or a voxel the data barely see.
 
 ## 4. What you may report

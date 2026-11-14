@@ -1,6 +1,6 @@
 """The numbers behind the calibration's choices and results, from its stage files (no plotting).
 
-For the rings: :func:`read_rings`. For the scan's fit, in the order of its choices: :func:`read_occupancy` and
+For the rings: :func:`read_rings`. For the detector's point spread: :func:`detector_profile`. For the scan's fit, in the order of its choices: :func:`read_occupancy` and
 :func:`occupancy_kept` (``--min-occ``), :func:`match_distances` (``--tols``, and again after the fit), then the
 result, :func:`read_calib`, with :func:`residual_trends` (``--clip``) and :func:`strain_left` (``--min-peaks``).
 :mod:`anri.calib.plots` draws them.
@@ -188,3 +188,37 @@ def strain_left(calib: dict) -> dict:
     tilts or the centre, a hydrostatic one to the wavelength or distance against the reference lattice.
     """
     return {**fit.split_strain(calib["strain"], calib["n_peaks"]), "n_peaks": np.asarray(calib["n_peaks"])}
+
+
+def detector_profile(detector_file: str, edges: np.ndarray | None = None) -> dict:
+    """Read a detector-response fit (:func:`anri.calib.stages.stage_detector`): its radial profile, data and models.
+
+    Every measured window pixel, binned by its radial offset from its spot's fitted centre (pixels), summed over the
+    spots: the data, the one-Gaussian model and the core + wing model (each with its background). A point spread
+    with a wing shows as data above the one Gaussian a pixel or two out.
+
+    Parameters
+    ----------
+    detector_file
+        From :func:`anri.calib.stages.stage_detector`
+    edges
+        Bin edges, pixels (default -5 to 5 by 0.5)
+
+    Returns
+    -------
+    dict
+        "edges", "data", "one", "two" (sums per bin), and "response", "low", "high" (each fit's attributes:
+        core, wing, fraction, one, nll_one, nll_two, n)
+    """
+    edges = np.arange(-5.0, 5.01, 0.5) if edges is None else np.asarray(edges)
+    with h5py.File(detector_file, "r") as h:
+        w = {k: h[f"windows/{k}"][()] for k in ("counts", "good", "one", "two", "radial_offset")}
+        fits = {name: dict(h["response" if name == "response" else f"response/{name}"].attrs)
+                for name in ("response", "low", "high")}  # fmt: skip
+    k = np.digitize(w["radial_offset"], edges) - 1
+    ok = w["good"] & (k >= 0) & (k < len(edges) - 1)
+    out = {"edges": edges, **fits}
+    for name in ("counts", "one", "two"):
+        out["data" if name == "counts" else name] = np.bincount(k[ok], w[name][ok], minlength=len(edges) - 1)
+    return out
+
