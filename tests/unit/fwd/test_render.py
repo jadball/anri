@@ -410,6 +410,34 @@ class TestOrientationSpread(unittest.TestCase):
             np.testing.assert_allclose(x, y, rtol=1e-12, atol=1e-12)
 
 
+class TestBeamWithinFrame(unittest.TestCase):
+    def test_coarse_frames_equal_fine_frames(self):
+        """An off-axis voxel moves across the beam while it diffracts: frames 8x coarser must hold what the fine frames
+        hold, in rows at the beam's centre and edge. Weighting each frame by the beam at its mean omega gave 0.7% at the
+        centre and 4.6% (totals 4% low) at 3 beam sd; folding the beam into the peak's omega profile, 3e-4."""
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        geom = {**geom, "sig_beam": 0.1, "voxel_size": 0.25, "sig_ky": 1e-4, "sig_kz": 1e-4,
+                "sig_wavelength": geom["wavelength"] * 1e-4}  # fmt: skip
+        r = 50.0
+        ent = {"ubi": entries["ubi"][:1], "pos": np.array([[r, 0.0, 0.0]]), "density": np.ones(1),
+               "sig_rot": np.array([np.radians(0.03)])}  # fmt: skip
+        y_c = -r * np.sin(np.radians(omega_c))
+        oc = (np.floor(omega_c / 0.1) + np.arange(-6, 7)) * 0.1 + 0.05
+        of = (oc[:, None] - 0.05 + (np.arange(8) + 0.5) * 0.0125).ravel()
+        for off in (0.0, 0.3):
+            out = []
+            for om, win, per in ((oc, (13, 9, 9), 1), (of, (97, 9, 9), 8)):
+                fr, px, v, _ = render_row(ent, hkl[None], np.ones(1), geom, make_row(om, np.full_like(om, y_c + off)),
+                                          det_shape, window=win, min_value=0.0, batch=BATCH)  # fmt: skip
+                out.append(((fr // per).astype(np.int64) * 10**7 + px, v))
+            keys = np.union1d(out[0][0], out[1][0])
+            a, b = np.zeros(len(keys)), np.zeros(len(keys))
+            np.add.at(a, np.searchsorted(keys, out[0][0]), out[0][1])
+            np.add.at(b, np.searchsorted(keys, out[1][0]), out[1][1])
+            self.assertLess(np.linalg.norm(a - b) / np.linalg.norm(b), 1e-3, msg=f"dty offset {off}")
+            self.assertAlmostEqual(a.sum() / b.sum(), 1.0, delta=1e-3)
+
+
 class TestAbsorption(unittest.TestCase):
     @staticmethod
     def _disc(r, step, mu):

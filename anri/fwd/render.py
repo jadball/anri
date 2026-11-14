@@ -482,6 +482,35 @@ def _sensor_cells(
     return (frac, *out[1:])
 
 
+def _beam_fold(pos: jax.Array, mu: jax.Array, shape: tuple, row: dict, geom: dict) -> tuple:
+    """Fold the beam's variation over a peak's omega profile into its Gaussian.
+
+    A voxel off the axis moves across the beam while it diffracts. log(beam weight) at the row's mid dty, to second order in omega about the centroid (autodiff, any beam profile),
+    multiplies the (slow, fast, omega) Gaussian: omega gets a new mean and variance, (slow, fast) keep their regression
+    on omega. Returns the new centroid and shape, the integral of the expansion over the old profile (the peak's beam
+    weight), and the expansion's coefficients (omega_c, log weight, slope, curvature) for each frame's residual.
+    Exact within frames for a Gaussian beam and a voxel moving linearly across it; per-frame weights at the frame's
+    mean omega (the previous model) miss that for peaks narrower than a frame in rows at the beam's edge.
+    """
+    ss, ff, oo, sf, so, fo = shape
+    om_c = mu[2]
+
+    def log_beam(o: jax.Array) -> jax.Array:
+        lab = sample_to_lab(pos, o, geom["wedge"], geom["chi"], row["dty_mid"], geom["y0"])
+        return jnp.log(jnp.maximum(beam_weight(lab, o, geom), 1e-300))
+
+    lb, beta = jax.value_and_grad(log_beam)(om_c)
+    gam = jax.grad(jax.grad(log_beam))(om_c)
+    oo_b = 1.0 / jnp.maximum(1.0 / oo - gam, 0.1 / oo)  # log beam is concave for the profiles used: gam <= 0
+    d = oo_b * beta  # the profile's centre moves by this
+    ks, kf = so / oo, fo / oo  # regression of slow and fast on omega
+    shrink = oo - oo_b
+    mu_b = jnp.stack([mu[0] + ks * d, mu[1] + kf * d, om_c + d])
+    shape_b = (ss - ks * ks * shrink, ff - kf * kf * shrink, oo_b, sf - ks * kf * shrink, ks * oo_b, kf * oo_b)
+    weight = jnp.exp(lb + 0.5 * beta**2 * oo_b) * jnp.sqrt(oo_b / oo)
+    return mu_b, shape_b, weight, (om_c, lb, beta, gam)
+
+
 def _frame_weights(pos: jax.Array, om_fr: jax.Array, fclip: jax.Array, row: dict, geom: dict) -> jax.Array:
     """Per frame of a window: the beam's profile over the voxel at that frame's dty, and transmission.
 
@@ -534,9 +563,16 @@ def _render_peaks(
         etasign = 1.0 - 2.0 * br
         sig = entries["sig_rot"][e] if "sig_rot" in entries else None
         mu, shape, valid = _peak_shape(ubi, pos, hkl, etasign, sig, row, geom)
+        # the beam's variation within the peak's omega profile folded into its Gaussian; each frame keeps the
+        # residual of the true weight (its own dty, any profile) against that expansion, at its mean omega
+        mu, shape, beam, (om_c, lb, beta, gam) = _beam_fold(pos, mu, shape, row, geom)
         frac, inside, fclip, rows, cols, om_fr, in_range, origin = _sensor_cells(mu, mu, shape, org, row, window,
                                                                                  det_shape, geom)  # fmt: skip
-        per_frame = _frame_weights(pos, om_fr, fclip, row, geom)
+        d_fr = om_fr - om_c
+        log_q = lb + beta * d_fr + 0.5 * gam * d_fr**2
+        fw = _frame_weights(pos, om_fr, fclip, row, geom)
+        # clipped: far from the centroid the expansion can fall far below the true weight where frac is ~0 anyway
+        per_frame = beam * jnp.exp(jnp.clip(jnp.log(jnp.maximum(fw, 1e-30)) - log_q, -30.0, 30.0)) * (fw > 0)
         if "optical_depth" in entries:
             per_frame = per_frame * _transmission(entries["optical_depth"][e], ubi, hkl, etasign, om_fr, geom)
         ext = None
