@@ -497,11 +497,20 @@ def _beam_fold(pos: jax.Array, mu: jax.Array, shape: tuple, row: dict, geom: dic
 
     def log_beam(o: jax.Array) -> jax.Array:
         lab = sample_to_lab(pos, o, geom["wedge"], geom["chi"], row["dty_mid"], geom["y0"])
-        return jnp.log(jnp.maximum(beam_weight(lab, o, geom), 1e-300))
+        w = beam_weight(lab, o, geom)
+        return jnp.log(jnp.maximum(w, jnp.finfo(w.dtype).tiny))  # tiny of the dtype: 1e-300 is 0 in float32
 
     lb, beta = jax.value_and_grad(log_beam)(om_c)
-    gam = jax.grad(jax.grad(log_beam))(om_c)
-    oo_b = 1.0 / jnp.maximum(1.0 / oo - gam, 0.1 / oo)  # log beam is concave for the profiles used: gam <= 0
+    # clamped: at a kink of a square voxel's chord through the beam (wherever the square lines up with it, every 90
+    # degrees) the point curvature can come out large and positive; the fold may narrow the profile, never widen it.
+    # Any error of the expansion is corrected at frame resolution by each frame's residual (render peaks).
+    gam = jnp.minimum(jax.grad(jax.grad(log_beam))(om_c), 0.0)
+    # far outside the beam its weight underflows to 0 and the derivatives are not finite: no fold (per-frame weights)
+    beta, gam = jnp.where(jnp.isfinite(beta), beta, 0.0), jnp.where(jnp.isfinite(gam), gam, 0.0)
+    oo_b = 1.0 / (1.0 / oo - gam)
+    # the expansion is trusted to move the profile's centre by at most 3 sd (a kink, or a profile that is not
+    # log-quadratic, can make the slope huge): beyond that each frame's residual carries the beam's variation
+    beta = jnp.clip(beta, -3.0 / jnp.sqrt(oo_b), 3.0 / jnp.sqrt(oo_b))
     d = oo_b * beta  # the profile's centre moves by this
     ks, kf = so / oo, fo / oo  # regression of slow and fast on omega
     shrink = oo - oo_b
@@ -572,7 +581,8 @@ def _render_peaks(
         log_q = lb + beta * d_fr + 0.5 * gam * d_fr**2
         fw = _frame_weights(pos, om_fr, fclip, row, geom)
         # clipped: far from the centroid the expansion can fall far below the true weight where frac is ~0 anyway
-        per_frame = beam * jnp.exp(jnp.clip(jnp.log(jnp.maximum(fw, 1e-30)) - log_q, -30.0, 30.0)) * (fw > 0)
+        log_fw = jnp.log(jnp.maximum(fw, jnp.finfo(fw.dtype).tiny))
+        per_frame = beam * jnp.exp(jnp.clip(log_fw - log_q, -30.0, 30.0)) * (fw > 0)
         if "optical_depth" in entries:
             per_frame = per_frame * _transmission(entries["optical_depth"][e], ubi, hkl, etasign, om_fr, geom)
         ext = None
@@ -580,6 +590,9 @@ def _render_peaks(
             ext = (entries["extinction"][0][h], entries["extinction"][1][h], entries["extinction"][2])
         amp = entries["density"][e] * F2[h] * _peak_factors(ubi, hkl, etasign, geom, ext)
         value = amp * per_frame[:, None, None] * frac
+        # frames holding none of the peak's mass (far in its tail, e.g. rows a voxel barely reaches) give 0 / 0 in the
+        # truncated moments: no light there
+        value = jnp.where(jnp.isfinite(value), value, 0.0)
         use = inside & valid
         value = jnp.where(use, value, 0.0)
         frame_out = jnp.where(use, row["order"][fclip][:, None, None], -1)

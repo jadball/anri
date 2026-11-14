@@ -438,6 +438,27 @@ class TestBeamWithinFrame(unittest.TestCase):
             self.assertAlmostEqual(a.sum() / b.sum(), 1.0, delta=1e-3)
 
 
+class TestBeamFold(unittest.TestCase):
+    def test_kink_and_float32(self):
+        """At omega = 0 and 180 deg a square voxel lines up with the beam (a kink in its weight): the fold stays finite
+        and moves the profile by at most 3 sd; in float32, far from the beam, it gives no NaN or infinity."""
+        from anri.fwd.render import _beam_fold
+
+        _, _, geom, _, _, _ = _single_peak_setup()
+        geom = {**geom, "sig_beam": 0.1, "voxel_size": 0.25}
+        pos = jnp.array([30.0, 0.0, 0.0])
+        for om, dty in ((180.0, 0.3), (0.0, -0.3), (180.0, 2.0)):
+            row = make_row(np.array([om - 0.1, om, om + 0.1]), np.full(3, dty))
+            shape = (0.3, 0.3, (0.01) ** 2, 0.0, 0.0, 0.0)
+            for dtype in (jnp.float64, jnp.float32):
+                g = {k: (jnp.asarray(v, dtype) if isinstance(v, (float, jax.Array, np.ndarray)) else v) for k, v in geom.items()}
+                mu_b, shape_b, w, _ = _beam_fold(pos.astype(dtype), jnp.array([500.0, 600.0, om], dtype),
+                                                 tuple(jnp.asarray(x, dtype) for x in shape), row, g)  # fmt: skip
+                self.assertTrue(bool(jnp.isfinite(w)) and bool(jnp.all(jnp.isfinite(mu_b))), msg=f"{om} {dty} {dtype}")
+                self.assertLessEqual(abs(float(mu_b[2]) - om), 3.0 * float(jnp.sqrt(shape_b[2])) + 1e-6)
+                self.assertLess(float(w), 1e3)
+
+
 class TestAbsorption(unittest.TestCase):
     @staticmethod
     def _disc(r, step, mu):
