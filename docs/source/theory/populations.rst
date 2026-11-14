@@ -11,13 +11,16 @@ mean and a spread, and describes which voxels are fitted at all.
 Grouping
 --------
 
-A voxel's :math:`m` most occupied candidates (16 by default), above a fraction :math:`\epsilon` (0.02) of its most
+All of a voxel's candidates (or its :math:`m` most occupied), above a fraction :math:`\epsilon` (0.02) of its most
 occupied one, are grouped greedily: the most occupied candidate not yet assigned seeds a population, and every
 unassigned candidate within a radius (1.8 steps of the search grid) of it joins, the distance being the misorientation over the
 Laue group (:eq:`cry-laue`). Up to :math:`p` (4) populations per voxel, ordered by fraction, largest first: a population
 of several candidates can outweigh the one the most occupied candidate seeded. The cut is relative to the most occupied
 candidate, not the total, so an occupied voxel always has a population, even when its occupancy is spread thinly over
-many orientations: it then comes out as one population with a large spread.
+many orientations: it then comes out as one population with a large spread. A population's fraction is its share of
+the voxel's whole occupancy, so every candidate must be grouped: a local search spreads a grain over many children,
+and grouping only the 16 most occupied (as before) under-reported the main population (median 0.87 instead of 0.94 on
+a Ni superalloy).
 
 **Code:** :func:`anri.index.populations.group`, :func:`anri.crystal.orientation.closest_equivalent`.
 

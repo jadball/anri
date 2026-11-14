@@ -515,9 +515,11 @@ class TestPopulations(unittest.TestCase):
         frac, mean, spread, n = ix.populations.group(
             np.ones((1, 64)), np.arange(64)[None], U, np.eye(3)[None], 1.0, vb=1
         )
-        self.assertEqual(int(n[0, 0]), 16)  # the m = 16 considered, each 1/64 of the total, below 0.02 of it
-        np.testing.assert_allclose(frac[0, 0], 16 / 64, rtol=1e-5)
-        self.assertAlmostEqual(float(np.degrees(anri.maths.rotation.rotation_angle(mean[0, 0]))), 40.0, delta=0.2)
+        self.assertEqual(int(n[0, 0]), 64)  # every candidate considered: the whole occupancy is one population
+        np.testing.assert_allclose(frac[0, 0], 1.0, rtol=1e-5)
+        frac16 = ix.populations.group(np.ones((1, 64)), np.arange(64)[None], U, np.eye(3)[None], 1.0, m=16)[0]
+        np.testing.assert_allclose(frac16[0, 0], 16 / 64, rtol=1e-5)  # m = 16 sees a quarter of it
+        self.assertAlmostEqual(float(np.degrees(anri.maths.rotation.rotation_angle(mean[0, 0]))), 40.315, delta=0.01)
         self.assertGreater(spread[0, 0], 0.0)
 
     def test_occupancy_weighted(self):
