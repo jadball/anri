@@ -258,6 +258,10 @@ class TestOccupancy(unittest.TestCase):
             self.assertAlmostEqual((w * dty).sum() / w.sum(), centre, delta=0.01)
             var = (w * (dty - centre) ** 2).sum() / w.sum()
             self.assertAlmostEqual(var, sig**2 + vox**2 / 12, delta=0.05 * (sig**2 + vox**2 / 12))
+        # 0.5 um beam on 0.2 um rows: 9 rows; the fit's coarse level (rows summed in pairs) needs 7 of 0.4 um
+        fine = {**scan, "ystep": 0.2, "sig_beam": 0.5 / 2.3548, "voxel": 0.2}
+        self.assertEqual(ix.occupancy.beam_rows(fine), 9)
+        self.assertEqual(ix.occupancy.beam_rows(ix.data.coarsen_scan(fine, 2)), 7)
 
     def test_padding_is_invisible(self):
         """Padded voxels get no entries: a far-away one (1e6, 1e6) would cross the axis's ray at omega 135, 315."""

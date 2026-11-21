@@ -897,7 +897,7 @@ def stage_fit(
     """
     from . import local
     from .data import coarsen_rows, coarsen_scan
-    from .occupancy import coarse_positions, fit_occupancy, inherit_candidates
+    from .occupancy import beam_rows, coarse_positions, fit_occupancy, inherit_candidates
     from .search import predictions
 
     if levels < 0:
@@ -956,7 +956,8 @@ def stage_fit(
                 f"({(lost > 0.05).mean():.1%} of voxels over 5%: raise --cand)")  # fmt: skip
         log(f"level {k}: {len(pos_k)} voxels of {g * s['YSTEP']:.3g} x {len(U)} orientations")
         pred = predictions(U, s["B"], s["rings"], s["geom"], s["etacut"])
-        f_m, cand_m, model = fit_occupancy(H_k, pred, ring_j, pos_k, scan_k, s["dims"], cand, n_iter, block, log=log,
+        dims_k = s["dims"] if len(s["dims"]) < 5 else (*s["dims"][:4], beam_rows(scan_k))  # rows of this level's step
+        f_m, cand_m, model = fit_occupancy(H_k, pred, ring_j, pos_k, scan_k, dims_k, cand, n_iter, block, log=log,
                                            return_model=True, censor=censor, callback=callback if last else None,
                                            absorb=s["absorb"], saturated=sat, given=given)  # fmt: skip
         log(f"level {k}: {time.perf_counter() - t0:.0f} s")
