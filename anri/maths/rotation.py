@@ -35,7 +35,7 @@ def rot_x(angle: float) -> jax.Array:
     # zeros_like/ones_like rather than literals so the matrix still
     # broadcasts correctly when angle is an array.
     z, o = jnp.zeros_like(c), jnp.ones_like(c)
-    return jnp.array([[o, z, z], [z, c, -s], [z, s, c]])
+    return jnp.stack([jnp.stack([o, z, z]), jnp.stack([z, c, -s]), jnp.stack([z, s, c])])  # stack keeps a Python angle weak
 
 
 @jax.jit
@@ -57,7 +57,7 @@ def rot_y(angle: float) -> jax.Array:
     # zeros_like/ones_like rather than literals so the matrix still
     # broadcasts correctly when angle is an array.
     z, o = jnp.zeros_like(c), jnp.ones_like(c)
-    return jnp.array([[c, z, s], [z, o, z], [-s, z, c]])
+    return jnp.stack([jnp.stack([c, z, s]), jnp.stack([z, o, z]), jnp.stack([-s, z, c])])  # stack keeps a Python angle weak
 
 
 @jax.jit
@@ -88,7 +88,7 @@ def rot_z(angle: float) -> jax.Array:
     # zeros_like/ones_like rather than literals so the matrix still
     # broadcasts correctly when angle is an array.
     z, o = jnp.zeros_like(c), jnp.ones_like(c)
-    return jnp.array([[c, -s, z], [s, c, z], [z, z, o]])
+    return jnp.stack([jnp.stack([c, -s, z]), jnp.stack([s, c, z]), jnp.stack([z, z, o])])  # stack keeps a Python angle weak
 
 
 @jax.jit

@@ -103,9 +103,11 @@ def chord_weight(
     b = 0.5 * voxel_size * jnp.abs(c - s)  # half-width at its top
     height = voxel_size**2 / (a + b)
 
-    # Near omega = 0, 90, ... the trapezoid becomes a rectangle and (a - b) -> 0.
-    # Double-where so neither branch produces NaN gradients.
-    is_box = (a - b) < 1e-6 * voxel_size
+    # Near omega = 0, 90, ... the trapezoid becomes a rectangle and (a - b) -> 0: its four-term difference loses
+    # ~eps x s2 / (a - b), the box's error grows as (a - b)^2. Balanced at 1e-6 in float64, ~3e-3 in float32 (weight
+    # errors <~ 1e-3 within ~0.2 deg of the kink). Double-where so neither branch produces NaN gradients.
+    tol = 1e-6 if jnp.finfo(jnp.result_type(a)).eps < 1e-10 else 3e-3
+    is_box = (a - b) < tol * voxel_size
     ab = jnp.where(is_box, 1.0, a - b)
     s2 = partial(_smoothed, 2, width=width, sigma=sigma)
     trapezoid = height / ab * (s2(u + a) - s2(u + b) - s2(u - b) + s2(u - a))

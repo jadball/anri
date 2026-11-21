@@ -106,7 +106,8 @@ def _peak_cov(
     sample-frame rotation vector (radians). None (the default) leaves it out entirely, at no cost.
     """
     cov_in = jnp.diag(jnp.array([geom["sig_wavelength"], geom["sig_ky"], geom["sig_kz"]]) ** 2)
-    cov = _propagate(ubi, pos, hkl, etasign, geom["wavelength"], 0.0, 0.0, dty, geom, cov_in)
+    zero = jnp.zeros((), ubi.dtype)  # not a Python 0.0: the propagator's primals would be float64 under x64
+    cov = _propagate(ubi, pos, hkl, etasign, geom["wavelength"], zero, zero, dty, geom, cov_in)
     if sig_rot is not None:
         rot_in = jnp.eye(3, dtype=ubi.dtype) * jnp.asarray(sig_rot, ubi.dtype) ** 2
         cov = cov + _propagate_rotation(ubi, pos, hkl, etasign, jnp.zeros(3, ubi.dtype), dty, geom, rot_in)

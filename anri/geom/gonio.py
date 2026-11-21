@@ -50,7 +50,7 @@ def sample_to_lab(v_sample: jax.Array, omega: float, wedge: float, chi: float, d
 
     $$\vec{v_{\text{lab}}} = \left(0, \text{dty} - y_0, 0\right) + \matr{W} \cdot \matr{C} \cdot \matr{R} \cdot \vec{v_{\text{sample}}}$$
     """
-    v_dty = jnp.array([0.0, dty - y0, 0.0])
+    v_dty = jnp.array([0.0, dty - y0, 0.0], dtype=jnp.result_type(v_sample, 1.0))
 
     C = rot_x(chi)
     W = rot_y(wedge)
@@ -99,7 +99,7 @@ def lab_to_sample(v_lab: jax.Array, omega: float, wedge: float, chi: float, dty:
 
     $$\vec{v_{\text{sample}}} = \matr{R^T} \cdot \matr{C^T} \cdot \matr{W^T} \cdot \left(\vec{v_{\text{lab}}} - \left(0, \text{dty} - y_0, 0\right)\right)$$
     """
-    v_dty = jnp.array([0.0, dty - y0, 0.0])
+    v_dty = jnp.array([0.0, dty - y0, 0.0], dtype=jnp.result_type(v_lab, 1.0))
 
     C = rot_x(chi)
     W = rot_y(wedge)
@@ -174,7 +174,7 @@ def origin_lab(
     """
     lab = sample_to_lab(v_sample, omega, wedge, chi, dty, y0)
     _, _, rise, _ = beam_offsets(lab, k_in_lab)
-    return lab + jnp.where(column, 1.0, 0.0) * jnp.array([0.0, 0.0, 1.0]) * rise
+    return lab + jnp.where(column, 1.0, 0.0) * jnp.array([0.0, 0.0, 1.0], lab.dtype) * rise
 
 
 @jax.jit

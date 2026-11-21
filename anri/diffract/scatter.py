@@ -437,7 +437,7 @@ def omega_solns_core(q_sample: jax.Array, k_in_sample: jax.Array) -> tuple[jax.A
     omega_solns_both : Returns both solutions in degrees.
     """
     q_0 = q_sample
-    axis_sample = jnp.array([0.0, 0.0, 1.0])  # rotation axis is always +Z in sample frame
+    axis_sample = jnp.array([0.0, 0.0, 1.0], q_0.dtype)  # rotation axis is always +Z in sample frame
 
     # split Q into components parallel and perpendicular to rotation axis
     # when we rotate, only the perpendicular component changes
