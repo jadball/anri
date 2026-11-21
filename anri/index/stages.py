@@ -945,12 +945,15 @@ def stage_fit(
             use, w, c = local.inherit(prev[1], prev[2], len(U), min_share, per_voxel)
             U, comp = local.children(U[use], step), np.repeat(comp[use], local.N_CHILD)
             step /= 3
+            tot_c = prev[1].sum(1)  # not subdivided: below min_share, or beyond per_voxel (a broad, deformed grain)
+            drop = np.where(tot_c > 0, 1 - w.sum(1) / np.maximum(tot_c, 1e-30), 0.0)[tot_c > 0]
             c_in, f0, lost = inherit_candidates(pos_k, prev[0], w, c, cand)
             given = (f0, c_in)
             log(f"level {k}: {use.sum()} orientations kept (share >= {min_share:g}, <= {per_voxel} per voxel), "
-                f"{len(U)} children {step:.3g} deg apart; {cand} candidates per voxel left out {lost.mean():.2%} of "
-                f"the occupancy of the coarse voxel holding it ({(lost > 0.05).mean():.1%} of voxels over 5%: "
-                f"raise --cand)")  # fmt: skip
+                f"{len(U)} children {step:.3g} deg apart; not subdivided {1 - w.sum() / max(tot_c.sum(), 1e-30):.2%} "
+                f"of the occupancy ({(drop > 0.05).mean():.1%} of voxels over 5%: raise --per-voxel); {cand} "
+                f"candidates per voxel left out {lost.mean():.2%} of the occupancy of the coarse voxel holding it "
+                f"({(lost > 0.05).mean():.1%} of voxels over 5%: raise --cand)")  # fmt: skip
         log(f"level {k}: {len(pos_k)} voxels of {g * s['YSTEP']:.3g} x {len(U)} orientations")
         pred = predictions(U, s["B"], s["rings"], s["geom"], s["etacut"])
         f_m, cand_m, model = fit_occupancy(H_k, pred, ring_j, pos_k, scan_k, s["dims"], cand, n_iter, block, log=log,
