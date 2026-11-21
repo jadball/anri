@@ -500,7 +500,7 @@ def plot_likelihood(fig: Figure, fitted: np.ndarray, lr: np.ndarray, comp: np.nd
     near
         From :func:`anri.index.diagnostics.nearest_stronger` on them
     step
-        The grid step (the population radius is 1.8 steps)
+        The grid step (a grain's grid neighbours lie within 1.8 steps)
     min_comp
         The completeness above which orientations were fitted
     """
@@ -522,7 +522,7 @@ def plot_likelihood(fig: Figure, fitted: np.ndarray, lr: np.ndarray, comp: np.nd
     lr_top = np.maximum(lr[order], 0.1)
     out = ax[2].scatter(dist, lr_top, s=2, color="0.75", label="not kept")
     inn = ax[2].scatter(dist, lr_top, s=3, color="tab:blue", label="kept")
-    ax[2].axvline(1.8 * step, color="0.4", ls="--", label="population radius")
+    ax[2].axvline(1.8 * step, color="0.4", ls="--", label="1.8 grid steps (a grain's neighbours)")
     ax[2].set(xscale="log", xlabel="misorientation to the nearest stronger orientation (°)",
               title=f"the {len(order)} strongest")  # fmt: skip
     ax[2].legend(fontsize=8, loc="lower right")
@@ -689,7 +689,7 @@ def plot_residual(fig: Figure, H: np.ndarray, model: np.ndarray, n_rings: int, s
 
 
 def plot_populations(fig: Figure, tot: np.ndarray, mask: np.ndarray, frac: np.ndarray, spread: np.ndarray,
-                     step: float, nr: int) -> Callable:  # fmt: skip
+                     radius: float, nr: int) -> Callable:  # fmt: skip
     """Draw the total occupancy and the populations, and ``update(occupied, min_frac)``'s choice.
 
     The choice is :func:`anri.index.populations.select_populations`, as the populations stage makes it.
@@ -702,8 +702,8 @@ def plot_populations(fig: Figure, tot: np.ndarray, mask: np.ndarray, frac: np.nd
         [Nv] each voxel's total occupancy and the voxels fitted (a fit stage file)
     frac, spread
         [Nv, P] the populations' fractions and spreads (:func:`anri.index.populations.group`)
-    step
-        The grid step (spreads include it)
+    radius
+        The population radius (:func:`anri.index.populations.radius`): spreads are below it, the top of their colours
     nr
         Voxels per side
     """
@@ -729,7 +729,7 @@ def plot_populations(fig: Figure, tot: np.ndarray, mask: np.ndarray, frac: np.nd
     hist_f2 = ax[1, 1]
     v_frac = hist_f2.axvline(0.1, color="tab:red")
     hist_f2.set(xlabel="fraction of populations 2 to 4", ylabel="populations")
-    im_sp = ax[1, 2].imshow(np.zeros((nr, nr)), origin="lower", cmap="viridis", vmin=0, vmax=max(2 * step, 1e-3))
+    im_sp = ax[1, 2].imshow(np.zeros((nr, nr)), origin="lower", cmap="viridis", vmin=0, vmax=max(radius, 1e-3))
     ax[1, 2].set(title="spread of the main population (°)")
     fig.colorbar(im_sp, ax=ax[1, 2], shrink=0.8)
     for a in maps:

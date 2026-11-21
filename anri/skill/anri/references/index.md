@@ -105,7 +105,8 @@ there is nothing.
 
 ## 5. populations: `--occupied`, `--min-frac`
 
-Groups each voxel's occupied candidates into populations (within 1.8 grid steps of the most occupied one), each
+Groups each voxel's occupied candidates into populations (within `anri.index.populations.radius` of the most
+occupied one: a 1° histogram bin, or 1.8 × the fitted orientations' spacing if coarser; logged), each
 with a fraction, mean orientation, spread and completeness.
 
 | Choice | Look at |

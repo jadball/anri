@@ -1114,6 +1114,11 @@ class TestLocalSearch(unittest.TestCase):
         use, _, _ = ix.local.inherit(np.array([[0.97, 0.03]], np.float32), np.array([[0, 1]], np.int32), 2)
         np.testing.assert_array_equal(use, [True, True])
 
+    def test_population_radius(self):
+        """Populations are grouped within a histogram bin, or 1.8 x the fitted orientations' spacing if coarser."""
+        self.assertEqual(ix.populations.radius(0.0926), 1.0)  # a fit with levels: the bin
+        self.assertAlmostEqual(ix.populations.radius(2.5), 4.5)  # a plain fit of a 2.5 deg grid
+
     def test_level_rows(self):
         """Each level's voxels are about radius x its worst case wide, the last on the dty step."""
         # 141.5 um radius, 0.289 deg: 0.71 um, 3 rows of 0.25 um; then 0.096 deg: 1 row (DTL1z45)

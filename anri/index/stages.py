@@ -1202,9 +1202,10 @@ def stage_populations(
     NR, YSTEP = fr["voxels"], fr["voxel_size"]
     NV = NR * NR
     step, delta = sres["grid_step"], sres["grid_worst_case_deg"]
+    rad = populations.radius(fr.get("orientation_step", step))  # a fit from before the levels: the grid's
     tot = f.sum(1)
     t1 = time.perf_counter()
-    frac, U_pop, spread, n_pop = populations.group(f, cands, U_kept, d["ops"], 1.8 * step, p=N_POP)
+    frac, U_pop, spread, n_pop = populations.group(f, cands, U_kept, d["ops"], rad, p=N_POP)
     occ, present = select_populations(tot, sel, frac, occupied, min_frac)
     comp_pop = np.zeros(frac.shape, np.float32)
     lm = lit_map(d["H_lit"], d["scan"], d["n_rings"], so["lit"], so["etacut"])
@@ -1212,7 +1213,7 @@ def stage_populations(
     n_occ = present.sum(1)
     log(f"{occ.sum()} of {NV} voxels occupied; populations ({time.perf_counter() - t1:.1f} s): per occupied voxel "
         + ", ".join(f"{k}: {np.mean(n_occ[occ] == k) * 100:.1f}%" for k in range(1, N_POP + 1))
-        + f"; main fraction median {np.median(frac[occ, 0]):.2f}; spread median {np.median(spread[present]):.2f} deg "
+        + f"; radius {rad:.3g} deg; main fraction median {np.median(frac[occ, 0]):.2f}; spread median {np.median(spread[present]):.2f} deg "
         f"(includes the grid); completeness median {np.median(comp_pop[present]):.2f}")  # fmt: skip
 
     out = stage_path(fit_file, "populations", out)
@@ -1220,8 +1221,8 @@ def stage_populations(
     results = {"frac": frac, "U_pop": U_pop, "spread": spread, "n": n_pop, "comp_pop": comp_pop, "occupied": occ,
                "present": present}  # fmt: skip
     with h5py.File(out, "w") as h:
-        write_provenance(h, "populations", fit_file, options, {"grid_step": step, "grid_worst_case_deg": delta},
-                         command)  # fmt: skip
+        write_provenance(h, "populations", fit_file, options, {"grid_step": step, "grid_worst_case_deg": delta,
+                         "radius_deg": rad}, command)  # fmt: skip
         for k, v in results.items():
             h.create_dataset(k, data=np.asarray(v), compression="lzf" if np.asarray(v).size > 1000 else None)
     write_results(out, {"voxels_occupied": int(occ.sum())})

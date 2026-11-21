@@ -12,7 +12,24 @@ from jax.typing import ArrayLike
 from anri.crystal.orientation import closest_equivalent
 from anri.maths.rotation import mean_rotation, rotation_angle
 
+from .data import B_E, B_O, R_E, R_O
+
 N_POP = 4  # populations per voxel at most
+
+
+def radius(orientation_step: float) -> float:
+    """Return the population radius (deg) for a fit of orientations orientation_step apart.
+
+    The larger of what the data resolve and what the orientations' spacing smears:
+
+    - one bin of the fit's histogram (1 deg): a misorientation moves spots by about as much in eta or omega, so
+      populations closer than a bin share bins in every reflection and the data cannot tell them apart;
+    - 1.8 x orientation_step: one orientation between the fitted ones is shared among its neighbours, up to sqrt(3)
+      steps apart.
+
+    A fit with levels (0.1 deg) gets the bin; a plain fit of a 2.5 deg grid, 4.5 deg.
+    """
+    return max(B_E * R_E, B_O * R_O, 1.8 * orientation_step)
 
 
 @partial(jax.jit, static_argnames=("m", "p"))
@@ -74,7 +91,7 @@ def group(
     ops
         [n, 3, 3] Laue-group rotations, from :func:`anri.crystal.orientation.laue_rotations`
     radius_deg
-        Largest misorientation from a population's seed, e.g. 1.8 grid steps
+        Largest misorientation from a population's seed, e.g. :func:`radius`
     p
         Populations per voxel at most
     m
