@@ -1136,7 +1136,7 @@ class TestLocalSearch(unittest.TestCase):
 
 class TestInherit(unittest.TestCase):
     def test_neighbourhood_candidates(self):
-        """A fine voxel gets the orientations its 3 x 3 coarse neighbourhood occupied, most occupied first, once each."""
+        """A fine voxel gets the orientations its 3 x 3 coarse neighbourhood occupied, its own coarse voxel's first."""
         gc = np.arange(-2, 3) * 4.0
         xx, yy = np.meshgrid(gc, gc, indexing="ij")
         pos_c = np.stack([xx.ravel(), yy.ravel(), np.zeros(25)], 1)
@@ -1145,16 +1145,21 @@ class TestInherit(unittest.TestCase):
         for c in range(25):
             cand_c[c] = [c, 100]  # every coarse voxel holds its own orientation and a shared one
             f_c[c] = [1.0 + c, 0.5]
-        fine = np.array([[0.0, 0.0, 0.0], [7.0, 7.0, 0.0]])  # the centre, and near coarse voxel (2, 2) -> index 18
-        cand, f0 = ix.occupancy.inherit_candidates(fine, pos_c, f_c, cand_c, 12)
-        centre = {6, 7, 8, 11, 12, 13, 16, 17, 18}
-        self.assertEqual(set(cand[0][:9]), centre)  # the neighbours' own orientations come first
-        self.assertEqual(list(cand[0][:9]), sorted(centre, reverse=True))  # by occupancy
-        np.testing.assert_allclose(f0[0][:9], 1.0 + cand[0][:9])  # starting from their occupancy there
-        self.assertEqual((cand[0][9], f0[0][9]), (100, 0.5))  # the shared one once
+        fine = np.array([[0.0, 0.0, 0.0], [7.0, 7.0, 0.0]])  # the centre (coarse voxel 12), and near coarse voxel 18
+        cand, f0, lost = ix.occupancy.inherit_candidates(fine, pos_c, f_c, cand_c, 12)
+        self.assertEqual(list(cand[0][:2]), [12, 100])  # its own coarse voxel's first, by occupancy
+        others = [6, 7, 8, 11, 13, 16, 17, 18]
+        self.assertEqual(list(cand[0][2:10]), sorted(others, reverse=True))  # then the neighbours', by occupancy
+        np.testing.assert_allclose(f0[0][2:10], 1.0 + cand[0][2:10])  # starting from their occupancy there
+        self.assertEqual(f0[0][1], 0.5)  # the shared one once
         np.testing.assert_array_equal(cand[0][10:], -1)  # nothing else: empty slots, never an orientation -1
         np.testing.assert_array_equal(f0[0][10:], 0)
         self.assertIn(24, cand[1])
+        np.testing.assert_array_equal(lost, 0)
+        # too few slots: the neighbours' go before the voxel's own
+        cand, _, lost = ix.occupancy.inherit_candidates(fine[:1], pos_c, f_c, cand_c, 1)
+        self.assertEqual(cand[0, 0], 12)
+        self.assertAlmostEqual(float(lost[0]), 0.5 / 13.5, places=6)
 
     def test_coarse_positions(self):
         """A coarse grid centred on the axis, its voxels within 0.75 coarse steps of the fine ones."""
@@ -1171,8 +1176,8 @@ class TestInherit(unittest.TestCase):
         c[8, 0] = 0  # orientation 0: weak in neighbour 0, strong in neighbour 8
         f = np.full((9, 2), 2.0, np.float32)
         f[0, 0], f[8, 0] = 0.01, 100.0
-        out, w = ix.occupancy._inherit(near, jnp.asarray(f), jnp.asarray(c), 2)
-        self.assertEqual((int(out[0, 0]), float(w[0, 0])), (0, 100.0))
+        out, w, _ = ix.occupancy._inherit(near, jnp.asarray(f), jnp.asarray(c), 2)
+        self.assertEqual((int(out[0, 0]), float(w[0, 0])), (0, 100.0))  # in the nearest (0), at its largest (8)
         c = np.tile(np.array([0, 1], np.int32), (9, 1))  # two orientations in all: the other slots empty
         out = np.asarray(ix.occupancy._inherit(near, jnp.ones((9, 2)), jnp.asarray(c), 4)[0])
         np.testing.assert_array_equal(np.sort(out[0, :2]), [0, 1])

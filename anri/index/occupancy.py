@@ -428,11 +428,11 @@ def backward(
 
 
 @jax.jit
-def _squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array) -> tuple[jax.Array, jax.Array]:
+def _squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array, step_max: float) -> tuple[jax.Array, jax.Array]:
     """SQUAREM's extrapolation from f and two MLEM steps f1, f2 (r = f1 - f and v = f2 - 2 f1 + f fused, not stored)."""
     nr = jnp.sqrt(jnp.sum((f1 - f) ** 2))
     nv = jnp.sqrt(jnp.sum((f2 - 2.0 * f1 + f) ** 2))
-    a = jnp.minimum(-nr / jnp.maximum(nv, 1e-30), -1.0)  # never shorter than plain MLEM
+    a = jnp.clip(-nr / jnp.maximum(nv, 1e-30), -step_max, -1.0)  # never shorter than plain MLEM
     # not below 1e-3 of f2: MLEM multiplies, so an occupancy at 0 could never come back
     return jnp.maximum(f - 2.0 * a * (f1 - f) + a * a * (f2 - 2.0 * f1 + f), 1e-3 * f2), a
 
@@ -447,9 +447,12 @@ def squarem(
     from f; the point ``f - 2 a r + a^2 v`` with ``r = f1 - f``, ``v = f2 - 2 f1 + f`` and ``a = -norm(r) / norm(v)``
     (at most -1: never shorter than plain MLEM), kept above 1e-3 f2 (MLEM multiplies: an occupancy at 0 could never
     come back); and one more MLEM update from there. If the point fits worse than f1, f2 is kept instead, so the
-    deviance never rises. An iteration costs 3 MLEM updates and goes about as far as 10 or more. It holds at most four
-    copies of f at once. Used by the voxel fit (:func:`mlem`) and the global orientation fit
-    (:func:`anri.index.orientations.fit`).
+    deviance never rises. After a step is refused, the step length -a is capped: at a quarter of the refused step, 4 x
+    larger after a step taken at the cap, and lower again after another refusal. Uncapped, near convergence -a grew to
+    50-60 (the point f + 100 r + 2500 v, wrecked by the clamp): every step was refused, a third of each iteration
+    wasted, and the next proposed as long a step again (Renk_a of ihma936: iterations 6-10 of 10 all refused). An
+    iteration costs 3 MLEM updates and goes about as far as 10 or more. It holds at most four copies of f at once. Used
+    by the voxel fit (:func:`mlem`) and the global orientation fit (:func:`anri.index.orientations.fit`).
 
     Parameters
     ----------
@@ -478,10 +481,11 @@ def squarem(
        any EM algorithm. Scandinavian Journal of Statistics 35, 335–353.
        https://doi.org/10.1111/j.1467-9469.2007.00585.x
     """
+    step_max = float("inf")  # no cap until a step is refused
     for it in range(1, n_iter + 1):
         f1, _ = step(f)
         f2, dev1 = step(f1)
-        fx, a = _squarem_point(f, f1, f2)
+        fx, a = _squarem_point(f, f1, f2, step_max)
         del f1  # at most 4 copies of the occupancies at once
         fn, devx = step(fx)
         del fx
@@ -491,7 +495,12 @@ def squarem(
         if callback is not None:
             callback(it, f, dev)
         # every iteration: the deviances are on the host already, and a is a scalar computed before devx
-        log(f"  {label} {it} (SQUAREM step {float(-a):.1f}{'' if taken else ', not taken'}): deviance {dev:.6g}")
+        length = float(-a)
+        log(f"  {label} {it} (SQUAREM step {length:.1f}{'' if taken else ', not taken'}): deviance {dev:.6g}")
+        if not taken:
+            step_max = max(1.0, length / 4)
+        elif length >= step_max * (1 - 1e-6):
+            step_max *= 4
     return f
 
 
@@ -554,21 +563,27 @@ def mlem(
 def _inherit(near9: jax.Array, f_c: jax.Array, cand_c: jax.Array, k2: int) -> tuple:
     def one(nb: jax.Array) -> tuple:
         c, w = cand_c[nb].ravel(), f_c[nb].ravel()  # the neighbourhood's candidates and coarse occupancies
+        own = jnp.arange(c.size) < cand_c.shape[1]  # entries of the nearest coarse voxel (nb[0]), which holds the voxel
         o = jnp.argsort(c)
-        c, w = c[o], w[o]
+        c, w, own = c[o], w[o], own[o]
         dup = jnp.concatenate([jnp.array([False]), c[1:] == c[:-1]])
         seg = jnp.cumsum(~dup) - 1  # which orientation each entry is, in sorted order
         w_max = jax.ops.segment_max(w, seg, num_segments=c.size)[seg]  # its largest occupancy in any neighbour
-        v, i = jax.lax.top_k(jnp.where(dup | (c < 0), -jnp.inf, w_max), k2)  # each orientation once, no empty slot
+        w_own = jax.ops.segment_sum(jnp.where(own, w, 0.0), seg, num_segments=c.size)  # in the nearest, per orientation
+        # the nearest coarse voxel's orientations first, then the neighbours' (boundaries the coarse fit misplaced)
+        key = w_max + jnp.where(w_own[seg] > 0, jnp.max(w) + 1.0, 0.0)
+        v, i = jax.lax.top_k(jnp.where(dup | (c < 0), -jnp.inf, key), k2)  # each orientation once, no empty slot
         ok = v > -jnp.inf  # fewer than k2 orientations in the neighbourhood: -1
-        return jnp.where(ok, c[i], -1), jnp.where(ok, v, 0.0)
+        taken = jnp.zeros(c.size, bool).at[seg[i]].max(ok)  # max: an unused slot may point at a taken one's duplicate
+        lost = jnp.sum(jnp.where(taken, 0.0, w_own)) / jnp.maximum(jnp.sum(w_own), 1e-30)
+        return jnp.where(ok, c[i], -1), jnp.where(ok, w_max[i], 0.0), lost
 
     return jax.vmap(one)(near9)
 
 
 def inherit_candidates(
     pos: ArrayLike, pos_c: ArrayLike, f_c: ArrayLike, cand_c: ArrayLike, k2: int, vb: int = 1 << 14
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Candidates for fine voxels from a coarse fit: what the nearest coarse voxel and its 8 neighbours occupied.
 
     Parameters
@@ -580,8 +595,9 @@ def inherit_candidates(
     f_c, cand_c
         [Nc, K] coarse occupancies and orientation indices (-1: none)
     k2
-        Candidates per fine voxel, the most occupied first (an orientation in several neighbours by its largest
-        occupancy)
+        Candidates per fine voxel: first the nearest coarse voxel's orientations (it holds the fine voxel), then the
+        neighbours', each group the most occupied first (an orientation in several neighbours by its largest
+        occupancy). Ranking by occupancy alone let a neighbour's main grain push out the voxel's own minor ones
     vb
         Fine voxels per call (padded: one compile)
 
@@ -591,6 +607,8 @@ def inherit_candidates(
         [Nv, k2] orientation indices, each once (-1 in the last slots where the neighbourhood holds fewer than k2),
         and each one's largest occupancy in the neighbourhood (0 for an empty slot): starting occupancies for
         :func:`fit_occupancy`'s given
+    lost: np.ndarray
+        [Nv] the share of the nearest coarse voxel's occupancy on orientations that did not fit in k2
     """
     from scipy.spatial import KDTree
 
@@ -600,15 +618,16 @@ def inherit_candidates(
     n9 = min(9, len(pos_c))
     f_c, cand_c = jnp.asarray(f_c), jnp.asarray(cand_c)
     vb = min(vb, len(pos))
-    cs, fs = [], []
+    cs, fs, ls = [], [], []
     for s0 in range(0, len(pos), vb):
         _, near = tree.query(pos[s0 : s0 + vb], k=n9)
         near = np.asarray(near, np.int32).reshape(-1, n9)
         n = len(near)
-        c, f = _inherit(jnp.asarray(np.pad(near, ((0, vb - n), (0, 0)))), f_c, cand_c, k2)
+        c, f, lost = _inherit(jnp.asarray(np.pad(near, ((0, vb - n), (0, 0)))), f_c, cand_c, k2)
         cs.append(np.asarray(c)[:n])
         fs.append(np.asarray(f)[:n])
-    return np.concatenate(cs), np.concatenate(fs).astype(np.float32)
+        ls.append(np.asarray(lost)[:n])
+    return np.concatenate(cs), np.concatenate(fs).astype(np.float32), np.concatenate(ls)
 
 
 def coarse_positions(pos: ArrayLike, step: float) -> np.ndarray:

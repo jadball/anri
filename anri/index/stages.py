@@ -928,7 +928,7 @@ def stage_fit(
                                 for k, g in enumerate(rows)) + f"; radius {radius:.4g}")  # fmt: skip
     if radius * np.radians(worst / 3**levels) > 1.5 * s["YSTEP"]:
         log(f"warning: the last level's orientations ({worst / 3**levels:.3g} deg) move a voxel at the radius by "
-            f"more than the dty step: more levels or a smaller refine_to fit it more consistently")  # fmt: skip
+            f"more than the dty step: add a level (a smaller refine_to crowds the candidates)")  # fmt: skip
     ring_j, block = s["rings"]["ring_j"], block_gb * 1e9
     prev = None
     f_m = cand_m = model = None
@@ -945,10 +945,12 @@ def stage_fit(
             use, w, c = local.inherit(prev[1], prev[2], len(U), min_share, per_voxel)
             U, comp = local.children(U[use], step), np.repeat(comp[use], local.N_CHILD)
             step /= 3
-            c_in, f0 = inherit_candidates(pos_k, prev[0], w, c, cand)
+            c_in, f0, lost = inherit_candidates(pos_k, prev[0], w, c, cand)
             given = (f0, c_in)
             log(f"level {k}: {use.sum()} orientations kept (share >= {min_share:g}, <= {per_voxel} per voxel), "
-                f"{len(U)} children {step:.3g} deg apart")  # fmt: skip
+                f"{len(U)} children {step:.3g} deg apart; {cand} candidates per voxel left out {lost.mean():.2%} of "
+                f"the occupancy of the coarse voxel holding it ({(lost > 0.05).mean():.1%} of voxels over 5%: "
+                f"raise --cand)")  # fmt: skip
         log(f"level {k}: {len(pos_k)} voxels of {g * s['YSTEP']:.3g} x {len(U)} orientations")
         pred = predictions(U, s["B"], s["rings"], s["geom"], s["etacut"])
         f_m, cand_m, model = fit_occupancy(H_k, pred, ring_j, pos_k, scan_k, s["dims"], cand, n_iter, block, log=log,
