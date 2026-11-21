@@ -176,9 +176,9 @@ def system(
         k0 = jnp.round(fk).astype(jnp.int32) - n_beam // 2
         norm = scan["ystep"] / scan["voxel"] ** 2  # the chord weight integrates to voxel^2 over dty
         psi = jnp.degrees(jnp.arctan2(k_in[1], k_in[0]))  # the beam sees the voxel turned by omega - psi
-        rows = tuple(
-            (dk, norm * chord_weight((k0 + dk - fk) * scan["ystep"], om - psi, scan["voxel"], scan["sig_beam"],
-                                      scan["width_beam"]))
+        rows = tuple(  # not below 0: in float32 the chord's four-term difference can cancel slightly below it
+            (dk, norm * jnp.maximum(chord_weight((k0 + dk - fk) * scan["ystep"], om - psi, scan["voxel"],
+                                                 scan["sig_beam"], scan["width_beam"]), 0.0))
             for dk in range(n_beam)
         )  # fmt: skip
     idx, wt = [], []
