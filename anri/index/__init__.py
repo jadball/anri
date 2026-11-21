@@ -11,11 +11,13 @@ The steps, in order (``python -m anri.index`` runs them on an ImageD11 dataset):
    global, intensity-aware orientation fit.
 4. :func:`local.refine`: the kept orientations refined off the grid on the row-summed data, to a fraction of the
    histogram's bins.
-5. :func:`occupancy.fit_occupancy`: sparse occupancy of orientations per voxel by MLEM, every voxel fitted jointly
+5. :mod:`drift` (optional): y0 and the sample's drift against the rotation axis, from the Friedel pairs of a full
+   turn, followed by the fit (``scan["ddty"]``).
+6. :func:`occupancy.fit_occupancy`: sparse occupancy of orientations per voxel by MLEM, every voxel fitted jointly
    (:mod:`anri.index.mask` chooses which voxels), coarse to fine: :func:`local.level_rows` sizes each level's voxels,
    :func:`local.inherit` and :func:`occupancy.inherit_candidates` pass each level's orientations, subdivided, to
    the next.
-6. :func:`populations.group`: each voxel's occupancy grouped into orientation populations with fractions and
+7. :func:`populations.group`: each voxel's occupancy grouped into orientation populations with fractions and
    spreads.
 
 :mod:`anri.index.stages` runs the same steps as five stages that each write one HDF5 file with its provenance, for the
@@ -27,11 +29,12 @@ dataset as the histogram stage does. The numbers behind each option's choice are
 their plots in :mod:`anri.index.plots`.
 """
 
-from . import data, diagnostics, local, mask, occupancy, orientations, plots, populations, search, stages
+from . import data, diagnostics, drift, local, mask, occupancy, orientations, plots, populations, search, stages
 
 __all__ = [
     "data",
     "diagnostics",
+    "drift",
     "local",
     "mask",
     "occupancy",

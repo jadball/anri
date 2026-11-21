@@ -33,6 +33,7 @@ from collections.abc import Callable, Iterator
 
 import h5py
 import numpy as np
+from jax.typing import ArrayLike
 
 from anri.io.provenance import (
     chain,
@@ -719,7 +720,8 @@ def stage_search(
 # ------------------------------------------------------------------------------------------------------------ 3. filter
 def stage_filter(
     search_file: str, out: str | None = None, *, prune: str = "likelihood", min_comp: float | None = None,
-    min_lr: float = 25.0, keep: int = 100000, censor: float = 0.0, command: str | None = None, log: Callable = print,
+    min_lr: float = 25.0, keep: int = 100000, censor: float | None = None, command: str | None = None,
+    log: Callable = print,
 ) -> str:  # fmt: skip
     """Choose the orientations for the fit.
 
@@ -744,7 +746,10 @@ def stage_filter(
     keep
         At most this many orientations, the most likely (or most complete) first
     censor
-        Counts per histogram bin below which an empty bin agrees with the model (0: empty bins are zeros)
+        Counts per histogram bin below which an empty bin agrees with the model (every pixel in it was below the
+        segmentation cut). Default: measured, the least a spot can hold and go unrecorded
+        (:func:`anri.index.occupancy.censor_level`: ImageD11's 3 pixels per spot x the smallest recorded pixel); give
+        pixels_in_spot x that pixel for another segmentation. 0: empty bins are zeros (plain Poisson)
     command, log
         See :func:`stage_histogram`
 
@@ -761,6 +766,7 @@ def stage_filter(
     s_prov = read_provenance(search_file)
     hist_file = upstream(search_file, "histogram")
     d = load_histogram(hist_file)
+    censor = _censor(d["H"], censor, log)
     with h5py.File(search_file, "r") as h:
         U_grid, comp = h["U_grid"][()], h["completeness"][()]
     so, sr = s_prov["options"], s_prov["results"]
@@ -789,7 +795,8 @@ def stage_filter(
     out = stage_path(search_file, "filter", out)
     check_out(out, chain(search_file))
     with h5py.File(out, "w") as h:
-        write_provenance(h, "filter", search_file, options, {"min_comp_used": min_comp_used}, command)
+        write_provenance(h, "filter", search_file, options, {"min_comp_used": min_comp_used, "censor_used": censor},
+                         command)  # fmt: skip
         h["kept"] = np.asarray(kept)
         h["U"] = np.asarray(U_grid[kept])
         h["completeness"] = np.asarray(comp[kept])
@@ -804,10 +811,11 @@ def stage_filter(
 
 # --------------------------------------------------------------------------------------------------------------- 4. fit
 def stage_fit(
-    filter_file: str, out: str | None = None, *, y0: float | None = None, cand: int = 256, n_iter: int = 10,
+    filter_file: str, out: str | None = None, *, y0: float | str | None = None, drift: str | None = None,
+    cand: int = 256, n_iter: int = 10,
     refine_to: float = 0.3, levels: int = 1, min_share: float = 0.01, per_voxel: int = 16, beam: float = 0.0,
     mask: str | None = "disc", pad: float = 0.0, absorption: bool = True, mu: float | None = None,
-    block_gb: float = 1.0, censor: float = 0.0, save_model: bool = False, command: str | None = None,
+    block_gb: float = 1.0, censor: float | None = None, save_model: bool = False, command: str | None = None,
     log: Callable = print, callback: Callable | None = None,
 ) -> str:  # fmt: skip
     """Fit each voxel's occupancy of orientations, coarse to fine in orientation and space (:mod:`anri.index.local`).
@@ -831,7 +839,13 @@ def stage_fit(
     out
         Output file (default: the input's name with ``_fit``)
     y0
-        dty where the rotation axis is in the beam (default: the DataSet's)
+        dty where the rotation axis is in the beam (default: the DataSet's); "pairs": measured from the Friedel
+        pairs of a full turn (:func:`anri.index.drift.from_pairs`)
+    drift
+        "pairs": follow the sample's drift against the rotation axis, measured per dty row from the Friedel pairs
+        (:mod:`anri.index.drift`: the part odd about the time row y0 was measured) and smoothed over 31 rows
+        (:func:`anri.index.drift.measure`); None: no drift. The log reports how smooth the rows' own values are and
+        where they jump (:func:`anri.index.drift.roughness`)
     cand
         Candidate orientations per voxel
     n_iter
@@ -890,16 +904,17 @@ def stage_fit(
         msg = f"levels must be at least 0, not {levels}"
         raise ValueError(msg)
     log, lines = recorder(log)
-    options = {"y0": y0, "cand": cand, "n_iter": n_iter, "refine_to": refine_to, "levels": levels,
+    options = {"y0": y0, "drift": drift, "cand": cand, "n_iter": n_iter, "refine_to": refine_to, "levels": levels,
                "min_share": min_share, "per_voxel": per_voxel, "beam": beam, "mask": mask, "pad": pad,
                "absorption": absorption, "mu": mu, "block_gb": block_gb, "censor": censor,
                "save_model": save_model}  # fmt: skip
-    s = _fit_setup(filter_file, y0, beam, mask, pad, absorption, mu, log)
+    s = _fit_setup(filter_file, y0, beam, mask, pad, absorption, mu, log, drift=drift)
     sres = read_provenance(upstream(filter_file, "search"))["resolved"]
     fo = read_provenance(filter_file)["options"]
     step, worst = float(sres["grid_step"]), float(sres["grid_worst_case_deg"])
     U, comp = s["U"], s["comp"]
     d, sc = s["d"], s["d"]["scan"]
+    censor = _censor(d["H"], censor, log)
     if refine_to > 0:
         data = d["H"].reshape(-1, sc["n_rows"]).sum(1)
         bins_o = (B_E * R_E, B_O * R_O, sc["n_e"] // R_E, sc["n_o"] // R_O, sc["om0"])
@@ -944,15 +959,16 @@ def stage_fit(
     assert f_m is not None and cand_m is not None and model is not None  # at least one level
     out = stage_path(filter_file, "fit", out)
     check_out(out, [*chain(filter_file), mask])
-    resolved = {"orientation_step": step, "worst_case_deg": worst / 3**levels, "rows_per_level": rows}
+    resolved = {"orientation_step": step, "worst_case_deg": worst / 3**levels, "rows_per_level": rows,
+                "censor_used": censor}  # fmt: skip
     _write_fit(out, "fit", filter_file, options, resolved, command, s, f_m, cand_m, model, U, comp, save_model,
                log)  # fmt: skip
     write_log(out, lines)
     return out
 
 
-def _fit_setup(filter_file: str, y0: float | None, beam: float, mask: str | None, pad: float, absorption: bool,
-               mu: float | None, log: Callable) -> dict:  # fmt: skip
+def _fit_setup(filter_file: str, y0: float | str | None, beam: float, mask: str | None, pad: float, absorption: bool,
+               mu: float | None, log: Callable, drift: str | None = None) -> dict:  # fmt: skip
     """Everything a fit needs from the stages before it (see :func:`stage_fit` for the options)."""
     import jax.numpy as jnp
 
@@ -960,6 +976,7 @@ def _fit_setup(filter_file: str, y0: float | None, beam: float, mask: str | None
     from anri.maths.utils import fwhm_to_sigma
 
     from .data import coarsen_coverage
+    from .drift import offsets
     from .mask import disc_mask, load_mask, support_mask
     from .occupancy import beam_rows
 
@@ -970,11 +987,24 @@ def _fit_setup(filter_file: str, y0: float | None, beam: float, mask: str | None
     with h5py.File(filter_file, "r") as h:
         U_kept, comp_kept = h["U"][()], h["completeness"][()]
     r = d["prov"]["resolved"]
-    Y0 = r.get("y0_dataset") if y0 is None else y0
-    if Y0 is None:
-        msg = f"{r['dataset_file']} has no y0: give it with y0"
+    if isinstance(y0, str) and y0 != "pairs":
+        msg = f'y0 is a number, "pairs" or None, not {y0!r}'
+        raise ValueError(msg)
+    if drift not in (None, "pairs"):
+        msg = f'drift is "pairs" or None, not {drift!r}'
+        raise ValueError(msg)
+    Y0 = r.get("y0_dataset") if y0 is None or y0 == "pairs" else float(y0)
+    if Y0 is None and y0 != "pairs":
+        msg = f'{r["dataset_file"]} has no y0: give it with y0 (or y0="pairs" to measure it)'
         raise ValueError(msg)
     sc, rings = d["scan"], d["rings"]
+    pairs = None
+    if y0 == "pairs" or drift == "pairs":
+        if Y0 is None:  # no guess: the middle of the scan
+            Y0 = sc["dty0"] + 0.5 * (sc["n_rows"] - 1) * sc["ystep"]
+        pairs = _pairs(d, Y0, so["etacut"], log)
+        if y0 == "pairs":
+            Y0 = pairs["y0"]
     YSTEP = sc["ystep"]
     NR = d["grid"]["n"] if d["grid"] is not None else voxel_grid(sc, Y0)  # the histogram stage's grid
     NV = NR * NR
@@ -984,6 +1014,10 @@ def _fit_setup(filter_file: str, y0: float | None, beam: float, mask: str | None
     for k in ("ddty", "exposure"):
         if k in sc:
             scan[k] = sc[k]
+    if drift == "pairs":
+        assert pairs is not None
+        off = offsets(pairs["s"], pairs["c"], sc)
+        scan["ddty"] = jnp.asarray(off + (np.asarray(scan["ddty"]) if "ddty" in scan else 0.0), jnp.float32)
     dims = (B_E * R_E, B_O * R_O, sc["n_e"] // R_E, sc["n_o"] // R_O)
     if rings.get("coverage") is not None:  # the measured share of each (ring, eta bin): masks and detector edges
         scan["coverage"] = jnp.asarray(coarsen_coverage(rings["coverage"], dims[2]), jnp.float32)
@@ -1024,7 +1058,41 @@ def _fit_setup(filter_file: str, y0: float | None, beam: float, mask: str | None
             log("absorption: not modelled (no CIF in the histogram stage and no mu given)")
     return {"d": d, "H": d["H"], "saturated": d["saturated"], "U": U_kept, "comp": comp_kept, "Y0": Y0, "NR": NR,
             "NV": NV, "YSTEP": YSTEP, "pos": pos, "sel": sel, "rec": rec, "scan": scan, "dims": dims, "MU": MU,
-            "absorb": absorb, "rings": rings, "geom": d["geom"], "B": d["B"], "etacut": so["etacut"]}  # fmt: skip
+            "absorb": absorb, "rings": rings, "geom": d["geom"], "B": d["B"], "etacut": so["etacut"],
+            "pairs": pairs}  # fmt: skip
+
+
+def _censor(H: ArrayLike, censor: float | None, log: Callable) -> float:
+    """Return censor, or measure it from the data (:func:`anri.index.occupancy.censor_level`) when None."""
+    from .occupancy import PIXELS_IN_SPOT, censor_level
+
+    if censor is not None:
+        return censor
+    censor, smallest = censor_level(H)
+    log(f"censor {censor:.4g} counts per bin: {PIXELS_IN_SPOT} pixels per spot (ImageD11's default) x the smallest "
+        f"recorded pixel, {smallest:.4g}")  # fmt: skip
+    return censor
+
+
+def _pairs(d: dict, y0: float, etacut: float, log: Callable) -> dict:
+    """y0 and the drift from the histogram's Friedel pairs (:mod:`anri.index.drift`), logged with their check."""
+    from .drift import measure
+
+    t0 = time.perf_counter()
+    p = measure(d["H"], d["n_rings"], d["scan"], y0, etacut)
+    rough, dty = p["roughness"], p["dty"]
+    log(f"Friedel pairs ({time.perf_counter() - t0:.0f} s): y0 {p['y0']:.5g} +- {p['y0_err']:.2g} (from {y0:.5g}); "
+        f"drift in {p['measured'].sum()} rows (median error {np.nanmedian(p['err']):.2g}): range {rough['total']:.3g}, "
+        f"row-to-row change {rough['ratio']:.2f} x its noise, {len(rough['jumps'])} rows jump; smoothed over "
+        f"{p['window']} rows for the fit")  # fmt: skip
+    if rough["ratio"] > 2:
+        log(f"warning: the drift changes from row to row {rough['ratio']:.2f} x more than its noise: check it "
+            "(anri.index.drift.from_pairs) before trusting the fit")  # fmt: skip
+    if len(rough["jumps"]):
+        log("warning: the drift jumps at dty " + ", ".join(f"{dty[j]:.4g}" for j in rough["jumps"][:20])
+            + ("..." if len(rough["jumps"]) > 20 else "") + " (a slip shows at its time and at the mirrored row's): "
+            "check it (anri.index.drift.from_pairs)")  # fmt: skip
+    return p
 
 
 def _write_fit(out: str, stage: str, source: str, options: dict, resolved: dict, command: str | None, s: dict,
@@ -1045,11 +1113,18 @@ def _write_fit(out: str, stage: str, source: str, options: dict, resolved: dict,
                "row_data": d_row, "row_model": m_row}  # fmt: skip
     if s["rec"] is not None:
         results["support"] = s["rec"]  # the projections' support the automatic mask was thresholded from
+    extra = {}
+    if s.get("pairs") is not None:  # y0 and the drift from the Friedel pairs, whether or not the drift was used
+        p = s["pairs"]
+        results.update({"drift_s": p["s"], "drift_c": p["c"], "drift_s_row": p["s_row"], "drift_c_row": p["c_row"],
+                        "drift_err": p["err"], "drift_measured": p["measured"]})  # fmt: skip
+        extra = {"y0_pairs": p["y0"], "y0_pairs_err": p["y0_err"], "drift_range": p["roughness"]["total"],
+                 "drift_ratio": p["roughness"]["ratio"], "drift_jumps": len(p["roughness"]["jumps"])}  # fmt: skip
     if save_model:
         results["model"] = np.asarray(model)
     with h5py.File(out, "w") as h:
         resolved = {"y0": s["Y0"], "voxels": s["NR"], "voxel_size": s["YSTEP"],
-                    "mu": s["MU"] if s["absorb"] is not None else 0.0, **resolved}  # fmt: skip
+                    "mu": s["MU"] if s["absorb"] is not None else 0.0, **extra, **resolved}  # fmt: skip
         write_provenance(h, stage, source, options, resolved, command)
         for k, v in results.items():
             h.create_dataset(k, data=np.asarray(v), compression="lzf" if np.asarray(v).size > 1000 else None)

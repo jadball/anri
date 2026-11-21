@@ -60,6 +60,41 @@ def deviance(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | 
     return 2.0 * total
 
 
+PIXELS_IN_SPOT = 3  # ImageD11's segmentation default (lima_segmenter): pixels per spot above the cut, in one frame
+
+
+@jax.jit
+def _smallest_recorded(H: jax.Array) -> jax.Array:
+    return jnp.min(jnp.where(H > 0, H, jnp.inf))
+
+
+def censor_level(H: ArrayLike, pixels_in_spot: int = PIXELS_IN_SPOT) -> tuple[float, float]:
+    """Return the censoring level of the segmentation, from the data: pixels_in_spot x the smallest recorded pixel.
+
+    ImageD11's segmentation keeps a pixel above its cut only in a spot of at least ``pixels_in_spot`` such pixels in
+    one frame, so a spot holding less than ``pixels_in_spot`` x (cut + 1) counts is never recorded. Pixels are binned
+    whole, so the smallest non-empty bin is one pixel at the cut + 1, monitor-normalised. A spot spread thinner (a
+    smeared tail) can hide more: this is the least an empty bin can hide. The segmentation's ``pixels_in_spot`` is
+    not in the sparse file: ImageD11's default unless given.
+
+    Parameters
+    ----------
+    H
+        The histogram stage's per-row histogram
+    pixels_in_spot
+        The segmentation's pixels per spot
+
+    Returns
+    -------
+    censor, smallest
+        Counts per bin (0 if nothing was recorded), and the smallest recorded pixel
+    """
+    smallest = float(_smallest_recorded(jnp.asarray(H)))
+    if not np.isfinite(smallest):
+        return 0.0, 0.0
+    return pixels_in_spot * smallest, smallest
+
+
 def system(
     eta: jax.Array,
     om: jax.Array,

@@ -116,13 +116,41 @@ def reconstruct(H: ArrayLike, n_rings: int, n_e: int, n_o: int, scan: dict, b_o:
     om = scan["om0"] + (np.arange(n_o) + 0.5) * b_o
     dty0, ddty = scan["dty0"], scan.get("ddty")
     if n_o * b_o >= 360.0 - 1e-6:  # a full turn: one projection per direction, both halves joined
+        if ddty is not None:  # the rows where they really were (fly scans, a drift), before the halves are joined
+            sino, ddty = shift_rows(sino, ddty, scan["ystep"]), None
         sino, om, dty0 = stitch_turn(sino, om, scan["y0"], scan["dty0"], scan["ystep"])
-        ddty = None  # the stitched rows are not the scan's: a fly scan's motion within its rows is not followed
     pos = jnp.asarray(recon_positions(nr, scan["ystep"]), jnp.float32)
     k_in, wedge, chi = scan_beam(scan)
     rec = backproject(jnp.asarray(ramp_filter(sino), jnp.float32), jnp.asarray(om, jnp.float32), pos,
                       scan["y0"], dty0, scan["ystep"], ddty, k_in, wedge, chi)  # fmt: skip
     return np.asarray(rec).reshape(nr, nr)
+
+
+def shift_rows(sino: ArrayLike, ddty: ArrayLike, ystep: float) -> np.ndarray:
+    """Resample each projection onto the nominal rows, from where its rows really were.
+
+    Row k at omega bin o was at its nominal dty + ``ddty[k, o]`` (fly scans, a drift: as
+    :func:`anri.index.occupancy.system`); each projection is interpolated linearly at the nominal rows from those
+    positions (held at its ends).
+
+    Parameters
+    ----------
+    sino
+        [n_o, n_rows] projections
+    ddty
+        [n_rows, n_o] each row's offset per omega bin, in the units of dty
+    ystep
+        dty step
+
+    Returns
+    -------
+    np.ndarray
+        [n_o, n_rows]
+    """
+    sino = jnp.asarray(sino, jnp.float32)
+    k = jnp.arange(sino.shape[1], dtype=jnp.float32)
+    x = k[None, :] + jnp.asarray(ddty, jnp.float32).T / ystep  # [n_o, n_rows] where each row really was, in rows
+    return np.asarray(jax.vmap(lambda xo, so: jnp.interp(k, xo, so))(x, sino))
 
 
 def stitch_turn(sino: ArrayLike, om: ArrayLike, y0: float, dty0: float, ystep: float) -> tuple:

@@ -41,8 +41,8 @@ Read options and signatures from the installed code, never from memory: `python 
 
 1. **Ask the human what the data files do not record**: the focusing optics (Al CRLs or Si nanolenses), the energy,
    any overfocusing, the beam's FWHM across dty against the dty step, the station (NSCOPE or TDXRD), the
-   segmentation cut, and the monitor counter. They set `--beam`, `--censor` and `--monitor`, and what a peak width
-   means. Never guess them.
+   segmentation's pixels per spot, and the monitor counter. They set `--beam`, `--censor` and `--monitor`, and what
+   a peak width means. Never guess them.
 2. **Never assume the microstructure.** Maps can come from phantoms, simulations or experiments: sharp boundaries,
    twins, deformation cells, several phases. If a step you plan relies on smoothness or on one orientation per
    grain, ask first.

@@ -394,6 +394,16 @@ class TestOccupancy(unittest.TestCase):
         self.assertAlmostEqual(float(ix.occupancy.deviance(d, mu, 0.0)), plain, places=4)
         self.assertAlmostEqual(float(ix.occupancy.deviance(d, mu, 5.0)), plain - 2 * (1.0 + 5.0), places=4)
 
+    def test_censor_level(self):
+        # pixels of 2 counts and up (cut 1), monitor-normalised by 0.95: the smallest bin is one pixel
+        H = np.zeros((3, 4, 5), np.float32)
+        H[0, 1, 2], H[2, 3, 4], H[1, 0, 0] = 2 * 0.95, 7.0, 40.0
+        censor, smallest = ix.occupancy.censor_level(H)
+        self.assertAlmostEqual(smallest, 1.9, places=5)
+        self.assertAlmostEqual(censor, 3 * 1.9, places=5)
+        self.assertAlmostEqual(ix.occupancy.censor_level(H, pixels_in_spot=5)[0], 5 * 1.9, places=5)
+        self.assertEqual(ix.occupancy.censor_level(np.zeros(4, np.float32)), (0.0, 0.0))
+
     def test_masks(self):
         yy, xx = np.indices((41, 41))
         disk = ((yy - 20) ** 2 + (xx - 20) ** 2 <= 12**2).astype(float)
@@ -808,26 +818,59 @@ class TestHalfScanReconstruction(unittest.TestCase):
         self.assertLess(np.abs(rec[r > 23]).mean() / inner.mean(), 0.15)  # air: a filtered edge rings a little
 
 
-class TestY0FromOverlap(unittest.TestCase):
-    def test_half_scan(self):
-        """A half-sample scan 5 um past the axis over a full turn: y0 from the rows measured twice."""
-        y0, step = 0.3, 0.25
-        dty = np.arange(-20.0, 5.0 + 1e-9, step)
-        om = (np.arange(720) + 0.5) * 0.5
-        rng = np.random.default_rng(0)
-        pts = np.r_[rng.uniform(-1, 1, (400, 2)) * 15, [[3.0, -2.0], [-6.0, 4.0]]]  # a sample and two bright blobs
-        wts = np.r_[np.ones(400), 30.0, 20.0]
-        lab_y = np.sin(np.radians(om))[:, None] * pts[:, 0] + np.cos(np.radians(om))[:, None] * pts[:, 1]  # [o, p]
-        at = y0 - lab_y  # each point's dty at each omega
-        sino = (wts * np.exp(-0.5 * ((dty[None, :, None] - at[:, None, :]) / 0.3) ** 2)).sum(2)
-        scan = {"dty0": dty[0], "ystep": step, "n_rows": len(dty), "om0": 0.0}
-        d = {"scan": scan, "H_sino": sino, "sino_omega_step": 0.5}
-        out = ix.diagnostics.y0_from_overlap(d, 0.0)
-        self.assertAlmostEqual(out["y0_median"], y0, delta=0.02 * step)
-        self.assertLess(out["spread"], 0.05 * step)
-        self.assertAlmostEqual(out["overlap"], 5.0)
-        with self.assertRaises(ValueError):  # half a turn: nothing measured twice
-            ix.diagnostics.y0_from_overlap({**d, "H_sino": sino[:360]}, 0.0)
+class TestDrift(unittest.TestCase):
+    @staticmethod
+    def _render(ddty, y0, dty, seed=0):
+        """Points with 4 reflections and their Friedel mates (180 - eta, omega + 180), each row at its dty + ddty."""
+        rng = np.random.default_rng(seed)
+        n_e, n_o, n_k = 360, 360, len(dty)
+        om = np.radians(-180.0 + np.arange(n_o) + 0.5)
+        H = np.zeros((1, n_e, n_o, n_k))
+        pts = rng.uniform(-5, 5, (600, 2))
+        for x, y in pts[np.hypot(*pts.T) < 5]:
+            for _ in range(4):
+                ie, io, inten = rng.integers(n_e), rng.integers(n_o // 2), rng.uniform(50, 500)
+                for e, o in ((ie, io), ((n_e // 2 - 1 - ie) % n_e, io + n_o // 2)):
+                    at = y0 - (np.sin(om[o]) * x + np.cos(om[o]) * y)  # the point's dty
+                    w = np.exp(-0.5 * ((dty + ddty[:, o] - at) / 0.16) ** 2)  # each row where it really was
+                    H[0, e, o] += inten * w / w.sum()
+        scan = {"n_e": 2 * n_e, "n_o": 4 * n_o, "n_rows": n_k, "om0": -180.0, "dty0": dty[0], "ystep": dty[1] - dty[0]}
+        return rng.poisson(H).astype(np.float32).ravel(), scan
+
+    def test_friedel_pairs(self):
+        """y0 and the drift's part odd about row y0's time from the Friedel pairs; a slip is flagged at both ends."""
+        y0, dty = 0.13, np.arange(-6.4, 6.4 + 1e-9, 0.2)
+        s_t, c_t = -0.004 * (dty - y0), 0.01 * (dty - y0) + np.where(dty > 3.0, 0.1, 0.0)
+        om = np.radians(-180.0 + np.arange(360) + 0.5)
+        ddty = s_t[:, None] * np.sin(om) + c_t[:, None] * np.cos(om)
+        H, scan = self._render(ddty, y0, dty)
+        p = ix.drift.from_pairs(ix.drift.friedel_shifts(H, 1, scan, 0.0, 0.13), 0.0)
+        self.assertAlmostEqual(p["y0"], y0, delta=0.005)
+
+        def odd(v):  # the part odd about row y0's time, as the pairs see it
+            return 0.5 * (v - np.interp(2 * y0 - dty, dty, v))
+
+        use = p["measured"] & (np.abs(dty - y0) < 4.5)
+        err = np.median(p["err"][use])
+        for est, true in ((p["s"], s_t), (p["c"], c_t)):
+            far = use & (np.abs(np.abs(dty - y0) - 2.9) > 0.5)  # away from the slip, which the pairs spread over 2 rows
+            self.assertLess(np.sqrt(np.mean((est[far] - odd(true)[far]) ** 2)), 2 * err)
+        rough = ix.drift.roughness(p["s"], p["c"], p["err"], p["measured"])
+        jumps = dty[rough["jumps"]]
+        self.assertTrue(np.any(np.abs(jumps - 3.0) < 0.5) and np.any(np.abs(jumps - (2 * y0 - 3.0)) < 0.5), jumps)
+        self.assertTrue(np.all(np.abs(np.abs(jumps - y0) - 2.9) < 0.6), jumps)  # nowhere else
+        # with the drift known (a fly scan's offsets, scan["ddty"]), nothing remains
+        q = ix.drift.friedel_shifts(H, 1, {**scan, "ddty": ddty}, y0, 0.13)
+        self.assertTrue(np.all(np.abs(q["coef"][far]) < 5 * q["err"][far]))
+        # the projections resampled onto the nominal rows, from where the rows really were
+        smooth = (0.01 * (dty - y0))[:, None] * np.cos(om)  # [row, omega], up to 1/3 of a row
+        prof = np.exp(-0.5 * ((dty[None, :] + smooth.T - 1.0) / 0.5) ** 2)  # [omega, row], a blob at dty 1
+        back = ix.mask.shift_rows(prof, smooth, 0.2)
+        want = np.exp(-0.5 * ((dty[10:-10] - 1.0) / 0.5) ** 2)
+        np.testing.assert_allclose(back[:, 10:-10], np.broadcast_to(want, back[:, 10:-10].shape), atol=0.02)
+        with self.assertRaises(ValueError):  # half a turn: no pairs
+            ix.drift.friedel_shifts(H.reshape(1, 360, 360, -1)[:, :, :170].ravel(), 1, {**scan, "n_o": 4 * 170}, y0,
+                                    0.13)  # fmt: skip
 
 
 class TestDatasetGroups(unittest.TestCase):

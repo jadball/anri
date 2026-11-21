@@ -115,9 +115,9 @@ def _keep_option(p: argparse.ArgumentParser) -> None:
 
 
 def _censor_option(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--censor", type=float, default=0.0, help="counts per histogram bin below which an empty bin "
-                   "(every pixel below the segmentation cut) counts as agreeing with the model, in both MLEMs "
-                   "(default 0: empty bins are zeros)")  # fmt: skip
+    p.add_argument("--censor", type=float, help="counts per histogram bin below which an empty bin (every pixel "
+                   "below the segmentation cut) counts as agreeing with the model, in both MLEMs (default: measured, "
+                   "3 pixels per spot x the smallest recorded pixel; 0: empty bins are zeros)")  # fmt: skip
 
 
 def _filter_options(p: argparse.ArgumentParser) -> None:
@@ -131,8 +131,15 @@ def _filter_options(p: argparse.ArgumentParser) -> None:
                    "about 5 sigma)")  # fmt: skip
 
 
+def _y0(v: str) -> float | str:
+    return v if v == "pairs" else float(v)
+
+
 def _fit_options(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--y0", type=float, help="dty where the rotation axis is in the beam (default: the DataSet's y0)")
+    p.add_argument("--y0", type=_y0, help='dty where the rotation axis is in the beam, or "pairs" to measure it from '
+                   "the Friedel pairs of a full turn (default: the DataSet's y0)")  # fmt: skip
+    p.add_argument("--drift", choices=["pairs"], help="follow the sample's drift against the rotation axis, measured per "
+                   "dty row from the Friedel pairs and smoothed over 31 rows (default: none)")  # fmt: skip
     p.add_argument(
         "--iter",
         dest="n_iter",
@@ -316,7 +323,7 @@ def main() -> None:
         source = ix.stages.stage_filter(source, out, prune=args.prune, min_comp=args.min_comp, min_lr=args.min_lr,
                                  keep=args.keep, censor=args.censor, command=command, log=log)  # fmt: skip
     if cmd in ("fit", "run"):
-        source = ix.stages.stage_fit(source, out, y0=args.y0, cand=args.cand, n_iter=args.n_iter,
+        source = ix.stages.stage_fit(source, out, y0=args.y0, drift=args.drift, cand=args.cand, n_iter=args.n_iter,
                               refine_to=args.refine_to, levels=args.levels, min_share=args.min_share,
                               per_voxel=args.per_voxel, beam=args.beam, mask=args.mask, pad=args.pad, absorption=not args.no_absorption, mu=args.mu, block_gb=args.block_gb, censor=args.censor,
                               command=command, log=log)  # fmt: skip

@@ -167,7 +167,7 @@ def plot_y0(fig: Figure, edges: dict, recon: Callable, y0: float, scan: dict) ->
     recon
         ``recon(y0)``: the back-projection for that y0, e.g. :func:`anri.index.diagnostics.back_projection` on one grid
     y0
-        The starting value (the DataSet's)
+        The starting value (the DataSet's, or the Friedel pairs')
     scan
         The histogram's scan
     """
@@ -190,7 +190,7 @@ def plot_y0(fig: Figure, edges: dict, recon: Callable, y0: float, scan: dict) ->
     n = rec0.shape[0]
     ext = (-n / 2 * scan["ystep"], n / 2 * scan["ystep"]) * 2
     ax[1].imshow(rec0, origin="lower", cmap="gray", vmin=0, vmax=vmax, extent=ext)
-    ax[1].set(title=f"back-projection, y0 = {y0:.6g} (DataSet)", xlabel="voxels (dty units)")
+    ax[1].set(title=f"back-projection, y0 = {y0:.6g} (start)", xlabel="voxels (dty units)")
     im = ax[2].imshow(rec0, origin="lower", cmap="gray", vmin=0, vmax=vmax, extent=ext)
     ax[2].set(xlabel="voxels (dty units)")
 
@@ -202,6 +202,59 @@ def plot_y0(fig: Figure, edges: dict, recon: Callable, y0: float, scan: dict) ->
         return f"y0 {y0:.6g}: from the sample's edges {edges['y0']:.4f}, from the mean dty {edges['y0_mean']:.4f}" + (
             f"; the end rows hold {edges['edge'] * 100:.0f}% of the brightest: the sample may extend past the scan"
             if edges["edge"] > 0.1 else "")  # fmt: skip
+
+    return update
+
+
+def plot_drift(fig: Figure, pairs: dict) -> Callable:
+    """Draw the drift measured from the Friedel pairs against the row (time), and each row's constant (y0).
+
+    Left: the drift's sin and cos parts (``ddty = s sin(omega) + c cos(omega)``), each row's own (thin; rows held from a
+    neighbour faded) and smoothed as the fit takes it (thick), and the rows where it jumps (``update(n_sigma)``). Right: each row's constant term a, whose
+    weighted median gives y0 (y0 = trial - a / 2); a trend with the row would be the stage drifting across the beam.
+
+    Parameters
+    ----------
+    fig
+        A matplotlib figure
+    pairs
+        From :func:`anri.index.drift.measure`
+    """
+    from .drift import roughness
+
+    dty, m = pairs["dty"], pairs["measured"]
+    ax = fig.subplots(1, 2, sharex=True)
+    s_row, c_row = pairs.get("s_row", pairs["s"]), pairs.get("c_row", pairs["c"])
+    for v, v_sm, name, col in (
+        (s_row, pairs["s"], "s (sin ω)", "tab:blue"),
+        (c_row, pairs["c"], "c (cos ω)", "tab:orange"),
+    ):
+        ax[0].plot(dty, np.where(m, v, np.nan), color=col, lw=0.5, alpha=0.5)
+        ax[0].plot(dty, np.where(m, np.nan, v), color=col, lw=0.5, alpha=0.15)
+        ax[0].plot(dty, v_sm, color=col, lw=2, label=f"{name}, the fit's")
+    jumps = ax[0].scatter([], [], marker="v", color="r", zorder=3, label="jump")
+    ax[0].axhline(0, color="0.5", lw=0.5)
+    ax[0].legend(fontsize=8)
+    ax[0].set(xlabel="row dty (rows are measured in turn: time)", ylabel="drift (units of dty)")
+    a, e = pairs["shifts"]["coef"][:, 0], pairs["shifts"]["err"][:, 0]
+    ax[1].errorbar(dty, a, e, fmt=".", ms=2, lw=0.5, color="0.3")
+    a0 = 2 * (pairs["y0_guess"] - pairs["y0"])
+    ax[1].axhline(a0, color="tab:green", lw=1, label=f"y0 = {pairs['y0']:.4f} (trial {pairs['y0_guess']:.4f})")
+    lim = np.nanpercentile(np.abs(a - a0), 98) if np.isfinite(a).any() else 1.0
+    ax[1].set(ylim=(a0 - 2 * lim, a0 + 2 * lim), xlabel="row dty", ylabel="constant a (units of dty)",
+              title="each row's constant: 2 (trial y0 - y0)")  # fmt: skip
+    ax[1].legend(fontsize=8)
+
+    def update(n_sigma: float = 5.0) -> str:
+        r = roughness(s_row, c_row, pairs["err"], m, n_sigma=n_sigma)
+        j = r["jumps"]
+        jumps.set_offsets(np.c_[dty[j], np.maximum(s_row[j], c_row[j])] if len(j) else np.zeros((0, 2)))
+        ax[0].set_title(f"drift: range {r['total']:.3g}, row-to-row change {r['ratio']:.2f} x its noise, "
+                        f"{len(j)} rows jump")  # fmt: skip
+        fig.canvas.draw_idle()
+        return (f"y0 {pairs['y0']:.5g} +- {pairs['y0_err']:.2g}; drift in {m.sum()} rows (median error "
+                f"{np.nanmedian(pairs['err']):.2g}): range {r['total']:.3g}, row-to-row change {r['ratio']:.2f} x its "
+                f"noise (~1: smooth), jumps at dty " + (", ".join(f"{dty[k]:.4g}" for k in j[:20]) or "none"))  # fmt: skip
 
     return update
 
