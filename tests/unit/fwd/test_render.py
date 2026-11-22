@@ -463,6 +463,54 @@ class TestOrientationSpread(unittest.TestCase):
         self.assertLess(b.max() / b.sum(), 0.5)  # the cloud is spread over several rows
         self.assertLess(np.linalg.norm(a - b) / np.linalg.norm(b), 0.08)  # 0.19 with one omega per peak
 
+    def test_isotropic_is_its_covariance(self):
+        """sig_rot = sigma per component and sig_rot = sigma^2 I as a [3, 3] covariance render the same pixels."""
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        omega = (np.floor(omega_c / 0.04) + np.arange(-15, 16)) * 0.04 + 0.02
+        row = make_row(omega, np.zeros_like(omega))
+        base = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        sig = 2e-3
+        a, b = (render_row({**base, "sig_rot": s}, hkl[None], np.ones(1), geom, row, det_shape, window=(31, 17, 17),
+                           min_value=0.0, batch=BATCH) for s in (np.array([sig]), (sig**2 * np.eye(3))[None]))  # fmt: skip
+        for x, y in zip(a[:3], b[:3]):
+            np.testing.assert_allclose(x, y, rtol=1e-12, atol=1e-15)
+
+    def test_anisotropic_matches_rotated_sub_entries(self):
+        """A [3, 3] rotation covariance adds the same to the peak's moments as 400 sub-entries rotated by draws with
+        that covariance (sds 3e-3, 1e-3, 0.3e-3 rad along tilted axes: every element of the peak's covariance changes;
+        off-diagonal entries of the input matter, which an isotropic spread cannot show)."""
+        from scipy.spatial.transform import Rotation
+
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        Q = Rotation.from_rotvec([0.4, -0.7, 0.3]).as_matrix()
+        S = Q @ np.diag(np.array([3e-3, 1e-3, 0.3e-3]) ** 2) @ Q.T
+        omega = (np.floor(omega_c / 0.04) + np.arange(-20, 21)) * 0.04 + 0.02
+        row = make_row(omega, np.zeros_like(omega))
+        win = (41, 21, 21)
+        ubi = entries["ubi"][:1]
+        one = {"ubi": ubi, "pos": np.zeros((1, 3)), "density": np.ones(1), "sig_rot": S[None]}
+        rng = np.random.default_rng(2)
+        rv = rng.multivariate_normal(np.zeros(3), S, size=200)
+        rv = np.concatenate([rv, -rv])  # antithetic pairs
+        R = Rotation.from_rotvec(rv).as_matrix()
+        cloud = {"ubi": ubi[0] @ np.swapaxes(R, -1, -2), "pos": np.zeros((400, 3)), "density": np.full(400, 1 / 400)}
+        # the cloud realises its own covariance (mean exactly zero: antithetic pairs), so the entry is given that one:
+        # what remains is the linearised propagation against exact rotations (second order, ~sigma^2 relative)
+        one_hat = {**one, "sig_rot": (rv.T @ rv / len(rv))[None]}
+        base = {k: v for k, v in one.items() if k != "sig_rot"}
+        res = []
+        for ent in (base, one_hat, cloud):
+            frame, pixel, value, stats = render_row(ent, hkl[None], np.ones(1), geom, row, det_shape, window=win,
+                                                    min_value=0.0, batch=BATCH)  # fmt: skip
+            # light f lost beyond a window ~a sd out changes a covariance by ~f a^2 (a ~ 5: 25 f): f < 1e-5 keeps that
+            # 40x below the 1e-2 compared here (measured: f 7e-8)
+            self.assertLess(1.0 - stats["captured"].min(), 1e-5)
+            res.append(self._moments(frame, pixel, value, omega, det_shape[1]))
+        (_, c0), (_, c1), (_, c2) = res
+        d1, d2 = c1 - c0, c2 - c0
+        self.assertGreater(d2[0, 0], c0[0, 0])  # the spread matters: it more than doubles the omega variance
+        self.assertLess(np.linalg.norm(d1 - d2) / np.linalg.norm(d2), 1e-2)
+
     def test_absent_equals_zero(self):
         """No "sig_rot" and sig_rot = 0 render the same pixels."""
         _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()

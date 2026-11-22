@@ -87,8 +87,11 @@ def _centroid_rotated(
     )
 
 
-# Covariance of (sc, fc, omega) from an entry's intrinsic orientation spread (isotropic, sample frame)
+# Covariance of (sc, fc, omega) from an entry's intrinsic orientation spread (sample frame): isotropic (a diagonal
+# input, one JVP per component), or a full 3 x 3 covariance (any symmetric S: linear in S)
 _propagate_rotation = make_propagator(_centroid_rotated, argnums=(4,), has_aux=True, out_elems=_COV_ELEMS)
+_propagate_rotation_full = make_propagator(_centroid_rotated, argnums=(4,), has_aux=True, diagonal=False,
+                                           out_elems=_COV_ELEMS)  # fmt: skip
 
 
 def _peak_cov(
@@ -102,15 +105,20 @@ def _peak_cov(
 ) -> jax.Array:
     """[6] elements of the (sc, fc, omega) covariance, in the order of _COV_ELEMS.
 
-    sig_rot: the entry's intrinsic orientation spread, the standard deviation of each component of a small
-    sample-frame rotation vector (radians). None (the default) leaves it out entirely, at no cost.
+    sig_rot: the entry's intrinsic orientation spread over a small sample-frame rotation vector: a scalar, the standard
+    deviation of each component (radians, isotropic), or [3, 3], its covariance (radians^2). It enters linearly, as
+    J S J^T. None (the default) leaves it out entirely, at no cost.
     """
     cov_in = jnp.diag(jnp.array([geom["sig_wavelength"], geom["sig_ky"], geom["sig_kz"]]) ** 2)
     zero = jnp.zeros((), ubi.dtype)  # not a Python 0.0: the propagator's primals would be float64 under x64
     cov = _propagate(ubi, pos, hkl, etasign, geom["wavelength"], zero, zero, dty, geom, cov_in)
     if sig_rot is not None:
-        rot_in = jnp.eye(3, dtype=ubi.dtype) * jnp.asarray(sig_rot, ubi.dtype) ** 2
-        cov = cov + _propagate_rotation(ubi, pos, hkl, etasign, jnp.zeros(3, ubi.dtype), dty, geom, rot_in)
+        sig = jnp.asarray(sig_rot, ubi.dtype)
+        if sig.ndim == 2:  # a [3, 3] covariance
+            cov = cov + _propagate_rotation_full(ubi, pos, hkl, etasign, jnp.zeros(3, ubi.dtype), dty, geom, sig)
+        else:  # an isotropic sd
+            rot_in = jnp.eye(3, dtype=ubi.dtype) * sig**2
+            cov = cov + _propagate_rotation(ubi, pos, hkl, etasign, jnp.zeros(3, ubi.dtype), dty, geom, rot_in)
     return cov
 
 
@@ -1085,7 +1093,8 @@ def _phase_jax(entries: dict, hkls: ArrayLike, F2: ArrayLike) -> tuple[dict, jax
     out["pos"] = jnp.asarray(entries["pos"], dtype=dtype)
     out["density"] = jnp.asarray(entries["density"], dtype=dtype)
     if "sig_rot" in entries:  # only when given, so renders without it compile and cost the same as before
-        out["sig_rot"] = jnp.broadcast_to(jnp.asarray(entries["sig_rot"], dtype=dtype), out["pos"].shape[:1])
+        sig = jnp.asarray(entries["sig_rot"], dtype=dtype)  # sd [N] (or a scalar), or covariance [N, 3, 3] (or [3, 3])
+        out["sig_rot"] = jnp.broadcast_to(sig, out["pos"].shape[:1] + ((3, 3) if sig.ndim >= 2 else ()))
     if "optical_depth" in entries:  # likewise: absorption only when asked for (add_absorption)
         out["optical_depth"] = jnp.asarray(entries["optical_depth"], dtype=jnp.float32)
     if "extinction" in entries:  # likewise, per reflection of the phase
@@ -1337,7 +1346,9 @@ def _check_splat(entries: dict) -> None:
         msg = 'splat needs a grain map: entries with "grain" and "grain_ubi" (grain_entries)'
         raise ValueError(msg)
     n_grains = entries["grain_ubi"].shape[0]
-    if "sig_rot" in entries and bool(_varies_in_grain(entries["sig_rot"], entries["grain"], n_grains)):
+    sig = entries.get("sig_rot")
+    cols = [] if sig is None else sig.reshape(sig.shape[0], -1).T  # sd [N] or covariance [N, 3, 3]: each element
+    if any(bool(_varies_in_grain(c, entries["grain"], n_grains)) for c in cols):
         msg = "splat shares one kernel per spot: sig_rot must be the same for every voxel of a grain"
         raise ValueError(msg)
 
@@ -1481,9 +1492,9 @@ def render_row(
         and "density" [N], for map entries of a single phase. A grain map (one orientation per grain, e.g. from DCT)
         gives "grain" [N] (int, each entry's grain) and "grain_ubi" [G, 3, 3] (each grain's UBI) instead of "ubi",
         see :func:`grain_entries`: the same pixels as with "ubi" = grain_ubi[grain], with the peaks that reach the row
-        found per grain first. Optionally "sig_rot" [N] (or a scalar): each entry's
-        intrinsic orientation spread, the standard deviation (radians) of each component of a small sample-frame
-        rotation vector, isotropic. It widens the entry's peaks in omega and on the detector through the same
+        found per grain first. Optionally "sig_rot": each entry's intrinsic orientation spread over a small
+        sample-frame rotation vector, either [N] (or a scalar), the standard deviation (radians) of each component,
+        isotropic, or [N, 3, 3] (or [3, 3]), its covariance (radians^2), anisotropic. It widens the entry's peaks in omega and on the detector through the same
         linearised propagation as the beam's spreads, so it suits spreads up to a few degrees. Widen ``window``
         (pixels) for spreads that move spots by several pixels. Optionally "optical_depth" [N, n_phi]
         (:func:`add_absorption`): absorption along the incoming and diffracted paths, at each frame's omega.

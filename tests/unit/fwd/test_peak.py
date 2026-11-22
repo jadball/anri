@@ -78,9 +78,13 @@ class TestPropagate(unittest.TestCase):
         no_aux = make_propagator(centroid_only, argnums=(1, 4, 6, 7), diagonal=False)
         np.testing.assert_allclose(no_aux(*self.args, cov_in), expected, rtol=1e-10)
 
+        # with out_elems: the selected elements of the full propagation
+        elems = ((0, 0), (1, 1), (0, 1), (1, 2))
+        sel = make_propagator(anri.fwd.box.get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True, diagonal=False,
+                              out_elems=elems)  # fmt: skip
+        np.testing.assert_allclose(sel(*self.args, cov_in), [expected[i, j] for i, j in elems], rtol=1e-10)
+
     def test_errors(self):
-        with self.assertRaises(ValueError):
-            make_propagator(anri.fwd.box.get_centroid_box, argnums=(1,), diagonal=False, diag_out=True)
         nothing = make_propagator(anri.fwd.box.get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True, active_dims=())
         with self.assertRaises(ValueError):
             nothing(*self.args, self.cov_in)

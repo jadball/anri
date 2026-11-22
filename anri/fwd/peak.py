@@ -233,7 +233,9 @@ def make_propagator(
     diagonal
         If ``True`` (default), treat :math:`\mathbf{\Sigma}^{\text{in}}` as diagonal,
         which is what :func:`get_cov_in` produces. Off-diagonal entries of ``cov_in``
-        are then ignored. Set ``False`` for a hand-built correlated input covariance.
+        are then ignored, and its diagonal must be non-negative (its square root is
+        taken). Set ``False`` for a correlated input covariance (any symmetric matrix:
+        the result is linear in it), with or without ``out_elems``.
     diag_out
         If ``True``, return only the diagonal of :math:`\\mathbf{\\Sigma}^{\\text{out}}`,
         i.e. the marginal variances, with shape ``[..., 4]`` instead of ``[..., 4, 4]``.
@@ -308,9 +310,6 @@ def make_propagator(
         out_elems = ((0, 0), (1, 1), (2, 2), (3, 3))
     if out_elems is not None:
         out_elems = tuple((int(i), int(j)) for i, j in out_elems)
-        if not diagonal:
-            msg = "out_elems / diag_out require diagonal=True"
-            raise ValueError(msg)
 
     if not diagonal:
         J_fn = jax.jacfwd(centroid_fn, argnums=argnums, has_aux=has_aux)
@@ -319,7 +318,10 @@ def make_propagator(
             J_out = J_fn(*args[:-1])
             if has_aux:
                 J_out, _ = J_out
-            return propagate_cov(J_out, args[-1])
+            cov = propagate_cov(J_out, args[-1])
+            if out_elems is None:
+                return cov
+            return jnp.stack([cov[..., i, j] for i, j in out_elems], axis=-1)
 
         return _propagate_full
 
