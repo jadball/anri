@@ -68,7 +68,7 @@ def friedel_shifts(H: ArrayLike, n_rings: int, scan: dict, y0: float, etacut: fl
     y0
         Trial y0 (mirrors the rows)
     etacut
-        Only eta bins with |sin(eta)| above this
+        Only eta bins with ``|sin(eta)|`` above this
     n_iter
         Gauss-Newton iterations
     min_frac
