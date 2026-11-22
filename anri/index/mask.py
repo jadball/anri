@@ -435,7 +435,7 @@ def draw_mask(image: ArrayLike, ax: Axes | None = None) -> Callable[[], np.ndarr
         return polygon_mask(image.shape, np.asarray(verts))
 
     # the selector must stay alive as long as the figure
-    get_mask.selector = selector  # ty: ignore[unresolved-attribute]
+    get_mask.selector = selector  # ty: ignore[missing-attribute]
     return get_mask
 
 

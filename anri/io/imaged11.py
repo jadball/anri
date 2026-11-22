@@ -361,7 +361,7 @@ def read_pars_json(parfile: str, phase: str | None = None) -> tuple[dict, str, d
         if len(phases) != 1:
             msg = f"several phases in {parfile}: {list(phases)}; choose one"
             raise ValueError(msg)
-        phase = next(iter(phases))
+        phase = str(next(iter(phases)))
     return read_par(path(pj["geometry"]["file"])), phase, read_par(path(phases[phase]["file"]))
 
 
