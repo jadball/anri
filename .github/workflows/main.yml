@@ -25,9 +25,9 @@ jobs:
     defaults:
       run:
         shell: bash -l {0}
-    # Pushes and PRs test on Ubuntu only. Release tags run the full sweep, with more time for the slow macOS runners.
+    # Pushes and PRs test on Ubuntu only. Release tags run the full sweep.
     # The test step has its own, shorter limit, so that the compile cache is saved even when it runs out of time.
-    timeout-minutes: ${{ startsWith(github.ref, 'refs/tags/') && 40 || 25 }}
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -135,7 +135,7 @@ jobs:
           restore-keys: jax-${{ env.CACHE_PREFIX }}-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: ${{ matrix.task.name }}
-        timeout-minutes: ${{ startsWith(github.ref, 'refs/tags/') && 35 || 20 }}
+        timeout-minutes: 35
         env:
           JAX_COMPILATION_CACHE_DIR: ${{ runner.temp }}/jax-cache
         run: |
