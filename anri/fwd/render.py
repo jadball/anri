@@ -452,6 +452,45 @@ def _sensor_kernel(mu: jax.Array, geom: dict) -> tuple:
     return r - jnp.mean(r), v, u
 
 
+NEWTON_STEPS = 3  # for the inverse distortion (:func:`_undistort`)
+
+
+def _undistort(mu_c: jax.Array, geom: dict) -> tuple:
+    """Return the raw pixel whose corrected position is mu_c, and the inverse of the distortion's Jacobian there.
+
+    geom "spatial" = (dx, dy) [n_slow, n_fast] (:func:`anri.io.imaged11.read_spatial`): the raw pixel (row, col) is at
+    (row + dy, col + dx) on the ideal detector, c(x) = x + d(x). Solves c(x0) = mu_c (NEWTON_STEPS Newton
+    steps: quadratic, and exact in one where the map is affine over the step) with d interpolated bilinearly (affine
+    within each pixel cell), and returns x0 [2] and A^-1 [2, 2], A = I + grad d(x0). A peak's Gaussian on the ideal detector is then, on the raw pixels, centred at x0
+    with its detector block mapped by A^-1 (exact for a map that is affine over the peak's window).
+    """
+    dx, dy = (jnp.asarray(m, mu_c.dtype) for m in geom["spatial"])
+
+    def d(x: jax.Array) -> jax.Array:
+        c = [x[0:1], x[1:2]]
+        return jnp.concatenate([jax.scipy.ndimage.map_coordinates(dy, c, order=1, mode="nearest"),
+                                jax.scipy.ndimage.map_coordinates(dx, c, order=1, mode="nearest")])  # fmt: skip
+
+    def inv_jac(x: jax.Array) -> jax.Array:
+        """(I + grad d(x))^-1, the 2 x 2 inverse by hand (as _sensor_kernel: shard_map in JAX 0.4.30)."""
+        A = jnp.eye(2, dtype=mu_c.dtype) + jax.jacfwd(d)(x)
+        det = A[0, 0] * A[1, 1] - A[0, 1] * A[1, 0]
+        return jnp.stack([jnp.stack([A[1, 1], -A[0, 1]]), jnp.stack([-A[1, 0], A[0, 0]])]) / det
+
+    x = mu_c - d(mu_c)
+    for _ in range(NEWTON_STEPS):  # Newton on x + d(x) = mu_c: exact in one step where the map is affine
+        x = x - inv_jac(x) @ (x + d(x) - mu_c)
+    return x, inv_jac(x)
+
+
+def _map_shape(shape: tuple, T: jax.Array) -> tuple:
+    """Map a peak's (ss, ff, oo, sf, so, fo) detector coordinates by T [2, 2]: T S T^T and T c."""
+    ss, ff, oo, sf, so, fo = shape
+    S = T @ jnp.stack([jnp.stack([ss, sf]), jnp.stack([sf, ff])]) @ T.T
+    c = T @ jnp.stack([so, fo])
+    return (S[0, 0], S[1, 1], oo, S[0, 1], c[0], c[1])
+
+
 def _sensor_cells(
     mu_det: jax.Array,
     mu: jax.Array,
@@ -467,11 +506,19 @@ def _sensor_cells(
     The kernel is a mixture of SENSOR_SLICES Gaussians, each the peak's shifted by r_k u and widened by v_k u u^T on
     the detector, all integrated over one window (that of the whole kernel's covariance). mu_det is the peak's own
     detector position (for the kernel's direction and size); mu is where it is rendered (a splat kernel renders at
-    its tile's origin).
+    its tile's origin). With geom "spatial", both are in corrected (ideal detector) pixels, and the peak is rendered on
+    the raw pixels through :func:`_undistort`.
     """
+    Ainv = None
+    if "spatial" in geom:  # render on the raw pixels: the peak mapped through the inverse distortion
+        x0, Ainv = _undistort(mu_det[:2], geom)
+        mu = jnp.concatenate([mu[:2] + (x0 - mu_det[:2]), mu[2:]])
+        shape = _map_shape(shape, Ainv)
     if "sensor" not in geom:
         return _window_cells(mu, shape, org, row, window, det_shape)
-    r, v, u = _sensor_kernel(mu_det, geom)
+    r, v, u = _sensor_kernel(mu_det, geom)  # on the ideal detector (corrected pixels)
+    if Ainv is not None:
+        u = Ainv @ u  # the kernel's direction in raw pixels (no longer of unit length: r u and v u u^T stay right)
     ss, ff, oo, sf, so, fo = shape
 
     def widened(var: jax.Array) -> tuple:
@@ -1452,7 +1499,10 @@ def render_row(
         and "pol_factor"; optionally "sig_omega", an extra spread of every peak in omega (degrees, default 0),
         "sensor", (attenuation coefficient, thickness) of a thick sensor in the lab's length units (e.g. 1 / um, um):
         each spot smeared outward by where its photons stop (:func:`_sensor_kernel`; the mean shift left to the
-        calibration; SENSOR_SLICES renders of each window), and
+        calibration; SENSOR_SLICES renders of each window),
+        "spatial", (dx, dy) [n_slow, n_fast] detector distortion maps (:func:`anri.io.imaged11.read_spatial`): the
+        peaks are rendered on the raw pixels, each through the local inverse of the distortion (:func:`_undistort`),
+        as a measured detector records them, and
         "psf_mix", ((fraction, sd), ...): a detector point spread that is a mixture of Gaussians (fractions summing
         to 1, sd in pixels), in place of "sig_psf". Rendering is linear in intensity, so each component is rendered
         with its own sd and its share of the intensity, and the pixels summed before ``min_value`` applies. E.g. a

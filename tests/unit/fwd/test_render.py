@@ -9,11 +9,15 @@ import anri.geom
 import anri.maths.rotation
 from anri.diffract.factors import lorentz, polarisation
 from anri.fwd.render import (
+    _VAR_FLOOR,
     _centroid,
     _compact,
     _free_memory,
+    _map_shape,
     _merge,
     _merge_host,
+    _peak_shape,
+    _undistort,
     _valid_from_shards,
     add_absorption,
     check_render,
@@ -295,6 +299,68 @@ class TestSensorDepth(unittest.TestCase):
         _, m1, c1 = self._moments({"sensor": (1.0, 750.0)})  # absorbed within a micron
         np.testing.assert_allclose(m1, m0, atol=1e-6)
         np.testing.assert_allclose(c1, c0, atol=1e-4)
+
+
+class TestSpatialDistortion(unittest.TestCase):
+    """geom "spatial": peaks rendered on the raw pixels of a distorted detector, through the inverse distortion."""
+
+    def _render(self, geom_extra, spatial=None, psf=0.7):
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        one = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
+        omega = (np.floor(omega_c / 0.05) + np.arange(-10, 11)) * 0.05 + 0.025
+        row = make_row(omega, np.zeros_like(omega))
+        g = {**geom, "sig_psf": psf, **geom_extra}
+        if spatial is not None:
+            g["spatial"] = spatial
+        frame, pixel, value, _ = render_row(one, hkl[None], np.ones(1), g, row, det_shape, window=(5, 15, 15),
+                                            min_value=0.0, batch=BATCH)  # fmt: skip
+        return geom, det_shape, frame, pixel, value
+
+    def test_constant_shift_is_a_moved_detector(self):
+        """A constant (dx, dy) renders exactly as the undistorted detector moved by dy s_step + dx f_step."""
+        dx, dy = 0.31, -0.27
+        for extra in ({}, {"sensor": (1.0 / 300.0, 750.0)}):
+            geom, _, f1, p1, v1 = self._render(extra, (np.full((2162, 2068), dx), np.full((2162, 2068), dy)))
+            moved = {"det_origin_lab": geom["det_origin_lab"] + dy * geom["s_step_lab"] + dx * geom["f_step_lab"]}
+            _, _, f0, p0, v0 = self._render({**extra, **moved})
+            np.testing.assert_array_equal(f1, f0)
+            np.testing.assert_array_equal(p1, p0)
+            np.testing.assert_allclose(v1, v0, rtol=1e-9, atol=1e-12 * v0.max())
+
+    def test_affine_map_is_a_skewed_detector(self):
+        """An affine map, c = A x + b, is exactly an undistorted detector with basis s' = A00 s + A10 f,
+        f' = A01 s + A11 f and origin moved by b. The peak's Gaussian on the raw pixels must be that detector's: the same
+        centroid, and the same covariance except the variance floor, which _peak_shape adds in corrected pixels and
+        the map then carries (A^-1 floor A^-T, against the floor itself on the skewed detector). Without a point
+        spread: the psf is a length on the sensor, isotropic in corrected pixels, where the skewed detector would add it
+        isotropic in raw pixels."""
+        _, _, geom, entries, hkl, omega_c = _single_peak_setup()
+        omega = (np.floor(omega_c / 0.05) + np.arange(-10, 11)) * 0.05 + 0.025
+        row = make_row(omega, np.zeros_like(omega))
+        G = np.array([[0.02, 0.01], [-0.012, 0.025]])  # d(slow, fast) per (slow, fast) pixel: large, so a weak
+        d0 = np.array([0.2, -0.3])  # inverse (e.g. fixed-point steps) shows
+        s, f = np.mgrid[0:2162, 0:2068].astype(float)
+        dy = G[0, 0] * (s - 1000) + G[0, 1] * (f - 1000) + d0[0]
+        dx = G[1, 0] * (s - 1000) + G[1, 1] * (f - 1000) + d0[1]
+        A, b = np.eye(2) + G, d0 - G @ np.array([1000.0, 1000.0])
+        S, F = geom["s_step_lab"], geom["f_step_lab"]
+        g0 = {**geom, "sig_psf": 0.0}
+        skewed = {**g0, "s_step_lab": A[0, 0] * S + A[1, 0] * F, "f_step_lab": A[0, 1] * S + A[1, 1] * F,
+                  "det_origin_lab": geom["det_origin_lab"] + b[0] * S + b[1] * F}  # fmt: skip
+
+        def shape(g):
+            mu, sh, _ = _peak_shape(jnp.asarray(entries["ubi"][0]), jnp.zeros(3), jnp.asarray(hkl), 1.0, None, row, g)
+            return np.asarray(mu), sh
+
+        mu_c, sh_c = shape(g0)
+        mu_s, sh_s = shape(skewed)
+        x0, Ainv = _undistort(jnp.asarray(mu_c[:2]), {"spatial": (dx, dy)})
+        np.testing.assert_allclose(np.asarray(x0), mu_s[:2], rtol=0, atol=1e-9)
+        np.testing.assert_allclose(np.asarray(Ainv), np.linalg.inv(A), rtol=0, atol=1e-14)
+        floor = np.diag(_VAR_FLOOR[:2])
+        dfl = np.linalg.inv(A) @ floor @ np.linalg.inv(A).T - floor
+        expect = np.array([float(x) for x in sh_s]) + np.array([dfl[0, 0], dfl[1, 1], 0.0, dfl[0, 1], 0.0, 0.0])
+        np.testing.assert_allclose([float(x) for x in _map_shape(sh_c, Ainv)], expect, rtol=1e-12, atol=1e-15)
 
 
 class TestOmegaSpread(unittest.TestCase):
