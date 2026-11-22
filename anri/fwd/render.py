@@ -442,7 +442,9 @@ def _sensor_kernel(mu: jax.Array, geom: dict) -> tuple:
     cos_phi = jnp.abs(jnp.dot(n, k))
     d = k - jnp.dot(n, k) * n  # the ray's in-plane part, per unit path (length sin(phi))
     A = jnp.stack([s_step, f_step], 1)  # [3, 2]: pixels to lab
-    d_pix = jnp.linalg.solve(A.T @ A, A.T @ d)  # pixels per unit path
+    G, b = A.T @ A, A.T @ d  # pixels per unit path: G d_pix = b, solved by hand (no custom_linear_solve under shard_map
+    det = G[0, 0] * G[1, 1] - G[0, 1] * G[1, 0]  # in JAX 0.4.30, which has no replication rule for it)
+    d_pix = jnp.stack([G[1, 1] * b[0] - G[0, 1] * b[1], G[0, 0] * b[1] - G[1, 0] * b[0]]) / det
     L = jnp.linalg.norm(d_pix)
     u = d_pix / jnp.maximum(L, 1e-12)
     mu_abs, thick = geom["sensor"][0], geom["sensor"][1]
