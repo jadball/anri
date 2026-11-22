@@ -1558,7 +1558,8 @@ def render_row(
             stats["in_range"] = stats_k["in_range"]
 
     # 3. Merge batches and devices: sort by (frame, pixel), sum duplicates, then drop the pixels below min_value
-    frame, pixel, value = _merge_host(*(np.concatenate(x) for x in zip(*parts)), det_shape[0] * det_shape[1])
+    frame, pixel, value = (np.concatenate(x) for x in zip(*parts))
+    frame, pixel, value = _merge_host(frame, pixel, value, det_shape[0] * det_shape[1])
     frame, pixel, value = _at_least(frame, pixel, value, min_value)
     if len(classes) > 1:
         frames = np.asarray(classes)[cls]
