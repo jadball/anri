@@ -726,3 +726,129 @@ def test_runout_harmonics():
     pair = dty(w + sp.pi, x, y, r.subs(w, w + sp.pi)) - (2 * y0 - dty(w, x, y, r))
     even = 2 * sum(c[n - 1] * sp.cos(n * w) + s[n - 1] * sp.sin(n * w) for n in (2, 4))
     assert is_zero(sp.simplify(sp.expand_trig(pair - even)))
+
+
+def test_reflection_lemma():
+    """rf-psf-leak: for a point spread radially non-increasing, a photon arriving at y beyond an edge of cell p (in the
+    half-plane across it) puts at least as much light in the cell q across that edge as in p: reflecting across the
+    edge's line maps p onto q, and for z in p and y across the line |sigma(z) - y| <= |z - y|. Here the line x = 1/2:
+    |sigma z - y|^2 - |z - y|^2 = (1 - 2 z_x)(1 - 2 y_x) <= 0 for z_x <= 1/2 <= y_x."""
+    zx, zy, yx, yy = sp.symbols("z_x z_y y_x y_y", real=True)
+    sig = (1 - zx, zy)
+    diff = (sig[0] - yx) ** 2 + (sig[1] - yy) ** 2 - ((zx - yx) ** 2 + (zy - yy) ** 2)
+    assert is_zero(sp.expand(diff - (1 - 2 * zx) * (1 - 2 * yx)))
+
+
+def test_psf_leak_number():
+    """rf-psf-leak: for a photon arriving anywhere in cell p, an edge neighbour q of a point spread that is a mixture of
+    centred isotropic Gaussians (shares f_c, sds s_c) receives at least
+    l = sum_c f_c [Phi(2 / s_c) - Phi(1 / s_c)] [Phi(1 / s_c) - 1/2]: each Gaussian's mass factorises, the mass across
+    the edge over [1/2 - y, 3/2 - y] grows with y (its derivative phi(1/2 - y) - phi(3/2 - y) >= 0 for y <= 1/2), the
+    mass along it over [-1/2 - y, 1/2 - y] falls with |y| (derivative of opposite sign to y), so the least is at the
+    far corner, y = (-1/2, +-1/2). For the measured point spread (0.25 px, 72 %; 1.3 px, 28 %), l = 0.0124."""
+    y = sp.Symbol("y", real=True)
+    s = sp.Symbol("s", positive=True)
+
+    def Phi(x):
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    across = Phi((sp.Rational(3, 2) - y) / s) - Phi((sp.Rational(1, 2) - y) / s)
+    d_across = sp.diff(across, y)
+    phi = lambda x: sp.exp(-(x**2) / 2) / sp.sqrt(2 * sp.pi)
+    assert is_zero(sp.simplify(d_across - (phi((sp.Rational(1, 2) - y) / s) - phi((sp.Rational(3, 2) - y) / s)) / s))
+    # for y <= 1/2, |1/2 - y| <= |3/2 - y| and phi falls with |x|: the derivative is >= 0
+    along = Phi((sp.Rational(1, 2) - y) / s) - Phi((-sp.Rational(1, 2) - y) / s)
+    d_along = sp.diff(along, y)
+    assert is_zero(sp.simplify(d_along - (phi((-sp.Rational(1, 2) - y) / s) - phi((sp.Rational(1, 2) - y) / s)) / s))
+    corner = (Phi(2 / s) - Phi(1 / s)) * (Phi(1 / s) - sp.Rational(1, 2))
+    assert is_zero(sp.simplify(corner - across.subs(y, -sp.Rational(1, 2)) * along.subs(y, sp.Rational(1, 2))))
+    ell = sp.Rational(72, 100) * corner.subs(s, sp.Rational(1, 4)) + sp.Rational(28, 100) * corner.subs(
+        s, sp.Rational(13, 10)
+    )
+    assert rounds_to(ell, "0.0124")
+
+
+def test_group_rule_psf_bound():
+    """rf-group-psf: with every edge neighbour receiving >= l of each photon arriving in p and, by the reflection
+    lemma, some edge neighbour receiving >= its share in p of each photon arriving outside p, the edge neighbours of p
+    hold >= l lambda_p together (l < 1); likewise the edge neighbours of a pair {p, q} (6 cells) hold >= min(l, 1/2)
+    of the pair's light. The largest of n cells holds at least their mean, and P(Poisson(mu) <= c) falls in mu, so
+    1 - w_p <= P(n <= c | l lambda_p / 4) + 8 P(n <= c | l lambda_p / 6) <= 9 P(n <= c | l lambda_p / 6), and the
+    group rule's loss in a cell is at most 9 lambda P(n <= c | l lambda / 6) <= (54 / l) kappa, kappa = max mu P(n <= c)
+    (0.840 at c = 1): 3.6e3 photons per cell for the measured point spread."""
+    mu, lam, ell = sp.symbols("mu lambda ell", positive=True)
+    c = 1
+    Q = sum(sp.exp(-mu) * mu**j / sp.factorial(j) for j in range(c + 1))
+    assert is_zero(sp.simplify(sp.diff(Q, mu) + sp.exp(-mu) * mu**c / sp.factorial(c)))  # falls in mu
+    # lambda Q(l lambda / 6) = (6 / l) mu Q(mu) at mu = l lambda / 6: its maximum is (6 / l) kappa
+    assert is_zero(sp.simplify(lam * Q.subs(mu, ell * lam / 6) - (6 / ell) * (mu * Q).subs(mu, ell * lam / 6)))
+    phi = (1 + sp.sqrt(5)) / 2
+    kappa = (mu * Q).subs(mu, phi)
+    assert rounds_to(kappa, "0.840")
+    lval = sp.Rational(72, 100) * (sp.erf(2 / sp.sqrt(2) * 4) - sp.erf(4 / sp.sqrt(2))) / 2 * sp.erf(
+        4 / sp.sqrt(2)
+    ) / 2 + sp.Rational(28, 100) * (sp.erf(2 / sp.sqrt(2) / sp.Rational(13, 10)) - sp.erf(
+        1 / sp.sqrt(2) / sp.Rational(13, 10))) / 2 * sp.erf(1 / sp.sqrt(2) / sp.Rational(13, 10)) / 2  # fmt: skip
+    assert rounds_to(54 * kappa / lval / 1000, "3.6")
+
+
+def test_weight_lemma():
+    """rf-weight-bound: a per-photon weight known only to a factor e^a, |a| <= G r (its log's gradient G times the
+    distance r between where it is evaluated and where the photon is), changes each photon's weight by e^a - 1, and
+    |e^a - 1| <= e^{|a|} - 1 (equal for a >= 0; for a < 0 the gap is 2 (cosh a - 1) >= 0). So a first moment about the
+    population's mean is off by at most (e^{G r} - 1) times the light's mean absolute deviation."""
+    a = sp.Symbol("a", negative=True)
+    gap = (sp.exp(-a) - 1) - (1 - sp.exp(a))
+    assert is_zero(sp.simplify(gap - 2 * (sp.cosh(a) - 1)))
+
+
+def test_parallax_angle():
+    """rf-parallax: a photon from x_v reaching the detector at X is seen from the origin turned by an angle alpha with
+    sin(alpha) = |(X - x_v) x X| / (|X - x_v| |X|) = |x_v x X| / (|X - x_v| |X|) <= |x_v| / (|X| - |x_v|)."""
+    X = sp.Matrix(sp.symbols("X0:3", real=True))
+    v = sp.Matrix(sp.symbols("v0:3", real=True))
+    assert is_zero((X - v).cross(X) + v.cross(X))
+
+
+def test_box_margin_exact():
+    """rf-box-margin-exact: along the rotation exp(t [d]x), t in [0, 1], the spot moves at the rates of
+    dif-rotation-motion evaluated where it is, |d eta / dt| <= e J(|sin eta|), J(s) = sqrt(1 + tan^2 theta / s^2)
+    < 1 + tan theta / s. With s* the larger root of s = s0 - e (1 + tan theta / s), |sin eta| stays above s* for all t
+    (at a first touch, |sin eta| >= s0 - e J(s*) > s*), so |d omega| <= e / s* and |d eta| <= e J(s*), exactly; to
+    second order e / s* = e / s0 + e^2 (s0 + tan theta) / s0^3. A strain eps (operator norm) turns g by an angle with
+    sin <= |eps| / (1 - |eps|), since (I + eps) u x u = eps u x u, and changes |g| by a factor in [1 - |eps|, 1 + |eps|]."""
+    s, s0, e, T = sp.symbols("s s_0 e T", positive=True)  # T = tan theta
+    roots = sp.solve(sp.Eq(s, s0 - e * (1 + T / s)), s)
+    big = (s0 - e + sp.sqrt((s0 - e) ** 2 - 4 * e * T)) / 2
+    assert any(is_zero(sp.simplify(r - big)) for r in roots)
+    assert is_zero(sp.simplify(big - (s0 - e * (1 + T / big))))
+    J = sp.sqrt(1 + T**2 / s**2)
+    assert is_zero(sp.simplify((1 + T / s) ** 2 - J**2 - 2 * T / s))  # J^2 < (1 + T/s)^2
+    ser = sp.series(e / big, e, 0, 3).removeO()
+    assert is_zero(sp.simplify(ser - (e / s0 + e**2 * (s0 + T) / s0**3)))
+    u = sp.Matrix(sp.symbols("u0:3", real=True))
+    E = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"E_{min(i, j)}{max(i, j)}"))
+    assert is_zero(((sp.eye(3) + E) * u).cross(u) - (E * u).cross(u))
+
+
+def test_group_rule_numbers():
+    """rf-group-psf's numbers: the bound peaks at lambda = 6 phi / l = 781 (about 800) for l = 0.0124; a photon at a
+    pixel's centre puts 0.0346 of itself in each edge neighbour (2.8 l, about three times), and parallax of 100 um at
+    180 mm is sin(alpha) <= 100 / (180000 - 100) = 5.6e-4."""
+
+    def Phi(x):
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    def corner(s):
+        return (Phi(2 / s) - Phi(1 / s)) * (Phi(1 / s) - sp.Rational(1, 2))
+
+    def centre(s):
+        return (Phi(sp.Rational(3, 2) / s) - Phi(sp.Rational(1, 2) / s)) * (2 * Phi(sp.Rational(1, 2) / s) - 1)
+
+    f = [(sp.Rational(72, 100), sp.Rational(1, 4)), (sp.Rational(28, 100), sp.Rational(13, 10))]
+    ell = sum(w * corner(s) for w, s in f)
+    mid = sum(w * centre(s) for w, s in f)
+    phi = (1 + sp.sqrt(5)) / 2
+    assert rounds_to(6 * phi / ell, "781")
+    assert rounds_to(mid, "0.0346") and rounds_to(mid / ell, "2.8")
+    assert rounds_to(sp.Rational(100, 180000 - 100) * 10**4, "5.6")

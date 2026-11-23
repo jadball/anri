@@ -238,10 +238,23 @@ spread (a core of 0.25 px holding 72 %, a wing of 1.3 px). A feature's first-ord
 **Proof:** ``tests/theory/test_refiner.py::test_alias_bound_any_spot`` (the bound; asymmetric spots, the point spread
 convolved with exponentials of either sign, against their cells' masses).
 
-In omega there is no factor like (A5) unless the beam's angular spread is measured as one: a peak inside one frame
-is placed within it only to :math:`\pm h/2`. This is the bound of :eq:`det-crlb`: without a shape, a cell's content
-says nothing of where in the cell its light fell. It does not touch :math:`|\vec{g}|^2` (:eq:`rf-invariant`), only the
-orientation about the rotation axis.
+In omega, a bound like :eq:`rf-alias-bound` would need a factor common to every peak's omega profile: the
+instrument's own omega kernel (horizontal and vertical convergence, bandwidth, the axis' wobble), measured as a
+distribution. Those terms do convolve independently with the sample's spread, but each depends on :math:`\eta`
+and :math:`\theta` (:eq:`ps-omega`), and they are known only roughly. A model of them would be a model of what widens
+peaks in omega: exactly what this refiner does not trust, and what earlier refiners absorbed into spreads. Anri's
+choice, proposed here, is not to model them. The binning in omega then costs, per reflection:
+
+- at most :math:`h/2` in the rotation about the axis, for any peak, by :eq:`rf-alias-bound`'s :math:`\min(\tfrac{1}{2},
+  \cdot)` in frames. It is the content of :eq:`det-crlb`: without a shape, a cell's content says nothing of where in
+  the cell its light fell;
+- nothing in :math:`|\vec{g}|^2`, at any width (:eq:`rf-invariant`);
+- nothing in the rotations that move a peak along the ring (:math:`\eta`) or across it.
+
+Over :math:`M` reflections whose sub-frame positions are independent and uniform, the per-reflection errors have mean
+0 and rms at most :math:`h/\sqrt{12}` (:eq:`rec-sheppard`), so a voxel's rotation about the axis is off by
+:math:`h/\sqrt{12M}` in rms. The worst case stays :math:`h/2`: the positions are set by the geometry, not drawn. The
+bound enters :math:`\bar\Delta` (:eq:`rf-linear`) for the omega features only, and is reported, not fitted away.
 
 The cut
 -------
@@ -303,12 +316,50 @@ group rule's loss is then :math:`e_p(1 - w_p)` per cell (:eq:`mom-deficit`).
 through :func:`anri.io.imaged11.segment`; the derivative; the number; and the lone pair).
 
 Without a bound on the neighbours' light there is none on the loss: two adjacent bright pixels with dark
-neighbours are removed whole at :math:`m = 3`, however bright. (A5) rules such spots out only as far as the point
-spread puts light in the neighbours: a pixel whose neighbours each get at least a share :math:`q` of its light meets
-:eq:`rf-group`'s condition once it holds :math:`3/q` photons. The share :math:`q` is the point spread's, and is not
-derived here. Spots fainter than that, and compact, are the regime of :doc:`recording`'s table of compact spots.
-There the group rule's loss depends on the light's position within its pixel, and this refiner can only report the
-bound, not correct it.
+neighbours are removed whole at :math:`m = 3`, however bright. (A5) rules such spots out, with one more property of
+the point spread: that it is radially non-increasing, as a mixture of centred Gaussians is. Two facts follow.
+
+**Leak inside a cell.** For a photon arriving anywhere in cell :math:`p`, each edge neighbour receives at least
+
+.. math::
+    :label: rf-psf-leak
+
+    \ell = \sum_c f_c\left[\Phi(2/s_c) - \Phi(1/s_c)\right]\left[\Phi(1/s_c) - \tfrac{1}{2}\right]
+
+of it (components of share :math:`f_c` and sd :math:`s_c`, in pixels). Each component's mass factorises; the mass
+across the edge grows as the photon nears it; the mass along the edge falls as the photon leaves the middle. So the
+least is at the far corner. For the measured point spread, :math:`\ell = 0.0124`.
+
+**Reflection outside a cell.** A photon arriving beyond an edge of :math:`p` puts at least as much light in the cell
+across that edge as in :math:`p`. Reflecting across the edge's line maps :math:`p` onto that cell and brings every
+point of :math:`p` closer to the photon.
+
+**Proof:** ``tests/theory/test_refiner.py::test_psf_leak_number`` (the monotonicities and the number),
+``tests/theory/test_refiner.py::test_reflection_lemma``
+
+Together, whatever the light arriving on the detector, the four edge neighbours of a cell hold at least
+:math:`\ell\lambda_p`, and those of a pair of cells (six) at least :math:`\min(\ell, \tfrac{1}{2})` of the pair's
+light. The largest of :math:`n` cells holds at least their mean, and :math:`P(n \le c)` falls with the light. So a cell
+is in a group smaller than 3 with probability
+
+.. math::
+    :label: rf-group-psf
+
+    1 - w_p \le 9\, P\big(n \le c \mid \ell\lambda_p/6\big), \qquad
+    e_p(1 - w_p) \le 9\lambda_p P\big(n \le c \mid \ell\lambda_p/6\big) \le \frac{54\,\kappa_{c+1}}{\ell},
+
+for any spot. The first term is the cell alone, the other eight the cell with one kept neighbour. The constant is
+:math:`3.6 \times 10^3` photons per cell for the measured point spread, reached near :math:`\lambda_p \approx
+800`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_group_rule_psf_bound``
+
+The bound is rigorous and weak. It takes every photon at the worst place in its cell (the corner), every neighbour
+at its least, and a union over eight pairs. A spot centred on a pixel leaks about three times :math:`\ell` into each
+neighbour, and :doc:`recording`'s table shows such spots kept above about 100 photons. Only a model of where in the
+cell the light falls would close the gap, and that is a shape. The page's own conclusion stands: in faint compact
+spots the group rule's loss is bounded, not known. :eq:`rf-group-psf` puts it in :math:`\bar\Delta` as the
+worst case; :eq:`rf-group` is the sharper bound wherever the neighbours' recorded light shows them bright.
 
 Noise and error bars
 --------------------
@@ -469,8 +520,9 @@ One linear solve, and its split
 :math:`\vec{Y}`. Iterating them is unnecessary if the first boxes already hold the light. The indexer's orientation
 is within a rotation :math:`|\vec{\delta}| \le e` of a population's mean (:doc:`localsearch` gives :math:`e` per
 level). A rotation moves a spot by :math:`\Delta\omega = \vec{j}_\omega\cdot\vec{\delta}` and :math:`\Delta\eta =
-\vec{j}_\eta\cdot\vec{\delta}` (:eq:`dif-rotation-motion`), and a strain :math:`|\varepsilon| \le
-\varepsilon_{\max}` moves it in :math:`2\theta` only. So, by Cauchy-Schwarz,
+\vec{j}_\eta\cdot\vec{\delta}` (:eq:`dif-rotation-motion`). A strain :math:`|\varepsilon| \le
+\varepsilon_{\max}` changes :math:`2\theta`, and also turns :math:`\vec{g}` by up to about :math:`\varepsilon_{\max}`
+(:eq:`rf-box-margin-exact`), which adds to :math:`e`. So, by Cauchy-Schwarz,
 
 .. math::
     :label: rf-box-margin
@@ -486,6 +538,29 @@ that is.
 **Proof:** ``tests/theory/test_refiner.py::test_box_margin`` (the lengths of :math:`\vec{j}`; Cauchy-Schwarz as
 :math:`|\vec{j}|^2|\vec{\delta}|^2 - (\vec{j}\cdot\vec{\delta})^2 = |\vec{j}\times\vec{\delta}|^2`; Bragg's law
 differentiated).
+
+To all orders, along the rotation :math:`\exp(t[\vec{\delta}]_\times)`, :math:`t \in [0, 1]`, the spot moves at
+:eq:`dif-rotation-motion`'s rates evaluated where it is. With :math:`s_0 = |\sin\eta|` at the start and :math:`s_*`
+the larger root of :math:`s = s_0 - e(1 + \tan\theta/s)`, :math:`|\sin\eta|` stays above :math:`s_*` along the
+whole path. At a first touch it would be at least :math:`s_0 - e\sqrt{1 + \tan^2\theta/s_*^2} > s_*`. So, exactly,
+
+.. math::
+    :label: rf-box-margin-exact
+
+    |\Delta\omega| \le \frac{e}{s_*} = \frac{e}{s_0} + \frac{e^2(s_0 + \tan\theta)}{s_0^3} + O(e^3), \qquad
+    |\Delta\eta| \le e\sqrt{1 + \frac{\tan^2\theta}{s_*^2}};
+    \qquad
+    \sin\angle\big((\matr{I} + \varepsilon)\vec{u}, \vec{u}\big) \le \frac{\|\varepsilon\|}{1 - \|\varepsilon\|},
+    \quad \frac{|(\matr{I} + \varepsilon)\vec{u}|}{|\vec{u}|} \in [1 - \|\varepsilon\|, 1 + \|\varepsilon\|],
+
+for real :math:`s_*` (:math:`(s_0 - e)^2 \ge 4e\tan\theta`). These margins hold for rotations of any size.
+Reflections too close to the axis for a real :math:`s_*` are left out. A strain, of operator norm
+:math:`\|\varepsilon\|`, turns :math:`\vec{g}` by the angle on the right (since :math:`(\matr{I} +
+\varepsilon)\vec{u}\times\vec{u} = \varepsilon\vec{u}\times\vec{u}`), which adds to :math:`e`, and changes
+:math:`|\vec{g}|` within the factors given. This bounds :math:`2\theta` exactly through Bragg's law.
+
+**Proof:** ``tests/theory/test_refiner.py::test_box_margin_exact`` (the root and its expansion; :math:`\sqrt{1 +
+T^2/s^2} < 1 + T/s`; the strain's cross product).
 
 So the regions are fixed once, from the indexer's populations. The estimand is the light within these fixed boxes,
 a fixed linear functional of the light, and :eq:`rf-linear` is one linear system, solved once. The price is box size:
@@ -809,6 +884,48 @@ they are told apart where the reflections that separate them span three dimensio
 different voxels is merged and is a tomography. So the one linear system of :eq:`rf-linear` has a block of unknowns
 per (voxel, occupied bin). How many are occupied, and so the system's size, is the indexer's to say.
 
+Remainders
+----------
+
+Three effects were stated in size only: the per-cell :math:`LP` division (evaluated at the cell, not at the photon),
+absorption's variation within a spot, and parallax. Each is now bounded.
+
+**A weight known to a factor.** If a photon's weight is used as :math:`w e^{a}` instead of :math:`w`, with
+:math:`|a| \le G r` (the log-weight's gradient :math:`G` times the distance :math:`r` between where the weight is
+evaluated and where it should be), then each photon's weight is off by :math:`e^a - 1`, and
+
+.. math::
+    :label: rf-weight-bound
+
+    |e^a - 1| \le e^{|a|} - 1 \ \Rightarrow\
+    \Big|\sum_p \lambda_p (e^{a_p} - 1)(x_p - m)\Big| \le (e^{Gr} - 1)\sum_p \lambda_p |x_p - m|:
+
+a first moment about the population's mean is off by at most :math:`e^{Gr} - 1` of the light's mean absolute
+deviation, for any light. For :math:`LP`, :math:`r` is the cell's half-diagonal and :math:`G` the gradient of
+:math:`\log(LP)` in pixels: with :math:`\log L = -\log\sin 2\theta - \log|\sin\eta|`, it is :math:`|\cot\eta|`
+per radian of :math:`\eta` and :math:`2|\cot 2\theta|` per radian of :math:`2\theta`, times the radians a pixel
+spans. For absorption, :math:`r` is the spot's angular extent and :math:`G` the derivative of :math:`\mu\ell` with
+the diffracted direction. That one is known per voxel, and can enter linearly through :math:`\matr{Y}^{(2)}` instead.
+
+**Proof:** ``tests/theory/test_refiner.py::test_weight_lemma`` (:math:`e^{-a} - 1 - (1 - e^{a}) = 2(\cosh a - 1)`).
+
+**Parallax.** A photon from :math:`\vec{x}_v` reaching the detector at :math:`\vec{X}` is seen from the origin
+turned by
+
+.. math::
+    :label: rf-parallax
+
+    \sin\alpha = \frac{|\vec{x}_v \times \vec{X}|}{|\vec{X} - \vec{x}_v|\,|\vec{X}|}
+    \le \frac{|\vec{x}_v|}{|\vec{X}| - |\vec{x}_v|},
+
+since :math:`(\vec{X} - \vec{x}_v)\times\vec{X} = -\vec{x}_v\times\vec{X}`. The map :math:`\Pi_v` is known for each
+voxel. Its expansion to second order about :math:`\vec{g}_0`, with :math:`\matr{Y}^{(1)}` and :math:`\matr{Y}^{(2)}`,
+leaves a Taylor remainder of third order. That remainder is at most a sixth of the third derivatives of
+:math:`f\circ\Pi_v` times the third absolute moment of :math:`\vec{g} - \vec{g}_0`, and those derivatives are of
+order :math:`\sin\alpha` (:math:`5.6 \times 10^{-4}` for 100 µm at 180 mm).
+
+**Proof:** ``tests/theory/test_refiner.py::test_parallax_angle``
+
 The guarantee
 -------------
 
@@ -841,16 +958,17 @@ What it costs, against :doc:`limits`:
 What is left out
 ----------------
 
-- **Second-order remainders** of the per-cell :math:`LP` division, the detector displacement's common term and
-  parallax: stated in size, not bounded rigorously.
+- **The detector displacement's common term** (:eq:`rf-instrument`) is stated, not bounded; it is common to every
+  population at one place on the detector.
+- **Parallax's third derivatives** are of order :math:`\sin\alpha` (:eq:`rf-parallax`) but not written out.
 - **The box half-widths**: their trade between :eq:`rf-cut-bound` and :eq:`ref-tail` is not optimised here, and the
   indexer gives only an isotropic spread per population (:doc:`populations`), so :eq:`rf-arc-box` needs an
   anisotropic :math:`\matr{S}` the indexer does not yet report.
-- **Absorption's variation within a spot** enters through :math:`\matr{Y}^{(2)}` (above); its coefficient is not
-  written out.
-- **A bound in omega** needs the beam's angular spread as a factor of every spot's omega profile, as (A5) is for
-  the detector; it is not established.
-- **The box margins** are first order in :math:`e`, as :eq:`dif-rotation-motion` is.
+- **Absorption's variation within a spot** is bounded by :eq:`rf-weight-bound`; its exact coefficient through
+  :math:`\matr{Y}^{(2)}` is not written out.
+- **Omega binning** is bounded at :math:`h/2` per reflection, not modelled (the choice proposed above).
+- **The group rule's bound** (:eq:`rf-group-psf`) is rigorous but weak; a sharper one needs where in a cell the light
+  falls.
 - **The precision** :math:`\epsilon` and confidence :math:`z` of :eq:`rf-smin` are the maintainer's to set.
 - **The system's size** with sub-populations per bin (:eq:`rf-bin-moments`) is set by how many bins each voxel
   lights; its cost is not estimated here.
