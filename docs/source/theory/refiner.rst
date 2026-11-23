@@ -462,6 +462,122 @@ the first moments, and its bias is the dislocation density threading the slice t
 recovers the weak combinations; each makes their error known. Separated populations are not affected: alone in their
 regions, they are seen in every reflection with all nine numbers (:doc:`limits`), with no tomography to weaken them.
 
+One linear solve, and its split
+-------------------------------
+
+**Boxes from the indexer are complete at once.** The regions depend on where the spots are, and so on
+:math:`\vec{Y}`. Iterating them is unnecessary if the first boxes already hold the light. The indexer's orientation
+is within a rotation :math:`|\vec{\delta}| \le e` of a population's mean (:doc:`localsearch` gives :math:`e` per
+level). A rotation moves a spot by :math:`\Delta\omega = \vec{j}_\omega\cdot\vec{\delta}` and :math:`\Delta\eta =
+\vec{j}_\eta\cdot\vec{\delta}` (:eq:`dif-rotation-motion`), and a strain :math:`|\varepsilon| \le
+\varepsilon_{\max}` moves it in :math:`2\theta` only. So, by Cauchy-Schwarz,
+
+.. math::
+    :label: rf-box-margin
+
+    |\Delta\omega| \le \frac{e}{|\sin\eta|}, \qquad
+    |\Delta\eta| \le e\sqrt{1 + \frac{\tan^2\theta}{\sin^2\eta}}, \qquad
+    |\Delta 2\theta| \le 2\varepsilon_{\max}\tan\theta,
+
+each attained for :math:`\vec{\delta}` along its :math:`\vec{j}`. A box whose half-widths exceed these margins plus
+the light's own extent :math:`t` holds all of the population's light within :math:`t` of its true centre, wherever
+that is.
+
+**Proof:** ``tests/theory/test_refiner.py::test_box_margin`` (the lengths of :math:`\vec{j}`; Cauchy-Schwarz as
+:math:`|\vec{j}|^2|\vec{\delta}|^2 - (\vec{j}\cdot\vec{\delta})^2 = |\vec{j}\times\vec{\delta}|^2`; Bragg's law
+differentiated).
+
+So the regions are fixed once, from the indexer's populations. The estimand is the light within these fixed boxes,
+a fixed linear functional of the light, and :eq:`rf-linear` is one linear system, solved once. The price is box size:
+the omega margin grows as :math:`1/|\sin\eta|`, and with it the cut's bound (:eq:`rf-cut-bound`). This is a second
+reason, beyond :eq:`dif-rotation-motion`'s smearing, for leaving out reflections near the rotation axis.
+
+**What is determined per population.** Write a population's first moment absolutely, :math:`\matr{Z}_k = \int
+\matr{F}\matr{U}_k\matr{B}\, d\mu_k`, so that it adds :math:`\matr{Z}_k\vec{h}` to every region it is in, whatever
+its reference orientation. Two populations of one voxel in the same region of a row then have equal columns there:
+only :math:`\matr{Z}_k + \matr{Z}_{k'}` is seen. Their difference is seen only in the rows where they are in
+different regions, through :math:`(\matr{Z}_k - \matr{Z}_{k'})\vec{h}` for those reflections, and
+
+.. math::
+    :label: rf-identify
+
+    \matr{Z} = [\matr{Z}\vec{h}_1, \matr{Z}\vec{h}_2, \matr{Z}\vec{h}_3]\,\matr{H}^{-1}
+    \ \text{if } \det\matr{H} \ne 0, \qquad
+    (\matr{Z} + \vec{v}\vec{n}^T)\vec{h} = \matr{Z}\vec{h}\ \ \forall \vec{h} \perp \vec{n}.
+
+The difference of two populations' first moments is therefore determined if and only if the reflections that
+separate them span three dimensions. Their metrics' difference needs reflections whose :math:`\vec{h}\vec{h}^T` span
+the symmetric matrices, six at least (100, 010, 001, 110, 101, 011 do; any five of them do not). Otherwise the two
+are one population as far as the data can tell. The refiner reports their sum, with its spread, as AGENTS.md asks.
+This is decided from the regions alone, before any fit.
+
+**Proof:** ``tests/theory/test_refiner.py::test_identify_populations``
+
+**The split, for the first moments.** Within a merged domain, the field :math:`\matr{Z}(\vec{x})` (zero outside the
+domain :math:`\Omega`, whose other populations sit in other regions) is seen by its Fourier slices. At an in-plane
+:math:`\vec{k}`, with :math:`\hat{\vec{\xi}} = \hat{\vec{z}}\times\hat{\vec{k}}`, each row :math:`i` of
+:math:`\hat{\matr{Z}}` has the in-plane columns :math:`(\hat Z_{ix}, \hat Z_{iy})`. These split as
+
+.. math::
+    :label: rf-split
+
+    \hat{\vec{k}}\hat{\vec{k}}^T + \hat{\vec{\xi}}\hat{\vec{\xi}}^T = \matr{I}_2, \qquad
+    |\vec{k}|\,\hat{\vec{\xi}}\cdot(\hat Z_{ix}, \hat Z_{iy}) = k_x\hat Z_{iy} - k_y\hat Z_{ix}
+    = -i\,\widehat{(\operatorname{curl}\matr{Z})}_{iz}, \qquad
+    L^2(\Omega)^2 = \nabla H^1(\Omega) \oplus \{\vec{w} : \nabla\cdot\vec{w} = 0,\ \vec{w}\cdot\vec{n}|_{\partial\Omega} = 0\}.
+
+The weak part is each row's solenoidal in-plane field, and the seen part its gradient. The third column
+:math:`\matr{Z}\hat{\vec{z}}` and the mean are seen whole. On the domain, the two parts are the Helmholtz
+decomposition: the seen part is :math:`\nabla\phi_i`, with :math:`\phi_i` from the Neumann problem
+:math:`\Delta\phi_i = \nabla\cdot\vec{v}_i` in :math:`\Omega`, :math:`\partial_n\phi_i = \vec{v}_i\cdot\vec{n}` on
+its boundary. Orthogonality is :math:`\nabla\cdot(\phi\vec{w}) = \nabla\phi\cdot\vec{w} + \phi\nabla\cdot\vec{w}` and
+the divergence theorem. It is three scalar Poisson problems per domain: sparse, local, and computable at any scale.
+The curl along :math:`z` is the Nye tensor's column of :eq:`lim-nye`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_split_first_moments``
+
+**The split, for the metric and the spreads.** :math:`|\vec{g}|^2` sees :math:`\vec{g}_0^T\matr{C}\vec{g}_0`
+(:eq:`rf-weak-any`). The out-of-plane parts follow the same pattern: :math:`C_{zz}` is seen whole, and the vector
+:math:`(C_{xz}, C_{yz})` splits as in :eq:`rf-split`, its solenoidal part seen through :math:`s`. The in-plane block
+splits in the orthonormal basis :math:`\hat{\vec{k}}\hat{\vec{k}}^T`, :math:`(\hat{\vec{k}}\hat{\vec{\xi}}^T +
+\hat{\vec{\xi}}\hat{\vec{k}}^T)/\sqrt{2}`, :math:`\hat{\vec{\xi}}\hat{\vec{\xi}}^T`, seen through :math:`s^0`,
+:math:`s^1`, :math:`s^2`, and
+
+.. math::
+    :label: rf-split-metric
+
+    |\vec{k}|^2\,\hat{\vec{\xi}}^T\hat{\matr{C}}\hat{\vec{\xi}} = k_y^2\hat C_{xx} + k_x^2\hat C_{yy} - 2k_xk_y\hat C_{xy}
+    = -\widehat{(\operatorname{inc}\matr{C})}_{zz},
+
+Saint-Venant's incompatibility. The doubly weak part is the field's incompatibility: zero for a compatible field
+:math:`\operatorname{sym}\nabla\vec{u}`, and all of an Airy field :math:`(\psi_{yy}, \psi_{xx}, -\psi_{xy})`. The seen
+part is the Hessians :math:`\nabla\nabla\phi`, which have only a :math:`\hat{\vec{k}}\hat{\vec{k}}^T` part. The second
+moments :math:`\matr{Y}^{(2)}[\vec{g}_0, \vec{g}_0]` carry the same weights, so a population's spread splits the same
+way: its weak parts are the spread of :math:`\matr{F}\hat{\vec{\xi}}`. These are the spreads that ran away in earlier
+refiners.
+
+**Proof:** ``tests/theory/test_refiner.py::test_split_metric``
+
+**The solve.** In each merged domain the in-plane columns of :math:`\matr{Z}` are written as :math:`\nabla\phi_i +
+\vec{w}_i`, with the third column, the mean, and the populations of separated light as they are. Two estimates follow,
+as the two outputs:
+
+- **(A)** :math:`\vec{w}_i` fitted too, reported with its covariance and flagged as seen only through
+  :math:`\sin\theta` (or not determined, below :math:`s_{\min}`, :eq:`rf-project`);
+- **(B)** :math:`\vec{w}_i = 0`, the curl-free constraint, whose bias is the true :math:`\vec{w}_i`: the dislocation
+  density threading the slice.
+
+Because each reflection's :math:`\vec{g}_0` holds :math:`s\,\hat{\vec{\xi}}`, the seen and weak columns overlap in the
+data at order :math:`s`. So (A) and (B) differ in their seen parts by order :math:`s` times the weak part. That
+difference is itself a diagnostic: where it exceeds the error bars, the constraint matters. The same split applies to
+the metric and the spreads, with the Hessian in place of the gradient.
+
+What the split does not remove is the beam's own weak family. A seen component at frequency :math:`\vec{k}` is
+attenuated by the beam's transfer :math:`T(\vec{k})` (:eq:`lim-transfer`), so its noise and bias are amplified by
+:math:`1/T`, by more than 4 at periods below 1.6 beam FWHM
+(``tests/theory/test_refiner.py::test_beam_quarter_period``). That is the map's resolution. It is reported as a
+resolution, not filtered, since filtering would be a smoothness prior.
+
 The guarantee
 -------------
 
@@ -501,6 +617,10 @@ What is left out
   written out.
 - **A bound in omega** needs the beam's angular spread as a factor of every spot's omega profile, as (A5) is for
   the detector; it is not established.
+- **The metric's split on a domain**: the in-plane block's seen part is the closure of the Hessians
+  :math:`\nabla\nabla\phi` on :math:`\Omega`. Its projector is a fourth-order (biharmonic) problem whose natural
+  boundary conditions are not derived here.
+- **The box margins** are first order in :math:`e`, as :eq:`dif-rotation-motion` is.
 - **The level** :math:`s_{\min}`, and how the seen and unseen parts are reported per voxel, are not chosen here.
 - **Boxes for curved arcs.** A box in :math:`(s, f, \omega)` around an arc of several degrees holds many cells the
   arc misses, and :eq:`rf-cut-bound` grows with them: boxes should follow the arc, defined in rotation space.

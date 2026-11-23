@@ -419,3 +419,117 @@ def test_sin_theta_numbers():
     assert [rounds_to(v, q) for v, q in zip(vals, ("0.0435", "0.0709", "0.183"))] == [True] * 3
     assert rounds_to(1 / vals[2], "5.5") and rounds_to(1 / vals[0], "23")
     assert float(f"{float(1 / vals[2] ** 2):.1g}") == 30 and float(f"{float(1 / vals[0] ** 2):.2g}") == 530
+
+
+def test_box_margin():
+    """rf-box-margin: a rotation error delta (|delta| <= e) of the indexer's orientation moves a spot by
+    d omega = j_w . delta, d eta = j_e . delta (dif-rotation-motion: j_w = (0, -cot eta, -1),
+    j_e = (1, -tan theta / sin eta, 0)), so by Cauchy-Schwarz |d omega| <= e |j_w| = e / |sin eta| and
+    |d eta| <= e sqrt(1 + tan^2 theta / sin^2 eta), attained for delta along j; a strain |eps| <= eps_max moves 2 theta
+    by at most 2 eps_max tan theta and leaves omega and eta (Delta 2theta = -2 eps tan theta, from Bragg's law)."""
+    eta, th = sp.symbols("eta theta", positive=True)
+    jw = sp.Matrix([0, -sp.cot(eta), -1])
+    je = sp.Matrix([1, -sp.tan(th) / sp.sin(eta), 0])
+    assert is_zero(sp.simplify(jw.dot(jw) - 1 / sp.sin(eta) ** 2))
+    assert is_zero(je.dot(je) - (1 + sp.tan(th) ** 2 / sp.sin(eta) ** 2))
+    d = sp.Matrix(sp.symbols("d0:3", real=True))
+    # Cauchy-Schwarz: |j|^2 |d|^2 - (j.d)^2 = |j x d|^2 >= 0, zero for d parallel to j
+    for j in (jw, je):
+        assert is_zero(sp.simplify(j.dot(j) * d.dot(d) - j.dot(d) ** 2 - j.cross(d).dot(j.cross(d))))
+    # Bragg: lambda = 2 d sin(theta); d -> d (1 + eps): d theta / d eps = -tan theta at eps = 0
+    eps, lam, d0 = sp.symbols("epsilon lambda d_0", positive=True)
+    theta_eps = sp.asin(lam / (2 * d0 * (1 + eps)))
+    dth = sp.diff(theta_eps, eps).subs(eps, 0)
+    assert is_zero(sp.simplify(dth + sp.tan(sp.asin(lam / (2 * d0)))))
+
+
+def test_identify_populations():
+    """rf-identify: with Z_k = int F U_k B d mu_k, population k adds Z_k h to every region it is in, so two
+    populations in one region of every row have equal columns there and only Z_k + Z_k' is seen; their difference is
+    seen in the rows where they are in different regions, through Z h for those h. Z is determined by Z h for
+    reflections h whose matrix H = [h1 h2 h3] is invertible, and not when they are coplanar (Z -> Z + v n^T,
+    n . h = 0, changes nothing); the metric's 6 numbers need 6 reflections with h h^T spanning the symmetric matrices
+    (rank 6 for 100, 010, 001, 110, 101, 011; 5 without the last)."""
+    Z = _mat("Z")
+    h = [sp.Matrix(sp.symbols(f"h{i}_0:3", real=True)) for i in range(3)]
+    H = h[0].row_join(h[1]).row_join(h[2])
+    assert is_zero((Z * H) * H.inv() - Z)
+    v = sp.Matrix(sp.symbols("v0:3", real=True))
+    n = h[0].cross(h[1])
+    for hh in (h[0], h[1], h[0] + 2 * h[1]):  # coplanar reflections
+        assert is_zero((Z + v * n.T) * hh - Z * hh)
+    hs = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0), (1, 0, 1), (0, 1, 1)]
+
+    def vech(x):
+        x = sp.Matrix(x)
+        m = x * x.T
+        return [m[0, 0], m[1, 1], m[2, 2], 2 * m[0, 1], 2 * m[0, 2], 2 * m[1, 2]]
+
+    assert sp.Matrix([vech(x) for x in hs]).rank() == 6
+    assert sp.Matrix([vech(x) for x in hs[:5]]).rank() == 5
+
+
+def test_split_first_moments():
+    """rf-split: at an in-plane frequency k (xi = z x k), the in-plane columns of Z_hat split by k k^T + xi xi^T = I_2
+    into orthogonal idempotent parts; Z_hat xi |k| = (k_x Z_y - k_y Z_x)_hat, the Fourier transform of i times
+    (curl Z)_z per row (lim-nye): the weak part is each row's solenoidal (divergence-free) in-plane field, the seen part
+    its gradient part, k k^T Z_hat = k (k . Z_hat) / |k|^2. On a domain Omega, div(phi w) = grad phi . w + phi div w,
+    so by the divergence theorem every gradient is orthogonal to every w with div w = 0 in Omega and w . n = 0 on its
+    boundary: L^2(Omega) = grad H^1 (+) those w, the seen part grad phi from the Neumann problem
+    lap phi = div v, d phi / dn = v . n."""
+    kx, ky = sp.symbols("k_x k_y", real=True)
+    kk = sp.sqrt(kx**2 + ky**2)
+    kh = sp.Matrix([kx, ky]) / kk
+    xh = sp.Matrix([-ky, kx]) / kk
+    Pk, Px = kh * kh.T, xh * xh.T
+    assert is_zero(sp.simplify(Pk + Px - sp.eye(2)))
+    assert is_zero(sp.simplify(Pk * Pk - Pk)) and is_zero(sp.simplify(Pk * Px))
+    Zx, Zy = sp.symbols("Z_x Z_y")  # one row's in-plane columns at k
+    w = sp.Matrix([Zx, Zy])
+    assert is_zero(sp.simplify(xh.dot(w) * kk - (kx * Zy - ky * Zx)))
+    x, y = sp.symbols("x y", real=True)
+    phi = sp.Function("phi")(x, y)
+    wx, wy = sp.Function("w_x")(x, y), sp.Function("w_y")(x, y)
+    lhs = sp.diff(phi * wx, x) + sp.diff(phi * wy, y)
+    rhs = sp.diff(phi, x) * wx + sp.diff(phi, y) * wy + phi * (sp.diff(wx, x) + sp.diff(wy, y))
+    assert is_zero(sp.expand(lhs - rhs))
+
+
+def test_split_metric():
+    """rf-split-metric: the in-plane block of a symmetric field's transform C_hat splits into its k k, k xi and
+    xi xi components (an orthonormal basis of 2 x 2 symmetric matrices: k k^T, (k xi^T + xi k^T) / sqrt 2,
+    xi xi^T), seen through s^0, s^1, s^2 (rf-weak-any). |k|^2 xi^T C_hat xi = k_y^2 C_xx + k_x^2 C_yy - 2 k_x k_y C_xy,
+    the transform of -(inc C)_zz, Saint-Venant's incompatibility; a compatible field sym grad u has no xi xi part, a
+    Hessian grad grad phi only a k k part, an Airy field (psi_yy, psi_xx, -psi_xy) only a xi xi part."""
+    kx, ky = sp.symbols("k_x k_y", real=True)
+    kk = sp.sqrt(kx**2 + ky**2)
+    kh = sp.Matrix([kx, ky]) / kk
+    xh = sp.Matrix([-ky, kx]) / kk
+    B = [kh * kh.T, (kh * xh.T + xh * kh.T) / sp.sqrt(2), xh * xh.T]
+    for i in range(3):
+        for j in range(3):
+            ip = sp.simplify(sum(B[i][a, b] * B[j][a, b] for a in range(2) for b in range(2)))
+            assert ip == (1 if i == j else 0)
+    Cxx, Cyy, Cxy = sp.symbols("C_xx C_yy C_xy")
+    C = sp.Matrix([[Cxx, Cxy], [Cxy, Cyy]])
+    assert is_zero(sp.simplify((xh.T * C * xh)[0] * kk**2 - (ky**2 * Cxx + kx**2 * Cyy - 2 * kx * ky * Cxy)))
+    ux, uy, p, q = sp.symbols("u_x u_y phi psi")
+    k = sp.Matrix([kx, ky])
+    u = sp.Matrix([ux, uy])
+    compat = sp.I * (u * k.T + k * u.T) / 2  # sym grad u
+    assert is_zero(sp.simplify((xh.T * compat * xh)[0]))
+    hess = -k * k.T * p  # grad grad phi
+    assert is_zero(sp.simplify((xh.T * hess * xh)[0])) and is_zero(sp.simplify((kh.T * hess * xh)[0]))
+    airy = -sp.Matrix([[ky**2, -kx * ky], [-kx * ky, kx**2]]) * q  # (psi_yy, -psi_xy; -psi_xy, psi_xx)
+    assert is_zero(sp.simplify((kh.T * airy * kh)[0])) and is_zero(sp.simplify((kh.T * airy * xh)[0]))
+
+
+def test_beam_quarter_period():
+    """rf-split's resolution: the beam's transfer exp(-pi^2 / (4 ln 2 Lambda^2)) (lim-transfer) is 1/4 at
+    Lambda = pi / (2 sqrt(ln 2 ln 4)) = 1.6 beam FWHM, so below that period a seen component is amplified more than 4
+    times."""
+    L = sp.Symbol("Lambda", positive=True)
+    T = sp.exp(-(sp.pi**2) / (4 * sp.log(2) * L**2))
+    root = sp.pi / (2 * sp.sqrt(sp.log(2) * sp.log(4)))
+    assert is_zero(sp.simplify(T.subs(L, root) - sp.Rational(1, 4)))
+    assert rounds_to(root, "1.6")
