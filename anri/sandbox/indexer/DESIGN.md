@@ -120,6 +120,16 @@ Naming: **the indexer** is `python -m anri.index` (histograms, grid search, occu
   (`peak_widths.py`) break down, so widths must come from the histograms. Needs a test phantom and real data.
 ## Next steps, in order
 
+Status 2026-10-09: items 1 and 2 are in (`--beam`, `--censor`), with `--mask` (auto or drawn) and notebook plots for
+the mask and for how fine a grid the fit needs.
+- On def316l (beam FWHM = step) the beam profile changes nothing measurable: the 2-row linear model is already a
+  triangle of that FWHM. It matters for beams wider than the step (overfocusing). Its 5 rows cost ~2.4x in the
+  candidate pass.
+- Censoring at 5-20 (phantom) or 30 (AP1_1) counts per 1 x 1 deg bin changes nothing measurable either; small or
+  weak grains (the crowded phantom) are the test still to do.
+- Most "neighbour" second populations on def316l are Sigma3 ghosts next to twin lamellae, not a beam leak.
+- `--mask auto` fails when the sample fills the scan (def316l: no air to threshold against).
+
 1. **Beam profile in the system matrix:** a voxel spread over the rows the beam reaches, not 2.
 2. **Censoring** below the segmentation cut in both MLEMs: weak predictions are biased to zero now.
 3. **Validation on real data** (dataset A, dataset B) against ImageD11's pbp and refined maps:
