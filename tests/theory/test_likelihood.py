@@ -1,6 +1,9 @@
 """Proofs for docs/source/theory/likelihood.rst: the Poisson deviance, MLEM, SQUAREM's step, censored bins, the
 likelihood ratio and the voxel fit's candidates."""
 
+import contextlib
+
+import mpmath as mp
 import numpy as np
 import sympy as sp
 
@@ -200,6 +203,15 @@ def test_log_pmf_pieces():
     assert abs(coef[5]) / 15**11 < sp.Rational(23, 10**17)
 
 
+def test_geometric_remainder():
+    """lik-saturated-series: positive terms whose ratios r_j <= r < 1 keep falling leave, after t_k, at most
+    sum_{j >= 1} t_k r^j = t_k r / (1 - r)."""
+    t, r = sp.symbols("t r", positive=True)
+    j = sp.symbols("j", integer=True, positive=True)
+    total = sp.summation(t * r**j, (j, 1, sp.oo))
+    assert is_zero(sp.piecewise_fold(total).args[0][0] - t * r / (1 - r))
+
+
 def _exact_below(mu_, c_):
     """log P(n <= c) + mu and the EM ratio at 40 digits (sympy's incomplete gamma)."""
     mu_, c_ = sp.nsimplify(mu_), sp.nsimplify(c_)
@@ -211,10 +223,13 @@ def _exact_below(mu_, c_):
 
 
 def _exact_above(mu_, d_):
-    mu_, d_ = sp.nsimplify(mu_), sp.nsimplify(d_)
-    P = sp.lowergamma(d_, mu_) / sp.gamma(d_)
-    g = sp.exp(-mu_) * mu_ ** (d_ - 1) / sp.gamma(d_)
-    return float(sp.N(sp.log(P), 40)), float(sp.N(1 + g / P, 40))
+    """log P(n >= d) and the EM ratio at 40 digits, by Kummer's form P(a, x) = x^a e^-x / Gamma(a + 1) 1F1(1; a + 1; x)
+    (mpmath, which sums it to any precision; sympy's lowergamma does not converge at d = 1e5)."""
+    mp.mp.dps = 40
+    m, d = mp.mpf(mu_), mp.mpf(d_)
+    log_p = d * mp.log(m) - m - mp.loggamma(d + 1) + mp.log(mp.hyp1f1(1, d + 1, m, maxterms=10**7))
+    log_g = (d - 1) * mp.log(m) - m - mp.loggamma(d)
+    return float(log_p), float(1 + mp.e ** (log_g - log_p))
 
 
 def test_censored_code():
@@ -232,14 +247,22 @@ def test_censored_code():
         scale = np.array([c * abs(np.log(max(x, 1e-300))) + x + float(sp.loggamma(c + 1)) + 1 for x in mus])
         assert np.all(np.abs(got[0] - [w[0] for w in want]) <= 64 * EPS * scale)
         assert np.all(np.abs(got[1] - [w[1] for w in want]) <= 64 * EPS * scale)
-    for dd in (5.0, 30.0):
-        ms = [1e-3, 1.0, 4.0, 0.8 * dd, dd, 1.3 * dd, 3 * dd]
+    for dd in (5.0, 30.0, 300.0, 1e5):
+        ms = [1e-3, 1.0, 4.0, 0.8 * dd, dd, 1.03 * dd, 1.3 * dd, 3 * dd]
         want = [_exact_above(x, dd) for x in ms]
-        with float64():
-            got = [np.asarray(v) for v in saturated_above(np.array(ms), np.full(len(ms), dd))]
-        scale = np.array([dd * abs(np.log(x)) + x + float(sp.loggamma(dd)) + 1 for x in ms])
-        assert np.all(np.abs(got[0] - [w[0] for w in want]) <= 64 * EPS * scale)
-        assert np.all(np.abs(got[1] / np.array([w[1] for w in want]) - 1) <= 64 * EPS * scale)
+        for dtype, ctx in ((np.float64, float64), (np.float32, contextlib.nullcontext)):
+            with ctx():
+                got = [
+                    np.asarray(v, np.float64) for v in saturated_above(np.array(ms, dtype), np.full(len(ms), dd, dtype))
+                ]
+            eps = float(np.finfo(dtype).eps)
+            # the series' n terms each round once in the product recurrence and once in the sum: n eps relative in T,
+            # with n <= (mu - d)+ + sqrt(2 d log(1/eps)) + 40 (its terms fall as exp(-k^2 / 2d) past mu); log P(n = d)
+            # rounds in terms of size |log P|; the ratio, 1 + d / (mu T), in a few operations
+            n_terms = np.array([max(x - dd, 0) + np.sqrt(2 * dd * np.log(1 / eps)) + 40 for x in ms])
+            bound = (n_terms + 16) * eps * np.maximum(1, np.abs([w[0] for w in want]))
+            assert np.all(np.abs(got[0] - [w[0] for w in want]) <= bound), (dd, dtype)
+            assert np.all(np.abs(got[1] / np.array([w[1] for w in want]) - 1) <= 16 * eps), (dd, dtype)
 
 
 def _lr(d_: sp.Expr, m: sp.Expr, ga: sp.Expr) -> sp.Expr:

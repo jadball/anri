@@ -149,17 +149,24 @@ likelihood ratio below).
 
 **Proof:** ``tests/theory/test_likelihood.py::test_censored_tail_series``
 
-For a saturated bin with the model far below its data, :math:`P(d, \mu)` underflows; there the convergent series
+For a saturated bin below :math:`\mu = d + 10\sqrt{d}`, the regularised lower gamma is computed from its convergent
+series
 
 .. math::
     :label: lik-saturated-series
 
-    P(a, x) = \frac{x^a e^{-x}}{\Gamma(a + 1)} \sum_{k \ge 0} \frac{x^k}{(a + 1) \cdots (a + k)}
+    P(d, \mu) = P(n = d) \sum_{k \ge 0} \frac{\mu^k}{(d + 1) \cdots (d + k)},
+    \qquad
+    \frac{P(n = d - 1)}{P(n \ge d)} = \frac{d}{\mu\, T},
 
-is summed to float precision (each partial sum's derivative telescopes to the integrand :math:`x^{a-1}e^{-x}/\Gamma(a)`
-less its last term).
+with :math:`T` the sum (each partial sum's derivative telescopes to the integrand :math:`x^{a-1}e^{-x}/\Gamma(a)` less
+its last term). Its terms are positive and, past :math:`k = \mu - d`, fall by ratios :math:`r_k = \mu/(d + k + 1) < 1`
+that keep falling, so what is left after a term :math:`t_k` is at most :math:`t_k\, r_k/(1 - r_k)`: the code sums
+(compensated) until that is below float precision. The ratio then has no cancellation at all, and :math:`\log P`
+only that of :math:`\log P(n = d)` (:eq:`lik-loader`) and of the terms' product recurrence (about one rounding per
+term). Above :math:`d + 10\sqrt{d}`, :math:`P` is within :math:`10^{-23}` of 1 and is taken from the regularised gamma.
 
-**Proof:** ``tests/theory/test_likelihood.py::test_saturated_series``
+**Proof:** ``tests/theory/test_likelihood.py::test_saturated_series``, ``tests/theory/test_likelihood.py::test_geometric_remainder``
 
 A saturated bin's :math:`d_b` can be :math:`10^5` counts, where :math:`\log P(n = d - 1) = (d-1)\log\mu - \mu -
 \log\Gamma(d)` subtracts numbers of size :math:`10^6` to leave one of order 1: in float32 that ratio was 4.5 % wrong.
@@ -254,7 +261,6 @@ What is left out
 - **Uncertainties** of the occupancies: not computed.
 - **Voxels outside the mask** (:doc:`populations`) are not fitted; their intensity has to go somewhere, and a mask that
   is too small piles it onto its edge.
-- **Saturated bins of very large counts.** :math:`\log P(n \ge d)` near :math:`\mu \approx d` comes from JAX's
-  regularised lower gamma, whose error grows with :math:`d`: at :math:`d = 10^5` it is about 9e-2 in float32 and
-  9e-11 in float64 (the ratio, which uses :eq:`lik-loader`, about 1e-3 and 1e-11). Saturated bins are few; the
-  uniform asymptotic expansion for large :math:`a` would fix it.
+- **Saturated bins' precision.** The ratio is exact to a few roundings at any count; :math:`\log P(n \ge d)` to about
+  one rounding per series term (in float32 at most 1e-5 relative, at :math:`d = 300`, :math:`\mu = 1.3 d`), which
+  only the deviance SQUAREM compares sees.

@@ -102,31 +102,36 @@ def censored_below(mu: jax.Array, censor: ArrayLike) -> tuple[jax.Array, jax.Arr
 def saturated_above(mu: jax.Array, d: jax.Array) -> tuple[jax.Array, jax.Array]:
     """Return log P(n >= d) and E[n | n >= d] / mu, for n ~ Poisson(mu) and d > 0, per bin.
 
-    Continued to a real d by P(n >= d) = P(d, mu), the regularised lower incomplete gamma. The ratio is
-    1 + P(n = d - 1) / P(n >= d). Where P underflows (mu far below d), P(d, mu) = P(n = d - 1) (mu / d) T with
-    T = sum over k >= 0 of mu^k / ((d + 1) ... (d + k)), summed until its terms fall below float precision.
+    Continued to a real d by P(n >= d) = P(d, mu), the regularised lower incomplete gamma. Below
+    mu = d + 10 sqrt(d): P(d, mu) = P(n = d) T, T = sum over k >= 0 of mu^k / ((d + 1) ... (d + k)), a series of positive
+    terms summed until the geometric bound on what is left falls below float precision; then the ratio is
+    1 + d / (mu T), with nothing cancelling. Above, P(d, mu) is within 1e-23 of 1 and is taken from the regularised
+    gamma (theory page, likelihood).
     """
     mus = jnp.maximum(mu, _TINY)
-    log_g = _log_pmf(d - 1, mus)  # P(n = d - 1)
-    p = gammainc(d, mu)
-    deep = p < _TINY
-    x = jnp.where(deep, mu, 0.0)
+    series = mu < d + 10 * jnp.sqrt(d)
+    x = jnp.where(series, mus, 0.0)
     eps = jnp.finfo(mu.dtype).eps
 
-    def more(st: tuple) -> jax.Array:
-        k, t, T = st
-        return (k < 100000) & jnp.any(t > eps * T)
+    def more(st: tuple) -> jax.Array:  # the terms after k are at most t r / (1 - r), r = x / (d + k + 1), once r < 1
+        k, t, T, _ = st
+        r = x / (d + k + 1)
+        left = jnp.where(r < 1, t * r / jnp.maximum(1 - r, eps), jnp.inf)
+        return (k < 10**6) & jnp.any(left > eps * T)
 
-    def term(st: tuple) -> tuple:
-        k, t, T = st
-        t = t * x / (d + k)
-        return k + 1, t, T + t
+    def term(st: tuple) -> tuple:  # compensated (Kahan) sum: hundreds of terms near mu = d
+        k, t, T, comp = st
+        t = t * x / (d + k + 1)
+        y = t - comp
+        T_new = T + y
+        return k + 1, t, T_new, (T_new - T) - y
 
     one = jnp.ones_like(mu)
-    _, _, T = jax.lax.while_loop(more, term, (jnp.ones((), jnp.int32), one, one))
-    log_p = jnp.where(deep, log_g + jnp.log(mus / d) + jnp.log(T), jnp.log(jnp.where(deep, 1.0, p)))
-    # deep: P(n = d - 1) / P(n >= d) = d / (mu T) exactly, without the logarithms
-    return log_p, 1.0 + jnp.where(deep, d / (mus * T), jnp.exp(log_g - log_p))
+    _, _, T, _ = jax.lax.while_loop(more, term, (jnp.zeros((), jnp.int32), one, one, jnp.zeros_like(mu)))
+    p = gammainc(d, mu)
+    log_p = jnp.where(series, _log_pmf(d, mus) + jnp.log(T), jnp.log(jnp.where(series, 1.0, p)))
+    ratio = jnp.where(series, 1.0 + d / (mus * T), 1.0 + jnp.exp(_log_pmf(d - 1, mus) - log_p))
+    return log_p, ratio
 
 
 @jax.jit
