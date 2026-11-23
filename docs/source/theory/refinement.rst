@@ -287,11 +287,7 @@ pixels each bounded.
 What is left out
 ----------------
 
-- **The cut's deficit in merged light** is not sized: how much a wrong tail changes :math:`\sum D_p f(\vec{x}_p)` of
-  :eq:`mom-deficit` over an asymmetric region.
-- **Two- and three-dimensional splitting.** :eq:`ref-split` is one dimension and one family of shape errors; spots in
-  :math:`(s, f, \omega)` with anisotropic spreads are not computed.
-- **The likelihood's own aliasing** under a wrong shape is of the same order as :eq:`ref-alias` but not derived.
-- **The separation threshold:** at which separation, for a given shape uncertainty, a population can be given its own
-  region is not derived beyond :eq:`ref-split` and :eq:`ref-tail`.
-- **Code:** none of the refiner is in anri yet. :eq:`rec-expected` is :func:`anri.io.imaged11.recorded_moments`.
+The questions this page left open (the cut's deficit in merged light, splitting in two and three dimensions, the
+likelihood's aliasing, the separation threshold) belong to methods that divide merged light by its shape. The refiner
+of :doc:`refiner` never does: it bounds the cut per cell (:eq:`rf-cut-bound`) and tells populations apart only where
+the regions separate them (:eq:`rf-identify`). They stay open only for a shape-based method.

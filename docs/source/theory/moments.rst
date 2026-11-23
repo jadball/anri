@@ -229,8 +229,9 @@ What is left out
 ----------------
 
 - **The noise contribution of second moments** (after :eq:`mom-info`) is shown to exist, not sized.
-- **Faint edges.** Where :math:`D_p` of :eq:`mom-deficit` matters, the region statistics depend on spot tails; how
-  much is not sized here.
-- **Mixture spots** have no window bound until one is written per mixture term.
+- **Faint edges.** Where :math:`D_p` of :eq:`mom-deficit` matters, the region statistics depend on spot tails; it is
+  bounded per cell, for any light, by :eq:`rf-cut-bound`.
+- **Mixture spots**: the window's light beyond each face is written per mixture term (:eq:`ps-faces`), summed by the
+  terms' shares.
 - **Within-ring differences** of :math:`|F|^2` (several families on one ring) break the per-ring scale.
 - Code: none of this is in anri yet (sandbox: ``anri/sandbox/refine/cutexact.py``, ``render_fast.py``).

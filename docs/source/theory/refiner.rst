@@ -157,7 +157,21 @@ the frames integrate the rotation, so a region holding all of a population's fra
 all. The detector's displacement enters through :math:`\hat{\vec{g}}(\vec{x}_p)` at the displaced position. Its mean
 is zero (the point spread, by definition) or calibrated (the sensor's), and its second moments give a term
 :math:`\tfrac{1}{2}\operatorname{tr}(\matr{H}_f \matr{\Sigma}_e)`, with :math:`\matr{H}_f` the feature's Hessian
-on the detector. It is the same for every population at one place on the detector, and smooth across it.
+on the detector. For a feature of the detector radius :math:`\rho` alone, such as :math:`|\vec{g}|^2 =
+(2/\lambda^2)(1 - L/\sqrt{L^2 + \rho^2})` on a detector normal to the beam at distance :math:`L`, the Hessian's
+eigenvalues are :math:`f''` (radial) and :math:`f'/\rho` (tangential), so
+
+.. math::
+    :label: rf-displacement
+
+    \tfrac{1}{2}\left(f''\sigma_r^2 + \frac{f'}{\rho}\sigma_t^2\right) = f\,\frac{\sigma_r^2 + \sigma_t^2}{\rho^2}\,
+    \big(1 + O(\rho^2/L^2)\big):
+
+:math:`5.7 \times 10^{-6}` of :math:`|\vec{g}|^2` for a point spread of 0.5 px² per axis at :math:`\rho = 420` px.
+It is the same for every population at one place on the detector, so it goes into the common scale
+(:eq:`lim-common`).
+
+**Proof:** ``tests/theory/test_refiner.py::test_displacement_common_term``
 
 **Parallax.** :math:`\hat{\vec{g}}_p` is computed from the lab origin. A photon from a voxel at :math:`\vec{x}_v`
 reaches the cell that the origin's ray :math:`\Pi_v(\vec{g})` would. :math:`\Pi_v` is a known smooth map, the
@@ -395,7 +409,22 @@ spot of :math:`\sigma = 1` px.
 The bound falls as :math:`1/N` and the noise as :math:`1/\sqrt{N}`. Faint spots are therefore the ones whose cut bias
 can exceed their noise, by a factor this bound gives. The bound is tight in the worst case: light of one photon per
 cell over the whole box. Smaller boxes lower it and raise the light beyond the box (:eq:`ref-tail`); the half-widths
-trade the two.
+trade the two. In a box of half-width :math:`t` cells along each of three axes, a first moment along one axis sums
+:math:`|x|` over :math:`(2t + 1)^2 t(t + 1) \approx 4t^4` cells. With the light beyond the faces known only through
+its variance :math:`\sigma^2`,
+
+.. math::
+    :label: rf-box-width
+
+    B(t) = \frac{4\kappa_c t^4}{N} + \frac{\sigma^2}{t}, \qquad
+    t_* = \Big(\frac{\sigma^2 N}{16\kappa_c}\Big)^{1/5}, \qquad B(t_*) = \frac{5}{4}\frac{\sigma^2}{t_*}:
+
+4.43 cells and 0.282 cells for :math:`\sigma = 1` cell, :math:`N = 10^4`, :math:`c = 1`. The worst case falls only
+as :math:`N^{-1/5}`, because a tail known only by its variance can hide anywhere. This sets the half-widths before the
+fit, from the indexer's spread and the instrument's width, never from the data being fitted. After the fit, the
+bound on the light beyond the faces is the measured one of :eq:`rf-shift`, usually much smaller.
+
+**Proof:** ``tests/theory/test_refiner.py::test_box_half_width``
 
 The group rule
 --------------
@@ -958,6 +987,28 @@ bilinear with :math:`\vec{Y}`. They are fitted by alternating with the linear so
 
 **Proof:** ``tests/theory/test_refiner.py::test_runout_harmonics`` (harmonics 1-4).
 
+The odd harmonics from the third up are determined by the populations themselves. A population's counts against dty,
+at the omega of each of its reflections, are the projection of its voxels. Their centroid is :math:`y_0 -
+(\bar{x}\sin\omega + \bar{y}\cos\omega) + r(\omega)`, with :math:`(\bar{x}, \bar{y})` the centre of its light: a
+constant and a first harmonic from the population, plus the runout shared by all. Over a full turn the harmonics are
+orthogonal. So the runout's harmonics from the second up are fixed by the populations' centroid curves, less their
+own first harmonics, once each population's reflections fall at enough distinct omegas (:math:`2n + 1` for
+harmonics up to :math:`n`). Fitting them by alternating with the linear solve never raises the misfit. Near the
+solution it contracts the error, per sweep, by the squared cosine of the angle between the runout's data pattern and
+the map's:
+
+.. math::
+    :label: rf-runout-fit
+
+    \text{centroid}(\omega) = y_0 - \bar{x}\sin\omega - \bar{y}\cos\omega + r(\omega), \qquad
+    r - r_* \ \to\ \frac{(\vec{a}\cdot\vec{b})^2}{|\vec{a}|^2|\vec{b}|^2}\,(r - r_*) \ \text{per sweep}.
+
+It stalls (cosine 1) only on a pattern the map can make itself, the first harmonic, which is fixed as the map's origin
+instead.
+
+**Proof:** ``tests/theory/test_refiner.py::test_runout_identifiable`` (the centroid; the harmonics' orthogonality),
+``tests/theory/test_refiner.py::test_alternation_rate`` (one column per block).
+
 Reflections at the ends of the omega range are complete only if their box lies within the scanned range. One whose
 box (:eq:`rf-box-margin`) reaches past an end is left out: (A3) needs the whole rotation through the reflection.
 
@@ -1057,8 +1108,9 @@ the second moments, where it is confounded with the spread, which is reported as
 
 So background is never a free slope per region. It is estimated from the cells outside every box: those boxes are
 fixed by the indexer (:eq:`rf-box-margin`), so the complement is not chosen by the data and is unbiased
-(:eq:`mom-select`). Its model is smooth over scales much larger than a box, with a few parameters per frame. Its
-prediction in each region is subtracted. A residual slope :math:`\delta\vec{b}_1` across a box then moves a centred
+(:eq:`mom-select`). Its model is smooth across the detector over scales much larger than a box. At worst it varies
+with omega, for a stress rig whose small-angle scattering reaches the detector at some angles. Its prediction in each
+region is subtracted. A residual slope :math:`\delta\vec{b}_1` across a box then moves a centred
 first moment by :math:`\matr{S}_2\,\delta\vec{b}_1/N` (:eq:`rf-background`), which enters :math:`\bar\Delta`. A
 residual constant moves the counts and second moments only. Background below the cut is in the cut's bound already,
 which holds per cell for any light (:eq:`rf-cut-bound`).
@@ -1104,6 +1156,30 @@ The cost per iteration is set by :math:`F` and the reflections per voxel. Sub-po
 (:eq:`rf-bin-moments`) multiply :math:`F` by the bins each voxel lights. The iterations are set by the beam's
 sampling and :math:`s_{\min}`, not by the grid's size, once preconditioned.
 
+Several slices
+--------------
+
+Everything above treats one slice. A stack of slices has frequencies along :math:`z` too. The rays are horizontal,
+so a frequency :math:`\vec{k} = \vec{k}_h + k_z\hat{\vec{z}}` is carried by :math:`\hat{\vec{\xi}} =
+\hat{\vec{z}}\times\hat{\vec{k}}_h` whatever :math:`k_z`, and the weak part is still :math:`\hat{\matr{\beta}}
+\hat{\vec{\xi}}`. With :math:`\hat{\vec{n}} = \hat{\vec{k}}\times\hat{\vec{\xi}}`,
+
+.. math::
+    :label: rf-3d
+
+    \hat{\vec{n}}\times\vec{k} = |\vec{k}|\,\hat{\vec{\xi}}, \qquad
+    i|\vec{k}|\,(\hat{\matr{\beta}}\hat{\vec{\xi}})_i = \big(i\vec{k}\times\hat{\vec{b}}_i\big)\cdot\hat{\vec{n}}
+    = \widehat{(\operatorname{curl}\matr{\beta})}_i\cdot\hat{\vec{n}},
+
+with :math:`\hat{\vec{b}}_i` the :math:`i`-th row of :math:`\hat{\matr{\beta}}`. The weak part is the dislocation
+density with lines along :math:`\hat{\vec{n}}`, normal to :math:`\vec{k}`. It is :math:`\hat{\vec{z}}` for an
+in-plane :math:`\vec{k}` (:eq:`lim-nye`), and leans from :math:`\hat{\vec{z}}` towards :math:`\vec{k}_h` as
+:math:`\vec{k}` tilts. A frequency along :math:`z` itself (:math:`\vec{k}_h = 0`) is carried by every horizontal
+ray, whose :math:`\vec{g}_0` span all directions: it is seen whole. So a stack adds no weak directions beyond the
+slice's. In 3D the curl-free output (:eq:`rf-split`) uses the 3D curl, and the split's projector the 3D gradient.
+
+**Proof:** ``tests/theory/test_refiner.py::test_three_dimensional_weak``
+
 The guarantee
 -------------
 
@@ -1136,12 +1212,10 @@ What it costs, against :doc:`limits`:
 What is left out
 ----------------
 
-- **The detector displacement's common term** (:eq:`rf-instrument`) is stated, not bounded; it is common to every
-  population at one place on the detector.
-- **Parallax's third derivatives** are of order :math:`\sin\alpha` (:eq:`rf-parallax`) but not written out.
-- **The box half-widths**: their trade between :eq:`rf-cut-bound` and :eq:`ref-tail` is not optimised here, and the
-  indexer gives only an isotropic spread per population (:doc:`populations`), so :eq:`rf-arc-box` needs an
-  anisotropic :math:`\matr{S}` the indexer does not yet report.
+- **Parallax's third derivatives**: for features of degree at most 2 they come from :math:`\Pi_v` alone, of order
+  :math:`\sin\alpha` (:eq:`rf-parallax`); not written out.
+- **Anisotropic boxes**: the indexer gives only an isotropic spread per population (:doc:`populations`), so
+  :eq:`rf-arc-box` needs an anisotropic :math:`\matr{S}` the indexer does not yet report.
 - **Absorption's variation within a spot** is bounded by :eq:`rf-weight-bound`; its exact coefficient through
   :math:`\matr{Y}^{(2)}` is not written out.
 - **The omega kernel's Gaussian form** (:eq:`rf-omega-kernel`) is the instrument's, as the point spread's mixture
@@ -1154,10 +1228,8 @@ What is left out
 - **The precision** :math:`\epsilon` and confidence :math:`z` of :eq:`rf-smin` are the maintainer's to set.
 - **The system's size** with sub-populations per bin (:eq:`rf-bin-moments`) is set by how many bins each voxel
   lights (:eq:`rf-cost` gives the cost per bin); the count needs a phantom.
-- **The background's smooth model** (its form per frame) is not chosen here; :eq:`rf-background` only rules out a free
-  slope per region.
-- **Runout's odd harmonics** from the third up: fitted by alternation with the linear solve, whose convergence is not
-  derived.
+- **The background's smooth model** (its form across the detector, and in omega where it must) is not chosen here;
+  :eq:`rf-background` only rules out a free slope per region.
 - **The beam profile and runout** enter :math:`\matr{G}`; :eq:`rf-centre` bounds how they reach the deformation,
   but their own sizes are estimates (runout about 1 µm).
 - **Multi-phase overlaps**: populations of different phases sharing a region add their ray sums like any others;

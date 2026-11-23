@@ -1096,3 +1096,103 @@ def test_cost_numbers():
     2 * 16 * 9e6 * 300 = 8.6e10 voxel-ray weights per iteration; 20 iterations 1.7e12."""
     per = 2 * 16 * 3000**2 * 300
     assert rounds_to(sp.Integer(per) / 10**10, "8.6") and rounds_to(sp.Integer(20 * per) / 10**12, "1.7")
+
+
+def test_alternation_rate():
+    """rf-runout-fit: alternating least squares on two blocks (the moments Y with the runout rho fixed, then rho with Y
+    fixed) never raises the misfit, and near the solution, for one column each (a, b), it contracts the error by
+    cos^2 of the angle between them per sweep: y <- a.(t - b r)/a.a, r <- b.(t - a y)/b.b leaves r - r* multiplied
+    by (a.b)^2 / (a.a b.b). It stalls (cos = 1) only where the runout's data pattern is one a change of the map can
+    make: the first harmonic, a translation (rf-runout)."""
+    a = sp.Matrix(sp.symbols("a0:3", real=True))
+    b = sp.Matrix(sp.symbols("b0:3", real=True))
+    ys, rs = sp.symbols("y_s r_s", real=True)  # the exact solution, t = a ys + b rs
+    t = a * ys + b * rs
+    r = sp.Symbol("r", real=True)
+    y_new = a.dot(t - b * r) / a.dot(a)
+    r_new = b.dot(t - a * y_new) / b.dot(b)
+    cos2 = a.dot(b) ** 2 / (a.dot(a) * b.dot(b))
+    assert is_zero(sp.simplify((r_new - rs) - cos2 * (r - rs)))
+
+
+def test_runout_identifiable():
+    """rf-runout-fit: a population's counts against dty at the omega of each of its reflections are the beam-weighted
+    projection of its voxels, whose centroid is y0 - (xbar sin w + ybar cos w) + r(w) (dif-dty; xbar, ybar its
+    light's centre): a constant and a first harmonic from the population, plus the runout. So the runout's harmonics
+    from the second up are the populations' centroid curves less their own first harmonics, shared by every
+    population: determined once the reflections' omegas resolve them (2n + 1 distinct omegas per population for
+    harmonics up to n, the harmonics being orthogonal over a full turn)."""
+    w = sp.Symbol("omega", real=True)
+    xs, ys = sp.symbols("x0:3", real=True), sp.symbols("y0_0:3", real=True)
+    f = sp.symbols("f0:3", positive=True)
+    y0 = sp.Symbol("y0", real=True)
+    M = sum(f)
+    centroid = sum(f[i] * (y0 - (xs[i] * sp.sin(w) + ys[i] * sp.cos(w))) for i in range(3)) / M
+    xb = sum(f[i] * xs[i] for i in range(3)) / M
+    yb = sum(f[i] * ys[i] for i in range(3)) / M
+    assert is_zero(sp.simplify(centroid - (y0 - xb * sp.sin(w) - yb * sp.cos(w))))
+    for m in range(4):
+        for n in range(1, 4):
+            if m != n:
+                assert sp.integrate(sp.cos(m * w) * sp.cos(n * w), (w, 0, 2 * sp.pi)) == 0
+                assert sp.integrate(sp.sin(m * w) * sp.sin(n * w), (w, 0, 2 * sp.pi)) == 0
+            assert sp.integrate(sp.cos(m * w) * sp.sin(n * w), (w, 0, 2 * sp.pi)) == 0
+
+
+def test_box_half_width():
+    """rf-box-width: in a box of half-width t cells per axis over three axes, a first moment along one axis sums
+    |x| over (2t + 1)^2 t (t + 1) cell-cells, about 4 t^4; with the cut's bound kappa W / N and the light beyond the
+    faces' worst case sigma^2 / t (variance only, ref-tail), B(t) = 4 kappa t^4 / N + sigma^2 / t is least at
+    t* = (sigma^2 N / (16 kappa))^(1/5), where B = (5/4) sigma^2 / t*: falling only as N^(-1/5). For sigma = 1 cell,
+    N = 1e4, kappa = 1/e: t* = 4.43 cells, B = 0.282 cells."""
+    t, N, kap, sig = sp.symbols("t N kappa sigma", positive=True)
+    W = sum(sp.Abs(x) for x in range(-3, 4)) * 7 * 7
+    assert W == 12 * 49 and (2 * 3 + 1) ** 2 * 3 * (3 + 1) == W  # (2t+1)^2 t (t+1) at t = 3
+    B = 4 * kap * t**4 / N + sig**2 / t
+    ts = (sig**2 * N / (16 * kap)) ** sp.Rational(1, 5)
+    assert is_zero(sp.simplify(sp.diff(B, t).subs(t, ts)))
+    assert is_zero(sp.simplify(B.subs(t, ts) - sp.Rational(5, 4) * sig**2 / ts))
+    vals = {sig: 1, N: 10**4, kap: sp.exp(-1)}
+    assert rounds_to(ts.subs(vals), "4.43") and rounds_to((sp.Rational(5, 4) * sig**2 / ts).subs(vals), "0.282")
+
+
+def test_three_dimensional_weak():
+    """rf-3d: in a stack of slices the rays are horizontal, so a frequency k = k_h + k_z z is carried by
+    xi = z x k_h-hat for any k_z, and the weak part is beta xi. With n = k-hat x xi (unit, normal to k and xi),
+    n x k = |k| xi, so i |k| (beta xi)_i = i (k x b_i) . n, the Nye tensor's component (curl beta)_i . n: the
+    dislocation density with lines along n, which leans from z towards k_h as k tilts. A frequency along z (k_h = 0)
+    is carried by every horizontal ray, whose g0 span all directions: fully seen."""
+    kx, ky, kz = sp.symbols("k_x k_y k_z", real=True)
+    k = sp.Matrix([kx, ky, kz])
+    kh = sp.Matrix([kx, ky, 0])
+    z = sp.Matrix([0, 0, 1])
+    xi = z.cross(kh) / sp.sqrt(kx**2 + ky**2)
+    assert is_zero(sp.simplify(xi.dot(k)))  # xi carries every k_z
+    kn = sp.sqrt(kx**2 + ky**2 + kz**2)
+    n = (k / kn).cross(xi)
+    assert is_zero(sp.simplify(n.dot(n) - 1)) and is_zero(sp.simplify(n.dot(k)))
+    assert is_zero(sp.simplify(n.cross(k) - kn * xi))
+    bi = sp.Matrix(sp.symbols("b0:3"))  # a row of beta_hat
+    assert is_zero(sp.simplify(kn * bi.dot(xi) - (k.cross(bi)).dot(n)))
+    assert is_zero(sp.simplify(n.subs({kz: 0}) - z))  # horizontal k: lines along z (lim-nye)
+
+
+def test_displacement_common_term():
+    """rf-displacement: a radially symmetric feature f(rho) of the detector radius (here |g|^2 =
+    (2 / lambda^2)(1 - L / sqrt(L^2 + rho^2)) on a detector normal to the beam at distance L) has Hessian eigenvalues
+    f'' (radial) and f'/rho (tangential), so a zero-mean displacement of covariance (s_r^2, s_t^2) adds
+    (f'' s_r^2 + f' s_t^2 / rho) / 2: relative to f, (s_r^2 + s_t^2) / rho^2 to leading order in rho / L. For a
+    point spread of variance 0.5 px^2 per axis at rho = 420 px, 5.7e-6, the same for every population there."""
+    rho, L, lam = sp.symbols("rho L lambda", positive=True)
+    f = 2 / lam**2 * (1 - L / sp.sqrt(L**2 + rho**2))
+    x, y = sp.symbols("x y", real=True)
+    F = f.subs(rho, sp.sqrt(x**2 + y**2))
+    Hxx = sp.diff(F, x, 2).subs({x: rho, y: 0})  # radial
+    Hyy = sp.diff(F, y, 2).subs({x: rho, y: 0})  # tangential
+    assert is_zero(sp.simplify(Hxx - sp.diff(f, rho, 2)))
+    assert is_zero(sp.simplify(Hyy - sp.diff(f, rho) / rho))
+    sr, st, e = sp.symbols("s_r s_t epsilon", positive=True)
+    rel = ((sp.diff(f, rho, 2) * sr**2 + sp.diff(f, rho) / rho * st**2) / 2 / f).subs(L, rho / e)
+    lead = sp.limit(rel, e, 0)
+    assert is_zero(sp.simplify(lead - (sr**2 + st**2) / rho**2))
+    assert rounds_to((sp.Rational(1, 2) + sp.Rational(1, 2)) / sp.Integer(420) ** 2 * 10**6, "5.7")
