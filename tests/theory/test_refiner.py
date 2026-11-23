@@ -921,3 +921,93 @@ def test_omega_floor_table():
     sd_bw = sp.Rational(3, 10**4) / (2 * sp.sqrt(2 * sp.log(2))) * sp.Rational(8, 100)
     assert rounds_to(sd_bw / h, "0.012") and rounds_to(sd_bw / sp.Rational(1, 5) / h, "0.058")
     assert rounds_to(sp.Rational(8, 10**5) / h, "0.092")
+
+
+def test_si_fisher():
+    """rf-si-fisher: a Si reflection's counts in its frames are Poisson with means N P_j(mu, v). Its intensity N is a
+    nuisance orthogonal to v (the cross information is sum_j d_v P_j = d_v sum_j P_j = 0), and the information on v is
+    N sum_j (d_v P_j)^2 / P_j: for two frames N (d_v q)^2 / (q (1 - q)). The chain rule through v_r = x_r . theta,
+    x_r = (1, cot^2 eta, tan^2 theta / sin^2 eta) / h^2, gives I(theta) = sum_r I_r x_r x_r^T. Checked for two cells."""
+    N, q, dq = sp.symbols("N q dq", positive=True)  # q = P_out(v), dq = d q / d v
+    P = [1 - q, q]
+    dP = [-dq, dq]
+    lam = [N * p for p in P]
+    # Poisson information for (N, v): sum_j (d lam_j)(d lam_j)^T / lam_j
+    I_NN = sum(pj**2 / l for pj, l in zip(P, lam))
+    I_Nv = sum(pj * N * dpj / l for pj, dpj, l in zip(P, dP, lam))
+    I_vv = sum((N * dpj) ** 2 / l for dpj, l in zip(dP, lam))
+    assert is_zero(sp.simplify(I_Nv))
+    assert is_zero(sp.simplify(I_vv - N * dq**2 / (q * (1 - q))))
+    assert is_zero(sp.simplify(I_NN - 1 / N))
+    th = sp.Matrix(sp.symbols("t0:3", positive=True))
+    x = sp.Matrix(sp.symbols("x0:3", positive=True))
+    Ir = sp.Symbol("I_r", positive=True)
+    v = (x.T * th)[0]
+    grad = sp.Matrix([sp.diff(v, ti) for ti in th])
+    assert is_zero(Ir * grad * grad.T - Ir * x * x.T)
+
+
+def test_si_fisher_narrow():
+    """rf-si-narrow: a kernel of sd s frames much narrower than a frame spills only across the nearer edge, at
+    distance d from the peak: q = Phi(-d/s), d_v q = d phi(d/s) / (2 s^3) (v = s^2). Over reflections spread evenly
+    in d on [0, 1/2], the mean information 2 int_0^(1/2) N (d_v q)^2 / (q (1 - q)) dd is, with d = s z,
+    (N / (2 s^3)) int_0^(1/(2s)) z^2 phi(z)^2 / (Phi(z) Phi(-z)) dz -> N K / (2 s^3), K = 1.10. So M reflections fix
+    v to sd sqrt(2 s^3 / (M N K)) and s to a relative sd 1 / sqrt(2 M N K s): 0.27 % for M = 500, N = 1e4 photons,
+    s = 0.012 frames (the bandwidth's), 0.87 % at N = 1e3, 0.099 % at s = 0.092 (the horizontal convergence's)."""
+    d, s, z, N = sp.symbols("d s z N", positive=True)
+
+    def Phi(x):
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    def phi(x):
+        return sp.exp(-(x**2) / 2) / sp.sqrt(2 * sp.pi)
+
+    v = sp.Symbol("v", positive=True)
+    q = Phi(-d / sp.sqrt(v))
+    dq = sp.diff(q, v).subs(v, s**2)
+    assert is_zero(sp.simplify(dq - d * phi(d / s) / (2 * s**3)))
+    integrand = 2 * N * dq**2 / (Phi(-d / s) * Phi(d / s))
+    sub = (integrand.subs(d, s * z) * s).simplify()  # dd = s dz
+    target = N / (2 * s**3) * z**2 * phi(z) ** 2 / (Phi(z) * Phi(-z))
+    assert is_zero(sp.simplify(sub - target))
+    import mpmath as mp
+
+    mp.mp.dps = 20
+    K = mp.quad(lambda t: t**2 * mp.npdf(t) ** 2 / (mp.ncdf(t) * mp.ncdf(-t)), [0, 2, 5, mp.inf])
+    assert rounds_to(sp.Float(str(K), 20), "1.10")
+    M = sp.Symbol("M", positive=True)
+    var_v = 2 * s**3 / (M * N * sp.Symbol("K", positive=True))
+    rel_s = sp.sqrt(var_v) / (2 * s**2)  # d s = d v / (2 s)
+    assert is_zero(sp.simplify(rel_s - 1 / sp.sqrt(2 * M * N * sp.Symbol("K", positive=True) * s)))
+    Kf = sp.Float(str(K), 20)
+    for Mv, Nv, sv, q_ in ((500, 10**4, sp.Rational(12, 1000), "0.27"), (500, 10**3, sp.Rational(12, 1000), "0.87"),
+                           (500, 10**4, sp.Rational(92, 1000), "0.099")):  # fmt: skip
+        assert rounds_to(100 / sp.sqrt(2 * Mv * Nv * Kf * sv), q_)
+
+
+def test_si_position_orthogonal():
+    """rf-si-narrow: the frame masses are P_j = G(j - mu, v) with G(x, v) = Phi((x + 1/2)/sqrt v) - Phi((x - 1/2)/sqrt v)
+    even in x, so G_x is odd and G_v even: the cross information between a reflection's position mu and v,
+    -sum_j G_x G_v / G at j - mu, is odd in mu (j -> -j), and vanishes over reflections spread symmetrically in mu. The
+    Si orientation, fitted jointly, costs the widths nothing on average; left unfitted, a position error of sd tau adds
+    tau^2 to v (Gaussians convolve), which raises the floor: unsafe."""
+    x = sp.Symbol("x", real=True)
+    v = sp.Symbol("v", positive=True)
+
+    def Phi(y):
+        return (1 + sp.erf(y / sp.sqrt(2))) / 2
+
+    G = Phi((x + sp.Rational(1, 2)) / sp.sqrt(v)) - Phi((x - sp.Rational(1, 2)) / sp.sqrt(v))
+    assert is_zero(sp.simplify(G.subs(x, -x) - G))
+    Gx, Gv = sp.diff(G, x), sp.diff(G, v)
+    assert is_zero(sp.simplify(Gx.subs(x, -x) + Gx))
+    assert is_zero(sp.simplify(Gv.subs(x, -x) - Gv))
+
+
+def test_si_position_number():
+    """rf-si-narrow's position scale: a 75 um pixel at 180 mm is 4.17e-4 rad; over sqrt(500) reflections 1.86e-5 rad,
+    0.021 frames of 0.05 deg."""
+    pix = sp.Rational(75, 180000)
+    h = sp.pi / 180 * sp.Rational(5, 100)
+    assert rounds_to(pix * 10**4, "4.17") and rounds_to(pix / sp.sqrt(500) * 10**5, "1.86")
+    assert rounds_to(pix / sp.sqrt(500) / h, "0.021")

@@ -310,6 +310,53 @@ Only reflections within a few kernel widths of a frame's edge carry information.
 frames that is about a fraction :math:`6\sigma` of them, about 35 of 500 at :math:`\sigma = 0.012`: still many more
 than three unknowns.
 
+**How precisely.** A Si reflection's counts in its frames are Poisson with means :math:`N P_j(\mu, v)`. Its unknown
+intensity :math:`N` costs nothing: the cross information with :math:`v` is :math:`\sum_j \partial_v P_j = 0`. Through
+:math:`v_r = \vec{x}_r\cdot\vec{\vartheta}`, with :math:`\vec{\vartheta}` the three squared widths and :math:`\vec{x}_r =
+(1, \cot^2\eta_r, \tan^2\theta_r/\sin^2\eta_r)/h^2`, the Fisher information on the widths is
+
+.. math::
+    :label: rf-si-fisher
+
+    \matr{I}(\vec{\vartheta}) = \sum_r I_r\, \vec{x}_r\vec{x}_r^T, \qquad
+    I_r = N_r \sum_j \frac{(\partial_v P_j)^2}{P_j},
+
+exactly, from each reflection's own predicted position. Its inverse bounds the widths' covariance.
+
+**Proof:** ``tests/theory/test_refiner.py::test_si_fisher``
+
+For a kernel of sd :math:`s` frames, much narrower than a frame, only the nearer edge matters. At distance :math:`d`
+from it, :math:`q = \Phi(-d/s)` spills over, :math:`\partial_v q = d\,\varphi(d/s)/(2s^3)`, and over reflections spread
+evenly in :math:`d`,
+
+.. math::
+    :label: rf-si-narrow
+
+    \overline{I_r} = \frac{N K}{2 s^3}, \quad K = \int_0^\infty \frac{z^2\varphi(z)^2}{\Phi(z)\Phi(-z)}\,dz = 1.10,
+    \qquad
+    \frac{\operatorname{sd}(s)}{s} = \frac{1}{\sqrt{2 M N K s}} \quad (M \text{ reflections}).
+
+So the narrower the kernel, the more information each reflection gives on its variance, but the fewer reflections give
+any: only those within a few :math:`s` of an edge, a fraction of about :math:`s`. That is why :math:`s` stays in the
+relative precision. For :math:`M = 500` reflections of :math:`N = 10^4` photons it is 0.27 % at :math:`s = 0.012`
+frames (the bandwidth's) and 0.099 % at 0.092 (the horizontal convergence's); 0.87 % at :math:`N = 10^3`. The limit
+holds while the far edge is negligible, :math:`s \lesssim 0.15`. Beyond that, :eq:`rf-si-fisher` is summed in full.
+
+**Proof:** ``tests/theory/test_refiner.py::test_si_fisher_narrow`` (the derivative; the change of variables
+:math:`d = sz`; :math:`K`; the numbers).
+
+The positions must be fitted with the widths, never taken as given. The frame masses are :math:`G(j - \mu, v)` with
+:math:`G` even in its first argument, so :math:`G_x` is odd and :math:`G_v` even. The cross information between a
+reflection's position and :math:`v` is therefore odd in :math:`\mu`. Over reflections spread symmetrically within their
+frames it vanishes, so the Si orientation fitted jointly costs the widths nothing on average. Left unfitted, a position
+error of sd :math:`\tau` adds :math:`\tau^2` to every :math:`v` (:eq:`rf-omega-kernel`: Gaussians convolve). That
+raises the floor, the one unsafe direction for (A6). Si's orientation error after calibration, about the pixel
+angle over :math:`\sqrt{M}`, is of the order of 0.02 frames at ID11. That is larger than the bandwidth's 0.012, so
+fitting the positions jointly is necessary, not optional.
+
+**Proof:** ``tests/theory/test_refiner.py::test_si_position_orthogonal``,
+``tests/theory/test_refiner.py::test_si_position_number``
+
 The cut
 -------
 
@@ -1024,8 +1071,9 @@ What is left out
   :math:`\matr{Y}^{(2)}` is not written out.
 - **The omega kernel's Gaussian form** (:eq:`rf-omega-kernel`) is the instrument's, as the point spread's mixture
   is; a non-Gaussian bandwidth or convergence profile would change :eq:`rf-omega-bound`'s numbers, not its form.
-- **The precision of the Si fit** (how well 500 reflections fix the three widths) is not derived, only that they are
-  determined.
+- **The Si fit's three-width covariance** for a given set of reflections is :eq:`rf-si-fisher` inverted; its
+  conditioning depends on the rings and :math:`\eta` spread (:eq:`rf-omega-identify`), not written out for a typical
+  scan.
 - **The group rule's bound** (:eq:`rf-group-psf`) is rigorous but weak; a sharper one needs where in a cell the light
   falls.
 - **The precision** :math:`\epsilon` and confidence :math:`z` of :eq:`rf-smin` are the maintainer's to set.
