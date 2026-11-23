@@ -438,9 +438,10 @@ def _sensor_kernel(mu: jax.Array, geom: dict) -> tuple:
     -------
     tuple
         Offsets r [SENSOR_SLICES] and variances v [SENSOR_SLICES] (pixels, along u) of the kernel's slices, the mean
-        removed, and the unit direction u [2] (slow, fast). The mean shift (mean depth x tan(phi), for a detector
-        normal to the beam the same for every spot as moving the detector back by the mean depth) is left out: a
-        geometry calibrated on spots or rings measured with this sensor already holds it.
+        removed, and the unit direction u [2] (slow, fast). The mean shift (mean depth x tan(phi)) is left out: a
+        geometry calibrated on spots or rings measured with this sensor already holds it. For a detector normal to the
+        beam it equals moving the detector back by the mean depth only to first order in phi: they differ by
+        (sin phi - tan phi) / mu (theory page, detector; -0.3 um at 2theta = 10 deg and 1 / mu = 111 um).
     """
     s_step, f_step = geom["s_step_lab"], geom["f_step_lab"]
     p = geom["det_origin_lab"] + mu[0] * s_step + mu[1] * f_step
@@ -469,7 +470,7 @@ def _undistort(mu_c: jax.Array, geom: dict) -> tuple:
     geom "spatial" = (dx, dy) [n_slow, n_fast] (:func:`anri.io.imaged11.read_spatial`): the raw pixel (row, col) is at
     (row + dy, col + dx) on the ideal detector, c(x) = x + d(x). Solves c(x0) = mu_c (NEWTON_STEPS Newton
     steps: quadratic, and exact in one where the map is affine over the step) with d interpolated bilinearly (affine
-    within each pixel cell), and returns x0 [2] and A^-1 [2, 2], A = I + grad d(x0). A peak's Gaussian on the ideal detector is then, on the raw pixels, centred at x0
+    along each axis within a pixel cell, with a cross term: Newton still converges, theory page, detector), and returns x0 [2] and A^-1 [2, 2], A = I + grad d(x0). A peak's Gaussian on the ideal detector is then, on the raw pixels, centred at x0
     with its detector block mapped by A^-1 (exact for a map that is affine over the peak's window).
     """
     dx, dy = (jnp.asarray(m, mu_c.dtype) for m in geom["spatial"])

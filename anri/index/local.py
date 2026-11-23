@@ -9,8 +9,9 @@ orientation replaced by its 27 :func:`children`, a third of the step apart, fitt
 and kept by likelihood ratio), until the worst case is within a third of the bins.
 
 The orientation error also enters the tomography: an error delta shifts a reflection's omega by about
--delta_z - delta_y cot(eta), which moves the voxel's predicted row by r sin(omega - phi) d_omega at a distance r from
-the axis. A fit of voxels v with orientations off by up to e is consistent only if v >~ R e (R: the sample's radius),
+-delta_z - delta_y cot(eta), which moves the predicted row of the voxel at r (cos phi, sin phi) by
+-r cos(omega + phi) d_omega (theory page, local search). A fit of voxels v with orientations off by up to e is
+consistent only if v >~ R e (R: the sample's radius; R e / |sin eta| for a reflection at eta, sized here for 1),
 so the first spatial level may need voxels a few rows wide (:func:`level_rows`). Each later level subdivides the
 orientations by 3 and the voxels down to the rows' step: every voxel keeps the orientations holding at least a small
 share of its occupancy (:func:`kept`: a thin twin lamella, a small share of a coarse voxel, keeps its own; a cover of
