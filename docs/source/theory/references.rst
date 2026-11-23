@@ -20,6 +20,10 @@ The works the theory pages cite, by label.
 .. [Dempster1977] Dempster, A.P., Laird, N.M., Rubin, D.B., 1977. Maximum likelihood from incomplete data via the EM
    algorithm. Journal of the Royal Statistical Society B 39, 1–38. https://doi.org/10.1111/j.2517-6161.1977.tb01600.x
 
+.. [DLMF2026] Olver, F.W.J., Olde Daalhuis, A.B., Lozier, D.W., Schneider, B.I., Boisvert, R.F., Clark, C.W.,
+   Miller, B.R., Saunders, B.V., Cohl, H.S., McClain, M.A. (Eds.), 2026. NIST Digital Library of Mathematical
+   Functions, Release 1.2.8 of 2026-09-15. https://dlmf.nist.gov/
+
 .. [FABLEgeom] FABLE, n.d. FABLE geometry, version 1.0.8. Included with these docs as
    :download:`Fable_Geometry_version_1.0.8.pdf <../tutorials/Fable_Geometry_version_1.0.8.pdf>`.
 

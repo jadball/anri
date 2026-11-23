@@ -18,6 +18,7 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.scipy.special import gammainc, gammaincc, gammaln, xlogy
 from jax.typing import ArrayLike
 
 from anri.geom.beam import beam_basis, chord_weight
@@ -27,37 +28,142 @@ from anri.geom.scan import recon_positions
 
 from .data import eta_omega_corners, omega_bin, scan_beam
 
+_TINY = 1e-30  # below this a regularised gamma is taken from its series (float32's smallest normal is 1.2e-38)
+
+
+def _log_pmf(k: jax.Array, mu: jax.Array) -> jax.Array:
+    """Compute log P(n = k), n ~ Poisson(mu > 0), for a real k >= 0, without cancellation at large k.
+
+    k log mu - mu - log Gamma(k + 1) subtracts numbers of size k log k to leave one of order log k: in float32 that
+    loses everything at k ~ 1e5. Written as -bd0(k, mu) - log(2 pi k) / 2 - stirlerr(k) instead, with
+    bd0 = k log(k / mu) + mu - k and stirlerr(k) = log Gamma(k + 1) - (k + 1/2) log k + k - log(2 pi) / 2, each
+    computed directly in its small form (theory page, likelihood).
+
+    References
+    ----------
+    .. [1] Olver, F.W.J., Olde Daalhuis, A.B., Lozier, D.W., Schneider, B.I., Boisvert, R.F., Clark, C.W., Miller,
+       B.R., Saunders, B.V., Cohl, H.S., McClain, M.A. (Eds.), 2026. NIST Digital Library of Mathematical Functions,
+       Release 1.2.8 of 2026-09-15. https://dlmf.nist.gov/ (Stirling's series, 5.11.1; its error bound for real
+       positive arguments, 5.11(ii))
+    """
+    kk = jnp.maximum(k, 1.0)
+    # Stirling's series to k^-9: the first omitted term is below 2.3e-16 for k >= 15 ([1]_, 5.11.1 and 5.11(ii))
+    stirlerr = (1 / 12 - (1 / 360 - (1 / 1260 - (1 / 1680 - 1 / (1188 * kk**2)) / kk**2) / kk**2) / kk**2) / kk
+    v = (kk - mu) / (kk + mu)
+    v2 = v * v
+    series = sum(v2**j / (2 * j + 1) for j in range(1, 9))  # 2 k sum_j v^(2j+1) / (2j+1): |v| < 0.1, v^18 < 1e-18
+    bd0 = jnp.where(jnp.abs(v) < 0.1, (kk - mu) * v + 2 * kk * v * series, kk * jnp.log(kk / mu) + mu - kk)
+    loader = -bd0 - 0.5 * jnp.log(2 * jnp.pi * kk) - stirlerr
+    return jnp.where(k >= 15, loader, xlogy(k, mu) - mu - gammaln(k + 1))
+
+
+def censored_below(mu: jax.Array, censor: ArrayLike) -> tuple[jax.Array, jax.Array]:
+    """Return log P(n <= censor) + mu and E[n | n <= censor] / mu, for n ~ Poisson(mu), per bin.
+
+    ``+ mu`` keeps the large -mu out of the logarithm, so differences between two models stay exact (the likelihood
+    ratio). For an integer c, P(n <= c) e^mu = sum over j <= c of mu^j / j!, summed as logs. For a real c, by
+    continuity P(n <= c) = Q(c + 1, mu), the regularised upper incomplete gamma; where it underflows,
+    Q(c + 1, mu) = P(n = c) S with S = sum over k <= ceil(c) of c (c - 1) ... (c - k + 1) / mu^k, in error by less
+    than its first omitted term. The ratio is 1 - P(n = c) / P(n <= c) (theory page, likelihood).
+    """
+    c = jnp.asarray(censor, mu.dtype)
+    n = jnp.ceil(c).astype(jnp.int32) + 1  # terms of either sum
+    log_mu = jnp.log(jnp.maximum(mu, _TINY))
+    log_pmf_mu = jnp.where(c > 0, c * log_mu, 0.0) - gammaln(c + 1)  # log P(n = c) + mu
+
+    def exact(j: jax.Array, s: jax.Array) -> jax.Array:  # log sum of mu^j / j!, j = 0 .. c
+        return jnp.logaddexp(s, jnp.where(mu > 0, j * log_mu, -jnp.inf) - gammaln(j + 1.0))
+
+    log_sum = jax.lax.fori_loop(1, n, exact, jnp.zeros_like(mu))
+    q = gammaincc(c + 1, mu)
+    deep = q < _TINY
+    x = jnp.where(deep, mu, 1.0)
+
+    eps = jnp.finfo(mu.dtype).eps
+
+    def more(st: tuple) -> jax.Array:  # at least ceil(c) terms (the bound needs k > c - 1), then to float precision
+        k, t, s = st
+        return (k < n) | ((k < 1000) & jnp.any(jnp.abs(t) > eps * jnp.abs(s)))
+
+    def tail(st: tuple) -> tuple:
+        k, t, s = st
+        t = t * (c - k + 1) / x
+        return k + 1, t, s + t
+
+    one = jnp.ones_like(mu)
+    t0 = jnp.where(deep, one, 0.0)  # bins outside the deep tail don't use S: no terms, so they never hold the loop
+    _, _, S = jax.lax.while_loop(more, tail, (jnp.ones((), jnp.int32), t0, one))
+    log_q_mu = jnp.log(jnp.where(deep, 1.0, q)) + mu
+    log_q_mu = jnp.where(c == jnp.floor(c), log_sum, jnp.where(deep, log_pmf_mu + jnp.log(S), log_q_mu))
+    log_q_mu = jnp.where((mu > 0) | (c > 0), log_q_mu, 0.0)
+    return log_q_mu, 1.0 - jnp.exp(jnp.where(mu > 0, log_pmf_mu, jnp.where(c > 0, -jnp.inf, 0.0)) - log_q_mu)
+
+
+def saturated_above(mu: jax.Array, d: jax.Array) -> tuple[jax.Array, jax.Array]:
+    """Return log P(n >= d) and E[n | n >= d] / mu, for n ~ Poisson(mu) and d > 0, per bin.
+
+    Continued to a real d by P(n >= d) = P(d, mu), the regularised lower incomplete gamma. The ratio is
+    1 + P(n = d - 1) / P(n >= d). Where P underflows (mu far below d), P(d, mu) = P(n = d - 1) (mu / d) T with
+    T = sum over k >= 0 of mu^k / ((d + 1) ... (d + k)), summed until its terms fall below float precision.
+    """
+    mus = jnp.maximum(mu, _TINY)
+    log_g = _log_pmf(d - 1, mus)  # P(n = d - 1)
+    p = gammainc(d, mu)
+    deep = p < _TINY
+    x = jnp.where(deep, mu, 0.0)
+    eps = jnp.finfo(mu.dtype).eps
+
+    def more(st: tuple) -> jax.Array:
+        k, t, T = st
+        return (k < 100000) & jnp.any(t > eps * T)
+
+    def term(st: tuple) -> tuple:
+        k, t, T = st
+        t = t * x / (d + k)
+        return k + 1, t, T + t
+
+    one = jnp.ones_like(mu)
+    _, _, T = jax.lax.while_loop(more, term, (jnp.ones((), jnp.int32), one, one))
+    log_p = jnp.where(deep, log_g + jnp.log(mus / d) + jnp.log(T), jnp.log(jnp.where(deep, 1.0, p)))
+    # deep: P(n = d - 1) / P(n >= d) = d / (mu T) exactly, without the logarithms
+    return log_p, 1.0 + jnp.where(deep, d / (mus * T), jnp.exp(log_g - log_p))
+
 
 @jax.jit
 def censored_ratio(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | None = None) -> jax.Array:
-    """Compute the MLEM ratio d / mu, with empty bins taken as censored, and saturated bins as at least their data.
+    """Compute the MLEM ratio E[n | data] / mu per bin, with empty and saturated bins censored.
 
-    A bin with no data had every pixel below the segmentation cut. Where the model predicts less than ``censor``
-    there, the data cannot rule it out: the bin counts as agreeing (ratio 1). Where it predicts more, it counts as
-    ``censor / 2``. ``censor = 0``: empty bins are zeros (ratio 0), plain MLEM. A bin holding a saturated pixel
-    (``saturated``: their indices) recorded at most its true counts: where the model predicts at least the data
-    there, it agrees (ratio 1); where it predicts less, the data pull it up as usual.
+    d / mu where data were recorded; the censored expectations where they were not (empty bins: n <= ``censor``) or
+    are a lower bound (``saturated``: indices of the bins holding a saturated pixel, n >= d).
+
+    This is the EM step for the censored Poisson likelihood whose deviance :func:`deviance` computes, so the two are
+    one objective. ``censor = 0``: empty bins are zeros (ratio 0), plain MLEM.
     """
     mus = jnp.maximum(mu, 1e-30)
-    r = jnp.where(mu > 0, jnp.where(d > 0, d, jnp.where(mu < censor, mu, 0.5 * censor)) / mus, 0.0)
+    _, r_empty = censored_below(mu, censor)
+    r = jnp.where(mu > 0, jnp.where(d > 0, d / mus, r_empty), 0.0)
     if saturated is not None:
-        r = r.at[saturated].set(jnp.where(mu[saturated] >= d[saturated], 1.0, r[saturated]))
+        _, r_sat = saturated_above(mu[saturated], d[saturated])
+        r = r.at[saturated].set(jnp.where(mu[saturated] > 0, r_sat, 0.0))
     return r
 
 
 @jax.jit
 def deviance(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | None = None) -> jax.Array:
-    """Poisson deviance of observed bins, plus 2 x (mu - censor) for empty bins the model predicts above ``censor``.
+    """Compute the deviance of the censored Poisson likelihood.
 
-    ``censor = 0``: the plain Poisson deviance. Saturated bins (``saturated``: their indices) where the model predicts
-    at least the data add nothing (see :func:`censored_ratio`).
+    The Poisson deviance of recorded bins, -2 log P(n <= ``censor``) for empty bins, and -2 log P(n >= d) for bins
+    holding a saturated pixel (``saturated``: their indices).
+
+    ``censor = 0``: the plain Poisson deviance. :func:`censored_ratio` is its EM step.
     """
     mus = jnp.maximum(mu, 1e-30)
-    obs = jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / mus) - d + mu, 0.0)
-    total = jnp.sum(obs + jnp.where(d > 0, 0.0, jnp.maximum(mu - censor, 0.0)))
+    log_q_mu, _ = censored_below(mu, censor)
+    term = jnp.where(d > 0, d * jnp.log(jnp.maximum(d, 1e-30) / mus) - d + mu, mu - log_q_mu)
     if saturated is not None:
-        total = total - jnp.sum(jnp.where(mu[saturated] >= d[saturated], obs[saturated], 0.0))
-    return 2.0 * total
+        log_p, _ = saturated_above(mu[saturated], d[saturated])
+        term = term.at[saturated].set(-log_p)
+    return 2.0 * jnp.sum(term)
 
 
 PIXELS_IN_SPOT = 3  # ImageD11's segmentation default (lima_segmenter): pixels per spot above the cut, in one frame

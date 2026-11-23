@@ -247,7 +247,8 @@ the :math:`a_q` are small.
 
 **Anri's rule:** pixels not recorded are censored, never zero. An unrecorded cell says only "below the cut, or in a
 group too small" (:eq:`rec-likelihood`); its likelihood is never :math:`e^{-\lambda_p}`. The indexer's histogram
-bins use a simple stand-in for this (:doc:`likelihood`, censored bins).
+bins use the exact likelihood of a censored count per bin, with a censoring level per bin in place of the per-pixel
+threshold (:doc:`likelihood`, censored bins).
 
 **What ImageD11 can also do, and the model must know.** A per-frame cap ``howmany`` (100000 pixels) raises the cut
 on a frame with more kept pixels, a cut that depends on the data: check that it never triggered. A background file

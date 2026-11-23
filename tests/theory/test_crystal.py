@@ -90,10 +90,11 @@ def test_laue_code():
         Bv = evaluate(B, {})
         got = orientation.laue_rotations(structure.symmetry_matrices(sg), Bv)
         np.testing.assert_array_equal(got[0], np.eye(3))  # the identity first
-        # match as sets; S is rounded to 8 decimals in the code (np.unique), so it agrees to 5e-9, not to ulps
+        # match as sets. S = B R^T B^-1: entries are bounded by cond(B), and inv(B) errs by cond(B) eps relative,
+        # so S errs by at most n ulps of cond(B)^2 (n = 16 covers the two products, as tol says)
         order = [int(np.argmin(np.abs(expected - g).sum((1, 2)))) for g in got]
         assert sorted(order) == list(range(n)), name
-        np.testing.assert_allclose(got, expected[order], rtol=0, atol=5e-9)
+        np.testing.assert_allclose(got, expected[order], **tol(np.linalg.cond(Bv) ** 2))
 
 
 def test_allowed_code():

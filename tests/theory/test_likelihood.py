@@ -114,41 +114,132 @@ def test_squarem_code():
         agree(want, lambda *z: _squarem_point(*z)[0], x, x1, x2, step_max, rtol=rtol, atol=0)
 
 
-def test_censored_terms():
-    """Empty bins: below c the deviance term and its gradient are 0 (ratio 1, consistent); at mu = c the term is
-    continuous; above c its gradient asks for ratio 0, while the update uses c / (2 mu), the Poisson ratio of a datum
-    c / 2. The update and the deviance are not one objective's there."""
-    m, c = sp.symbols("mu c", positive=True)
-    above = 2 * (m - c)
-    assert is_zero(above.subs(m, c))
-    assert is_zero((1 - sp.diff(above, m) / 2) - 0)
-    assert is_zero(c / (2 * m) - (1 - sp.diff(_dev(c / 2, m), m) / 2))
+def _pmf(k, m):
+    return sp.exp(-m) * m**k / sp.factorial(k)
+
+
+def test_censored_em():
+    """lik-censored: for an empty bin (n <= c, c integer), E[n | n <= c] / mu = 1 - P(n = c) / P(n <= c), and that
+    ratio is 1 - (1/2) dD/dmu for D = -2 log P(n <= c): the EM step and the deviance are one objective. c = 0 is the
+    Poisson zero (ratio 0, D = 2 mu). Saturated bins (n >= d, d integer) likewise: E[n | n >= d] / mu
+    = 1 + P(n = d - 1) / P(n >= d) = 1 - (1/2) dD/dmu for D = -2 log P(n >= d)."""
+    m = sp.symbols("mu", positive=True)
+    for c in range(5):
+        F = sum(_pmf(j, m) for j in range(c + 1))
+        cond_mean = sum(j * _pmf(j, m) for j in range(c + 1)) / F
+        ratio = 1 - _pmf(c, m) / F
+        assert is_zero(cond_mean / m - ratio)
+        assert is_zero(ratio - (1 - sp.diff(-2 * sp.log(F), m) / 2))
+    assert is_zero(-2 * sp.log(_pmf(0, m)) - 2 * m)
+    k = sp.symbols("k", integer=True, nonnegative=True)
+    for dd in range(1, 5):
+        tail = 1 - sum(_pmf(j, m) for j in range(dd))  # P(n >= d)
+        cond = (m - sum(j * _pmf(j, m) for j in range(dd))) / tail  # E[n 1(n >= d)] = mu - sum_{j < d} j P(j)
+        ratio = 1 + _pmf(dd - 1, m) / tail
+        assert is_zero(cond / m - ratio)
+        assert is_zero(ratio - (1 - sp.diff(-2 * sp.log(tail), m) / 2))
+    assert is_zero(sp.summation(k * _pmf(k, m), (k, 0, sp.oo)) - m)  # E[n] = mu, used above
+
+
+def test_censored_gamma():
+    """lik-censored-gamma: for integer c, P(n <= c) = Q(c + 1, mu) and P(n >= d) = P(d, mu) (regularised incomplete
+    gammas), and dQ(a, x)/dx = -x^(a-1) e^-x / Gamma(a): so for a real c the hazard P(n = c) / P(n <= c) keeps its
+    form, with P(n = c) = mu^c e^-mu / Gamma(c + 1)."""
+    m = sp.symbols("mu", positive=True)
+    a = sp.symbols("a", positive=True)
+    for c in range(4):
+        Q = sp.uppergamma(c + 1, m) / sp.gamma(c + 1)
+        assert is_zero(sp.expand_func(Q) - sum(_pmf(j, m) for j in range(c + 1)))
+        P = sp.lowergamma(c + 1, m) / sp.gamma(c + 1)
+        assert is_zero(sp.expand_func(P) - (1 - sum(_pmf(j, m) for j in range(c + 1))))
+    assert is_zero(sp.diff(sp.uppergamma(a, m) / sp.gamma(a), m) + m ** (a - 1) * sp.exp(-m) / sp.gamma(a))
+
+
+def test_censored_tail_series():
+    """lik-censored-tail: Gamma(a, x) = x^(a-1) e^-x int_0^oo e^-t (1 + t/x)^(a-1) dt (substituting u = x + t), and
+    int_0^oo e^-t t^k dt = k!, so expanding (1 + t/x)^(a-1) by Taylor's theorem gives
+    S = sum_k (a-1)(a-2)...(a-k) / x^k, whose remainder after n >= a - 1 terms is the next term times a factor in
+    (0, 1]. The finite sum for integer c equals P(n <= c) / P(n = c) exactly."""
+    x, t, a = sp.symbols("x t a", positive=True)
+    lhs = (x + t) ** (a - 1) * sp.exp(-(x + t))
+    rhs = x ** (a - 1) * sp.exp(-x) * (1 + t / x) ** (a - 1) * sp.exp(-t)
+    assert is_zero(sp.powsimp(sp.expand_power_base(lhs / rhs, force=True), force=True) - 1)
+    for k in range(6):
+        assert sp.integrate(sp.exp(-t) * t**k, (t, 0, sp.oo)) == sp.factorial(k)
+    m = sp.symbols("mu", positive=True)
+    for c in range(5):
+        S = sum(sp.ff(c, k) / m**k for k in range(c + 1))
+        assert is_zero(sum(_pmf(j, m) for j in range(c + 1)) - _pmf(c, m) * S)
+
+
+def test_saturated_series():
+    """lik-saturated-series: P(a, x) = x^a e^-x / Gamma(a+1) sum_k x^k / ((a+1)...(a+k)): the partial sums F_N
+    satisfy F_N' = x^(a-1) e^-x / Gamma(a) - (last term's) x^(a+N) e^-x / Gamma(a+N+1), telescoping, and F_N(0) = 0."""
+    x, a = sp.symbols("x a", positive=True)
+    for N in range(4):
+        F = sum(x ** (a + k) * sp.exp(-x) / sp.gamma(a + k + 1) for k in range(N + 1))
+        want = x ** (a - 1) * sp.exp(-x) / sp.gamma(a) - x ** (a + N) * sp.exp(-x) / sp.gamma(a + N + 1)
+        assert is_zero(sp.gammasimp(sp.diff(F, x) - want))
+
+
+def test_log_pmf_pieces():
+    """lik-loader: log P(n = k) = -bd0 - log(2 pi k)/2 - stirlerr(k) with bd0 = k log(k/mu) + mu - k and stirlerr
+    Stirling's series sum B_2m / (2m (2m-1) k^(2m-1)) [DLMF2026] (5.11.1); bd0 = (k - mu) v + 2k sum_j v^(2j+1)/(2j+1),
+    v = (k - mu)/(k + mu), as log(k/mu) = log((1+v)/(1-v)) = 2 atanh(v); the code's coefficients are the Bernoulli
+    ones, and the first omitted term, |B_12| / (132 k^11), is below 2.3e-16 at k = 15 [DLMF2026] (5.11(ii))."""
+    m, v = sp.symbols("mu v", positive=True)
+    vv = sp.symbols("vv", positive=True)  # log((1 + v) / (1 - v)) = 2 atanh(v), so with v = (k - mu)/(k + mu)
+    assert is_zero(sp.diff(sp.log((1 + vv) / (1 - vv)) - 2 * sp.atanh(vv), vv))
+    series = sp.series(2 * sp.atanh(v), v, 0, 19).removeO()
+    assert is_zero(series - 2 * sum(v ** (2 * j + 1) / (2 * j + 1) for j in range(9)))
+    km = m * (1 + v) / (1 - v)  # k in terms of v
+    assert is_zero(sp.simplify(2 * km * v - (km - m) - (km - m) * v))  # 2 k v - (k - mu) = (k - mu) v
+    coef = [sp.bernoulli(2 * j) / (2 * j * (2 * j - 1)) for j in range(1, 7)]
+    assert coef[:5] == [sp.Rational(1, 12), -sp.Rational(1, 360), sp.Rational(1, 1260), -sp.Rational(1, 1680),
+                        sp.Rational(1, 1188)]  # fmt: skip
+    assert abs(coef[5]) / 15**11 < sp.Rational(23, 10**17)
+
+
+def _exact_below(mu_, c_):
+    """log P(n <= c) + mu and the EM ratio at 40 digits (sympy's incomplete gamma)."""
+    mu_, c_ = sp.nsimplify(mu_), sp.nsimplify(c_)
+    if mu_ == 0:
+        return 0.0, (1.0 if c_ > 0 else 0.0)
+    Q = sp.uppergamma(c_ + 1, mu_) / sp.gamma(c_ + 1)
+    pmf = sp.exp(-mu_) * mu_**c_ / sp.gamma(c_ + 1)
+    return float(sp.N(sp.log(Q) + mu_, 40)), float(sp.N(1 - pmf / Q, 40))
+
+
+def _exact_above(mu_, d_):
+    mu_, d_ = sp.nsimplify(mu_), sp.nsimplify(d_)
+    P = sp.lowergamma(d_, mu_) / sp.gamma(d_)
+    g = sp.exp(-mu_) * mu_ ** (d_ - 1) / sp.gamma(d_)
+    return float(sp.N(sp.log(P), 40)), float(sp.N(1 + g / P, 40))
 
 
 def test_censored_code():
-    """anri's censored_ratio and deviance are lik-censored and its deviance terms, saturated bins included."""
-    from anri.index.occupancy import censored_ratio, deviance
+    """anri's censored_below and saturated_above against lik-censored at 40 digits, in float64, for integer and real
+    c, across the regimes (mu = 0, below c, near, the deep tail where Q(c + 1, mu) < 1e-30)."""
+    from anri.index.occupancy import censored_below, saturated_above
+    from anri.maths.utils import float64
 
-    db, mb, c = sp.symbols("d mu c", positive=True)
-    cv = 2.0
-    dv = np.array([3.0, 0.0, 0.0, 5.0, 1.0, 4.0])
-    mv = np.array([2.0, 1.5, 3.0, 6.0, 0.7, 2.5])
-    sat = np.array([3, 5])  # bin 3: mu >= d (agrees), bin 5: mu < d (as usual)
-    ratio, dev = [], 0.0
-    for i, (x, y) in enumerate(zip(dv, mv)):
-        if i in sat and y >= x:
-            ratio.append(1.0)
-        elif x > 0:
-            ratio.append(float(evaluate(db / mb, {db: x, mb: y})))
-            dev += float(evaluate(_dev(db, mb), {db: x, mb: y}))
-        elif y < cv:
-            ratio.append(1.0)
-        else:
-            ratio.append(float(evaluate(c / (2 * mb), {c: cv, mb: y})))
-            dev += float(evaluate(2 * (mb - c), {c: cv, mb: y}))
-    agree(np.array(ratio), censored_ratio, dv, mv, cv, sat, rtol=2 * EPS, atol=0)  # one division (and c / 2 exact)
-    parts = [x * np.log(x / y) for x, y in zip(dv, mv) if x > 0] + list(dv) + list(mv) + [cv] * len(dv)
-    agree(np.array(dev), deviance, dv, mv, cv, sat, rtol=_sum_rtol(parts, dev), atol=0)
+    mus = [0.0, 1e-6, 0.3, 1.0, 2.5, 6.0, 30.0, 80.0, 150.0, 1e3]
+    for c in (0.0, 3.0, 2.7, 6.3):
+        want = [_exact_below(x, c) for x in mus]
+        with float64():
+            got = [np.asarray(v) for v in censored_below(np.array(mus), c)]
+        # the logarithm's terms are at most c |log mu| + mu + log Gamma(c + 1): 64 ulps of that bound each result
+        scale = np.array([c * abs(np.log(max(x, 1e-300))) + x + float(sp.loggamma(c + 1)) + 1 for x in mus])
+        assert np.all(np.abs(got[0] - [w[0] for w in want]) <= 64 * EPS * scale)
+        assert np.all(np.abs(got[1] - [w[1] for w in want]) <= 64 * EPS * scale)
+    for dd in (5.0, 30.0):
+        ms = [1e-3, 1.0, 4.0, 0.8 * dd, dd, 1.3 * dd, 3 * dd]
+        want = [_exact_above(x, dd) for x in ms]
+        with float64():
+            got = [np.asarray(v) for v in saturated_above(np.array(ms), np.full(len(ms), dd))]
+        scale = np.array([dd * abs(np.log(x)) + x + float(sp.loggamma(dd)) + 1 for x in ms])
+        assert np.all(np.abs(got[0] - [w[0] for w in want]) <= 64 * EPS * scale)
+        assert np.all(np.abs(got[1] / np.array([w[1] for w in want]) - 1) <= 64 * EPS * scale)
 
 
 def _lr(d_: sp.Expr, m: sp.Expr, ga: sp.Expr) -> sp.Expr:
@@ -160,8 +251,12 @@ def test_likelihood_ratio_is_deviance_change():
     db, m, ga = sp.symbols("d mu ga", positive=True)
     assert is_zero(sp.expand_log(_dev(db, m - ga) - _dev(db, m) - _lr(db, m, ga), force=True))
     assert is_zero(m / (m - ga) - (1 + ga / (m - ga)))
-    c = sp.symbols("c", positive=True)  # an empty bin above c on both sides: the censored deviance changes by -2 g a
-    assert is_zero(2 * ((m - ga) - c) - 2 * (m - c) + 2 * ga)
+    # an empty bin: D = -2 log P(n <= c) = 2 mu - 2 log(P(n <= c) e^mu), so D(mu - g a) - D(mu) = -2 g a
+    # - 2 [log(P e^mu)(mu - g a) - log(P e^mu)(mu)]: the code's two terms (its exact -g a, and censored_below's)
+    for c in range(3):
+        P = [sum(_pmf(j, x) for j in range(c + 1)) for x in (m - ga, m)]  # P(n <= c) at mu - g a and mu
+        L = [sp.log(Pi) + x for Pi, x in zip(P, (m - ga, m))]
+        assert is_zero(sp.expand_log(-2 * sp.log(P[0]) + 2 * sp.log(P[1]) - (-2 * ga - 2 * (L[0] - L[1])), force=True))
 
 
 def test_likelihood_ratio_code():

@@ -149,18 +149,6 @@ class TestTolerances(unittest.TestCase):
 
 
 class TestOccupancy(unittest.TestCase):
-    def test_saturated_bins(self):
-        """A saturated bin is a lower bound: a model at or above it agrees; below it, the data pull it up."""
-        d = jnp.array([10.0, 10.0, 10.0, 0.0])
-        mu = jnp.array([20.0, 5.0, 20.0, 1.0])
-        sat = jnp.array([0, 1])  # bins 0 and 1 saturated; bin 2 the same numbers, not saturated
-        r = np.asarray(ix.occupancy.censored_ratio(d, mu, 0.0, sat))
-        np.testing.assert_allclose(r[:3], [1.0, 2.0, 0.5])
-        dev = float(ix.occupancy.deviance(d, mu, 0.0, sat))
-        dev_plain = float(ix.occupancy.deviance(d, mu, 0.0))
-        bin0 = 2 * (10 * np.log(10 / 20) - 10 + 20)  # the plain deviance of bin 0, dropped when saturated
-        self.assertAlmostEqual(dev, dev_plain - bin0, places=4)
-
     def test_fewer_orientations_than_candidates(self):
         """Fewer orientations than the candidates asked for: as many candidates as orientations (issue #32)."""
         pred = (jnp.full((16, 1), 90.0), jnp.full((16, 1), 0.5), jnp.ones((16, 1), bool), jnp.ones((16, 1)))
@@ -387,16 +375,6 @@ class TestOccupancy(unittest.TestCase):
             ix.occupancy.deviance(d, ix.occupancy.forward(fp, cand, pred, ring_j, pos, scan, dims, n_cells, 8), 0.0)
         )
         self.assertLessEqual(dev_sq, dev_plain * 1.0001)
-
-    def test_censored_ratio(self):
-        d = jnp.asarray([4.0, 0.0, 0.0, 0.0])
-        mu = jnp.asarray([2.0, 1.0, 10.0, 0.0])
-        np.testing.assert_allclose(np.asarray(ix.occupancy.censored_ratio(d, mu, 0.0)), [2.0, 0.0, 0.0, 0.0])
-        # empty bins: agreeing below the censoring level, censor / 2 above it
-        np.testing.assert_allclose(np.asarray(ix.occupancy.censored_ratio(d, mu, 5.0)), [2.0, 1.0, 0.25, 0.0])
-        plain = 2 * float(jnp.sum(jnp.where(d > 0, d * jnp.log(d / jnp.maximum(mu, 1e-30)), 0.0) - d + mu))
-        self.assertAlmostEqual(float(ix.occupancy.deviance(d, mu, 0.0)), plain, places=4)
-        self.assertAlmostEqual(float(ix.occupancy.deviance(d, mu, 5.0)), plain - 2 * (1.0 + 5.0), places=4)
 
     def test_censor_level(self):
         # pixels of 2 counts and up (cut 1), monitor-normalised by 0.95: the smallest bin is one pixel

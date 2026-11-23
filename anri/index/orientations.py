@@ -18,7 +18,7 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from .data import coarsen_coverage, eta_omega_corners
-from .occupancy import add_cells, censored_ratio, deviance, squarem, take_cells
+from .occupancy import add_cells, censored_below, censored_ratio, deviance, squarem, take_cells
 from .search import predict
 
 
@@ -91,8 +91,10 @@ def _likelihood_ratio(
         # log(m / rest) as log1p((m - rest) / rest): in float32, m / rest of a weak orientation rounds to 1 + a few
         # ulps, and times counts of 1e6 that is noise of order 1 in the ratio (which then changed from run to run)
         x = jnp.where(m - ga > 1e-6 * m, ga, m - rest) / jnp.maximum(rest, 1e-30)
-        # empty bins: only the model above the censoring level costs likelihood (censor = 0: all of it, -ga)
-        empty = jnp.where(censor > 0, jnp.maximum(rest - censor, 0.0) - jnp.maximum(m - censor, 0.0), -ga)
+        # empty bins: the censored likelihood log P(n <= censor), as deviance() has it, with the -mu of each log
+        # taken out exactly (censor = 0: -ga)
+        drop = jnp.where(m - ga > 1e-6 * m, ga, m - rest)
+        empty = censored_below(m, censor)[0] - censored_below(rest, censor)[0] - drop
         term = jnp.where((idx >= 0) & (m > 0), jnp.where(dd > 0, dd * jnp.log1p(x) - ga, empty), 0.0)
         return 2 * jnp.sum(term, (1, 2))
 
@@ -160,7 +162,7 @@ def fit(
     likelihood_ratio: np.ndarray
         [Nq] increase in the Poisson deviance if that orientation alone were removed, the others fixed:
         ``2 sum_b [d_b log(mu_b / (mu_b - g a_b)) - g a_b]`` over observed bins (empty bins: the change in
-        ``max(mu_b - censor, 0)``). About chi-square with one degree of freedom for an
+        -2 log P(n <= censor), :func:`anri.index.occupancy.deviance`). About chi-square with one degree of freedom for an
         orientation that is not there (Wilks, 1938) [1]_, so ~25 is 5 sigma. Two caveats: an occupancy cannot be
         negative, so the null is half chi-square, half zero (Chernoff, 1954) [2]_; and holding the others fixed
         overstates the ratio where orientations share spots. Read it as a ranking.

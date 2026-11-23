@@ -40,13 +40,17 @@ def laue_rotations(sym_ops: ArrayLike, B: ArrayLike) -> np.ndarray:
     np.ndarray
         [n, 3, 3] rotations, the identity first
     """
-    R = np.asarray(sym_ops, float)[:, :3, :3]
-    R = R * np.sign(np.linalg.det(R))[:, None, None]  # improper operations times inversion
+    # operations on fractional coordinates are integer matrices: duplicates are removed exactly, before the
+    # Cartesian transform, so S is as accurate as B allows (no rounding of S)
+    R = np.rint(np.asarray(sym_ops, float)[:, :3, :3]).astype(np.int64)
+    R = R * np.rint(np.linalg.det(R)).astype(np.int64)[:, None, None]  # improper operations times inversion
+    R = np.unique(R, axis=0)
+    is_identity = np.all(R == np.eye(3, dtype=np.int64), axis=(1, 2))
+    R = np.concatenate([R[is_identity], R[~is_identity]]).astype(float)
     B = np.asarray(B, float)
     S = B @ np.swapaxes(R, 1, 2) @ np.linalg.inv(B)  # reflections transform as h -> R^T h
-    S = np.unique(np.round(S, 8), axis=0)
-    is_identity = np.all(np.isclose(S, np.eye(3), atol=1e-6), axis=(1, 2))
-    return np.concatenate([S[is_identity], S[~is_identity]])
+    S[0] = np.eye(3)  # every group holds the identity, sorted first: exact, not B B^-1
+    return S
 
 
 def closest_equivalent(U_ref: ArrayLike, U: ArrayLike, ops: ArrayLike) -> tuple[jax.Array, jax.Array]:

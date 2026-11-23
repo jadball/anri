@@ -89,36 +89,99 @@ Censored and saturated bins
 
 The data are thresholded when they are segmented: only pixels above a cut are kept. A bin with no data is therefore
 not a zero: every pixel in it was below the cut. Treating it as zero pulls the model down wherever faint parts of
-peaks (the ends of an arc, tails) were cut. With a censoring level :math:`c` (counts per bin), an empty bin
-
-- agrees with the model where the model predicts less than :math:`c` (MLEM ratio 1, no deviance);
-- pulls the model towards :math:`c/2` where it predicts more (ratio :math:`c / 2\mu_b`), with deviance :math:`2(\mu_b - c)`.
-
-Likewise a bin holding a saturated pixel recorded at most its true intensity: where the model predicts at least the
-data there it agrees; below, the data pull it up as usual.
+peaks (the ends of an arc, tails) were cut. Anri takes an empty bin as the observation that its count was at most a
+censoring level :math:`c` (counts per bin), and a bin holding a saturated pixel as the observation that its count was
+at least its data :math:`d_b`. Their likelihoods are those of a Poisson count so censored, and MLEM's ratio becomes
+the count's conditional expectation over the model (the EM step for censored data [Dempster1977]_):
 
 .. math::
     :label: lik-censored
 
     \frac{d_b}{\mu_b} \;\to\;
     \begin{cases}
-    d_b / \mu_b & d_b > 0 \text{ (and not saturated with } \mu_b \ge d_b) \\
-    1 & d_b = 0,\ \mu_b < c, \text{ or saturated with } \mu_b \ge d_b \\
-    c / (2\mu_b) & d_b = 0,\ \mu_b \ge c
+    d_b / \mu_b & \text{recorded,} \\
+    \operatorname{E}[n \mid n \le c] / \mu_b = 1 - \dfrac{P(n = c)}{P(n \le c)} & \text{empty,} \\[2ex]
+    \operatorname{E}[n \mid n \ge d_b] / \mu_b = 1 + \dfrac{P(n = d_b - 1)}{P(n \ge d_b)} & \text{saturated,}
     \end{cases}
+    \qquad
+    D_b = \begin{cases} -2 \log P(n \le c) & \text{empty,} \\ -2 \log P(n \ge d_b) & \text{saturated,} \end{cases}
 
-**Definition:** Anri's rule for empty and saturated bins.
+with :math:`n \sim \text{Poisson}(\mu_b)`. Each ratio is :math:`1 - \tfrac{1}{2}\, \partial D_b / \partial \mu_b`, the
+same relation as a recorded bin's, so the update and the deviance are one objective's: SQUAREM's safeguard compares
+the function MLEM climbs. :math:`c = 0` gives a recorded zero (ratio 0, :math:`D_b = 2\mu_b`): plain Poisson MLEM, the
+default.
 
-**Anri's choice:** this is a simple stand-in for the likelihood of a censored observation, not that likelihood itself,
-and the update and the deviance are not one objective's. Below :math:`c` an empty bin's deviance term and its gradient
-are zero, which is ratio 1, as used; the term is continuous at :math:`\mu_b = c`. Above :math:`c` its gradient (2)
-corresponds to ratio 0, while the update uses :math:`c/(2\mu_b)`, the Poisson ratio of a datum :math:`c/2`. So the
-censored MLEM's fixed point does not minimise the censored deviance that SQUAREM's safeguard compares. :math:`c = 0`
-gives plain Poisson MLEM, the default.
-
-**Proof:** ``tests/theory/test_likelihood.py::test_censored_terms``, ``tests/theory/test_likelihood.py::test_censored_code``.
+**Proof:** ``tests/theory/test_likelihood.py::test_censored_em``
 
 **Code:** :func:`anri.index.occupancy.censored_ratio`, :func:`anri.index.occupancy.deviance`.
+
+The censoring level is a count per bin measured from the data (:func:`anri.index.occupancy.censor_level`), not an
+integer, so the probabilities are continued to real levels by the regularised incomplete gamma functions:
+
+.. math::
+    :label: lik-censored-gamma
+
+    P(n \le c) = Q(c + 1, \mu), \qquad P(n \ge d) = P(d, \mu), \qquad
+    \frac{\partial Q(a, x)}{\partial x} = -\frac{x^{a-1} e^{-x}}{\Gamma(a)},
+
+exact for integer levels, so the hazard :math:`P(n = c)/P(n \le c)` keeps its form with
+:math:`P(n = c) = \mu^c e^{-\mu}/\Gamma(c + 1)`.
+
+**Proof:** ``tests/theory/test_likelihood.py::test_censored_gamma``
+
+**Code:** :func:`anri.index.occupancy.censored_below`, :func:`anri.index.occupancy.saturated_above`.
+
+Deep in a tail the regularised gammas underflow (below 1.2e-38 in float32, a model of a few hundred counts in an empty
+bin). There, substituting :math:`u = x + t` in :math:`\Gamma(a, x) = \int_x^\infty u^{a-1}e^{-u}\,du` and expanding
+:math:`(1 + t/x)^{a-1}` by Taylor's theorem,
+
+.. math::
+    :label: lik-censored-tail
+
+    Q(c + 1, \mu) = P(n = c)\, S, \qquad S = \sum_{k \ge 0} \frac{c (c - 1) \cdots (c - k + 1)}{\mu^k},
+
+where :math:`S` is a finite sum (exact) for an integer :math:`c`. For a real :math:`c` it is asymptotic: after
+:math:`n \ge c` terms, Taylor's remainder :math:`\binom{c}{n}(1+\xi)^{c-n} (t/x)^n` has :math:`(1 + \xi)^{c - n} \in
+(0, 1]`, so the error is the next term times a factor in :math:`(0, 1]`, and the code sums until the terms are below
+float precision. For an integer :math:`c` the code uses the exact :math:`\log \sum_{j \le c} \mu^j / j!` (as
+:math:`\log P(n \le c) + \mu`, which keeps the large :math:`-\mu` out of every difference between two models: the
+likelihood ratio below).
+
+**Proof:** ``tests/theory/test_likelihood.py::test_censored_tail_series``
+
+For a saturated bin with the model far below its data, :math:`P(d, \mu)` underflows; there the convergent series
+
+.. math::
+    :label: lik-saturated-series
+
+    P(a, x) = \frac{x^a e^{-x}}{\Gamma(a + 1)} \sum_{k \ge 0} \frac{x^k}{(a + 1) \cdots (a + k)}
+
+is summed to float precision (each partial sum's derivative telescopes to the integrand :math:`x^{a-1}e^{-x}/\Gamma(a)`
+less its last term).
+
+**Proof:** ``tests/theory/test_likelihood.py::test_saturated_series``
+
+A saturated bin's :math:`d_b` can be :math:`10^5` counts, where :math:`\log P(n = d - 1) = (d-1)\log\mu - \mu -
+\log\Gamma(d)` subtracts numbers of size :math:`10^6` to leave one of order 1: in float32 that ratio was 4.5 % wrong.
+Anri computes it in a form without that cancellation,
+
+.. math::
+    :label: lik-loader
+
+    \log P(n = k) = -\operatorname{bd0}(k, \mu) - \tfrac{1}{2}\log(2\pi k) - \operatorname{stirlerr}(k),
+    \qquad
+    \operatorname{bd0} = k \log\frac{k}{\mu} + \mu - k = (k - \mu)\,v + 2k \sum_{j \ge 1} \frac{v^{2j+1}}{2j + 1},
+
+with :math:`v = (k - \mu)/(k + \mu)` (the series when :math:`|v| < 0.1`), and :math:`\operatorname{stirlerr}(k) =
+\log\Gamma(k+1) - (k + \tfrac{1}{2})\log k + k - \tfrac{1}{2}\log 2\pi` from Stirling's series [DLMF2026]_ (5.11.1),
+whose remainder for a real positive argument is bounded by the first omitted term [DLMF2026]_ (5.11(ii)): below
+2.3e-16 for :math:`k \ge 15` with five terms.
+
+**Proof:** ``tests/theory/test_likelihood.py::test_log_pmf_pieces``, ``tests/theory/test_likelihood.py::test_censored_code``
+
+**Anri's choice:** the censoring level per bin stands in for the threshold, which acts per pixel: a bin's hidden counts
+are at most :math:`c` only if no spot below the group rule's size hid more (:doc:`recording` has the per-pixel model).
+The ratio and the deviance are exact for that observation; the level itself is the approximation.
 
 .. _theory_global_fit:
 
@@ -137,7 +200,7 @@ deviance if that orientation alone were removed, the others fixed,
     \Lambda_q = 2\sum_b \left[ d_b \log\frac{\mu_b}{\mu_b - g_q a_{qb}} - g_q a_{qb} \right],
 
 over observed bins, with :math:`a_{qb}` the orientation's system entries (empty bins add their change in
-:math:`\max(\mu_b - c, 0)`). For an orientation that is not there, :math:`\Lambda_q` is about :math:`\chi^2` with one
+:math:`D_b` of :eq:`lik-censored`). For an orientation that is not there, :math:`\Lambda_q` is about :math:`\chi^2` with one
 degree of freedom [Wilks1938]_, so ``min_lr = 25`` is about 5σ. A small grain with clean spots scores well; a decoy that
 only borrows intensity from real grains does not.
 
