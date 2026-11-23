@@ -260,7 +260,8 @@ def test_likelihood_ratio_is_deviance_change():
 
 
 def test_likelihood_ratio_code():
-    """anri's likelihood ratio is lik-lr, with a_qb summed over an orientation's entries in each bin."""
+    """anri's likelihood ratio is lik-lr, with a_qb summed over an orientation's entries in each bin (bins coarse enough
+    that entries share them)."""
     import jax.numpy as jnp
 
     import anri
@@ -275,11 +276,11 @@ def test_likelihood_ratio_code():
     geom = anri.io.imaged11.geom_from_pars(pars, 0.0, wl * 1e-4, 5e-5, 5e-5, sig_beam=0.5, voxel_size=1.0)
     lp = np.array([2.8665] * 3 + [90.0] * 3)
     B = anri.crystal.structure.B_matrix(lp)
-    rings = ring_table(lp, 229, wl, 2)
+    rings = ring_table(lp, 229, wl, 6)
     g = rng(3)
     q = g.normal(size=(2, 4))
     U = anri.maths.rotation.quat_to_mat(q / np.linalg.norm(q, axis=1, keepdims=True))
-    bins, n_cells = (1.0, 1.0, 360, 180, 0.0), 2 * 360 * 180
+    bins, n_cells = (30.0, 20.0, 12, 9, 0.0), 6 * 12 * 9  # coarse: an orientation's entries share bins
     occ = np.array([3.0, 0.5])
     with float64():
         geom = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in geom.items()}
@@ -289,6 +290,8 @@ def test_likelihood_ratio_code():
     a = np.zeros((2, n_cells))  # a_qb: each orientation's entries summed per bin
     for k in range(2):
         np.add.at(a[k], idx[k][idx[k] >= 0], wt[k][idx[k] >= 0])
+        kept = idx[k][idx[k] >= 0]
+        assert len(np.unique(kept)) < len(kept)  # some bins hold several entries: the case the sum per bin is for
     mu_v = occ @ a + g.uniform(1.0, 2.0, n_cells)
     d_v = np.where(g.uniform(size=n_cells) < 0.2, 0.0, g.uniform(0.5, 5.0, n_cells))
     want, rtol = [], 0.0

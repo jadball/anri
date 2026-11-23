@@ -205,10 +205,10 @@ degree of freedom [Wilks1938]_, so ``min_lr = 25`` is about 5σ. A small grain w
 only borrows intensity from real grains does not.
 
 **Proof:** ``tests/theory/test_likelihood.py::test_likelihood_ratio_is_deviance_change`` (:math:`\Lambda_q =
-D(\mu - g_q a_q) - D(\mu)`), ``tests/theory/test_likelihood.py::test_likelihood_ratio_code``. The code sums the terms
-over the orientation's system entries (:eq:`idx-bilinear`'s corners of each prediction), with :math:`\mu_b - g_q a_{qb}`
-kept above :math:`10^{-6}\mu_b`; that is :math:`\Lambda_q` when no two of the orientation's entries share a bin, which
-none did in the checks (random and symmetric orientations of a bcc phase, 1° bins).
+D(\mu - g_q a_q) - D(\mu)`), ``tests/theory/test_likelihood.py::test_likelihood_ratio_code``. The code sums each
+orientation's system entries (:eq:`idx-bilinear`'s corners of each prediction) per bin first, so entries that share a
+bin give one term with :math:`a_{qb}` their sum (the check uses bins coarse enough that they do), and keeps
+:math:`\mu_b - g_q a_{qb}` above :math:`10^{-6}\mu_b`, the drop in each term being the clipped model's.
 
 **Code:** :func:`anri.index.orientations.fit`, :func:`anri.index.orientations.select_by_likelihood`.
 

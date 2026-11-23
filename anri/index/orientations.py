@@ -77,6 +77,15 @@ def _backward(
     return jax.lax.map(one, U)
 
 
+def _bin_totals(i: jax.Array, v: jax.Array) -> jax.Array:
+    """For each entry, the sum of v over the entries with the same bin index i (sorted, then summed by segment)."""
+    order = jnp.argsort(i)
+    si = i[order]
+    seg = jnp.cumsum(jnp.concatenate([jnp.ones(1, bool), si[1:] != si[:-1]])) - 1
+    tot = jax.ops.segment_sum(v[order], seg, num_segments=i.shape[0])
+    return jnp.zeros_like(v).at[order].set(tot[seg])
+
+
 @partial(jax.jit, static_argnames=("bins",))
 def _likelihood_ratio(
     d: jax.Array, mu: jax.Array, g: jax.Array, U: jax.Array, B: jax.Array, hkls: jax.Array, F2: jax.Array,
@@ -87,15 +96,20 @@ def _likelihood_ratio(
         idx, wt = _system(uc, B, hkls, F2, ring_j, geom, etacut, cov, bins)
         m, dd = take_cells(mu, idx), take_cells(d, idx)
         ga = gc[:, None, None] * wt
-        rest = jnp.maximum(m - ga, 1e-6 * jnp.maximum(m, 1e-30))
+        # an orientation's entries can share a bin: its term is the bin's, with g a summed over them (G), shared back
+        # over the entries in proportion to their g a
+        n = idx.shape[0]
+        G = jax.vmap(_bin_totals)(idx.reshape(n, -1), ga.reshape(n, -1)).reshape(ga.shape)
+        share = jnp.where(G > 0, ga / jnp.maximum(G, 1e-30), 0.0)
+        rest = jnp.maximum(m - G, 1e-6 * jnp.maximum(m, 1e-30))
         # log(m / rest) as log1p((m - rest) / rest): in float32, m / rest of a weak orientation rounds to 1 + a few
         # ulps, and times counts of 1e6 that is noise of order 1 in the ratio (which then changed from run to run)
-        x = jnp.where(m - ga > 1e-6 * m, ga, m - rest) / jnp.maximum(rest, 1e-30)
+        drop = jnp.where(m - G > 1e-6 * m, G, m - rest)
+        x = drop / jnp.maximum(rest, 1e-30)
         # empty bins: the censored likelihood log P(n <= censor), as deviance() has it, with the -mu of each log
-        # taken out exactly (censor = 0: -ga)
-        drop = jnp.where(m - ga > 1e-6 * m, ga, m - rest)
+        # taken out exactly (censor = 0: -G)
         empty = censored_below(m, censor)[0] - censored_below(rest, censor)[0] - drop
-        term = jnp.where((idx >= 0) & (m > 0), jnp.where(dd > 0, dd * jnp.log1p(x) - ga, empty), 0.0)
+        term = jnp.where((idx >= 0) & (m > 0), share * jnp.where(dd > 0, dd * jnp.log1p(x) - drop, empty), 0.0)
         return 2 * jnp.sum(term, (1, 2))
 
     return jax.lax.map(one, (g, U))
