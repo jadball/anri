@@ -1011,3 +1011,88 @@ def test_si_position_number():
     h = sp.pi / 180 * sp.Rational(5, 100)
     assert rounds_to(pix * 10**4, "4.17") and rounds_to(pix / sp.sqrt(500) * 10**5, "1.86")
     assert rounds_to(pix / sp.sqrt(500) / h, "0.021")
+
+
+def test_background_confound():
+    """rf-background: background light b(x) = b0 + b1 . (x - centre) over a region adds to its counts, first and
+    second moments b0 (S0, S1, S2) + b1 . (S1, S2, S3), S_n the box's own moments (with 1/(LP) weights), linearly. In a
+    box symmetric about its centre the odd ones vanish, so (1) a constant background leaves the centred first moment
+    alone and adds b0 S2 to the second moments (confounded with the spread); (2) a population shifted by m,
+    (N, N m, N (Sigma + m m^T)), equals an unshifted one with spread Sigma + m m^T plus a slope b1 = N S2^-1 m, in all
+    three, exactly: a free slope per region removes that region's information on position. 2D, cells -2..2 by -1..1."""
+    xs = [(i, j) for i in range(-2, 3) for j in range(-1, 2)]
+    w = {c: sp.Symbol(f"w_{abs(c[0])}_{abs(c[1])}", positive=True) for c in xs}  # weights symmetric under x -> -x
+    X = {c: sp.Matrix(c) for c in xs}
+    S1 = sum((w[c] * X[c] for c in xs), sp.zeros(2, 1))
+    S2 = sum((w[c] * X[c] * X[c].T for c in xs), sp.zeros(2, 2))
+    S3 = [sum(w[c] * X[c][a] * X[c][b] * X[c][d] for c in xs) for a in range(2) for b in range(2) for d in range(2)]
+    assert is_zero(S1) and all(is_zero(t) for t in S3)
+    assert is_zero(S2[0, 1])
+    N = sp.Symbol("N", positive=True)
+    m = sp.Matrix(sp.symbols("m0:2", real=True))
+    Sig = sp.Matrix(2, 2, lambda i, j: sp.Symbol(f"Sig{min(i, j)}{max(i, j)}"))
+    b1 = N * S2.inv() * m
+    # counts, first, second moments of: shifted population vs unshifted (spread Sig + m m^T) plus the slope
+    shifted = (N, N * m, N * (Sig + m * m.T))
+    slope_first = sum((w[c] * X[c] * (b1.T * X[c])[0] for c in xs), sp.zeros(2, 1))
+    slope_count = sum(w[c] * (b1.T * X[c])[0] for c in xs)
+    slope_second = sum((w[c] * X[c] * X[c].T * (b1.T * X[c])[0] for c in xs), sp.zeros(2, 2))
+    unshifted = (N + slope_count, sp.zeros(2, 1) + slope_first, N * (Sig + m * m.T) + slope_second)
+    assert is_zero(sp.simplify(shifted[0] - unshifted[0]))
+    assert is_zero(sp.simplify(shifted[1] - unshifted[1]))
+    assert is_zero(sp.simplify(shifted[2] - unshifted[2]))
+    b0 = sp.Symbol("b0", real=True)
+    assert is_zero(b0 * S1)  # a constant leaves the centred first moment alone
+
+
+def test_richardson_bound():
+    """rf-cost: for A symmetric positive definite with eigenvalues in [l, L], kappa = L / l, the step a = 2 / (l + L)
+    gives |1 - a l| = |1 - a L| = (kappa - 1) / (kappa + 1), so the iteration x <- x + a (b - A x) contracts the error by
+    that per step; ln((kappa - 1)/(kappa + 1)) = -2 atanh(1/kappa) <= -2 / kappa (atanh's series has positive
+    coefficients), so k >= (kappa / 2) ln(1 / tol) steps reach tol. Its k-th iterate is x0 + p(A) r0 with deg p < k, in
+    the Krylov space over which conjugate gradients minimises the A-norm error, so CG needs no more."""
+    l, L, kap = sp.symbols("l L kappa", positive=True)
+    a = 2 / (l + L)
+    assert is_zero(sp.simplify((1 - a * l) - (L - l) / (L + l)))
+    assert is_zero(sp.simplify((a * L - 1) - (L - l) / (L + l)))
+    assert is_zero(sp.simplify(((L - l) / (L + l)).subs(L, kap * l) - (kap - 1) / (kap + 1)))
+    y = sp.Symbol("y", positive=True)
+    ser = sp.series(sp.atanh(y), y, 0, 12).removeO()
+    assert all(c >= 0 for c in sp.Poly(ser, y).coeffs()) and sp.Poly(ser, y).coeff_monomial(y) == 1
+    # atanh(y) = (1/2) log((1 + y)/(1 - y)): at y = 1/kappa, -2 atanh = log((kappa - 1)/(kappa + 1))
+    k3 = sp.Symbol("k3", positive=True)
+    at = sp.atanh(1 / (1 + k3)).rewrite(sp.log)  # kappa = 1 + k3 > 1
+    assert is_zero(sp.simplify(sp.expand_log(2 * at + sp.log(k3 / (2 + k3)), force=True)))
+    A = sp.Symbol("A")
+    r0, al = sp.symbols("r0 alpha")
+    x, r = 0, r0  # x0 = 0; residual r = b - A x
+    for _ in range(3):
+        x = x + al * r
+        r = r - al * A * r
+    assert sp.Poly(sp.expand(x / r0), A).degree() == 2  # x_3 = p(A) r0, deg p = 2 < 3
+
+
+def test_ray_normal_symbol():
+    """rf-cost: back-projecting ray sums along every direction, R^T R f(x) = int_0^pi int f(x + t theta) dt d theta,
+    is f convolved with 1/|z| (polar coordinates d^2 z = |t| dt d theta), whose 2D transform is 2 pi / |k|
+    (int_0^inf 2 pi J0(k r) dr = 2 pi / k): the ray sums' normal operator falls as 1/|k|, and with the beam's profile
+    on both sides as T(k)^2 / |k|. A ramp |k| preconditioner leaves T(k)^2: kappa = 1 / T(k_max)^2, 5.9 when the beam's
+    FWHM is the dty step (Nyquist period 2 FWHM, T = 0.41), 1.2e3 when it is two steps (T = 0.028); (kappa / 2) ln 1000
+    is 20 steps for the first."""
+    k, r = sp.symbols("k r", positive=True)
+    assert is_zero(sp.integrate(2 * sp.pi * sp.besselj(0, k * r), (r, 0, sp.oo)) - 2 * sp.pi / k)
+
+    def T(lam):  # lim-transfer
+        return sp.exp(-(sp.pi**2) / (4 * sp.log(2) * lam**2))
+
+    k1, k2 = 1 / T(2) ** 2, 1 / T(1) ** 2
+    assert rounds_to(T(2), "0.41") and rounds_to(k1, "5.9")
+    assert rounds_to(T(1), "0.028") and rounds_to(k2 / 1000, "1.2")
+    assert rounds_to(k1 / 2 * sp.log(1000), "20")
+
+
+def test_cost_numbers():
+    """rf-cost's example: 3000 x 3000 voxels, 300 reflections each, 16 moment components, forward and adjoint:
+    2 * 16 * 9e6 * 300 = 8.6e10 voxel-ray weights per iteration; 20 iterations 1.7e12."""
+    per = 2 * 16 * 3000**2 * 300
+    assert rounds_to(sp.Integer(per) / 10**10, "8.6") and rounds_to(sp.Integer(20 * per) / 10**12, "1.7")

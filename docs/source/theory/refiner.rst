@@ -1030,6 +1030,80 @@ order :math:`\sin\alpha` (:math:`5.6 \times 10^{-4}` for 100 µm at 180 mm).
 
 **Proof:** ``tests/theory/test_refiner.py::test_parallax_angle``
 
+Background
+----------
+
+Light that belongs to no population (air scatter, fluorescence, a diffuse floor) adds to every cell. Over a region,
+a background :math:`b(\vec{x}) = b_0 + \vec{b}_1\cdot(\vec{x} - \vec{x}_R)` adds to the counts, first and second
+moments :math:`b_0(S_0, \vec{S}_1, \matr{S}_2) + \vec{b}_1\cdot(\vec{S}_1, \matr{S}_2, S_3)`, with :math:`S_n` the
+region's own moments (cells weighted by :math:`1/LP`): a linear term in :eq:`rf-linear`. Which background model is
+allowed is decided by what it can mimic. In a box symmetric about its centre the odd :math:`S_n` vanish, and then
+
+.. math::
+    :label: rf-background
+
+    \big(N,\ N\vec{m},\ N(\matr{\Sigma} + \vec{m}\vec{m}^T)\big)
+    = \big(N,\ \vec{0},\ N(\matr{\Sigma} + \vec{m}\vec{m}^T)\big) + \vec{b}_1\cdot(\vec{S}_1, \matr{S}_2, S_3)
+    \quad\text{at } \vec{b}_1 = N\matr{S}_2^{-1}\vec{m}, \qquad
+    b_0\vec{S}_1 = \vec{0}.
+
+A population shifted by :math:`\vec{m}` is, in all three statistics, exactly an unshifted one with a wider spread plus
+a background slope. So a background slope free in each region removes that region's information on position: the
+deformation. A constant background per region leaves the centred first moment alone and adds :math:`b_0\matr{S}_2` to
+the second moments, where it is confounded with the spread, which is reported as an upper bound already
+(:eq:`rf-shift`).
+
+**Proof:** ``tests/theory/test_refiner.py::test_background_confound`` (a symmetric 2D box, symbolic weights).
+
+So background is never a free slope per region. It is estimated from the cells outside every box: those boxes are
+fixed by the indexer (:eq:`rf-box-margin`), so the complement is not chosen by the data and is unbiased
+(:eq:`mom-select`). Its model is smooth over scales much larger than a box, with a few parameters per frame. Its
+prediction in each region is subtracted. A residual slope :math:`\delta\vec{b}_1` across a box then moves a centred
+first moment by :math:`\matr{S}_2\,\delta\vec{b}_1/N` (:eq:`rf-background`), which enters :math:`\bar\Delta`. A
+residual constant moves the counts and second moments only. Background below the cut is in the cut's bound already,
+which holds per cell for any light (:eq:`rf-cut-bound`).
+
+The cost of the solve
+---------------------
+
+One iteration applies :math:`\matr{G}` and :math:`\matr{G}^T` once each. By the factorisation into scalar
+projections [Henningsson2023]_ that is :math:`2F` projections for :math:`F` moment components (16 with the metric, 61
+with the second moments), each touching every voxel once per reflection it is in. For example, 3000 × 3000 voxels
+seen in 300 reflections each with :math:`F = 16` is :math:`8.6 \times 10^{10}` voxel-ray weights per iteration, and
+:math:`1.7 \times 10^{12}` for 20.
+
+The number of iterations follows from the condition number. For a symmetric positive definite operator with
+eigenvalues in :math:`[\ell, L]`, :math:`\kappa = L/\ell`, the step :math:`2/(\ell + L)` contracts the error by
+:math:`(\kappa - 1)/(\kappa + 1)` per iteration. That reaches a tolerance :math:`\tau` within :math:`(\kappa/2)\ln(1/\tau)`
+iterations, since :math:`\ln\frac{\kappa - 1}{\kappa + 1} = -2\operatorname{atanh}(1/\kappa) \le -2/\kappa`. Conjugate
+gradients minimise the same error over a Krylov space that holds that iterate, so they need no more. The ray sums'
+normal operator is a convolution:
+
+.. math::
+    :label: rf-cost
+
+    \matr{R}^T\matr{R} f(\vec{x}) = \int_0^\pi\!\!\int f(\vec{x} + t\hat{\vec{\theta}})\, dt\, d\theta
+    = \Big(f * \frac{1}{|\vec{z}|}\Big)(\vec{x}), \qquad
+    \widehat{\tfrac{1}{|\vec{z}|}} = \frac{2\pi}{|\vec{k}|}, \qquad
+    \kappa = \frac{1}{T(k_{\max})^2}\ \text{after a ramp } |\vec{k}|.
+
+With the beam's profile on both sides it falls as :math:`T(\vec{k})^2/|\vec{k}|`. On an :math:`n`-voxel-wide grid
+:math:`|\vec{k}|` spans a factor :math:`n/2` (from the grid's size to its Nyquist), so :math:`\kappa \gtrsim n/2`. A ramp preconditioner :math:`|\vec{k}|` along dty, per reflection (as in filtered
+back-projection), leaves :math:`T(\vec{k})^2`. Then :math:`\kappa = 1/T(k_{\max})^2`: 5.9 when the beam's FWHM is the
+dty step (the Nyquist period is 2 FWHM, :math:`T = 0.41`), and 20 iterations reach :math:`\tau = 10^{-3}`. With the
+FWHM two steps wide, :math:`T = 0.028` and :math:`\kappa = 1.2 \times 10^3`. Those frequencies fall below
+:math:`s_{\min}` (:eq:`rf-smin`) and are not estimated, so :math:`\kappa` is bounded by :math:`(s_{\max}/s_{\min})^2`
+in any case. The weak combinations, estimated in place, would multiply :math:`\kappa` by :math:`1/\sin^2\theta`
+(30-530). Solving in the seen parameterisation (:eq:`rf-split-grid`) keeps them out of the iteration.
+
+**Proof:** ``tests/theory/test_refiner.py::test_richardson_bound`` (the contraction; the logarithm's bound; the
+Krylov space), ``tests/theory/test_refiner.py::test_ray_normal_symbol`` (the transform; the numbers),
+``tests/theory/test_refiner.py::test_cost_numbers``.
+
+The cost per iteration is set by :math:`F` and the reflections per voxel. Sub-populations per bin
+(:eq:`rf-bin-moments`) multiply :math:`F` by the bins each voxel lights. The iterations are set by the beam's
+sampling and :math:`s_{\min}`, not by the grid's size, once preconditioned.
+
 The guarantee
 -------------
 
@@ -1079,7 +1153,9 @@ What is left out
   falls.
 - **The precision** :math:`\epsilon` and confidence :math:`z` of :eq:`rf-smin` are the maintainer's to set.
 - **The system's size** with sub-populations per bin (:eq:`rf-bin-moments`) is set by how many bins each voxel
-  lights; its cost is not estimated here.
+  lights (:eq:`rf-cost` gives the cost per bin); the count needs a phantom.
+- **The background's smooth model** (its form per frame) is not chosen here; :eq:`rf-background` only rules out a free
+  slope per region.
 - **Runout's odd harmonics** from the third up: fitted by alternation with the linear solve, whose convergence is not
   derived.
 - **The beam profile and runout** enter :math:`\matr{G}`; :eq:`rf-centre` bounds how they reach the deformation,
