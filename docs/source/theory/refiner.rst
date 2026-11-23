@@ -1073,13 +1073,36 @@ turned by
     \sin\alpha = \frac{|\vec{x}_v \times \vec{X}|}{|\vec{X} - \vec{x}_v|\,|\vec{X}|}
     \le \frac{|\vec{x}_v|}{|\vec{X}| - |\vec{x}_v|},
 
-since :math:`(\vec{X} - \vec{x}_v)\times\vec{X} = -\vec{x}_v\times\vec{X}`. The map :math:`\Pi_v` is known for each
-voxel. Its expansion to second order about :math:`\vec{g}_0`, with :math:`\matr{Y}^{(1)}` and :math:`\matr{Y}^{(2)}`,
-leaves a Taylor remainder of third order. That remainder is at most a sixth of the third derivatives of
-:math:`f\circ\Pi_v` times the third absolute moment of :math:`\vec{g} - \vec{g}_0`, and those derivatives are of
-order :math:`\sin\alpha` (:math:`5.6 \times 10^{-4}` for 100 µm at 180 mm).
+since :math:`(\vec{X} - \vec{x}_v)\times\vec{X} = -\vec{x}_v\times\vec{X}`: :math:`5.6 \times 10^{-4}` for 100 µm at
+180 mm.
 
 **Proof:** ``tests/theory/test_refiner.py::test_parallax_angle``
+
+The map itself is exact and simple. A photon leaving :math:`\vec{x}_v` along the unit :math:`\vec{u}` meets the
+detector plane :math:`\hat{\vec{n}}\cdot\vec{X} = D` at :math:`\vec{X} = (D/\hat{\vec{n}}\cdot\vec{u})\,(\vec{u} +
+\hat{\vec{n}}\times(\vec{x}_v\times\vec{u})/D)`. So the direction the origin sees is a linear map, normalised:
+
+.. math::
+    :label: rf-parallax-exact
+
+    \Pi_v(\vec{u}) = \frac{(\matr{I} + \epsilon\matr{A})\vec{u}}{|(\matr{I} + \epsilon\matr{A})\vec{u}|}
+    = \vec{u} + \epsilon\,\vec{T}(\vec{u}) + O(\epsilon^2), \quad
+    \matr{A} = [\hat{\vec{n}}]_\times[\hat{\vec{e}}]_\times,\ \epsilon = \frac{|\vec{x}_v|}{D},\
+    \vec{T}(\vec{u}) = (\matr{I} - \vec{u}\vec{u}^T)\matr{A}\vec{u}, \qquad
+    \vec{T}(\vec{u}_0 + \vec{\delta}) = \vec{T}(\vec{u}_0) + D\vec{T}\,\vec{\delta}
+    + \tfrac{1}{2}D^2\vec{T}[\vec{\delta}, \vec{\delta}] - \vec{\delta}\,(\vec{\delta}^T\matr{A}\vec{\delta}),
+
+with :math:`\hat{\vec{e}} = \vec{x}_v/|\vec{x}_v|` and :math:`\|\matr{A}\| \le 1`. :math:`\vec{T}` is a cubic, so its
+expansion ends at the written third-order term. A first-moment feature :math:`\vec{\ell}\cdot\hat{\vec{g}}`, after its
+expansion to second order (with :math:`\matr{Y}^{(1)}` and :math:`\matr{Y}^{(2)}`), keeps exactly the remainder
+:math:`-\epsilon|\vec{k}|\,(\vec{\ell}\cdot\vec{\delta})(\vec{\delta}^T\matr{A}\vec{\delta})`. That is at most
+:math:`\epsilon|\vec{k}||\vec{\ell}||\vec{\delta}|^3`, and its mean is a third moment of the spread, zero for a
+centrosymmetric one. :math:`|\hat{\vec{g}}|^2` gives the same with :math:`\vec{\ell} = -2|\vec{k}|\hat{\vec{k}}_{\text{in}}`,
+because :math:`\vec{u}\cdot\vec{T}(\vec{u}) = (\vec{u}^T\matr{A}\vec{u})(1 - |\vec{u}|^2) = 0` on the sphere.
+:math:`\epsilon|\vec{\delta}|^3` is :math:`3.0 \times 10^{-9}` for 100 µm at 180 mm and a 1° spread.
+
+**Proof:** ``tests/theory/test_refiner.py::test_parallax_exact`` (the plane's intersection; the first order; the
+cubic's third-order term; :math:`\vec{u}\cdot\vec{T}`; :math:`\|[\hat{\vec{n}}]_\times\| = 1`; the number).
 
 Background
 ----------
@@ -1212,8 +1235,8 @@ What it costs, against :doc:`limits`:
 What is left out
 ----------------
 
-- **Parallax's third derivatives**: for features of degree at most 2 they come from :math:`\Pi_v` alone, of order
-  :math:`\sin\alpha` (:eq:`rf-parallax`); not written out.
+- **Parallax at second order in** :math:`\epsilon`: :eq:`rf-parallax-exact` is exact, but its expansion is written to
+  first order only.
 - **Anisotropic boxes**: the indexer gives only an isotropic spread per population (:doc:`populations`), so
   :eq:`rf-arc-box` needs an anisotropic :math:`\matr{S}` the indexer does not yet report.
 - **Absorption's variation within a spot** is bounded by :eq:`rf-weight-bound`; its exact coefficient through

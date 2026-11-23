@@ -1196,3 +1196,45 @@ def test_displacement_common_term():
     lead = sp.limit(rel, e, 0)
     assert is_zero(sp.simplify(lead - (sr**2 + st**2) / rho**2))
     assert rounds_to((sp.Rational(1, 2) + sp.Rational(1, 2)) / sp.Integer(420) ** 2 * 10**6, "5.7")
+
+
+def test_parallax_exact():
+    """rf-parallax-exact: a photon leaving a voxel at x_v along the unit u reaches the detector plane n . X = D at
+    X = x_v + s u, s = (D - n . x_v) / (n . u), and X = (D / (n . u)) (u + n x (x_v x u) / D): seen from the origin its
+    direction is exactly (I + eps A) u normalised, A = [n]x [e]x (e = x_v / |x_v|, eps = |x_v| / D, ||A|| <= 1). To
+    first order in eps it is u + eps T(u), T(u) = (I - u u^T) A u, a cubic in u whose expansion about u0 ends at third
+    order with the term -delta (delta^T A delta) (the coefficient of t^3 in T(u0 + t delta)). A first-moment feature
+    l . g_hat then has, after its second-order expansion, the remainder -eps |k| (l . delta)(delta^T A delta) exactly,
+    at most eps |k| |l| |delta|^3, and with mean a third moment of the spread (zero for a symmetric one); |g_hat|^2 the
+    same with l = -2 |k| k_in-hat, since u . T(u) = (u^T A u)(1 - |u|^2) = 0 on the sphere. eps |delta|^3 is 3.0e-9 for
+    100 um at 180 mm and a 1 deg spread."""
+    n = sp.Matrix([0, 0, 1])  # detector normal (any unit n: the identities below hold for symbols too)
+    x = sp.Matrix(sp.symbols("x0:3", real=True))
+    u = sp.Matrix(sp.symbols("u0:3", real=True))
+    D = sp.Symbol("D", positive=True)
+    s = (D - n.dot(x)) / n.dot(u)
+    X = x + s * u
+    assert is_zero(sp.simplify(X - D / n.dot(u) * (u + n.cross(x.cross(u)) / D)))
+    assert is_zero(n.cross(x.cross(u)) - skew(n) * skew(x) * u)
+    # first order of the normalised (I + eps A) u at |u| = 1
+    e = sp.Symbol("eps", positive=True)
+    A = sp.Matrix(3, 3, sp.symbols("A0:9", real=True))
+    y = (sp.eye(3) + e * A) * u
+    Nn = y / sp.sqrt(y.dot(y))
+    first = sp.Matrix([sp.diff(c, e).subs(e, 0) for c in Nn]).subs(u.dot(u), 1)
+    T = A * u - u * (u.T * A * u)[0]
+    norm1 = {u[2]: sp.sqrt(1 - u[0] ** 2 - u[1] ** 2)}
+    assert is_zero(sp.simplify((first - T).subs(norm1)))
+    # T's expansion about u0 ends at t^3 with -delta (delta^T A delta)
+    t = sp.Symbol("t", real=True)
+    u0 = sp.Matrix(sp.symbols("p0:3", real=True))
+    dl = sp.Matrix(sp.symbols("d0:3", real=True))
+    Tt = (A * (u0 + t * dl) - (u0 + t * dl) * ((u0 + t * dl).T * A * (u0 + t * dl))[0]).applyfunc(sp.expand)
+    assert all(sp.Poly(c, t).degree() <= 3 for c in Tt)
+    c3 = sp.Matrix([sp.Poly(c, t).coeff_monomial(t**3) for c in Tt])
+    assert is_zero(c3 + dl * (dl.T * A * dl)[0])
+    assert is_zero(sp.expand(u.dot(T) - (u.T * A * u)[0] * (1 - u.dot(u))))
+    # ||A|| <= ||[n]x|| ||[e]x|| = 1: [n]x^T [n]x = I - n n^T, eigenvalues 1, 1, 0
+    assert is_zero(skew(n).T * skew(n) - (sp.eye(3) - n * n.T))
+    val = sp.Rational(100, 180000) * (sp.pi / 180) ** 3
+    assert rounds_to(val * 10**9, "3.0")
