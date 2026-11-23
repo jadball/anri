@@ -600,7 +600,8 @@ def _sensor_cells(
 def _beam_fold(pos: jax.Array, mu: jax.Array, shape: tuple, row: dict, geom: dict) -> tuple:
     """Fold the beam's variation over a peak's omega profile into its Gaussian.
 
-    A voxel off the axis moves across the beam while it diffracts. log(beam weight) at the row's mid dty, to second order in omega about the centroid (autodiff, any beam profile),
+    A voxel off the axis moves across the beam while it diffracts. log(beam weight) along the scan's path (dty at each
+    omega, :func:`_dty_at`), to second order in omega about the centroid (autodiff, any beam profile),
     multiplies the (slow, fast, omega) Gaussian: omega gets a new mean and variance, (slow, fast) keep their regression
     on omega. Returns the new centroid and shape, the integral of the expansion over the old profile (the peak's beam
     weight), and the expansion's coefficients (omega_c, log weight, slope, curvature) for each frame's residual.
@@ -611,7 +612,7 @@ def _beam_fold(pos: jax.Array, mu: jax.Array, shape: tuple, row: dict, geom: dic
     om_c = mu[2]
 
     def log_beam(o: jax.Array) -> jax.Array:
-        lab = sample_to_lab(pos, o, geom["wedge"], geom["chi"], row["dty_mid"], geom["y0"])
+        lab = sample_to_lab(pos, o, geom["wedge"], geom["chi"], _dty_at(o, row), geom["y0"])
         w = beam_weight(lab, o, geom)
         return jnp.log(jnp.maximum(w, jnp.finfo(w.dtype).tiny))  # tiny of the dtype: 1e-300 is 0 in float32
 
@@ -635,15 +636,27 @@ def _beam_fold(pos: jax.Array, mu: jax.Array, shape: tuple, row: dict, geom: dic
     return mu_b, shape_b, weight, (om_c, lb, beta, gam)
 
 
-def _frame_weights(pos: jax.Array, om_fr: jax.Array, fclip: jax.Array, row: dict, geom: dict) -> jax.Array:
-    """Per frame of a window: the beam's profile over the voxel at that frame's dty, and transmission.
+def _dty_at(omega: jax.Array, row: dict) -> jax.Array:
+    """Return the dty the scan had at omega (any turn).
 
-    At the mean omega of the peak's mass within each frame: a peak spread in omega (e.g. by sig_rot) diffracts at
-    different omegas, where an off-axis voxel sits at a different place across the beam.
+    Within each frame, its reading (at the frame's centre) moved at the frame's rate, as omega and dty both move
+    uniformly in time (theory page, intensity: int-dty-motion).
     """
-    lab = jax.vmap(lambda o, d: sample_to_lab(pos, o, geom["wedge"], geom["chi"], d, geom["y0"]))(
-        om_fr, row["dty_sorted"][fclip]
-    )  # [wo, 3]
+    om = nearest_omega(omega, row["omega_mid"])
+    f = jnp.clip(jnp.searchsorted(row["omega_edges"], om) - 1, 0, row["omega_sorted"].shape[0] - 1)
+    return row["dty_sorted"][f] + row["dty_rate_sorted"][f] * (om - row["omega_sorted"][f])
+
+
+def _frame_weights(pos: jax.Array, om_fr: jax.Array, fclip: jax.Array, row: dict, geom: dict) -> jax.Array:
+    """Per frame of a window: the beam's profile over the voxel, and transmission.
+
+    At the mean omega of the peak's mass within each frame, and the dty the scan had there (its path within the
+    frame, :func:`_dty_at`): a peak spread in omega (e.g. by sig_rot) diffracts at different omegas, where an
+    off-axis voxel sits at a different place across the beam, and dty moves within a frame where it moves.
+    """
+    off = nearest_omega(om_fr - row["omega_sorted"][fclip], 0.0)  # within the frame: om_fr may be in another turn
+    dty = row["dty_sorted"][fclip] + row["dty_rate_sorted"][fclip] * off
+    lab = jax.vmap(lambda o, d: sample_to_lab(pos, o, geom["wedge"], geom["chi"], d, geom["y0"]))(om_fr, dty)  # [wo, 3]
     w_beam = jax.vmap(beam_weight, in_axes=(0, 0, None))(lab, om_fr, geom)
     per_frame = w_beam * row["transmission_sorted"][fclip]  # [wo]
 
@@ -822,9 +835,12 @@ def make_row(omega: np.ndarray, dty: np.ndarray, transmission: np.ndarray | None
     Returns
     -------
     dict
-        Frames sorted by omega ("omega_sorted", "omega_edges", "dty_sorted", "transmission_sorted", and "order", each
-        sorted frame's index in file order), and the row's range and middle in omega and dty ("omega_min",
-        "omega_max", "omega_mid", "dty_min", "dty_max", "dty_mid")
+        Frames sorted by omega ("omega_sorted", "omega_edges", "dty_sorted", "dty_rate_sorted", "transmission_sorted",
+        and "order", each sorted frame's index in file order), and the row's range and middle in omega and dty
+        ("omega_min", "omega_max", "omega_mid", "dty_min", "dty_max", "dty_mid"). "dty_rate_sorted" is dty's rate
+        of change with omega within each frame, from the readings' differences between frames (theory page,
+        intensity: int-dty-rate): each reading is taken as the frame's centre, dty and omega moving uniformly in time;
+        0 where dty is constant over the row
     """
     omega = np.asarray(omega, dtype=float)
     dty = np.asarray(dty, dtype=float)
@@ -834,10 +850,18 @@ def make_row(omega: np.ndarray, dty: np.ndarray, transmission: np.ndarray | None
     om = omega[order]
     mids = 0.5 * (om[1:] + om[:-1])
     edges = np.concatenate([[om[0] - (mids[0] - om[0])], mids, [om[-1] + (om[-1] - mids[-1])]])
+    rate = np.zeros_like(om)
+    h = np.diff(om)
+    if om.size > 1 and np.all(h > 0):  # central differences of the readings (theory page: int-dty-rate)
+        dy = np.diff(dty[order])
+        rate[[0, -1]] = dy[[0, -1]] / h[[0, -1]]
+        hm, hp = h[:-1], h[1:]
+        rate[1:-1] = (hm**2 * dy[1:] + hp**2 * dy[:-1]) / (hp * hm * (hp + hm))
     return {
         "omega_sorted": jnp.asarray(om),
         "omega_edges": jnp.asarray(edges),
         "dty_sorted": jnp.asarray(dty[order]),
+        "dty_rate_sorted": jnp.asarray(rate),
         "transmission_sorted": jnp.asarray(np.asarray(transmission, dtype=float)[order]),
         "order": jnp.asarray(order.astype(np.int32)),
         "omega_min": float(edges[0]),
@@ -1102,6 +1126,7 @@ def _select_margin(window: tuple[int, int, int], row: dict, geom: dict, dtype: j
     cos_alpha = float(beam_offsets(jnp.zeros(3), jnp.asarray(geom["k_in_lab"]))[3])  # the beam's tilt
     size = float(geom["voxel_size"])
     dty_range = float(row["dty_max"]) - float(row["dty_min"])  # frames of a row may have different dty
+    dty_range += float(np.max(np.abs(np.asarray(row["dty_rate_sorted"])))) * ostep  # and it moves within a frame
     across = float(geom["width_beam"]) / 2 + 4 * float(geom["sig_beam"]) + size + dty_range
     vertical = (float(geom["width_beam_v"]) / 2 + 4 * float(geom["sig_beam_v"])) / cos_alpha + size
     return jnp.array([ws // 2 + 1, wf // 2 + 1, (wo // 2 + 1) * ostep, across, vertical], dtype=dtype)

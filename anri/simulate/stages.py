@@ -3,8 +3,9 @@
 1. :func:`stage_prepare`: a map (an ImageD11 TensorMap, any number of phases, or the indexer's entries) and the
    instrument become everything the renderer needs: each phase's map entries, reflections and structure factors, the
    beam's spreads and the motor positions of the scan.
-2. :func:`stage_render`: rows of the scan rendered into sparse pixels above the segmentation cut, as ImageD11 scan
-   groups. The rows are independent, so they can be split between jobs (e.g. a SLURM array), one file each.
+2. :func:`stage_render`: rows of the scan rendered into each cell's expected light, then recorded as the detector and
+   ImageD11's segmentation record it (Poisson counts, the cut and the group rule), as ImageD11 scan groups. The rows
+   are independent, so they can be split between jobs (e.g. a SLURM array), one file each.
 3. :func:`stage_assemble`: the rendered rows gathered into an ImageD11 dataset (sparse file, ``pars/`` and DataSet),
    which ``python -m anri.index`` and ImageD11 read.
 
@@ -24,6 +25,7 @@ from typing import Any
 import h5py
 import numpy as np
 
+from anri.io.imaged11 import PIXELS_IN_SPOT
 from anri.io.provenance import (
     check_out,
     command_line,
@@ -42,6 +44,7 @@ from anri.io.provenance import (
 OPTICS = {"al-crl": 8e-5, "si-nanolens": 1.5e-4}
 BANDWIDTH = 2e-3  # FWHM of d(lambda) / lambda: ID11's double Laue Si(111) monochromator
 EIGER_4M = (2162, 2068)
+NOISE = ("poisson", "round")  # how simulated counts are made from the expected light (record)
 _SCAN = re.compile(r"^\d+\.1$")
 _ENTRY_KEYS = ("ubi", "grain", "grain_ubi", "pos", "density", "sig_rot")  # what a map's entries may hold
 
@@ -410,10 +413,11 @@ def parse_rows(rows: str | None, n_rows: int) -> range:
 
 def stage_render(
     prepare_file: str, out: str | None = None, *, rows: str | None = None, cut: float = 1.0,
-    window: tuple = (3, 7, 7), max_frames: int | None = 31, batch: int = 2**16, splat: bool = False,
-    frames_per_call: int | None = None, command: str | None = None, log: Callable = print,
+    pixels_in_spot: int = PIXELS_IN_SPOT, noise: str = "poisson", seed: int = 0, window: tuple = (3, 7, 7),
+    max_frames: int | None = 31, batch: int = 2**16, splat: bool = False, frames_per_call: int | None = None,
+    command: str | None = None, log: Callable = print,
 ) -> str:  # fmt: skip
-    """Render rows of the scan into sparse pixels, every phase summed, as ImageD11 scan groups.
+    """Render rows of the scan, every phase summed, and record them as ImageD11 scan groups (:func:`record`).
 
     Parameters
     ----------
@@ -423,8 +427,9 @@ def stage_render(
         Output file (default: the prepare file's name with ``_render``, and ``_<first>-<last>`` for some rows only)
     rows
         "a:b", the rows to render (a Python slice; default every row)
-    cut
-        Keep counts strictly above this, as ImageD11's segmentation does
+    cut, pixels_in_spot, noise, seed
+        The recording, see :func:`record`: ImageD11's segmentation cut and group size, the counts drawn (Poisson) or
+        rounded (tests only), and the seed of the draws
     window, max_frames, batch, splat
         See :func:`anri.fwd.render.render_row`; splat (every phase a grain map) renders whole spots, for DCT-like maps
     frames_per_call
@@ -437,8 +442,9 @@ def stage_render(
         The file written: a scan group "<row + 1>.1" per row rendered, and per-row "stats"
     """
     log, lines = recorder(log)
-    options = {"rows": rows, "cut": cut, "window": list(window), "max_frames": max_frames, "batch": batch,
-               "splat": splat, "frames_per_call": frames_per_call}  # fmt: skip
+    options = {"rows": rows, "cut": cut, "pixels_in_spot": pixels_in_spot, "noise": noise, "seed": seed,
+               "window": list(window), "max_frames": max_frames, "batch": batch, "splat": splat,
+               "frames_per_call": frames_per_call}  # fmt: skip
     p = load_prepare(prepare_file)
     todo = parse_rows(rows, p["omega"].shape[0])
     if len(todo) == 0:
@@ -455,8 +461,9 @@ def stage_render(
     with h5py.File(out, "w") as h:
         write_provenance(h, "render", prepare_file, options, {"first_row": todo[0], "last_row": todo[-1]}, command)
         stats = write_rendered_rows(h, p["phases"], p["geom"], p["omega"], p["dty"], p["det_shape"], rows=todo,
-                                    cut=cut, log=log, window=tuple(window), max_frames=max_frames, batch=batch,
-                                    splat=splat, frames_per_call=frames_per_call)  # fmt: skip
+                                    cut=cut, pixels_in_spot=pixels_in_spot, noise=noise, seed=seed, log=log,
+                                    window=tuple(window), max_frames=max_frames, batch=batch, splat=splat,
+                                    frames_per_call=frames_per_call)  # fmt: skip
         idx = np.asarray(todo)
         h["stats/rows"] = idx
         for k, v in stats.items():
@@ -587,6 +594,8 @@ def run_command(assemble_file: str) -> str:
     asm = a["options"]
     args = [prep.pop("map"), prep.pop("pars"), *(asm.pop(k) for k in ("analysisroot", "sample", "dataset"))]
     part.pop("rows", None)
+    if "noise" not in part:  # rendered before the recording model: rounded, cut, no group rule
+        part.update(noise="round", pixels_in_spot=1)
     return shlex.join(command_line(parser(), "run", args, {**prep, **part, **asm}))
 
 
@@ -600,6 +609,9 @@ def simulate_sparse(
     dty: np.ndarray,
     det_shape: tuple[int, int],
     cut: float = 1,
+    pixels_in_spot: int = PIXELS_IN_SPOT,
+    noise: str = "poisson",
+    seed: int = 0,
     transmission: np.ndarray | None = None,
     omega_motor: str = "rot_center",
     dty_motor: str = "dty",
@@ -619,8 +631,8 @@ def simulate_sparse(
         [n_rows, n_frames] motor positions, e.g. from :func:`motor_grid` or an ImageD11 DataSet
     det_shape
         (n_slow, n_fast)
-    cut
-        Keep counts strictly above this
+    cut, pixels_in_spot, noise, seed
+        The recording, see :func:`record`
     transmission
         Optional [n_rows, n_frames] transmission factor per frame
     omega_motor, dty_motor
@@ -635,8 +647,54 @@ def simulate_sparse(
     """
     with h5py.File(path, "w-") as hout:
         return write_rendered_rows(hout, [(entries, hkls, F2)], geom, omega, dty, det_shape, cut=cut,
-                                   transmission=transmission, omega_motor=omega_motor, dty_motor=dty_motor,
+                                   pixels_in_spot=pixels_in_spot, noise=noise, seed=seed, transmission=transmission, omega_motor=omega_motor, dty_motor=dty_motor,
                                    window=window, batch=batch, max_frames=max_frames)  # fmt: skip
+
+
+def record(
+    frame: np.ndarray, pixel: np.ndarray, lam: np.ndarray, det_shape: tuple[int, int], cut: float = 1,
+    pixels_in_spot: int = PIXELS_IN_SPOT, noise: str = "poisson", seed: int | tuple = 0,
+) -> tuple[np.ndarray, np.ndarray]:  # fmt: skip
+    """Record a row's expected light as the detector and ImageD11's segmentation record it.
+
+    A photon count per cell, then the cut and the group rule (:func:`anri.io.imaged11.segment`), as the theory page
+    "What the detector records" models them.
+
+    Parameters
+    ----------
+    frame, pixel, lam
+        [n] the rendered cells (sorted by (frame, pixel), each once) and their expected light (photons); cells not
+        given have none
+    det_shape
+        (n_slow, n_fast)
+    cut, pixels_in_spot
+        ImageD11's segmentation: counts strictly above cut, in 8-connected groups of at least pixels_in_spot pixels
+        per frame (default 3, as ImageD11)
+    noise
+        "poisson": each count drawn from Poisson(lam), independently (rec-poisson), so the file is a realisation of
+        the recording model. "round": lam rounded, for tests that need a fixed result. A rounded count is neither a
+        realisation nor the expected recorded value (which is not an integer, and cannot be written as sparse
+        counts): never compare a method's model with rounded data
+    seed
+        Seed of the draws (numpy's default generator; anything ``np.random.default_rng`` takes, e.g. (seed, row))
+
+    Returns
+    -------
+    counts: np.ndarray
+        [n] the photon counts
+    keep: np.ndarray
+        [n] bool, the cells recorded
+    """
+    if noise == "poisson":
+        counts = np.random.default_rng(seed).poisson(np.asarray(lam, np.float64))
+    elif noise == "round":
+        counts = np.round(np.asarray(lam, np.float64))
+    else:
+        msg = f"noise {noise!r}: one of {NOISE}"
+        raise ValueError(msg)
+    from anri.io.imaged11 import segment
+
+    return counts, segment(frame, pixel, counts, det_shape, cut, pixels_in_spot)
 
 
 def _pad_frames(
@@ -662,11 +720,15 @@ def _pad_frames(
 
 def write_rendered_rows(
     hout: h5py.File, phases: list, geom: dict, omega: np.ndarray, dty: np.ndarray, det_shape: tuple[int, int], *,
-    rows: range | None = None, cut: float = 1, transmission: np.ndarray | None = None, omega_motor: str = "rot_center",
-    dty_motor: str = "dty", log: Callable | None = None, frames_per_call: int | None = None,
+    rows: range | None = None, cut: float = 1, pixels_in_spot: int = PIXELS_IN_SPOT, noise: str = "poisson",
+    seed: int = 0, transmission: np.ndarray | None = None, omega_motor: str = "rot_center", dty_motor: str = "dty",
+    log: Callable | None = None, frames_per_call: int | None = None,
     **render_kwargs: Any,  # noqa: ANN401
 ) -> dict:  # fmt: skip
     """Render dty rows of a scan, every phase summed, and write each as an ImageD11 scan group ("<row + 1>.1").
+
+    Each row is recorded by :func:`record`, row i's counts drawn with the seed (seed, i): the same whichever rows a
+    job renders, or how many frames per call.
 
     Parameters
     ----------
@@ -674,7 +736,7 @@ def write_rendered_rows(
         Open, writable HDF5 file
     phases
         [(entries, hkls, F2), ...] one per phase, see :func:`anri.fwd.render.render_phases`
-    geom, omega, dty, det_shape, cut, transmission, omega_motor, dty_motor
+    geom, omega, dty, det_shape, cut, pixels_in_spot, noise, seed, transmission, omega_motor, dty_motor
         See :func:`simulate_sparse`
     rows
         The rows to render (default all)
@@ -700,6 +762,9 @@ def write_rendered_rows(
     from anri.fwd.render import make_row, render_phases, to_device
     from anri.io.imaged11 import write_scan
 
+    if noise not in NOISE:
+        msg = f"noise {noise!r}: one of {NOISE}"
+        raise ValueError(msg)
     phases = [to_device(*p) for p in phases]  # once, not on every call of render_phases
     n_rows = omega.shape[0]
     stats = {"n_peaks": np.zeros(n_rows, int), "n_pixels": np.zeros(n_rows, int), "captured_min": np.ones(n_rows),
@@ -726,11 +791,13 @@ def write_rendered_rows(
                 share = (np.asarray(rstats["captured"])[inside] / rstats["in_range"][inside]).min()
                 stats["captured_min"][i] = min(stats["captured_min"][i], share)
         frame, pixel, value = (np.concatenate(x) for x in zip(*parts))  # frames in order: still sorted
+        counts, keep = record(frame, pixel, value, det_shape, cut, pixels_in_spot, noise, (seed, i))
         stats["n_pixels"][i] = write_scan(
-            hout, f"{i + 1}.1", frame, pixel, value, omega[i], dty[i], det_shape, cut, omega_motor, dty_motor
+            hout, f"{i + 1}.1", frame[keep], pixel[keep], counts[keep], omega[i], dty[i], det_shape, omega_motor,
+            dty_motor,
         )
         if log is not None:
             log(f"row {i} (dty {float(np.mean(dty[i])):.4g}): {stats['n_peaks'][i]} peaks ({stats['n_outside'][i]} "
-                f"outside the omega range), {stats['n_pixels'][i]} pixels above {cut:g}, window capture >= "
+                f"outside the omega range), {stats['n_pixels'][i]} pixels recorded, window capture >= "
                 f"{stats['captured_min'][i]:.4f} ({time.perf_counter() - t0:.1f} s)")  # fmt: skip
     return stats

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import itertools
 
+import numpy as np
 import sympy as sp
 
 from tests.theory.common import (
@@ -205,3 +206,96 @@ def test_frame_likelihood():
                 if all(len(g) < m for g in _groups_all(kept)):
                     Z += weight(kept, U)
             assert is_zero(p_brute - sp.Mul(*[a[q] for q in K]) * sp.Mul(*[1 - a[q] for q in dK]) * Z)
+
+
+def test_segment_is_the_group_rule():
+    """anri.io.imaged11.segment records exactly the pixels of rec-recorded: every kept pattern of a 4 x 4 detector
+    (each pattern one frame, so frames must not join either), a kept pixel with count c + 1 and the others with c (so
+    the cut is tested too), c = 1, for groups of at least m = 1 .. 5 pixels: against the groups of _component."""
+    from anri.io.imaged11 import segment
+
+    c, ns, nf = 1, 4, 4
+    pix = [(i, j) for i in range(ns) for j in range(nf)]
+    patterns = np.arange(1 << len(pix))
+    bits = (patterns[:, None] >> np.arange(len(pix))) & 1  # [pattern, pixel]
+    frame, pixel = np.nonzero(np.ones_like(bits))
+    counts = c + bits[frame, pixel]
+    size = np.zeros_like(bits)  # each kept pixel's group size
+    for t in patterns:
+        for g in _groups_all({pix[k] for k in range(len(pix)) if bits[t, k]}):
+            for q in g:
+                size[t, q[0] * nf + q[1]] = len(g)
+    for m in (1, 2, 3, 4, 5):
+        keep = segment(frame, pixel, counts, (ns, nf), c, m)
+        np.testing.assert_array_equal(keep, ((bits == 1) & (size >= m))[frame, pixel])
+
+
+def test_rounded_counts_numbers():
+    """The page's numbers on simulated data: a cell of lam = 1.4 is kept at c = 1 with probability 0.41 (rounding
+    never keeps it), and a cell below the renderer's min_value 1e-3 with at most lam^2 / 2 = 5e-7."""
+    lam = sp.Rational(14, 10)
+    assert rounds_to(p_at_least(2, lam), "0.41")  # P(n > 1) = P(n >= 2)
+    assert sp.Rational(1, 1000) ** 2 / 2 == sp.Rational(5, 10**7)
+
+
+def _joint_terms(p: tuple, q: tuple, m: int, det: set) -> list:
+    """The terms of rec-joint on a detector (cells det): (kept cells, not-kept cells) of each, every cell other than
+    p and q; groups must lie on the detector, boundaries are cut to it."""
+    out = []
+    for k in range(2, m):
+        for s in animals(p, k):
+            if q in s and s <= det:
+                out.append((set(s) - {p, q}, boundary(s) & det))
+    for k1 in range(1, m):
+        for s in animals(p, k1):
+            if not s <= det or q in s:
+                continue
+            for k2 in range(1, m):
+                for t in animals(q, k2):
+                    if t <= det and not s & t and not s & boundary(t) and not t & boundary(s):
+                        out.append(((set(s) | set(t)) - {p, q}, (boundary(s) | boundary(t)) & det))
+    return out
+
+
+def _rho(p: tuple, q: tuple, m: int, a: dict) -> sp.Expr:
+    """rec-cov-pair's rho_pq = 1 - s_p^(q) - s_q^(p) + J_pq, cells not in a never kept."""
+
+    def s_at(x, y):  # s_x with a_y = 1
+        b = {**a, y: sp.Integer(1)}
+        return sum(p_group(x, k, b) for k in range(1, m))
+
+    J = sum(sp.Mul(*[a[x] for x in kept]) * sp.Mul(*[1 - a[x] for x in out]) for kept, out in _joint_terms(p, q, m, set(a)))
+    return 1 - s_at(p, q) - s_at(q, p) + J
+
+
+def test_recorded_covariance_any_pair():
+    """rec-cov-pair and rec-joint. (1) Symbolically, every pair of a 2 x 3 and of a 1 x 5 detector, m = 1, 2, 3:
+    Cov(r_p, r_q) by enumerating every kept pattern equals e_p e_q (rho_pq - w_p w_q); the ends of a row of five,
+    m = 3, have Cov = e_1 e_5 a_2 a_3 a_4 (1 - a_3) (correlated at distance 2 (m - 1)). (2) J_pq on every kept pattern
+    of a 3 x 4 detector, every pair, m = 2, 3, 4: J at the 0 / 1 point equals the indicator that neither p's nor q's
+    group (p, q kept) reaches m. J is multilinear (a term's kept and not-kept cells are disjoint), as is the
+    probability, so agreeing on every 0 / 1 point is equality."""
+    for shape in ((2, 3), (1, 5)):
+        pix = [(i, j) for i in range(shape[0]) for j in range(shape[1])]
+        a = {x: sp.Symbol(f"a_{x[0]}_{x[1]}", positive=True) for x in pix}
+        e = {x: sp.Symbol(f"e_{x[0]}_{x[1]}", positive=True) for x in pix}
+        for p, q in itertools.combinations(pix, 2):
+            for m in (1, 2, 3):
+                ep, eq, epq = _recorded_moments(a, e, m, p, q)
+                w = {x: 1 - sum(p_group(x, k, a) for k in range(1, m)) for x in (p, q)}
+                assert is_zero(epq - ep * eq - e[p] * e[q] * (_rho(p, q, m, a) - w[p] * w[q])), (shape, p, q, m)
+    p, q = (0, 0), (0, 4)
+    ep, eq, epq = _recorded_moments(a, e, 3, p, q)
+    assert is_zero(epq - ep * eq - e[p] * e[q] * a[0, 1] * a[0, 2] * a[0, 3] * (1 - a[0, 2]))
+
+    pix = [(i, j) for i in range(3) for j in range(4)]
+    det = set(pix)
+    for p, q in itertools.combinations(pix, 2):
+        others = [x for x in pix if x not in (p, q)]
+        for m in (2, 3, 4):
+            terms = _joint_terms(p, q, m, det)
+            for bits in itertools.product((0, 1), repeat=len(others)):
+                kept = {x for x, b in zip(others, bits) if b} | {p, q}
+                small = len(_component(kept, p)) < m and len(_component(kept, q)) < m
+                J = sum(kp <= kept and not (out & kept) for kp, out in terms)
+                assert J == int(small), (p, q, m, bits)

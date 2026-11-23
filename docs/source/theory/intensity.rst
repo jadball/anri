@@ -161,7 +161,8 @@ The beam's weight within a peak
 A voxel off the axis moves across the beam as omega turns, so within a peak's omega profile (often narrower than a
 frame) the beam's weight changes. The renderer expands :math:`\log w_{\text{beam}}` to second order in omega about the
 centroid, :math:`q(\omega) = \exp(\ell + \beta d + \tfrac{1}{2}\gamma d^2)` with :math:`d = \omega - \mu_\omega` (by automatic
-differentiation, any profile, at the row's middle dty), and multiplies the peak's Gaussian by it:
+differentiation, any profile, along the scan's path: at each omega the dty the scan had there, :eq:`int-dty-motion`), and
+multiplies the peak's Gaussian by it:
 
 .. math::
     :label: int-fold
@@ -189,37 +190,65 @@ over the peak. The renderer clamps :math:`\gamma \le 0` (the fold never widens a
 curvature can come out large and positive) and :math:`|\beta| \le 3/\sqrt{\Sigma'_{\omega\omega}}`.
 
 Each frame :math:`f` then keeps the residual of the true weight against the expansion, at the mean omega
-:math:`\bar\omega_f` of the peak's mass in it and at the frame's own dty :math:`y_f`:
+:math:`\bar\omega_f` of the peak's mass in it and at the dty the scan had there, :math:`y(\bar\omega_f)`
+(:eq:`int-dty-motion`):
 
 .. math::
     :label: int-frame-weight
 
     I_f = I\; e^{\ell + \beta^2\Sigma'_{\omega\omega}/2}\sqrt{\Sigma'_{\omega\omega}/\Sigma_{\omega\omega}}\;
-    \frac{w_{\text{beam}}(\bar\omega_f, y_f)}{q(\bar\omega_f)}\; P'(\text{frame } f),
+    \frac{w_{\text{beam}}(\bar\omega_f, y(\bar\omega_f))}{q(\bar\omega_f)}\; P'(\text{frame } f),
 
 with :math:`P'` the folded Gaussian's mass in the frame, before it is spread over pixels.
 
 **Definition:** Anri's per-frame weight. It is exact when :math:`w_{\text{beam}}/q` is constant over each frame's share of
-the peak (a log-quadratic weight, dty fixed), and right to first order in the residual's variation within a frame
-otherwise. Where dty differs between frames (a fly scan), the residual carries it.
+the peak (a weight log-quadratic along the scan's path), and right to first order in the residual's variation within a
+frame otherwise.
 
 **Code:** :func:`anri.fwd.render.render_peaks`.
 
-Within one frame the code takes one dty reading. If dty moves by :math:`\Delta` during the frame, the voxel sees the
-profile averaged over that motion, a convolution with a box of width :math:`\Delta`:
+A frame integrates over time, and in a fly scan dty moves while omega turns. Both move uniformly in time, so within a
+frame dty is linear in omega: with frame :math:`f`'s omega and dty readings :math:`\omega_f, y_f` taken at its centre
+and :math:`r_f` the rate of dty with omega,
 
 .. math::
     :label: int-dty-motion
 
-    \sigma^2 \to \sigma^2 + \frac{\Delta^2}{12}, \qquad \text{mean unchanged}.
+    \omega = \omega_f + \Omega t, \quad y = y_f + V t
+    \;\Rightarrow\;
+    y(\omega) = y_f + r_f\,(\omega - \omega_f), \quad r_f = V/\Omega,
+    \qquad
+    \int g\big(\omega(t), y(t)\big)\, dt = \frac{1}{\Omega}\int g\big(\omega, y(\omega)\big)\, d\omega,
 
-**Proof:** ``tests/theory/test_intensity.py::test_dty_motion``.
+so the light a peak puts in a frame is :math:`\int_{\text{frame}} N(\omega)\, w_{\text{beam}}(\omega, y(\omega))\, d\omega`: the
+beam's weight taken along the path, where the voxel is at the moment the peak's light arrives. :eq:`int-fold` and
+:eq:`int-frame-weight` compute this integral, exact for a weight log-quadratic along the path. It is not the profile
+averaged over the frame's whole motion :math:`\Delta = r_f\,\delta\omega` (a box, adding :math:`\Delta^2/12` to the
+profile's variance): that is the special case of a peak whose light is spread evenly over the frame. A peak narrower
+than a frame is lit where the voxel is when the peak crosses, at :math:`y(\bar\omega_f)`, not over the whole motion.
 
-**Anri's rule:** a frame's weight is the profile integrated over the voxel and over the frame's motion, in omega and in
-dty. The renderer integrates omega within a frame (:eq:`int-fold`, :eq:`int-frame-weight`) but takes one dty per frame:
-it errs by the profile's change over :math:`\Delta`, second order, of relative size about :math:`\Delta^2/(12\sigma^2)`.
-In a fly scan where dty moves by one step over a turn of a few thousand frames, :math:`\Delta` is below a thousandth of
-the step.
+**Proof:** ``tests/theory/test_intensity.py::test_dty_path`` (the change of variables; the even-light case is the box
+average), ``tests/theory/test_intensity.py::test_dty_motion`` (the box's mean and :math:`\Delta^2/12`),
+``tests/theory/test_intensity.py::test_dty_path_code`` (:func:`anri.fwd.render.make_row`'s path within each frame).
+
+The scan records one dty per frame, so the rate comes from the readings: central differences in omega,
+
+.. math::
+    :label: int-dty-rate
+
+    r_f = \frac{h_-^2\, (y_{f+1} - y_f) + h_+^2\, (y_f - y_{f-1})}{h_+ h_- (h_+ + h_-)},
+    \qquad h_\pm = |\omega_{f\pm1} - \omega_f|,
+
+one-sided at the row's ends: exact for readings linear (and, inside the row, quadratic) in omega, and zero where dty
+is constant over a row (a step scan; the differences are then exactly 0), which then gives the weights it gave before.
+
+**Proof:** ``tests/theory/test_intensity.py::test_dty_rate`` (exact on a quadratic), ``tests/theory/test_intensity.py::test_dty_path_code``.
+
+**Code:** :func:`anri.fwd.render.make_row` ("dty_rate_sorted"), through ``_dty_at`` and ``_frame_weights``.
+
+**Anri's choice:** the readings are taken as each frame's centre, as omega's are, and the motion as uniform within a
+frame; a scan whose dty steps between frames, or whose readings are a frame's start, is not modelled. Ask how a
+dataset's dty was recorded.
 
 .. _theory_absorption:
 
@@ -371,5 +400,4 @@ What is left out
   (:ref:`theory_global_fit`).
 - **The detector's efficiency** versus angle of incidence and energy, and its gain: absorbed in the relative scale
   (a thick sensor's depth is in :doc:`detector`).
-- **dty motion within a frame** (:eq:`int-dty-motion`): one dty reading per frame.
 - **A tilted beam through a cube** (:eq:`int-beam-weight`): horizontal and vertical treated separately.

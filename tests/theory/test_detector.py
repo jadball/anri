@@ -385,5 +385,25 @@ def test_splat_bilinear():
     assert sp.solve(sp.diff(var, d), d) == [sp.Rational(1, 2)] and var.subs(d, sp.Rational(1, 2)) == sp.Rational(1, 4)
 
 
+def test_splat_bspline():
+    """:eq:`det-splat-exact`: quadratic B-spline weights at -1, 0, 1 (offset e from the nearest grid point) are
+    non-negative for |e| <= 1/2, sum to 1, have mean e and variance 1/4 whatever e; on a grid n times finer, 1 / (4 n^2)
+    pixel^2. A kernel N(0, s^2 - 1 / (4 n^2)) shared so has mean e and variance s^2: the spot's two moments."""
+    e = sp.symbols("e", real=True)
+    w = [(sp.Rational(1, 2) - e) ** 2 / 2, sp.Rational(3, 4) - e**2, (sp.Rational(1, 2) + e) ** 2 / 2]
+    x = [-1, 0, 1]
+    assert is_zero(sum(w) - 1)
+    mean = sum(wi * xi for wi, xi in zip(w, x))
+    assert is_zero(mean - e)
+    assert is_zero(sum(wi * xi**2 for wi, xi in zip(w, x)) - mean**2 - sp.Rational(1, 4))
+    assert all(sp.solveset(wi < 0, e, sp.Interval(-sp.Rational(1, 2), sp.Rational(1, 2))) == sp.EmptySet for wi in w)
+    n, s = sp.symbols("n s", positive=True)
+    v_share = sp.Rational(1, 4) / n**2  # the same weights on a grid of step 1 / n
+    assert is_zero((s**2 - v_share) + v_share - s**2)  # kernel then sharing: variances add (independent)
+    # bilinear sharing's d (1 - d) reaches the B-spline's 1/4 only at d = 1/2: no constant kernel deficit fits it
+    d = sp.symbols("d", real=True)
+    assert sp.solve(d * (1 - d) - sp.Rational(1, 4), d) == [sp.Rational(1, 2)]
+
+
 if __name__ == "__main__":
     unittest.main()

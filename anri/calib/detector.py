@@ -27,8 +27,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.scipy.special import ndtr
 from scipy.optimize import minimize
-from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import connected_components
+
+from anri.io.imaged11 import pixel_groups
 
 SUB = 4  # sub-samples per pixel side
 
@@ -57,18 +57,7 @@ def find_spots(frame: np.ndarray, row: np.ndarray, col: np.ndarray, value: np.nd
     h = window // 2
     f, r, c = (np.asarray(x, np.int64) for x in (frame, row, col))
     v = np.asarray(value, np.float64)
-    key = (f * ns + r) * nf + c
-    o = np.argsort(key)
-    ks = key[o]
-    src, dst = [], []
-    for dr, dc in ((0, 1), (1, -1), (1, 0), (1, 1)):  # each neighbour pair once
-        q = key + dr * nf + dc
-        at = np.searchsorted(ks, q)
-        hit = (at < len(ks)) & (ks[np.minimum(at, len(ks) - 1)] == q) & (c + dc >= 0) & (c + dc < nf)
-        src.append(np.nonzero(hit)[0])
-        dst.append(o[at[hit]])
-    src, dst = np.concatenate(src), np.concatenate(dst)
-    _, lab = connected_components(coo_matrix((np.ones(len(src)), (src, dst)), shape=(len(v),) * 2), directed=False)
+    lab = pixel_groups(f, r, c, shape)
     tot = np.bincount(lab, v)
     peak = np.full(len(tot), -1)
     order = np.lexsort((v, lab))  # per blob, its brightest pixel last

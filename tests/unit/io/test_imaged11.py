@@ -39,20 +39,64 @@ class TestWriteScan(unittest.TestCase):
 
         det_shape = (20, 30)
         omega, dty = np.arange(5) + 0.5, np.full(5, 2.0)
-        frame = np.array([0, 0, 2, 2, 2, 4])
-        pixel = np.array([3, 31, 0, 45, 599, 100])
-        value = np.array([5.2, 0.9, 1.6, 300.4, 2.5, 1.4])  # rounds to 5, 1, 2, 300, 2, 1
+        frame = np.array([0, 2, 2, 2])
+        pixel = np.array([3, 0, 45, 599])
+        counts = np.array([5, 2, 300, 2])
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "sparse.h5")
             with h5py.File(path, "w") as hout:
-                n = write_scan(hout, "1.1", frame, pixel, value, omega, dty, det_shape, cut=1)
-            self.assertEqual(n, 4)  # counts of 1 are not > cut
+                n = write_scan(hout, "1.1", frame, pixel, counts, omega, dty, det_shape)
+                with self.assertRaises(ValueError):  # an expected value is not a recorded count
+                    write_scan(hout, "2.1", frame, pixel, counts + 0.5, omega, dty, det_shape)
+            self.assertEqual(n, 4)
             scan = SparseScan(path, "1.1")
             np.testing.assert_array_equal(scan.nnz, [1, 0, 3, 0, 0])
             np.testing.assert_array_equal(scan.row, [0, 0, 1, 19])
             np.testing.assert_array_equal(scan.col, [3, 0, 15, 29])
             np.testing.assert_array_equal(scan.intensity, [5, 2, 300, 2])
             self.assertEqual(scan.shape, (5, 20, 30))
+
+
+class TestSegment(unittest.TestCase):
+    def test_as_imaged11(self):
+        """segment records the pixels ImageD11's lima_segmenter records (select, then clean), frame by frame: Poisson
+        frames with spots of every size, faint and bright, touching the detector's edges, for cut 0, 1, 2 and groups
+        of at least 1, 2, 3, 4 pixels."""
+        import ImageD11.sinograms.lima_segmenter as lima
+
+        from anri.io.imaged11 import segment
+
+        rng = np.random.default_rng(0)
+        ns, nf, n_frames = 24, 31, 40
+        ii, jj = np.mgrid[:ns, :nf]
+        lam = np.zeros((n_frames, ns, nf))
+        for k in range(n_frames):
+            for _ in range(6):
+                ci, cj, w, a = rng.uniform(-2, ns + 2), rng.uniform(-2, nf + 2), rng.uniform(0.3, 3), rng.uniform(0.5, 30)
+                lam[k] += a * np.exp(-((ii - ci) ** 2 + (jj - cj) ** 2) / (2 * w**2))
+        img = rng.poisson(lam)
+        frame, pixel = np.nonzero(img.reshape(n_frames, -1))  # every cell with counts, sorted by (frame, pixel)
+        counts = img.reshape(n_frames, -1)[frame, pixel]
+        saved = lima.OPTIONS
+        try:
+            for cut in (0, 1, 2):
+                for m in (1, 2, 3, 4):
+                    opts = lima.SegmenterOptions(cut=cut, pixels_in_spot=m)
+                    opts.setup()
+                    opts.mask = np.ones((ns, nf), np.uint8)
+                    lima.OPTIONS = opts
+                    tosparse = lima.frmtosparse(opts.mask, np.uint32)
+                    want = []
+                    for k in range(n_frames):
+                        spf = lima.clean(*tosparse(img[k].astype(np.uint32), cut))
+                        if spf is not None:
+                            want += [(k, int(r) * nf + int(c)) for r, c in zip(spf.row, spf.col)]
+                    keep = segment(frame, pixel, counts, (ns, nf), cut, m)
+                    got = list(zip(frame[keep].tolist(), pixel[keep].tolist()))
+                    self.assertEqual(got, want, (cut, m))
+                    self.assertGreater(len(want), 50)
+        finally:
+            lima.OPTIONS = saved
 
 
 class TestDataset(unittest.TestCase):
@@ -113,7 +157,7 @@ class TestSpatial(unittest.TestCase):
             sparse = os.path.join(tmp, "s_sparse.h5")
             pixel = np.array([0, 31, 2 * 30 + 7, 19 * 30 + 29])
             with h5py.File(sparse, "w") as h:
-                write_scan(h, "1.1", np.arange(4), pixel, np.full(4, 5.0), omega[0], dty[0], det_shape, cut=0)
+                write_scan(h, "1.1", np.arange(4), pixel, np.full(4, 5), omega[0], dty[0], det_shape)
             ds = read_dataset(write_dataset(sparse, tmp, "s", "d", y0=0.0, e2dxfile=paths[0], e2dyfile=paths[1]))
             self.assertEqual((ds["e2dxfile"], ds["e2dyfile"], ds["detectorh5"]), (*paths, ""))
             spatial = read_spatial(ds)
@@ -416,7 +460,7 @@ class TestStreamMonitor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "s.h5")
             with h5py.File(path, "w") as h:
-                write_scan(h, "1.1", frame, pixel, value, omega, dty, det_shape, cut=0)
+                write_scan(h, "1.1", frame, pixel, value, omega, dty, det_shape)
                 h["1.1/measurement/fpico6"] = mon
             edges = np.array([-0.5, 0.5])
             plain = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100)))
@@ -439,7 +483,7 @@ class TestStreamMonitor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "s.h5")
             with h5py.File(path, "w") as h:
-                write_scan(h, "1.1", np.arange(7), np.arange(7), np.full(7, 5.0), omega, dty, (20, 30), cut=0)
+                write_scan(h, "1.1", np.arange(7), np.arange(7), np.full(7, 5), omega, dty, (20, 30))
             edges = np.array([-1.0, 0.0, 1.0])
             row = next(iter(stream_sparse(path, edges, "rot_center", "dty", 100)))[3]
             np.testing.assert_array_equal(row, [0, 1, 1, 1, 1, 1, 1])  # the readings
@@ -459,7 +503,7 @@ class TestStreamMonitor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path, master = os.path.join(tmp, "s.h5"), os.path.join(tmp, "master.h5")
             with h5py.File(path, "w") as h:
-                write_scan(h, "1.1", np.arange(3), np.array([1, 2, 3]), np.full(3, 8.0), omega, dty, det_shape, cut=0)
+                write_scan(h, "1.1", np.arange(3), np.array([1, 2, 3]), np.full(3, 8), omega, dty, det_shape)
             with h5py.File(master, "w") as h:
                 h["1.1/measurement/fpico6"] = np.array([1.0, 2.0, 4.0, 99.0])  # one frame more than the sparse scan
             mon = read_monitor(path, ["1.1"], "fpico6", master)

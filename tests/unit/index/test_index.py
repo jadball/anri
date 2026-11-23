@@ -529,8 +529,10 @@ class TestEndToEnd(unittest.TestCase):
                 "cell_lattice_[P,A,B,C,I,F,R]": 229}  # fmt: skip
         with tempfile.TemporaryDirectory() as tmp:
             sparse = os.path.join(tmp, "sparse.h5")
+            # pixels_in_spot 1: this phantom's spots are mostly 1-2 pixels, which ImageD11's default group rule (3) would
+            # drop whole (65% of the counts)
             anri.simulate.stages.simulate_sparse(sparse, entries, rings["hkls"], np.ones(len(rings["hkls"])), geom, omega, dty,
-                                    (2162, 2068), window=(5, 9, 9))  # fmt: skip
+                                    (2162, 2068), window=(5, 9, 9), pixels_in_spot=1)  # fmt: skip
             parfile = anri.io.imaged11.write_pars(os.path.join(tmp, "pars"), PARS, {"Fe": cell})
             dsfile = anri.io.imaged11.write_dataset(sparse, tmp, "fe", "sim", y0=0.0, parfile=parfile)
             ds = anri.io.imaged11.read_dataset(dsfile)
@@ -632,7 +634,8 @@ class TestFitStage(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             sparse = os.path.join(tmp, "sparse.h5")
             anri.simulate.stages.simulate_sparse(sparse, entries, rings["hkls"], np.ones(len(rings["hkls"])),
-                                                 geometry(), omega, dty, (2162, 2068), window=(5, 9, 9))  # fmt: skip
+                                                 geometry(), omega, dty, (2162, 2068), window=(5, 9, 9),
+                                                 pixels_in_spot=1)  # fmt: skip (spots of 1-2 pixels: see test_two_grains)
             parfile = anri.io.imaged11.write_pars(os.path.join(tmp, "pars"), PARS, {"Fe": cell})
             anri.io.imaged11.write_dataset(sparse, tmp, "fe", "half", y0=0.0, parfile=parfile)
             hist = ix.stages.stage_histogram(tmp, "fe", "half", os.path.join(tmp, "h.h5"), rings=3, log=quiet)

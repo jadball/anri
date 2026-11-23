@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import unittest
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
 from anri.diffract.factors import lorentz, polarisation, polarisation_extinction
-from anri.fwd.render import _beam_fold
+from anri.fwd.render import _beam_fold, _dty_at, _frame_weights, make_row
 from anri.geom.beam import beam_weight, chord_weight
+from anri.geom.gonio import sample_to_lab
 from anri.geom.paths import path_lengths, transmission
 from anri.maths.utils import float64, ramp_integral, ramp_integral2
 from tests.theory.common import (
@@ -279,7 +281,7 @@ def test_beam_fold_code():
     """_beam_fold's new centroid, shape and weight from its own expansion (l, beta, gamma), against :eq:`int-fold`."""
     geom = {"k_in_lab": np.array([1.0, 0.0, 0.0]), "wedge": 0.0, "chi": 0.0, "y0": 0.0, "voxel_size": 0.5,
             "sig_beam": 0.4, "width_beam": 0.0, "sig_beam_v": 1.0, "width_beam_v": 0.0, "voxel_3d": False}  # fmt: skip
-    row = {"dty_mid": 0.3}
+    row = make_row(np.array([11.9, 12.0, 12.1]), np.full(3, 0.3))  # dty fixed: the path is the row's dty
     mu = np.array([100.2, 50.7, 12.0])
     shape = (0.5, 0.4, 0.04, 0.1, 0.05, -0.03)
     with float64():
@@ -303,11 +305,73 @@ def test_beam_fold_code():
 
 
 def test_dty_motion():
-    """A voxel moving uniformly by Delta across the beam during a frame sees the profile convolved with a box: its
-    variance grows by Delta^2 / 12, and its mean is unchanged."""
+    """A voxel moving uniformly by Delta across the beam during a frame, its light spread evenly over the frame, sees
+    the profile convolved with a box: its variance grows by Delta^2 / 12, and its mean is unchanged."""
     x, D = sp.symbols("x Delta", positive=True)
     assert is_zero(sp.integrate(x / D, (x, -D / 2, D / 2)))
     assert is_zero(sp.integrate(x**2 / D, (x, -D / 2, D / 2)) - D**2 / 12)
+
+
+def test_dty_path():
+    """:eq:`int-dty-motion`: omega and dty uniform in time make dty linear in omega within a frame, and the time
+    integral of a light g(omega, y) is the omega integral along that path, over Omega. With the light even over the
+    frame (g = w(y)), the path's average is the box average over Delta = r delta_omega."""
+    t, w0, y0 = sp.symbols("t omega_f y_f", real=True)
+    Om, V, T = sp.symbols("Omega V T", positive=True)
+    om = sp.symbols("omega", real=True)
+    a, b, c, d = sp.symbols("a b c d", real=True)
+    g = a * om**2 + b * om * sp.Symbol("y") + c * sp.Symbol("y") ** 2 + d  # any polynomial light g(omega, y)
+    path = y0 + V / Om * (om - w0)
+    by_time = sp.integrate(g.subs({om: w0 + Om * t, sp.Symbol("y"): y0 + V * t}), (t, -T / 2, T / 2))
+    by_omega = sp.integrate(g.subs(sp.Symbol("y"), path), (om, w0 - Om * T / 2, w0 + Om * T / 2)) / Om
+    assert is_zero(by_time - by_omega)
+    # light even over the frame: the weight along the path averaged over the frame is the box average over the
+    # frame's motion Delta = r delta_omega (delta_omega = Omega T), by u = (V / Omega)(omega - omega_f); checked on
+    # w(y) = exp(k y), of which any weight is a superposition (its Fourier or Laplace transform)
+    D = V * T
+    u = sp.symbols("u", real=True)
+    k = sp.symbols("k", positive=True)  # k < 0 is the same with y -> -y
+    path_avg = sp.integrate(sp.exp(k * path), (om, w0 - Om * T / 2, w0 + Om * T / 2)) / (Om * T)
+    box = sp.integrate(sp.exp(k * (y0 + u)), (u, -D / 2, D / 2)) / D
+    assert is_zero(sp.simplify(path_avg - box))
+
+
+def test_dty_rate():
+    """:eq:`int-dty-rate`: the central difference for unequal steps is exact on a quadratic y(omega)."""
+    hp, hm = sp.symbols("h_+ h_-", positive=True)
+    w0, c0, c1, c2 = sp.symbols("omega_f c0 c1 c2", real=True)
+
+    def y(o: sp.Expr) -> sp.Expr:
+        return c0 + c1 * (o - w0) + c2 * (o - w0) ** 2
+
+    r = (hm**2 * (y(w0 + hp) - y(w0)) + hp**2 * (y(w0) - y(w0 - hm))) / (hp * hm * (hp + hm))
+    assert is_zero(r - sp.diff(y(sp.Symbol("o")), sp.Symbol("o")).subs(sp.Symbol("o"), w0))
+
+
+def test_dty_path_code():
+    """make_row's rate and _dty_at's path against :eq:`int-dty-rate` and :eq:`int-dty-motion` for readings linear in
+    omega (unequal frames, unsorted), and _frame_weights' weight at the path's dty; a constant dty has rate 0."""
+    omega = np.array([0.30, 0.0, 0.11, 0.25, 0.62, 0.43])
+    dty = 1.7 - 2.3 * omega  # a fly scan's dty, linear in omega
+    with float64():
+        row = make_row(omega, dty)
+        assert np.all(np.asarray(make_row(omega, np.full(6, 1.7))["dty_rate_sorted"]) == 0.0)
+        # the rate: a few operations on differences of |dty| <= 2 over steps >= 0.05: ~16 ulps of 2 / 0.05
+        np.testing.assert_allclose(np.asarray(row["dty_rate_sorted"]), -2.3, rtol=0, atol=16 * EPS * 2 / 0.05)
+        om = np.array([0.02, 0.13, 0.299, 0.31, 0.7, 360.2])  # the last in the next turn: 0.2
+        got = np.asarray(jax.vmap(_dty_at, in_axes=(0, None))(jnp.asarray(om), row))
+        # the reading plus rate x offset: ~16 ulps of the largest term (|dty| <= 2, rate x offset <= 0.5)
+        np.testing.assert_allclose(got, 1.7 - 2.3 * np.mod(om, 360.0), rtol=0, atol=16 * EPS * 2 + 16 * EPS * 360 * 2.3)
+        geom = {"k_in_lab": jnp.array([1.0, 0.0, 0.0]), "wedge": 0.0, "chi": 0.0, "y0": 0.0, "voxel_size": 0.5,
+                "sig_beam": 0.4, "width_beam": 0.0, "sig_beam_v": 1.0, "width_beam_v": 0.0, "voxel_3d": False}  # fmt: skip
+        pos = jnp.array([5.0, 0.2, 0.0])
+        fclip = jnp.array([1, 3, 4])  # sorted frames 0.11, 0.30, 0.43; mean omegas within them
+        om_fr = jnp.array([0.12, 0.27, 0.40])
+        fw = np.asarray(_frame_weights(pos, om_fr, fclip, row, geom))
+        lab = [sample_to_lab(pos, o, 0.0, 0.0, 1.7 - 2.3 * o, 0.0) for o in (0.12, 0.27, 0.40)]
+        want = np.asarray([beam_weight(x, o, geom) for x, o in zip(lab, (0.12, 0.27, 0.40))])
+    # the same float64 operations but for the dty: its error (above, ~1e-14) moves a weight of slope ~1 / sigma
+    np.testing.assert_allclose(fw, want, rtol=1e-13)
 
 
 # ---------------------------------------------------------------------------------------------- int-absorption

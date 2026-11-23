@@ -341,6 +341,29 @@ for a point at an integer pixel; sharing it between two integer positions is not
 a few pixels, and of the size of the effects above for a spot narrower than a pixel. Splatting also takes the beam's
 weight per frame at the frame's mean omega, without :eq:`int-fold`.
 
+What an exact splat needs. Rendering the kernel with :math:`\matr{\Sigma}` and sharing a voxel's weight between grid
+points is the pixel integration, once, of the continuous mixture :math:`\sum_j s_j N(x - j, \matr{\Sigma})`: the rule of
+:eq:`det-box-once` is kept when that mixture has the voxel's spot's mean and variance. Bilinear sharing's variance
+:math:`d(1 - d)` changes with :math:`d`, so no shared kernel can make up for it. Quadratic B-spline weights on a grid of
+step :math:`1/n` pixel, :math:`w_{\mp} = \tfrac{1}{2}(\tfrac{1}{2} \mp e)^2`, :math:`w_0 = \tfrac{3}{4} - e^2` (:math:`e` the
+offset from the nearest grid point, in grid steps), have the offset as mean and a variance that does not depend on
+it:
+
+.. math::
+    :label: det-splat-exact
+
+    \sum_k w_k\, k = e, \qquad \sum_k w_k\, k^2 - e^2 = \tfrac{1}{4}\ \text{grid step}^2 = \frac{1}{4n^2}\ \text{pixel}^2,
+
+so a kernel rendered with :math:`\tfrac{1}{4n^2}` taken off each detector conditional variance (slow given the frame,
+fast given the row and frame, :eq:`ps-condition`, :eq:`ps-condition-f`) gives every voxel its spot's first two
+moments exactly, for any subpixel position. It needs those conditional variances above :math:`\tfrac{1}{4n^2}`: a
+point spread of 0.25 pixel needs :math:`n = 2`, of 0.2 pixel :math:`n = 3`, and each phase of the finer grid is its own
+kernel and convolution, :math:`n^2` of each per spot. The beam's fold differs from voxel to voxel (each crosses the
+beam at its own place): its weight per frame and its shift of the frame's mean are per voxel and fit the sharing,
+but its narrowing of the profile needs a margin in that variance too.
+
+**Proof:** ``tests/theory/test_detector.py::test_splat_bspline``.
+
 The model's threshold
 ---------------------
 

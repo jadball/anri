@@ -100,9 +100,16 @@ def _prepare_options(p: argparse.ArgumentParser) -> None:
 
 
 def _render_options(p: argparse.ArgumentParser) -> None:
+    from anri.simulate.stages import NOISE, PIXELS_IN_SPOT
+
     p.add_argument(
         "--cut", type=float, default=1.0, help="keep counts above this, as ImageD11's segmentation (default 1)"
     )
+    p.add_argument("--pixels-in-spot", type=int, default=PIXELS_IN_SPOT, help="record kept pixels only in 8-connected "
+                   f"groups of at least this many per frame, as ImageD11's segmentation (default {PIXELS_IN_SPOT})")  # fmt: skip
+    p.add_argument("--noise", choices=NOISE, default="poisson", help="poisson: draw each pixel's count (default); "
+                   "round: round the expected light, for tests only (neither a realisation nor the expected value)")  # fmt: skip
+    p.add_argument("--seed", type=int, default=0, help="seed of the Poisson draws (default 0; row i uses [seed, i])")
     p.add_argument("--window", type=int, nargs=3, default=(3, 7, 7),
                    help="peak window: frames, slow and fast pixels (default 3 7 7)")  # fmt: skip
     p.add_argument("--max-frames", type=int, default=31,
@@ -197,6 +204,7 @@ def main() -> None:
         source = args.source
     if cmd in ("render", "run"):
         sim.stages.stage_render(source, None if cmd == "run" else args.out, rows=getattr(args, "rows", None), cut=args.cut,
+                        pixels_in_spot=args.pixels_in_spot, noise=args.noise, seed=args.seed,
                         window=tuple(args.window), max_frames=args.max_frames, batch=args.batch, splat=args.splat,
                         frames_per_call=args.frames_per_call, command=command,
                         log=log)  # fmt: skip

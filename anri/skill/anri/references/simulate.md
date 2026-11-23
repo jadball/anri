@@ -31,12 +31,16 @@ instead of "ubi"; it assumes no orientation spread and one strain per grain, so 
 | prepare | `--dataset` | simulate a measured scan exactly: its frames' ω and dty, detector, y0 and geometry | |
 | prepare | `--cif`, `--mu`, `--mu-map`, `--no-absorption` | absorption along the incoming and diffracted paths, as the indexer's fit models it: from each phase's CIF, a coefficient per phase, or a map (e.g. from absorption tomography). Ask the human for the sample's composition | |
 | render | `--cut`, with prepare's `--density` | how peaks survive the segmentation cut at each density: below the density where peaks stop disappearing, small and thin features vanish | `probe_rows`; `plot_survival` |
+| render | `--pixels-in-spot` | the segmentation of the data you mimic: ImageD11 records kept pixels only in 8-connected groups of at least this many per frame (default 3, as ImageD11) | |
+| render | `--noise`, `--seed` | `poisson` (default): each pixel's count drawn, a realisation of what the detector records; `round` is for tests only, neither a realisation nor the expected value. Change `--seed` for another realisation (row i uses (seed, i)) | |
 | render | `--window`, `--max-frames` | the share of each peak its window misses; peaks broad in ω (near η = 0 and 180°, or with a spread) need more frames | `probe_rows`; `plot_capture` |
 | render | `--splat` | grain maps only (one UBI per grain, e.g. DCT): renders whole spots, 10-20x faster, totals within ~1e-3 of the per-voxel render | |
 | render | `--frames-per-call` | a box beam's one long rotation: render it in chunks of frames (e.g. 10°) so its peaks fit in memory | |
 | render | `--rows a:b` | rows are independent: split them between jobs, then `assemble` gathers every part and refuses a missing or doubled row | |
 
-Set `--cut` to the threshold the segmentation used on the data you mimic. To compare a map with measured frames,
+Set `--cut` and `--pixels-in-spot` to the segmentation used on the data you mimic (the dataset's `lima_segmenter`
+options; a background file subtracted there is not simulated). The rendered file is a realisation of the theory page
+"What the detector records": compare a method's expected recorded values with it, never with rounded counts. To compare a map with measured frames,
 prepare with `--dataset` and the y0 the map's fit used (`show` prints it), then compare `observed_row` (or
 `raw_image`) with `model_row`, scaled by `row_scale`; `plot_frame_compare` overlays them.
 
@@ -55,6 +59,10 @@ quartz).
 
 - `anri.fwd.render.render_row`: every peak of one phase that reaches one dty row, as sparse pixels; `render_phases`
   sums several phases.
+  Its stats give, per peak, `captured` (the share of its Gaussian in its window), `in_range`, and `face_light`
+  [n_peaks, 6], the light beyond each face of the window (frames below, above; rows below, above; columns below,
+  above), with `face_decay`, so that the light n cells beyond a face is at most face_light x face_decay^n. A fit must
+  leave out, or account for, the cells next to a face whose light is above its tolerance.
 - `anri.fwd.render.grain_entries`: map entries from a label volume and one UBI per grain. The same pixels as giving
   every voxel its grain's UBI, with the peaks that reach a row found grain by grain first (faster).
   `render_row(..., splat=True)` renders a grain map spot by spot, 10-20x faster: each voxel added at its own detector
@@ -67,7 +75,9 @@ quartz).
   ...) for a point spread that is a mixture of Gaussians; `sensor` (attenuation coefficient, thickness) for a thick
   sensor's depth kernel, its mean shift left to the calibration. Each extra component or slice is one more render.
 - `anri.fwd.render.make_row`: the row dict from one scan's per-frame ω and dty. Frames integrate over their ω (and
-  dty) range: never treat a frame as one angle.
+  dty) range: never treat a frame as one angle. Where dty moves within a row (fly scans), its rate within each frame
+  comes from the readings' differences (each reading taken as its frame's centre, the motion uniform), and the beam's
+  weight is taken along that path. Ask how a dataset's dty was recorded if a scan steps dty between frames.
 - `anri.fwd.render.guess_batch_size`: the largest `batch` that fits a share of free memory. Use it rather than
   guessing on a shared GPU.
 - `anri.fwd.render.check_render`: checks rendered peaks against a Monte Carlo simulation of the beam's spreads.

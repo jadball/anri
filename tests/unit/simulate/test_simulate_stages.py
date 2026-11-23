@@ -157,7 +157,8 @@ class TestGrainMap(unittest.TestCase):
 
 class TestFramesPerCall(unittest.TestCase):
     def test_scanning_row_in_chunks(self):
-        """A scanning row rendered 7 frames at a time (90 frames: a short last call) matches it rendered at once."""
+        """A scanning row rendered 7 frames at a time (90 frames: a short last call) matches it rendered at once (counts
+        rounded, not drawn: a draw differs wherever the two renders differ by a pixel)."""
         with tempfile.TemporaryDirectory() as tmp:
             parfile = os.path.join(tmp, "geometry.par")
             anri.io.imaged11.write_par(parfile, PARS)
@@ -167,7 +168,7 @@ class TestFramesPerCall(unittest.TestCase):
             scans = []
             for name, n in (("whole.h5", None), ("parts.h5", 7)):
                 f = sim.stages.stage_render(prep, os.path.join(tmp, name), rows="1:2", cut=0.0, frames_per_call=n,
-                                            log=lambda m: None)  # fmt: skip
+                                            noise="round", log=lambda m: None)  # fmt: skip
                 with h5py.File(f, "r") as h:
                     g = h["2.1"]
                     scans.append({"frame": np.repeat(np.arange(len(g["nnz"])), g["nnz"][()]), "row": g["row"][()],
@@ -204,8 +205,9 @@ class TestBoxBeam(unittest.TestCase):
             self.assertEqual(p["omega"].shape, (1, 180))  # one rotation at y0
             self.assertTrue(p["geom"]["voxel_3d"])
             self.assertEqual((p["geom"]["width_beam"], p["geom"]["width_beam_v"]), (2 * np.hypot(5, 5) + 4, 6 + 6))
-            whole = sim.stages.stage_render(prep, os.path.join(tmp, "whole.h5"), splat=True, log=lambda m: None)
-            parts = sim.stages.stage_render(prep, splat=True, frames_per_call=50, log=lambda m: None)
+            whole = sim.stages.stage_render(prep, os.path.join(tmp, "whole.h5"), splat=True, noise="round",
+                                            log=lambda m: None)  # fmt: skip
+            parts = sim.stages.stage_render(prep, splat=True, frames_per_call=50, noise="round", log=lambda m: None)
             totals = []
             for f in (whole, parts):
                 with h5py.File(f, "r") as h:

@@ -563,6 +563,35 @@ class TestBeamWithinFrame(unittest.TestCase):
             self.assertLess(np.linalg.norm(a - b) / np.linalg.norm(b), 1e-3, msg=f"dty offset {off}")
             self.assertAlmostEqual(a.sum() / b.sum(), 1.0, delta=1e-3)
 
+    def test_fly_scan(self):
+        """dty moving during the rotation, one beam sd per coarse frame: frames 8x coarser, each with one dty reading
+        (its centre), hold what the fine frames hold, the beam taken along the path within each frame (fine frames 32x
+        coarser agree with 8x to 3e-5)."""
+        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
+        geom = {**geom, "sig_beam": 0.1, "voxel_size": 0.25, "sig_ky": 1e-4, "sig_kz": 1e-4,
+                "sig_wavelength": geom["wavelength"] * 1e-4}  # fmt: skip
+        r = 50.0
+        ent = {"ubi": entries["ubi"][:1], "pos": np.array([[r, 0.0, 0.0]]), "density": np.ones(1),
+               "sig_rot": np.array([np.radians(0.03)])}  # fmt: skip
+        y_c = -r * np.sin(np.radians(omega_c))
+        oc = (np.floor(omega_c / 0.1) + np.arange(-6, 7)) * 0.1 + 0.05
+        of = (oc[:, None] - 0.05 + (np.arange(8) + 0.5) * 0.0125).ravel()
+        for off in (0.0, 0.15):
+            out = []
+            for om, win, per in ((oc, (13, 9, 9), 1), (of, (97, 9, 9), 8)):
+                dty = y_c + off + 1.0 * (om - omega_c)  # 1 um per degree: 0.1 um, one beam sd, per coarse frame
+                fr, px, v, _ = render_row(ent, hkl[None], np.ones(1), geom, make_row(om, dty), det_shape, window=win,
+                                          min_value=0.0, batch=BATCH)  # fmt: skip
+                out.append(((fr // per).astype(np.int64) * 10**7 + px, v))
+            keys = np.union1d(out[0][0], out[1][0])
+            a, b = np.zeros(len(keys)), np.zeros(len(keys))
+            np.add.at(a, np.searchsorted(keys, out[0][0]), out[0][1])
+            np.add.at(b, np.searchsorted(keys, out[1][0]), out[1][1])
+            # the fold's error for a weight that is not log-quadratic (a 0.25 um voxel in a 0.1 um sd beam): 0.35%;
+            # with each frame's one reading (no path within the frame) it was 6% at the centre and 20% at 1.5 sd
+            self.assertLess(np.linalg.norm(a - b) / np.linalg.norm(b), 5e-3, msg=f"dty offset {off}")
+            self.assertAlmostEqual(a.sum() / b.sum(), 1.0, delta=3e-3)
+
 
 class TestBeamFold(unittest.TestCase):
     def test_kink_and_float32(self):

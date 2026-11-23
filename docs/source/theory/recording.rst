@@ -78,6 +78,8 @@ The Eiger counts photons. Given the map, each cell's count is Poisson and the ce
 
 **Definition:** the counting model (an assumption, below).
 
+**Code:** :func:`anri.simulate.stages.record` (simulated data: each count drawn, see `Simulated data`_).
+
 A photon counted in another pixel than where it arrived (escaped fluorescence, the detector's point spread) keeps
 this true: a Poisson source whose photons go to pixel 1 with probability :math:`q` and to pixel 2 otherwise gives
 independent Poisson counts, since the joint generating function factorises,
@@ -125,6 +127,12 @@ ImageD11's segmentation (``lima_segmenter``) records a frame's pixels in two ste
 2. a kept pixel is *recorded* when its 8-connected group of kept pixels in that frame, :math:`G_p`, has at least
    :math:`m` pixels (``pixels_in_spot``; ImageD11's defaults on the Eiger: :math:`c = 1`, :math:`m = 3`).
 
+Checked in ImageD11's source (upstream master, 2026-11-23; the same in release 1.17.0): ``select`` keeps a pixel when
+its value times the mask is above ``cut``; ``clean`` labels the kept pixels of one frame with
+``cImageD11.sparse_connectedpixels`` (a pixel joins the one before it in its row and the three at columns
+:math:`j - 1, j, j + 1` in the row above: 8-connected), counts each label's pixels (``np.bincount``) and keeps those
+in labels of at least ``pixels_in_spot`` (for ``pixels_in_spot`` :math:`\le 1` it keeps every pixel).
+
 .. math::
     :label: rec-recorded
 
@@ -132,7 +140,11 @@ ImageD11's segmentation (``lima_segmenter``) records a frame's pixels in two ste
 
 **Definition:** the recorded value; :math:`r_p = 0` means "not recorded", not "zero photons".
 
-**Code:** :func:`anri.io.imaged11.write_scan` (the cut, for simulated data; the group rule is not in anri yet).
+**Code:** :func:`anri.io.imaged11.segment`.
+
+**Proof:** ``tests/theory/test_recording.py::test_segment_is_the_group_rule`` (every kept pattern of a 4 × 4
+detector, :math:`m = 1 \dots 5`); ``tests/unit/io/test_imaged11.py::TestSegment`` checks it against ImageD11's own
+``lima_segmenter`` on Poisson frames.
 
 For a Poisson count (sums over :math:`k > c` done in closed form):
 
@@ -220,6 +232,47 @@ At :math:`\lambda = 2`, :math:`c = 1` the pair's correlation is 0.82: at the fai
 values are far from independent, and the variance of any sum over cells must include these covariances (for
 :math:`m = 1` they vanish).
 
+**Any two pixels.** Given the kept pattern, the counts of kept pixels are independent of each other and of the pattern,
+with :math:`\operatorname{E}[n_p \mid p \text{ kept}] = e_p / a_p`; and the kept indicators are independent, so
+conditioning on :math:`p` and :math:`q` kept sets :math:`a_p = a_q = 1` in any probability of the pattern. With
+:math:`A_p` the event :math:`|G_p| \ge m` and :math:`s_p = \sum_{k<m} P_k = 1 - w_p` (:eq:`rec-animal`), for
+:math:`p \ne q` in one frame:
+
+.. math::
+    :label: rec-cov-pair
+
+    \operatorname{Cov}(r_p, r_q) = e_p e_q \left(\rho_{pq} - w_p w_q\right), \qquad
+    \rho_{pq} = P(A_p \cap A_q \mid p, q \text{ kept}) = 1 - s_p^{(q)} - s_q^{(p)} + J_{pq},
+
+**Proof:** ``tests/theory/test_recording.py::test_recorded_covariance_any_pair`` (below).
+
+with :math:`s_p^{(q)}` the polynomial :math:`s_p` at :math:`a_q = 1`, and :math:`J_{pq} = P(\text{neither}\ A_p
+\text{ nor } A_q \mid p, q \text{ kept})`, a sum over the groups the two pixels can have: one group of fewer than
+:math:`m` pixels holding both, or two disjoint groups :math:`S \ni p`, :math:`T \ni q` of fewer than :math:`m`
+each, neither touching the other (:math:`S \cap \partial T = T \cap \partial S = \emptyset`),
+
+.. math::
+    :label: rec-joint
+
+    J_{pq} = \sum_{\substack{S \ni p, q \\ |S| < m}} \prod_{S \setminus \{p, q\}} a \prod_{\partial S} (1 - a)
+    \; + \sum_{\substack{S \ni p,\ T \ni q \\ |S|, |T| < m}} \prod_{(S \cup T) \setminus \{p, q\}} a
+    \prod_{\partial S \cup \partial T} (1 - a).
+
+**Proof:** ``tests/theory/test_recording.py::test_recorded_covariance_any_pair`` (every pair of a 2 × 3 and of a
+1 × 5 detector, :math:`m = 1, 2, 3`, against the enumerated covariance, symbolically; and :eq:`rec-joint` on every kept
+pattern of a 3 × 4 detector, every pair, :math:`m = 2, 3, 4`: both sides are multilinear in the :math:`a`, as in
+:eq:`rec-p12`).
+
+:eq:`rec-cov` is its two simplest cases. Pixels in different frames are independent, and so are pixels of one frame
+more than :math:`2(m - 1)` apart (Chebyshev distance): their windows (:eq:`rec-reach`) are disjoint. At exactly
+:math:`2(m - 1)` some are correlated (the ends of a row of five, :math:`m = 3`:
+:math:`\operatorname{Cov}(r_1, r_5) = e_1 e_5\, a_2 a_3 a_4 (1 - a_3)`, in the same test). So a pixel is correlated
+with the pixels of its frame in a :math:`(4m - 3) \times (4m - 3)` stencil: 5 × 5 for :math:`m = 2`, 9 × 9 for
+:math:`m = 3`. The covariance of the sums of :math:`r_p f_p` over two sets of cells :math:`R`, :math:`R'` (a moment's
+features :math:`f_p`, :doc:`moments`) is then :math:`\sum_{p \in R,\, q \in R'} \operatorname{Cov}(r_p, r_q)\,
+f_p f_q^T` over the pairs in one frame within the stencil, :math:`\operatorname{Var}(r_p)` (:eq:`rec-expected`) where
+:math:`p = q`; it vanishes between sets more than :math:`2(m - 1)` apart in every frame, and not otherwise.
+
 The likelihood of a frame
 -------------------------
 
@@ -255,6 +308,29 @@ on a frame with more kept pixels, a cut that depends on the data: check that it 
 (``bgfile``) is subtracted before the cut, so the cut acts on :math:`n_p - \text{bg}_p` and the recorded values are
 not Poisson.
 
+Simulated data
+--------------
+
+**Anri's rule:** simulated data are a realisation of this model, never its expectation. The expected recorded value
+:math:`\operatorname{E}[r_p] = e_p w_p` (:eq:`rec-expected`) is not an integer and cannot be written as ImageD11's
+sparse counts; nor can the noise and the correlations of :eq:`rec-cov` be had without drawing the counts.
+:func:`anri.simulate.stages.record` draws each rendered cell's count from :math:`\operatorname{Poisson}(\lambda_p)`
+(:eq:`rec-poisson`), then keeps and records pixels by :eq:`rec-recorded` (:func:`anri.io.imaged11.segment`), with
+:math:`c = 1`, :math:`m = 3` by default, as real data. The draws are reproducible: row :math:`i` of a render with
+seed :math:`s` uses numpy's default generator seeded with :math:`(s, i)`, the same whichever rows a job renders, and
+the seed is in the render stage's provenance.
+
+For tests that need a fixed file, ``noise="round"`` writes :math:`\operatorname{round}(\lambda_p)` through the same
+cut and group rule. That is neither a realisation nor :math:`\operatorname{E}[r_p]`: a cell of :math:`\lambda = 1.4`
+is never recorded at :math:`c = 1`, though :math:`P(n > 1) = 0.41`. Never judge a method on rounded data.
+
+What the simulation assumes, beyond the model above: each photon counted once and no pile-up (both being checked),
+no background, no mask, no ``howmany`` cap and no background file. The renderer drops cells whose light is below
+:math:`10^{-3}` photons (its ``min_value``); such a cell would be kept with probability
+:math:`P(n \ge c + 1) \le \lambda^{c + 1} / (c + 1)! \le 5 \times 10^{-7}` at :math:`c = 1` (each term
+:math:`\lambda^{c + 1 + i} / (c + 1 + i)!` of the tail is at most :math:`\lambda^{c + 1} / (c + 1)!` times
+:math:`\lambda^i / i!`, and with the factor :math:`e^{-\lambda}` those sum to 1).
+
 What is left out
 ----------------
 
@@ -264,5 +340,5 @@ What is left out
   not modelled; nor is a photon counted twice (above).
 - **The cap and background subtraction** of the segmentation (above).
 - :math:`Z_m(U)` of :eq:`rec-likelihood` is not computed by anything in anri.
-- Code: :eq:`rec-trunc` to :eq:`rec-expected` are not yet in anri (sandbox: ``anri/sandbox/refine/cutexact.py``,
-  which agrees with them, and drops the covariances of :eq:`rec-cov`).
+- Code: :eq:`rec-trunc` to :eq:`rec-joint` are not yet in anri (sandbox: ``anri/sandbox/refine/cutexact.py``,
+  which agrees with them for :math:`m \le 3`).

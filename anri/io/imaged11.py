@@ -27,6 +27,7 @@ _GEOMETRY_KEYS = ("y_center", "y_size", "tilt_y", "z_center", "z_size", "tilt_z"
 _ORIENTATION_KEYS = ("o11", "o12", "o21", "o22")
 _CELL_KEYS = ("cell__a", "cell__b", "cell__c", "cell_alpha", "cell_beta", "cell_gamma")
 _SPACE_GROUP_KEY = "cell_lattice_[P,A,B,C,I,F,R]"
+PIXELS_IN_SPOT = 3  # ImageD11's segmentation default (lima_segmenter): the fewest kept pixels of a recorded group
 
 
 def detector_from_pars(pars: dict) -> dict:
@@ -922,23 +923,101 @@ def motor_grid(omega_range: tuple[float, float], ostep: float, dty_range: tuple[
     return np.broadcast_to(omega, (n_rows, n_frames)).copy(), np.repeat(dty[:, None], n_frames, 1)
 
 
+def pixel_groups(frame: np.ndarray, row: np.ndarray, col: np.ndarray, det_shape: tuple[int, int]) -> np.ndarray:
+    """Label sparse pixels by their 8-connected group within their frame, as ImageD11's segmenter groups them.
+
+    Two pixels of one frame are neighbours when their rows and columns each differ by at most 1 (ImageD11's
+    ``cImageD11.sparse_connectedpixels`` joins a pixel to the one before it in its row and to the three above it).
+
+    Parameters
+    ----------
+    frame, row, col
+        [n] sparse pixels, each (frame, row, col) once, in any order
+    det_shape
+        (n_slow, n_fast)
+
+    Returns
+    -------
+    np.ndarray
+        [n] the group of each pixel, numbered from 0
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    ns, nf = det_shape
+    f, r, c = (np.asarray(x, np.int64) for x in (frame, row, col))
+    n = f.size
+    if n == 0:
+        return np.zeros(0, np.int64)
+    key = (f * ns + r) * nf + c
+    o = np.argsort(key, kind="stable")  # stable: linear time when the pixels are sorted already
+    ks = key[o]
+    src, dst = [], []
+    for dr, dc in ((0, 1), (1, -1), (1, 0), (1, 1)):  # each neighbour pair once
+        q = key + dr * nf + dc
+        at = np.minimum(np.searchsorted(ks, q), n - 1)
+        hit = (ks[at] == q) & (r + dr < ns) & (c + dc >= 0) & (c + dc < nf)  # not into another row or frame
+        src.append(np.flatnonzero(hit))
+        dst.append(o[at[hit]])
+    src, dst = np.concatenate(src), np.concatenate(dst)
+    _, lab = connected_components(coo_matrix((np.ones(src.size), (src, dst)), shape=(n, n)), directed=False)
+    return lab
+
+
+def segment(
+    frame: np.ndarray, pixel: np.ndarray, counts: np.ndarray, det_shape: tuple[int, int], cut: float = 1,
+    pixels_in_spot: int = PIXELS_IN_SPOT,
+) -> np.ndarray:  # fmt: skip
+    """Return which sparse pixels ImageD11's segmentation records: counts above the cut, in groups of enough pixels.
+
+    A pixel is kept when its count is strictly above ``cut``; a kept pixel is recorded when its 8-connected group of
+    kept pixels in its frame (:func:`pixel_groups`) has at least ``pixels_in_spot`` pixels, as
+    ``ImageD11.sinograms.lima_segmenter`` (``select``, then ``clean``) does. Its per-frame cap ``howmany`` and a
+    background file are not applied. See the theory page "What the detector records" (rec-recorded).
+
+    Parameters
+    ----------
+    frame, pixel, counts
+        [n] sparse pixels: frame index, pixel = slow * n_fast + fast, and photon count; each (frame, pixel) once.
+        Pixels not given have no counts
+    det_shape
+        (n_slow, n_fast)
+    cut
+        Keep counts strictly above this (ImageD11's ``cut``; 1 for the Eiger)
+    pixels_in_spot
+        The fewest kept pixels of a group that is recorded (ImageD11's ``pixels_in_spot``, default 3); 1 or less:
+        every kept pixel
+
+    Returns
+    -------
+    np.ndarray
+        [n] bool, the pixels recorded
+    """
+    keep = np.asarray(counts) > cut
+    if pixels_in_spot > 1 and keep.any():
+        i = np.flatnonzero(keep)
+        r, c = np.divmod(np.asarray(pixel, np.int64)[i], det_shape[1])
+        lab = pixel_groups(np.asarray(frame)[i], r, c, det_shape)
+        keep[i] = np.bincount(lab)[lab] >= pixels_in_spot
+    return keep
+
+
 def write_scan(
     hout: h5py.File,
     scan: str,
     frame: np.ndarray,
     pixel: np.ndarray,
-    value: np.ndarray,
+    counts: np.ndarray,
     omega: np.ndarray,
     dty: np.ndarray,
     det_shape: tuple[int, int],
-    cut: float = 1,
     omega_motor: str = "rot_center",
     dty_motor: str = "dty",
 ) -> int:
-    """Write one dty row of sparse pixels as an ImageD11 scan group.
+    """Write one dty row of recorded pixels as an ImageD11 scan group.
 
-    Values are rounded to integer counts and only counts ``> cut`` are kept, as ImageD11's segmenter does.
-    Pixels must be sorted by (frame, pixel), as :func:`anri.fwd.render.render_row` returns them.
+    The pixels are written as given: the recorded counts (integers), e.g. those :func:`segment` keeps. Pixels must be
+    sorted by (frame, pixel), as :func:`anri.fwd.render.render_row` returns them.
 
     Parameters
     ----------
@@ -946,14 +1025,12 @@ def write_scan(
         Open, writable HDF5 file
     scan
         Group name, e.g. "1.1"
-    frame, pixel, value
-        Sparse pixels: frame index within the row, pixel = slow * n_fast + fast, and intensity
+    frame, pixel, counts
+        Sparse pixels: frame index within the row, pixel = slow * n_fast + fast, and photon count
     omega, dty
         [n_frames] motor positions of the row
     det_shape
         (n_slow, n_fast)
-    cut
-        Keep counts strictly above this
     omega_motor, dty_motor
         Motor names, which must match the DataSet's ``omegamotor`` and ``dtymotor``
 
@@ -962,9 +1039,11 @@ def write_scan(
     n_pixels: int
         Number of pixels written
     """
-    counts = np.round(value)
-    keep = counts > cut
-    frame, pixel, counts = frame[keep], pixel[keep], counts[keep]
+    counts = np.asarray(counts)
+    if np.any(counts != np.round(counts)) or np.any(counts < 0):
+        msg = "ImageD11 sparse files hold photon counts: write non-negative integers, not expected values"
+        raise ValueError(msg)
+    frame, pixel = np.asarray(frame), np.asarray(pixel)
     n_frames = len(omega)
     opts = {"chunks": (10000,), "maxshape": (None,), "compression": "lzf", "shuffle": True}
     g = hout.create_group(scan)

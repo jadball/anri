@@ -25,6 +25,7 @@ from anri.geom.beam import beam_basis, chord_weight
 from anri.geom.gonio import find_dty_for_beam_xy, wrap_omega
 from anri.geom.paths import edge_distances, ray_directions, transmission
 from anri.geom.scan import recon_positions
+from anri.io.imaged11 import PIXELS_IN_SPOT
 
 from .data import eta_omega_corners, omega_bin, scan_beam
 
@@ -169,9 +170,6 @@ def deviance(d: jax.Array, mu: jax.Array, censor: float, saturated: jax.Array | 
         log_p, _ = saturated_above(mu[saturated], d[saturated])
         term = term.at[saturated].set(-log_p)
     return 2.0 * jnp.sum(term)
-
-
-PIXELS_IN_SPOT = 3  # ImageD11's segmentation default (lima_segmenter): pixels per spot above the cut, in one frame
 
 
 @jax.jit

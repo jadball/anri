@@ -1070,7 +1070,9 @@ def _fit_setup(filter_file: str, y0: float | str | None, beam: float, mask: str 
 
 def _censor(H: ArrayLike, censor: float | None, log: Callable) -> float:
     """Return censor, or measure it from the data (:func:`anri.index.occupancy.censor_level`) when None."""
-    from .occupancy import PIXELS_IN_SPOT, censor_level
+    from anri.io.imaged11 import PIXELS_IN_SPOT
+
+    from .occupancy import censor_level
 
     if censor is not None:
         return censor
