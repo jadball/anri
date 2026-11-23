@@ -596,3 +596,105 @@ def test_discrete_projector():
     assert G.rank() == 3
     PG = G * (G.T * G).inv() * G.T
     assert PG == sp.eye(3)  # in 1D every edge field is a gradient: nothing is weak
+
+
+def test_free_plate_edge():
+    """rf-plate: the seen part of a symmetric in-plane field C on a domain is grad grad phi minimising
+    1/2 int |grad grad phi - C|^2. With M = grad grad phi - C, pointwise
+    M : grad grad psi = d_i(M_ij d_j psi) - d_j((d_i M_ij) psi) + (d_i d_j M_ij) psi, so the first variation is
+    int (d_i d_j M_ij) psi + the boundary integral of n_i M_ij d_j psi - (d_i M_ij) n_j psi. On an edge (here y = 0,
+    n = (0, -1), t = (1, 0)), the tangential derivative's term differs from -(d_s M_nt) psi by a total derivative
+    along the edge, -d_x(M_xy psi), which integrates to zero round a closed boundary: the boundary term is
+    M_nn d_n psi - (Q_n + d_s M_nt) psi, Q_n = (d_i M_ij) n_j. psi and d_n psi are free on the boundary, so:
+    biharmonic grad grad : M = 0 inside, and the free plate edge M_nn = 0, Q_n + d_s M_nt = 0 (with M_nt continuous
+    at corners). The gradient's analogue (rf-split) is Neumann: d_n phi = v . n."""
+    x, y = sp.symbols("x y", real=True)
+    Mxx, Mxy, Myy = (sp.Function(f"M_{a}")(x, y) for a in ("xx", "xy", "yy"))
+    M = sp.Matrix([[Mxx, Mxy], [Mxy, Myy]])
+    psi = sp.Function("psi")(x, y)
+    X = (x, y)
+    lhs = sum(M[i, j] * sp.diff(psi, X[i], X[j]) for i in range(2) for j in range(2))
+    divM = [sum(sp.diff(M[i, j], X[i]) for i in range(2)) for j in range(2)]  # (d_i M_ij)_j
+    flux = [sum(M[i, j] * sp.diff(psi, X[j]) for j in range(2)) - divM[i] * psi for i in range(2)]
+    rhs = (
+        sum(sp.diff(flux[i], X[i]) for i in range(2))
+        + sum(sp.diff(M[i, j], X[i], X[j]) for i in range(2) for j in range(2)) * psi
+    )
+    assert is_zero(sp.expand(lhs - rhs))
+    n, t = sp.Matrix([0, -1]), sp.Matrix([1, 0])
+    boundary = sum(n[i] * flux[i] for i in range(2))  # n . flux on y = 0
+    Mnn, Mnt = (n.T * M * n)[0], (n.T * M * t)[0]
+    Qn = sum(divM[j] * n[j] for j in range(2))
+    dn_psi = sum(n[j] * sp.diff(psi, X[j]) for j in range(2))
+    kirchhoff = Mnn * dn_psi - (Qn + sp.diff(Mnt, x)) * psi
+    assert is_zero(sp.expand(boundary - kirchhoff + sp.diff(Mxy * psi, x)))
+
+
+def test_polar_mean():
+    """rf-polar: the polar factor Q of M = Q S moves, to first order, by Q Omega with S Omega + Omega S = W,
+    W = Q^T dM - dM^T Q (skew); for S diagonal, Omega_ij = W_ij / (s_i + s_j). About Q = I with dM = E[R eps]
+    (F = R (I + eps), eps symmetric, R = I + [d]x), the skew part of dM is that of E[[d]x eps]: the symmetric eps
+    drops out, so the mean rotation read from int F differs from the rotations' own chordal mean only through the
+    correlation of a sub-volume's rotation d with its strain eps."""
+    s = sp.symbols("s0:3", positive=True)
+    S = sp.diag(*s)
+    w = sp.symbols("w0:3", real=True)
+    W = skew(sp.Matrix(w))
+    Om = sp.Matrix(3, 3, lambda i, j: W[i, j] / (s[i] + s[j]))
+    assert is_zero(S * Om + Om * S - W)
+    assert is_zero(Om + Om.T)  # skew: a rotation's tangent
+    # M(t) = Q(t) S(t): with Q = I + t Omega, S = S0 + t Sd (Sd symmetric), dM = Omega S0 + Sd, and
+    # Q^T dM - dM^T Q = Omega S0 + S0 Omega at first order
+    Sd = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"q_{min(i, j)}{max(i, j)}"))
+    dM = Om * S + Sd
+    assert is_zero((dM - dM.T) - W)
+    # about Q = I: dM = E[R eps] with R = I + [d]x: its skew part is that of E[[d]x eps] (eps symmetric drops out)
+    d = sp.Matrix(sp.symbols("d0:3", real=True))
+    eps = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"e_{min(i, j)}{max(i, j)}"))
+    dMs = (sp.eye(3) + skew(d)) * eps
+    cross = skew(d) * eps
+    assert is_zero((dMs - dMs.T) - (cross - cross.T))
+
+
+def test_tds_tails():
+    """rf-tds: light A(q_hat) / |q|^2 about a Bragg point (one-phonon diffuse scattering, A even), within a ball of
+    radius t: counts t oint A dOmega, second moments (t^3 / 3) oint A q q^T dOmega, growing with the box; first
+    moment zero in a ball centred on the Bragg point (A even). Centred off it by a small delta, its first moment is
+    -t (oint A q q^T dOmega) delta (the divergence theorem on grad(A q / |q|^2)): it pulls a centred first moment
+    towards the box's centre by its share of the light times (oint A q q^T / oint A) delta, delta / 3 for
+    isotropic A. Checked for A = 1 and A = 1 + a q_z^2 (spherical integrals)."""
+    r, t, th, ph, a = sp.symbols("r t theta phi a", positive=True)
+    qh = sp.Matrix([sp.sin(th) * sp.cos(ph), sp.sin(th) * sp.sin(ph), sp.cos(th)])
+    dOm = sp.sin(th)
+    for A in (sp.Integer(1), 1 + a * qh[2] ** 2):
+
+        def ball(f, A=A):
+            return sp.integrate(sp.integrate(sp.integrate(f * A / r**2 * r**2 * dOm, (r, 0, t)), (th, 0, sp.pi)),
+                                (ph, 0, 2 * sp.pi))  # fmt: skip
+
+        oA = sp.integrate(sp.integrate(A * dOm, (th, 0, sp.pi)), (ph, 0, 2 * sp.pi))
+        oAqq = sp.Matrix(3, 3, lambda i, j, A=A: sp.integrate(sp.integrate(A * qh[i] * qh[j] * dOm, (th, 0, sp.pi)),
+                                                          (ph, 0, 2 * sp.pi)))  # fmt: skip
+        assert is_zero(ball(1) - t * oA)
+        assert all(is_zero(ball(r * qh[i])) for i in range(3))  # first moment: A even
+        for i in range(3):
+            for j in range(3):
+                assert is_zero(ball(r**2 * qh[i] * qh[j]) - t**3 / 3 * oAqq[i, j])
+        # off-centre by delta: d/d delta of int_{|q| < t} f(q + delta) = int grad f = surface integral of f n
+        surf = sp.Matrix(3, 3, lambda i, j, A=A: sp.integrate(sp.integrate(A * qh[i] / t * qh[j] * t**2 * dOm,
+                                                                       (th, 0, sp.pi)), (ph, 0, 2 * sp.pi)))  # fmt: skip
+        assert is_zero(surf - t * oAqq)
+    iso = sp.integrate(sp.integrate(qh[0] ** 2 * dOm, (th, 0, sp.pi)), (ph, 0, 2 * sp.pi)) / (4 * sp.pi)
+    assert iso == sp.Rational(1, 3)
+    # and the volume side for A = 1: grad(q_i / |q|^2) = delta_ij / r^2 - 2 q_i q_j / r^4, integrable in 3D
+    vol = sp.Matrix(
+        3,
+        3,
+        lambda i, j: sp.integrate(
+            sp.integrate(
+                sp.integrate(((1 if i == j else 0) - 2 * qh[i] * qh[j]) / r**2 * r**2 * dOm, (r, 0, t)), (th, 0, sp.pi)
+            ),
+            (ph, 0, 2 * sp.pi),
+        ),
+    )
+    assert is_zero(vol - 4 * sp.pi * t / 3 * sp.eye(3))

@@ -596,6 +596,29 @@ sparse, symmetric and positive definite: conjugate gradients per domain. In one 
 
 **Proof:** ``tests/theory/test_refiner.py::test_discrete_projector``
 
+**The continuum limit.** The projections are least-squares problems, and their natural boundary conditions follow by
+integrating the first variation by parts. For the gradient, :math:`\min \tfrac{1}{2}\int_\Omega |\nabla\phi -
+\vec{v}|^2` gives Neumann's problem (:eq:`rf-split`). For the Hessian, with :math:`\matr{M} = \nabla\nabla\phi -
+\matr{C}`, :math:`n` the boundary's normal, :math:`s` its arc length and :math:`Q_n = (\partial_i M_{ij}) n_j`,
+
+.. math::
+    :label: rf-plate
+
+    \matr{M} : \nabla\nabla\psi = \partial_i(M_{ij}\partial_j\psi) - \partial_j\big((\partial_i M_{ij})\psi\big)
+    + (\partial_i\partial_j M_{ij})\psi
+    \ \Rightarrow\
+    \partial_i\partial_j M_{ij} = 0 \text{ in } \Omega, \qquad
+    M_{nn} = 0, \quad Q_n + \partial_s M_{nt} = 0 \text{ on } \partial\Omega,
+
+with :math:`M_{nt}` continuous at corners. Inside, it is the biharmonic :math:`\Delta^2\phi = \partial_i\partial_j
+C_{ij}`. On the boundary the normal moment and Kirchhoff's effective shear vanish: a free plate edge. The boundary
+term :math:`n_i M_{ij}\partial_j\psi - (\partial_i M_{ij}) n_j\psi` becomes :math:`M_{nn}\partial_n\psi - (Q_n +
+\partial_s M_{nt})\psi` after the tangential derivative is moved off :math:`\psi`, a total derivative along the
+boundary. Then :math:`\psi` and :math:`\partial_n\psi` are free there.
+
+**Proof:** ``tests/theory/test_refiner.py::test_free_plate_edge`` (the pointwise identity; the boundary term on an
+edge, up to that total derivative).
+
 The level :math:`s_{\min}`
 --------------------------
 
@@ -658,6 +681,52 @@ Light within a few :math:`\sigma` of a bin's edge is the bins' misfit, bounded l
 instrument widths are the finest that need no instrument shape. Finer bins need the instrument's kernel, as
 deconvolution does. The weak combinations are the same for histograms (:eq:`rf-weak-any`): bins resolve a voxel's
 populations, not what single-axis data cannot see.
+
+Two more bounds
+---------------
+
+**The mean rotation at large spreads.** The fit gives :math:`\int\matr{F}` exactly at any spread. Its polar factor is
+the rotations' chordal mean [Moakher2002]_ (:eq:`pop-mean`) only if strain does not enter. Write :math:`\matr{F} =
+\matr{R}(\matr{I} + \varepsilon)`. The polar factor :math:`\matr{Q}` of :math:`\matr{M} = \matr{Q}\matr{S}` moves,
+to first order in a change :math:`d\matr{M}`, by :math:`\matr{Q}\matr{\Omega}`, with
+
+.. math::
+    :label: rf-polar
+
+    \matr{S}\matr{\Omega} + \matr{\Omega}\matr{S} = \matr{Q}^T d\matr{M} - d\matr{M}^T\matr{Q}, \qquad
+    \Omega_{ij} = \frac{W_{ij}}{s_i + s_j}\ (\matr{S} \text{ diagonal}), \qquad
+    \operatorname{skew}\operatorname{E}[\matr{R}\varepsilon] = \operatorname{skew}\operatorname{E}\big[[\vec{d}]_\times\varepsilon\big]
+    \ (\matr{R} = \matr{I} + [\vec{d}]_\times).
+
+A symmetric strain does not turn the mean. Only the correlation of a sub-volume's rotation :math:`\vec{d}` with its
+strain does, and :math:`|\matr{\Omega}| \lesssim |\operatorname{E}[[\vec{d}]_\times\varepsilon]|`: a spread of
+:math:`10^{-2}` rad fully correlated with a strain spread of :math:`10^{-3}` turns it by :math:`10^{-5}`. Elastic
+bending is fully correlated (:doc:`limits`), so this is the case to bound.
+
+**Proof:** ``tests/theory/test_refiner.py::test_polar_mean``
+
+**Thermal diffuse tails.** One-phonon diffuse scattering about a Bragg point falls as :math:`A(\hat{\vec{q}})/|\vec{q}|^2`
+with :math:`A` even. Its variance grows without bound with the region, so :eq:`ref-tail` does not apply. Within a ball
+of radius :math:`t` about the Bragg point it adds
+
+.. math::
+    :label: rf-tds
+
+    t\oint A\, d\Omega \ \text{(counts)}, \qquad 0 \ \text{(first moment)}, \qquad
+    \frac{t^3}{3}\oint A\,\hat{\vec{q}}\hat{\vec{q}}^T d\Omega \ \text{(second moments)};
+    \qquad
+    -t\Big(\oint A\,\hat{\vec{q}}\hat{\vec{q}}^T d\Omega\Big)\vec{\delta} \ \text{(first moment, off centre by } \vec{\delta}).
+
+It biases no first moment in a box symmetric about the Bragg point. Off centre, it pulls a centred first moment
+towards the box's centre by its share of the light times :math:`(\oint A\hat{\vec{q}}\hat{\vec{q}}^T / \oint
+A)\,\vec{\delta}`: :math:`\vec{\delta}/3` for isotropic :math:`A`. The box's centre is the indexer's prediction, so
+this is a pull towards the prior, bounded by the margin of :eq:`rf-box-margin`. It biases the second moments by an
+amount that grows as :math:`t^3`. A spread read from second moments therefore includes diffuse scattering in
+proportion to the box's volume, and must be read with that term subtracted or bounded. This is the tail seen on ID11's
+Si peaks over 5-9 frames.
+
+**Proof:** ``tests/theory/test_refiner.py::test_tds_tails`` (spherical integrals for :math:`A = 1` and :math:`A = 1 +
+a\hat q_z^2`; the off-centre term by the divergence theorem, and its volume side for :math:`A = 1`).
 
 The guarantee
 -------------
