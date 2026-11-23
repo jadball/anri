@@ -705,3 +705,24 @@ def test_arc_box():
     assert is_zero(across - dperp * d.dot(gu) / 2)
     x, y = sp.symbols("x y", real=True)  # |d_perp|, |d . g|: x y / 2 <= (x^2 + y^2) / 4
     assert is_zero(sp.expand((x**2 + y**2) / 4 - x * y / 2 - (x - y) ** 2 / 4))
+
+
+def test_runout_harmonics():
+    """rf-runout: a voxel at (x, y) is in the beam at dty = y0 - (x sin w + y cos w) + r(w) (dif-dty with a runout r
+    across the beam). (1) A translation of the whole sample by (sx, sy) changes dty by -(sx sin w + sy cos w): exactly
+    a runout's first harmonic, so that harmonic is the map's origin, a gauge, not a measurement. (2) Its Friedel pair is
+    at w + pi, and dty(w + pi) - (2 y0 - dty(w)) = r(w) + r(w + pi): pairs see the runout's even harmonics (and its
+    mean, y0) and none of its odd ones. Checked on harmonics 1-4."""
+    w, x, y, y0, sx, sy = sp.symbols("omega x y y0 s_x s_y", real=True)
+    c = sp.symbols("c1:5", real=True)
+    s = sp.symbols("s1:5", real=True)
+    r = sum(c[n - 1] * sp.cos(n * w) + s[n - 1] * sp.sin(n * w) for n in range(1, 5))
+
+    def dty(om, xx, yy, rr):
+        return y0 - (xx * sp.sin(om) + yy * sp.cos(om)) + rr
+
+    shifted = dty(w, x + sx, y + sy, 0) - dty(w, x, y, 0)
+    assert is_zero(shifted + sx * sp.sin(w) + sy * sp.cos(w))
+    pair = dty(w + sp.pi, x, y, r.subs(w, w + sp.pi)) - (2 * y0 - dty(w, x, y, r))
+    even = 2 * sum(c[n - 1] * sp.cos(n * w) + s[n - 1] * sp.sin(n * w) for n in (2, 4))
+    assert is_zero(sp.simplify(sp.expand_trig(pair - even)))

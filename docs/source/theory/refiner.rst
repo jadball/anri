@@ -756,6 +756,59 @@ the union of their small boxes, and it follows the arc by construction. Only a s
 anisotropic spread (bending about one axis, AGENTS.md) needs the ellipse. Its :math:`\matr{S}` comes from the
 indexer, since boxes are fixed once (:eq:`rf-box-margin`).
 
+Runout
+------
+
+The TDXRD stage moves the sample across the beam by up to about 1 µm, periodically in omega. A voxel at
+:math:`(x, y)` is then in the beam at :math:`\text{dty} = y_0 - (x\sin\omega + y\cos\omega) + r(\omega)`
+(:eq:`dif-dty`). Two facts decide what can be done with :math:`r`:
+
+.. math::
+    :label: rf-runout
+
+    \text{translation by } (s_x, s_y):\ \Delta\text{dty} = -(s_x\sin\omega + s_y\cos\omega), \qquad
+    \text{dty}(\omega + \pi) - \big(2y_0 - \text{dty}(\omega)\big) = r(\omega) + r(\omega + \pi).
+
+The runout's first harmonic is exactly a translation of the whole sample, so it moves the map's origin and is not
+a measurement: nothing needs it. Friedel pairs (:mod:`anri.index.drift`) see :math:`r(\omega) + r(\omega + \pi)`,
+which holds its mean (:math:`y_0`) and its even harmonics, and none of its odd ones. So the second harmonic, a
+stage's ellipticity, is measured by the pairs the indexer already fits. The odd harmonics from the third up are not
+seen by the pairs. They enter :math:`\matr{G}` as a function of omega common to every voxel, a few global unknowns,
+bilinear with :math:`\vec{Y}`. They are fitted by alternating with the linear solve, or bounded, and centring
+(:eq:`rf-centre`) limits what they do to the deformation.
+
+**Proof:** ``tests/theory/test_refiner.py::test_runout_harmonics`` (harmonics 1-4).
+
+Reflections at the ends of the omega range are complete only if their box lies within the scanned range. One whose
+box (:eq:`rf-box-margin`) reaches past an end is left out: (A3) needs the whole rotation through the reflection.
+
+Histograms and moments together
+-------------------------------
+
+The two statistics combine without a new model. Partition each reflection's directions into bins a few instrument
+widths wide (:eq:`rf-bin-edge`), and take within each bin the counts and moments of :eq:`rf-statistic`. Then each
+(population, bin) pair contributes, linearly (:eq:`rf-hist`),
+
+.. math::
+    :label: rf-bin-moments
+
+    \sum_k a_{bk}|F_h|^2 A_{kh} \int_{\matr{F}\vec{g}_0 \in B} f(\matr{F}\vec{g}_0)\, d\mu_k(\matr{F})
+    + O\!\left(\frac{\sigma^2}{d^2}\right)\sup|f|,
+
+the moments of the part of the population whose light falls in the bin, up to the light within reach of the bin's
+edges. A voxel's orientation distribution is thus represented by sub-populations, one per bin it lights, each with
+its own moments. The bins give the profile along the arc; the moments give each bin's mean and spread below the
+bin's width.
+
+**Definition:** the combined statistic; its linearity is :eq:`rf-hist`'s and its edge term :eq:`rf-bin-edge`'s.
+
+The populations of :doc:`populations` are such bins, grown to what the indexer resolves. Sub-populations of one voxel
+whose bins are disjoint in a reflection are separated there by construction, so :eq:`rf-identify` applies to them:
+they are told apart where the reflections that separate them span three dimensions. A rotation about
+:math:`\vec{g}` maps a bin onto itself, so those reflections are never all of them. Along a ray, the same bin of
+different voxels is merged and is a tomography. So the one linear system of :eq:`rf-linear` has a block of unknowns
+per (voxel, occupied bin). How many are occupied, and so the system's size, is the indexer's to say.
+
 The guarantee
 -------------
 
@@ -799,8 +852,10 @@ What is left out
   the detector; it is not established.
 - **The box margins** are first order in :math:`e`, as :eq:`dif-rotation-motion` is.
 - **The precision** :math:`\epsilon` and confidence :math:`z` of :eq:`rf-smin` are the maintainer's to set.
-- **Histograms at scale**: their unknowns are each voxel's density over a rotation grid, many more than the moments'
-  16; how the two are combined (histograms for populations, moments for their means) is not derived.
+- **The system's size** with sub-populations per bin (:eq:`rf-bin-moments`) is set by how many bins each voxel
+  lights; its cost is not estimated here.
+- **Runout's odd harmonics** from the third up: fitted by alternation with the linear solve, whose convergence is not
+  derived.
 - **The beam profile and runout** enter :math:`\matr{G}`; :eq:`rf-centre` bounds how they reach the deformation,
   but their own sizes are estimates (runout about 1 µm).
 - **Multi-phase overlaps**: populations of different phases sharing a region add their ray sums like any others;
