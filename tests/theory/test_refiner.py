@@ -656,45 +656,52 @@ def test_polar_mean():
     assert is_zero((dMs - dMs.T) - (cross - cross.T))
 
 
-def test_tds_tails():
-    """rf-tds: light A(q_hat) / |q|^2 about a Bragg point (one-phonon diffuse scattering, A even), within a ball of
-    radius t: counts t oint A dOmega, second moments (t^3 / 3) oint A q q^T dOmega, growing with the box; first
-    moment zero in a ball centred on the Bragg point (A even). Centred off it by a small delta, its first moment is
-    -t (oint A q q^T dOmega) delta (the divergence theorem on grad(A q / |q|^2)): it pulls a centred first moment
-    towards the box's centre by its share of the light times (oint A q q^T / oint A) delta, delta / 3 for
-    isotropic A. Checked for A = 1 and A = 1 + a q_z^2 (spherical integrals)."""
-    r, t, th, ph, a = sp.symbols("r t theta phi a", positive=True)
-    qh = sp.Matrix([sp.sin(th) * sp.cos(ph), sp.sin(th) * sp.sin(ph), sp.cos(th)])
-    dOm = sp.sin(th)
-    for A in (sp.Integer(1), 1 + a * qh[2] ** 2):
+def test_box_shift():
+    """rf-shift: for any light rho along an axis, the first moment over a box [-t + delta, t + delta] differs from that
+    over [-t, t] by the light of two slabs of width delta at its faces: int_t^{t+delta} x rho - int_{-t}^{-t+delta}
+    x rho (0 < delta < 2t, an antiderivative F of x rho, symbolic). On those slabs |x| <= t + delta (by inspection), so
+    the change is at most (t + delta) times the light in the slabs, whatever rho is; for light symmetric about 0 the centred box's
+    moment is 0 (ref-symmetric)."""
+    t, dl = sp.symbols("t delta", positive=True)
+    Fn = sp.Function("F")
 
-        def ball(f, A=A):
-            return sp.integrate(sp.integrate(sp.integrate(f * A / r**2 * r**2 * dOm, (r, 0, t)), (th, 0, sp.pi)),
-                                (ph, 0, 2 * sp.pi))  # fmt: skip
+    def I(a, b):
+        return Fn(b) - Fn(a)
 
-        oA = sp.integrate(sp.integrate(A * dOm, (th, 0, sp.pi)), (ph, 0, 2 * sp.pi))
-        oAqq = sp.Matrix(3, 3, lambda i, j, A=A: sp.integrate(sp.integrate(A * qh[i] * qh[j] * dOm, (th, 0, sp.pi)),
-                                                          (ph, 0, 2 * sp.pi)))  # fmt: skip
-        assert is_zero(ball(1) - t * oA)
-        assert all(is_zero(ball(r * qh[i])) for i in range(3))  # first moment: A even
-        for i in range(3):
-            for j in range(3):
-                assert is_zero(ball(r**2 * qh[i] * qh[j]) - t**3 / 3 * oAqq[i, j])
-        # off-centre by delta: d/d delta of int_{|q| < t} f(q + delta) = int grad f = surface integral of f n
-        surf = sp.Matrix(3, 3, lambda i, j, A=A: sp.integrate(sp.integrate(A * qh[i] / t * qh[j] * t**2 * dOm,
-                                                                       (th, 0, sp.pi)), (ph, 0, 2 * sp.pi)))  # fmt: skip
-        assert is_zero(surf - t * oAqq)
-    iso = sp.integrate(sp.integrate(qh[0] ** 2 * dOm, (th, 0, sp.pi)), (ph, 0, 2 * sp.pi)) / (4 * sp.pi)
-    assert iso == sp.Rational(1, 3)
-    # and the volume side for A = 1: grad(q_i / |q|^2) = delta_ij / r^2 - 2 q_i q_j / r^4, integrable in 3D
-    vol = sp.Matrix(
-        3,
-        3,
-        lambda i, j: sp.integrate(
-            sp.integrate(
-                sp.integrate(((1 if i == j else 0) - 2 * qh[i] * qh[j]) / r**2 * r**2 * dOm, (r, 0, t)), (th, 0, sp.pi)
-            ),
-            (ph, 0, 2 * sp.pi),
-        ),
-    )
-    assert is_zero(vol - 4 * sp.pi * t / 3 * sp.eye(3))
+    assert is_zero((I(-t + dl, t + dl) - I(-t, t)) - (I(t, t + dl) - I(-t, -t + dl)))
+
+
+def test_arc_box():
+    """rf-arc-box: a rotation exp([d]x) turns g_hat to g_hat + d x g_hat + (1/2) d x (d x g_hat): to first order its
+    image is -[g]x d, with covariance [g]x S [g]x^T for Cov(d) = S. The image of the ellipsoid d^T S^-1 d <= k^2
+    under a linear map L is the ellipse y^T (L S L^T)^-1 y <= k^2: both have the support function
+    k sqrt(w^T L S L^T w) (attained at d* = k S L^T w / sqrt(w^T L S L^T w), and no larger by Cauchy-Schwarz in the
+    metric S). The second-order term's part across g is (1/2) d_perp (d . g), of length at most |d|^2 / 4."""
+    d = sp.Matrix(sp.symbols("d0:3", real=True))
+    gh = sp.Matrix(sp.symbols("g0:3", real=True))
+    assert is_zero(d.cross(gh) + skew(gh) * d)
+    S = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"S_{min(i, j)}{max(i, j)}"))
+    assert is_zero(skew(gh) * S * skew(gh).T - (skew(gh) * S * skew(gh).T).T)  # symmetric
+    # support function, with a concrete SPD S and L (rational) and symbolic w, k
+    Sc = sp.Matrix([[2, 1, 0], [1, 3, 1], [0, 1, 1]])
+    L = sp.Matrix([[1, 0, 2], [0, 1, -1]])
+    w = sp.Matrix(sp.symbols("w0:2", real=True))
+    k = sp.Symbol("k", positive=True)
+    q = (w.T * L * Sc * L.T * w)[0]
+    ds = k * Sc * L.T * w / sp.sqrt(q)
+    assert is_zero(sp.simplify((ds.T * Sc.inv() * ds)[0] - k**2))
+    assert is_zero(sp.simplify((w.T * L * ds)[0] - k * sp.sqrt(q)))
+    # Cauchy-Schwarz in the inner product <u, v> = u^T S v gives (w^T L d)^2 <= (w^T L S L^T w)(d^T S^-1 d): its terms
+    dd = sp.Matrix(sp.symbols("e0:3", real=True))
+    a, b = Sc.inv() * dd, L.T * w  # <u, v>_S := u^T S v; u = S^-1 d, v = L^T w
+    assert is_zero(sp.expand((b.T * Sc * b)[0] - q))
+    assert is_zero(sp.expand((a.T * Sc * b)[0] - (w.T * L * dd)[0]))
+    assert is_zero(sp.expand((a.T * Sc * a)[0] - (dd.T * Sc.inv() * dd)[0]))
+    # second order: (1/2) d x (d x g) = (1/2)(d (d.g) - g |d|^2); across g: (1/2) d_perp (d . g)
+    gu = sp.Matrix([0, 0, 1])
+    sec = d.cross(d.cross(gu)) / 2
+    across = sec - sec.dot(gu) * gu
+    dperp = d - d.dot(gu) * gu
+    assert is_zero(across - dperp * d.dot(gu) / 2)
+    x, y = sp.symbols("x y", real=True)  # |d_perp|, |d . g|: x y / 2 <= (x^2 + y^2) / 4
+    assert is_zero(sp.expand((x**2 + y**2) / 4 - x * y / 2 - (x - y) ** 2 / 4))

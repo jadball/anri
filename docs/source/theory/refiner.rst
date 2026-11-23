@@ -705,28 +705,56 @@ bending is fully correlated (:doc:`limits`), so this is the case to bound.
 
 **Proof:** ``tests/theory/test_refiner.py::test_polar_mean``
 
-**Thermal diffuse tails.** One-phonon diffuse scattering about a Bragg point falls as :math:`A(\hat{\vec{q}})/|\vec{q}|^2`
-with :math:`A` even. Its variance grows without bound with the region, so :eq:`ref-tail` does not apply. Within a ball
-of radius :math:`t` about the Bragg point it adds
+**Light that is not the population's.** Diffuse scattering about a Bragg point (thermal, from dislocation walls) is
+part of the light no spot model is trusted with. Its variance can grow without bound with the box (one-phonon
+scattering falls as :math:`1/|\vec{q}|^2`), so :eq:`ref-tail` does not bound it. Two properties do, with no model of
+its shape. Light centrosymmetric about the Bragg point adds nothing to a first moment over a box symmetric about that
+point (:eq:`ref-symmetric`). A box off centre by :math:`\delta` differs from the centred one by slabs of width
+:math:`\delta` at its faces, and for any light :math:`\rho` along an axis
 
 .. math::
-    :label: rf-tds
+    :label: rf-shift
 
-    t\oint A\, d\Omega \ \text{(counts)}, \qquad 0 \ \text{(first moment)}, \qquad
-    \frac{t^3}{3}\oint A\,\hat{\vec{q}}\hat{\vec{q}}^T d\Omega \ \text{(second moments)};
-    \qquad
-    -t\Big(\oint A\,\hat{\vec{q}}\hat{\vec{q}}^T d\Omega\Big)\vec{\delta} \ \text{(first moment, off centre by } \vec{\delta}).
+    \int_{-t+\delta}^{t+\delta} x\rho\, dx - \int_{-t}^{t} x\rho\, dx
+    = \int_{t}^{t+\delta} x\rho\, dx - \int_{-t}^{-t+\delta} x\rho\, dx,
+    \qquad |\cdot| \le (t + \delta)\,\rho(\text{slabs}).
 
-It biases no first moment in a box symmetric about the Bragg point. Off centre, it pulls a centred first moment
-towards the box's centre by its share of the light times :math:`(\oint A\hat{\vec{q}}\hat{\vec{q}}^T / \oint
-A)\,\vec{\delta}`: :math:`\vec{\delta}/3` for isotropic :math:`A`. The box's centre is the indexer's prediction, so
-this is a pull towards the prior, bounded by the margin of :eq:`rf-box-margin`. It biases the second moments by an
-amount that grows as :math:`t^3`. A spread read from second moments therefore includes diffuse scattering in
-proportion to the box's volume, and must be read with that term subtracted or bounded. This is the tail seen on ID11's
-Si peaks over 5-9 frames.
+The box's centre is the indexer's prediction, within the margin of :eq:`rf-box-margin`. So such light biases a centred
+first moment by at most the box's half-width times the light in the slabs at its faces. That light is in the data:
+the recorded light of the faces' cells, plus at most :math:`\kappa_c` per cell (:eq:`rf-cut-bound`). Second moments
+are another matter: any light in the box adds its own second moment, and nothing tells it from the population's
+spread. A spread read from second moments is therefore an upper bound on the population's own, including whatever
+diffuse light the box holds.
 
-**Proof:** ``tests/theory/test_refiner.py::test_tds_tails`` (spherical integrals for :math:`A = 1` and :math:`A = 1 +
-a\hat q_z^2`; the off-centre term by the divergence theorem, and its volume side for :math:`A = 1`).
+**Proof:** ``tests/theory/test_refiner.py::test_box_shift``
+
+**Boxes that follow arcs.** A population's box in a reflection is a set of directions of :math:`\vec{g}`, not a
+rectangle in :math:`(s, f, \omega)`. A rotation :math:`\exp([\vec{d}]_\times)` turns :math:`\hat{\vec{g}}` by
+:math:`\vec{d}\times\hat{\vec{g}} = -[\hat{\vec{g}}]_\times\vec{d}` to first order. A linear map :math:`\matr{L}` takes
+the ellipsoid :math:`\vec{d}^T\matr{S}^{-1}\vec{d} \le k^2` onto the ellipse :math:`\vec{y}^T(\matr{L}\matr{S}\matr{L}^T)^{-1}\vec{y}
+\le k^2`: both have the support function :math:`k\sqrt{\vec{w}^T\matr{L}\matr{S}\matr{L}^T\vec{w}}`. So a population
+whose rotations lie within :math:`k` of its mean, in the metric of its spread :math:`\matr{S}`, has its light's
+directions within
+
+.. math::
+    :label: rf-arc-box
+
+    \vec{y}^T\left([\hat{\vec{g}}]_\times\matr{S}[\hat{\vec{g}}]_\times^T\right)^{+}\vec{y} \le k^2, \qquad
+    \left|\tfrac{1}{2}\vec{d}_\perp(\vec{d}\cdot\hat{\vec{g}})\right| \le \tfrac{1}{4}|\vec{d}|^2,
+
+in the tangent plane at the mean :math:`\hat{\vec{g}}`. The ellipse is its first-order image (:math:`^{+}` the
+pseudo-inverse in the plane). The second term bounds the second order, the arc's curvature, by which the box must be
+widened. The box is that ellipse, widened by the indexer's error :math:`e` (:eq:`rf-box-margin`) and by the curvature
+term, crossed with the :math:`2\theta` interval, and mapped to the cells whose :math:`\hat{\vec{g}}_p` fall in it.
+
+**Proof:** ``tests/theory/test_refiner.py::test_arc_box`` (the image's covariance; the support function attained
+and, by Cauchy-Schwarz in the metric :math:`\matr{S}`, not exceeded; the second-order term).
+
+Most bananas need no such box. An arc made of many voxels' slightly different orientations along a ray (dislocation
+cells, a random walk of misorientation) is, after the indexer, many populations with small spreads. Their region is
+the union of their small boxes, and it follows the arc by construction. Only a single population with a large
+anisotropic spread (bending about one axis, AGENTS.md) needs the ellipse. Its :math:`\matr{S}` comes from the
+indexer, since boxes are fixed once (:eq:`rf-box-margin`).
 
 The guarantee
 -------------
@@ -762,7 +790,9 @@ What is left out
 
 - **Second-order remainders** of the per-cell :math:`LP` division, the detector displacement's common term and
   parallax: stated in size, not bounded rigorously.
-- **The box half-widths**: their trade between :eq:`rf-cut-bound` and :eq:`ref-tail` is not optimised here.
+- **The box half-widths**: their trade between :eq:`rf-cut-bound` and :eq:`ref-tail` is not optimised here, and the
+  indexer gives only an isotropic spread per population (:doc:`populations`), so :eq:`rf-arc-box` needs an
+  anisotropic :math:`\matr{S}` the indexer does not yet report.
 - **Absorption's variation within a spot** enters through :math:`\matr{Y}^{(2)}` (above); its coefficient is not
   written out.
 - **A bound in omega** needs the beam's angular spread as a factor of every spot's omega profile, as (A5) is for
@@ -771,8 +801,6 @@ What is left out
 - **The precision** :math:`\epsilon` and confidence :math:`z` of :eq:`rf-smin` are the maintainer's to set.
 - **Histograms at scale**: their unknowns are each voxel's density over a rotation grid, many more than the moments'
   16; how the two are combined (histograms for populations, moments for their means) is not derived.
-- **Boxes for curved arcs.** A box in :math:`(s, f, \omega)` around an arc of several degrees holds many cells the
-  arc misses, and :eq:`rf-cut-bound` grows with them: boxes should follow the arc, defined in rotation space.
 - **The beam profile and runout** enter :math:`\matr{G}`; :eq:`rf-centre` bounds how they reach the deformation,
   but their own sizes are estimates (runout about 1 µm).
 - **Multi-phase overlaps**: populations of different phases sharing a region add their ray sums like any others;
