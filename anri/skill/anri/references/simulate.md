@@ -51,7 +51,9 @@ optionally, cell orientations that accumulate like a random walk, a spread insid
 `anri.phantom.tensormap` turns it into a TensorMap to render. [phantom](phantom.md) says how to choose its options
 for a microstructure, what it cannot make, and what to check before using it. Use a phantom with orientation spread
 along the rays to test a method: a uniform orientation per voxel turns a gradient into an unphysical ladder of
-sub-peaks. Before using a phantom to judge a method, check that its peaks render as single-maximum arcs (bananas).
+sub-peaks. Before using a phantom to judge a method, check that where its orientation varies continuously along the
+rays its peaks render as continuous arcs (bananas), not ladders spaced by the grid's steps; separate maxima from real
+structure (twins, cells misoriented beyond the resolution) are fine.
 The repository's `tests/data/phantoms` holds phantom TensorMaps ready to render (an AM-like 316L, a deformed 316L,
 quartz).
 
