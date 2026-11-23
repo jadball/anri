@@ -301,3 +301,121 @@ def test_recorded_values_increasing():
     expanded = sp.expand((fx - fy) * (gx - gy))
     E = expanded.subs({fx * gx: Efg, fy * gy: Efg, fx * gy: Ef * Eg, fy * gx: Ef * Eg})
     assert is_zero(E - 2 * (Efg - Ef * Eg))
+
+
+def test_weak_for_any_statistic():
+    """rf-weak-any: a photon of a reflection whose g0 = a k + c z + s xi (k, z, xi orthonormal) has g = F g0, so any
+    function of it, f(F g0), is unchanged by F -> F + v xi^T (any v) when s = 0: whatever statistic is taken (pixels,
+    histograms, moments of any order), the data at frequency k see F's action on k and z, and on xi only through s
+    (sin theta). For |g|^2 the six entries of F^T F enter with weights a^2, c^2, 2ac, 2as, 2cs, s^2."""
+    a, c, s = sp.symbols("a c s", real=True)
+    F = _mat("F")
+    v = sp.Matrix(sp.symbols("v0:3", real=True))
+    k, z, xi = sp.Matrix([1, 0, 0]), sp.Matrix([0, 0, 1]), sp.Matrix([0, 1, 0])
+    g0 = a * k + c * z + s * xi
+    f = sp.Function("f")
+    g, gv = F * g0, (F + v * xi.T) * g0
+    assert is_zero((f(*gv) - f(*g)).subs(s, 0))
+    C = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"C_{min(i, j)}{max(i, j)}"))
+    q = sp.expand((g0.T * C * g0)[0])
+    kk, zz, xx, kz, kx, zx = C[0, 0], C[2, 2], C[1, 1], C[0, 2], C[0, 1], C[1, 2]
+    assert is_zero(q - (a**2 * kk + c**2 * zz + 2 * a * c * kz + 2 * a * s * kx + 2 * c * s * zx + s**2 * xx))
+
+
+def test_weak_amplification():
+    """rf-amplify: G = U S V^T (U, V orthogonal, S diagonal): the least-squares bias is V S^-1 U^T Delta, so along v_i
+    it is <u_i, Delta> / s_i (symbolic s_i, U and V rotations rational in a parameter). A nuisance column e fitted alongside a column g
+    lowers its information: g^T P g = g^T g - (e^T g)^2 / e^T e <= g^T g, P = I - e e^T / e^T e."""
+    s = sp.symbols("s0:2", positive=True)
+    t, u = sp.symbols("t u", real=True)
+
+    def rot(q):  # every rotation of the plane but by 180 degrees, rational in q
+        return sp.Matrix([[1 - q**2, -2 * q], [2 * q, 1 - q**2]]) / (1 + q**2)
+
+    U, V = rot(t), rot(u)
+    G = U * sp.diag(*s) * V.T
+    Delta = sp.Matrix(sp.symbols("D0:2"))
+    b = (G.T * G).inv() * G.T * Delta
+    for i in range(2):
+        assert is_zero(sp.simplify(V[:, i].dot(b) - U[:, i].dot(Delta) / s[i]))
+    g = sp.Matrix(sp.symbols("g0:3", real=True))
+    e = sp.Matrix(sp.symbols("e0:3", real=True))
+    P = sp.eye(3) - e * e.T / e.dot(e)
+    assert is_zero(sp.simplify((g.T * P * g)[0] - (g.dot(g) - e.dot(g) ** 2 / e.dot(e))))
+
+
+def test_discrete_weak_directions():
+    """rf-discrete: a field constant on voxels, beta(x) = sum_v B_v chi(x - x_v) (lattice step h), has the transform
+    chi_hat(k) B(k) with B(k) = sum_v B_v e^{-i k . x_v} periodic: B(k + 2 pi n / h) = B(k) for integer n (here in
+    each axis, symbolic, voxels at integer multiples of h). The reflections carrying the alias k_n = k + 2 pi n / h see
+    B(k) applied to k_n-hat and z; written in the frame of k, B k_n-hat = (k_n-hat . k-hat) B k-hat
+    + (k_n-hat . xi-hat) B xi-hat, so the weak combination B(k) xi-hat(k) is seen with the coefficient
+    (k_n-hat . xi-hat) chi_hat(k_n) T(k_n): through the voxel's shape and the beam's transfer at frequencies beyond k.
+    At the first alias of a beam of FWHM h (Lambda = 1 in lim-transfer) T = exp(-pi^2 / (4 ln 2)) = 0.028."""
+    h = sp.Symbol("h", positive=True)
+    k = sp.Symbol("k", real=True)
+    n, v = sp.symbols("n v", integer=True)
+    phase = sp.exp(-sp.I * k * v * h)
+    alias = sp.exp(-sp.I * (k + 2 * sp.pi * n / h) * v * h)
+    assert sp.simplify(alias / phase) == 1  # e^{-2 pi i n v} = 1
+    th, psi = sp.symbols("theta psi", real=True)  # directions of k and of the alias k_n in the slice
+    kh = sp.Matrix([sp.cos(th), sp.sin(th), 0])
+    xh = sp.Matrix([0, 0, 1]).cross(kh)
+    knh = sp.Matrix([sp.cos(psi), sp.sin(psi), 0])
+    B = _mat("B")
+    decomp = knh.dot(kh) * (B * kh) + knh.dot(xh) * (B * xh)
+    assert is_zero(B * knh - decomp)
+    assert is_zero(sp.simplify(knh.dot(xh) - sp.sin(psi - th)))  # zero only when the alias is along k
+    T = sp.exp(-(sp.pi**2) / (4 * sp.log(2)))
+    assert rounds_to(T, "0.028")
+
+
+def test_centred_features():
+    """rf-centre: an error dG in the geometry (beam weights, runout) gives a misfit dG Y. Centred on a reference
+    (features g - g_R, |g|^2 - |g_R|^2, with the counts' column), the misfit is dG (Y - Y_R): proportional to the
+    deformation, not to the lattice. Here: one region, two populations of weights a_k (errors da_k), first moments."""
+    a = sp.symbols("a0:2", positive=True)
+    da = sp.symbols("da0:2", real=True)
+    V = sp.symbols("V0:2", positive=True)
+    gR = sp.Matrix(sp.symbols("gR0:3", real=True))
+    m = [gR + sp.Matrix(sp.symbols(f"dm{k}_0:3", real=True)) for k in range(2)]  # each population's mean g
+    true = sum(((a[k] + da[k]) * V[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1))
+    model = sum((a[k] * V[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1))
+    assert is_zero(true - model - sum((da[k] * V[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1)))
+    raw = sum(((a[k] + da[k]) * V[k] * m[k] for k in range(2)), sp.zeros(3, 1)) - sum(
+        (a[k] * V[k] * m[k] for k in range(2)), sp.zeros(3, 1)
+    )
+    assert is_zero(raw - sum((da[k] * V[k] * m[k] for k in range(2)), sp.zeros(3, 1)))  # the whole lattice
+
+
+def test_projected_estimator():
+    """rf-project: keeping only the singular directions with s_i >= s_min, the bias is sum_kept <u_i, Delta> / s_i v_i,
+    whose squared length sum_kept <u_i, Delta>^2 / s_i^2 <= |Delta|^2 / s_min^2 (orthonormal u_i, v_i; Bessel's
+    inequality sum_kept <u_i, Delta>^2 <= |Delta|^2). Symbolic: three directions kept of four, U a product of rotations."""
+    s = sp.symbols("s0:3", positive=True)
+    smin = sp.Symbol("smin", positive=True)
+    c = sp.symbols("c0:3", real=True)  # <u_i, Delta>, the kept ones; the fourth component is the rest
+    rest = sp.Symbol("r", real=True)
+    norm2 = sum(ci**2 for ci in c) + rest**2  # |Delta|^2 in the U basis
+    bias2 = sum(c[i] ** 2 / s[i] ** 2 for i in range(3))
+    # with s_i = smin + d_i, d_i >= 0: |Delta|^2 / smin^2 - bias2 is a sum of non-negative terms
+    d = sp.symbols("d0:3", nonnegative=True)
+    gap = sp.together((norm2 / smin**2 - bias2).subs({s[i]: smin + d[i] for i in range(3)}))
+    num, den = sp.fraction(gap)
+    # every monomial holds c_i^2 or r^2 (even), with d_i, smin >= 0, and a non-negative coefficient
+    assert all(coef >= 0 for coef in sp.Poly(sp.expand(num), *c, rest, *d, smin).coeffs())
+    assert den.is_positive
+
+
+def test_sin_theta_numbers():
+    """rf-amplify's numbers: Ni (a = 3.524 A) has sin(theta) = lambda / (2 d) of 0.0435 for 111 at 70 keV, 0.0709 for
+    111 at 43 keV, 0.183 for 420 at 43 keV (lambda = 12.398 / E A): weak combinations amplified by 1 / sin theta =
+    5.5-23, and C_xixi by 1 / sin^2 theta = 30-530."""
+    hc, a0 = sp.Rational(12398, 1000), sp.Rational(3524, 1000)
+    vals = []
+    for E, hkl in ((70, (1, 1, 1)), (43, (1, 1, 1)), (43, (4, 2, 0))):
+        d = a0 / sp.sqrt(sum(h * h for h in hkl))
+        vals.append(hc / E / (2 * d))
+    assert [rounds_to(v, q) for v, q in zip(vals, ("0.0435", "0.0709", "0.183"))] == [True] * 3
+    assert rounds_to(1 / vals[2], "5.5") and rounds_to(1 / vals[0], "23")
+    assert float(f"{float(1 / vals[2] ** 2):.1g}") == 30 and float(f"{float(1 / vals[0] ** 2):.2g}") == 530

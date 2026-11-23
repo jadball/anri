@@ -74,12 +74,13 @@ The statistics
 --------------
 
 For a region :math:`R` of cells (below) and a feature :math:`f`, the statistic is the recorded values summed with each
-cell's own Lorentz and polarisation factor divided out:
+cell's own Lorentz and polarisation factor divided out, and each frame's monitor ratio :math:`M_j / M_{\text{ref}}`
+(after the recording, which acts on raw counts; :eq:`rec-monitor`):
 
 .. math::
     :label: rf-statistic
 
-    T_R[f] = \sum_{p \in R} \frac{r_p\, f(\hat{\vec{g}}_p)}{L(\hat{\vec{g}}_p)\, P(\hat{\vec{g}}_p)},
+    T_R[f] = \sum_{p \in R} \frac{M_{\text{ref}}}{M_j}\, \frac{r_p\, f(\hat{\vec{g}}_p)}{L(\hat{\vec{g}}_p)\, P(\hat{\vec{g}}_p)},
     \qquad f \in \{1,\ \vec{g},\ |\vec{g}|^2,\ \vec{g}\vec{g}^T\}.
 
 Here :math:`\hat{\vec{g}}_p` is the scattering vector, in the sample frame, of the cell's centre at its frame's
@@ -328,6 +329,125 @@ of :math:`\matr{\Sigma}_{bb}`. So it errs large by the bias and small by the lev
 falls as the number of unknowns over the number of blocks. It is consistent as the blocks per unknown grow, with no
 model of the noise.
 
+The weak directions
+-------------------
+
+Two months of refiners (tomography, pixel-wise EM, first moments, second moments, Gaussian populations) have
+shared one failure: misfits between model and data are absorbed by the weak combinations of :doc:`limits` and by
+free variables such as spreads, which run to unphysical values. This section derives why, for any statistic, and
+what estimate avoids it.
+
+**No statistic sees them.** A reflection carries the in-plane spatial frequency :math:`\vec{k}` only if its ray runs
+along :math:`\vec{\xi} = \hat{\vec{z}} \times \hat{\vec{k}}` (the Fourier slice, :eq:`lim-slice`). Its
+:math:`\vec{g}_0` is then :math:`a\hat{\vec{k}} + c\hat{\vec{z}} + s\hat{\vec{\xi}}`, with :math:`s` of the order
+of :math:`\sin\theta` (:eq:`lim-ray`). Each of its photons has :math:`\vec{g} = \matr{F}\vec{g}_0`, so for every
+function :math:`f`,
+
+.. math::
+    :label: rf-weak-any
+
+    f\big((\matr{F} + \vec{v}\hat{\vec{\xi}}^T)\,\vec{g}_0\big) = f(\matr{F}\vec{g}_0) \quad \text{at } s = 0,
+    \qquad
+    \vec{g}_0^T\matr{C}\vec{g}_0 = a^2 C_{kk} + c^2 C_{zz} + 2ac\, C_{kz} + 2as\, C_{k\xi} + 2cs\, C_{z\xi} + s^2 C_{\xi\xi}.
+
+So the data at frequency :math:`\vec{k}` see each population's :math:`\matr{F}` acting on :math:`\hat{\vec{k}}`
+and :math:`\hat{\vec{z}}`, and its action on :math:`\hat{\vec{\xi}}` only through :math:`s`. This holds whatever is
+computed from them: pixels, histograms or moments of any order, the cut and the group rule included, since all of
+these are functions of the photons' :math:`\vec{g}`. The metric's :math:`C_{\xi\xi}` is seen through :math:`s^2`. The
+weak combinations are a property of single-axis scanning, not of a method. The second moments
+:math:`\matr{Y}^{(2)}[\vec{g}_0, \vec{g}_0]` carry the same weights, so a population's spread has weak components too:
+its spread of :math:`\matr{F}\hat{\vec{\xi}}`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_weak_for_any_statistic``
+
+**How a misfit reaches them.** With :math:`\matr{G} = \matr{U}\matr{S}\matr{V}^T` (whitened by the weights), the
+least-squares estimate's bias along the right singular vector :math:`\vec{v}_i` is
+:math:`\langle\vec{u}_i, \vec{\Delta}\rangle / s_i` (:eq:`rf-linear`). A weak combination has :math:`s_i \propto
+\sin\theta`, or :math:`\sin^2\theta` for :math:`C_{\xi\xi}`, so any misfit with any overlap on its data pattern
+:math:`\vec{u}_i` is amplified by :math:`1/s_i`. For Ni (111 at 70 keV, 111 and 420 at 43 keV)
+:math:`\sin\theta` = 0.0435, 0.0709 and 0.183: amplification by 5.5-23, and by 30-530 for :math:`C_{\xi\xi}`. A
+nuisance fitted alongside (a free spread, a width) can only lower the effective :math:`s_i`, never raise it: its
+Schur complement :math:`\vec{g}^T\matr{P}\vec{g} \le \vec{g}^T\vec{g}`. A misfit that a free spread could absorb is
+absorbed there, at whatever value of the spread it takes.
+
+.. math::
+    :label: rf-amplify
+
+    \vec{b} = \sum_i \frac{\langle\vec{u}_i, \vec{\Delta}\rangle}{s_i}\,\vec{v}_i, \qquad
+    s_{\text{weak}} \propto \sin\theta, \qquad
+    \vec{g}_w^T\matr{P}_\eta\vec{g}_w \le \vec{g}_w^T\vec{g}_w .
+
+**Proof:** ``tests/theory/test_refiner.py::test_weak_amplification``, ``tests/theory/test_refiner.py::test_sin_theta_numbers``
+
+**On a voxel grid they are seen through the model's geometry.** :eq:`rf-weak-any` is exact for continuous fields.
+A field constant on voxels of step :math:`h`, :math:`\matr{\beta}(\vec{x}) = \sum_v \matr{B}_v\chi(\vec{x} -
+\vec{x}_v)`, has the transform :math:`\hat\chi(\vec{k})\matr{B}(\vec{k})`, with :math:`\matr{B}(\vec{k}) = \sum_v
+\matr{B}_v e^{-i\vec{k}\cdot\vec{x}_v}` periodic on the reciprocal lattice. The reflections that carry an alias
+:math:`\vec{k}_n = \vec{k} + 2\pi\vec{n}/h` see :math:`\matr{B}(\vec{k})` applied to :math:`\hat{\vec{k}}_n` and
+:math:`\hat{\vec{z}}`, and :math:`\hat{\vec{k}}_n` has a component along :math:`\hat{\vec{\xi}}(\vec{k})`:
+
+.. math::
+    :label: rf-discrete
+
+    \matr{B}(\vec{k} + 2\pi\vec{n}/h) = \matr{B}(\vec{k}), \qquad
+    \matr{B}\hat{\vec{k}}_n = (\hat{\vec{k}}_n\cdot\hat{\vec{k}})\,\matr{B}\hat{\vec{k}}
+    + \sin(\psi_n - \psi)\,\matr{B}\hat{\vec{\xi}},
+
+with :math:`\psi`, :math:`\psi_n` the directions of :math:`\vec{k}` and :math:`\vec{k}_n`. So a voxel model sees its
+weak combination :math:`\matr{B}(\vec{k})\hat{\vec{\xi}}(\vec{k})` with the coefficient :math:`\sin(\psi_n -
+\psi)\,\hat\chi(\vec{k}_n)\,T(\vec{k}_n)`: through the voxel's assumed shape :math:`\hat\chi` and the beam's
+transfer :math:`T` at frequencies beyond the beam's resolution. At the first alias of a beam whose FWHM is the voxel
+step, :math:`T = e^{-\pi^2/(4\ln 2)} = 0.028` (:eq:`lim-transfer`, :math:`\Lambda = 1`), before :math:`\hat\chi`'s
+factor: of the same order as the combination's physical visibility, :math:`\sin\theta = 0.04`-0.18 times its
+coefficient. A voxel model therefore sees its weak combinations about as much through its own discretisation as
+through the physics.
+
+**Proof:** ``tests/theory/test_refiner.py::test_discrete_weak_directions`` (the periodicity; the decomposition; the
+number).
+
+The real sample is not constant on voxels: its content at :math:`\vec{k}_n` is its own structure at that frequency,
+unrelated to :math:`\matr{B}(\vec{k})`. So a voxel model fits its weak combinations from the high-frequency tails of
+its beam profile and voxel shape, which are exactly what a wrong beam profile or an unmodelled runout makes wrong.
+That is the mechanism of the failures: the weak combinations are set by the model's errors, not by the data.
+
+**Errors in the geometry.** An error :math:`\delta\matr{G}` (beam weights, a runout of about 1 µm, a beam profile
+known only roughly) gives a misfit :math:`\delta\matr{G}\,\vec{Y}`, and :math:`\vec{Y}` is dominated by the lattice
+itself: :math:`\matr{Y}^{(1)} \approx V\matr{I}`. Features centred on a reference per region, :math:`\vec{g} -
+\vec{g}_R` and :math:`|\vec{g}|^2 - |\vec{g}_R|^2` (with the counts fitted alongside), turn the misfit into
+
+.. math::
+    :label: rf-centre
+
+    \delta\matr{G}\,(\vec{Y} - \vec{Y}_R) = \sum_k \delta a_k V_k\, (\vec{m}_k - \vec{g}_R),
+
+proportional to each population's deviation from the reference, about :math:`10^{-3}` of the lattice, instead of to
+the lattice. The counts' own misfit, :math:`\sum \delta a_k V_k`, falls on the densities, which are not sought. The
+deformation then inherits only the geometry's relative error, :math:`\delta a / a` times its own contrast. A runout
+that is common to every voxel and periodic in omega is also of the drift's form (:mod:`anri.index.drift`, measured
+from Friedel pairs), and can be fitted as one function of omega for the whole map.
+
+**Proof:** ``tests/theory/test_refiner.py::test_centred_features``
+
+**What to estimate.** The combinations whose :math:`s_i` is above a level :math:`s_{\min}` are estimated, with
+bias at most :math:`|\vec{\Delta}|/s_{\min}`. The rest are reported as not determined, with their covariance. This is
+not a smoothness prior. It does not change the data's fit along the seen directions, and it reports what the data
+cannot resolve (AGENTS.md) instead of filling it with model error.
+
+.. math::
+    :label: rf-project
+
+    \hat{\vec{Y}}_{\text{seen}} = \sum_{s_i \ge s_{\min}} \frac{\langle\vec{u}_i, \vec{T}\rangle}{s_i}\,\vec{v}_i,
+    \qquad
+    |\operatorname{E}[\hat{\vec{Y}}_{\text{seen}}] - P_{\text{seen}}\vec{Y}| \le \frac{|\vec{\Delta}|}{s_{\min}}.
+
+**Proof:** ``tests/theory/test_refiner.py::test_projected_estimator``
+
+The alternative, where the maintainer allows it within a merged domain, is the constraint
+:math:`(\operatorname{curl}\matr{\beta})_{\cdot z} = 0` (:doc:`limits`). It removes exactly the weak combinations of
+the first moments, and its bias is the dislocation density threading the slice that it assumes away. Neither choice
+recovers the weak combinations; each makes their error known. Separated populations are not affected: alone in their
+regions, they are seen in every reflection with all nine numbers (:doc:`limits`), with no tomography to weaken them.
+
 The guarantee
 -------------
 
@@ -367,6 +487,11 @@ What is left out
   written out.
 - **A bound in omega** needs the beam's angular spread as a factor of every spot's omega profile, as (A5) is for
   the detector; it is not established.
+- **The level** :math:`s_{\min}`, and how the seen and unseen parts are reported per voxel, are not chosen here.
+- **Boxes for curved arcs.** A box in :math:`(s, f, \omega)` around an arc of several degrees holds many cells the
+  arc misses, and :eq:`rf-cut-bound` grows with them: boxes should follow the arc, defined in rotation space.
+- **The beam profile and runout** enter :math:`\matr{G}`; :eq:`rf-centre` bounds how they reach the deformation,
+  but their own sizes are estimates (runout about 1 µm).
 - **Multi-phase overlaps**: populations of different phases sharing a region add their ray sums like any others;
   nothing more is needed, but nothing is checked.
 - **Code**: none of the refiner is in anri yet.
