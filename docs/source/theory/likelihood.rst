@@ -254,3 +254,7 @@ What is left out
 - **Uncertainties** of the occupancies: not computed.
 - **Voxels outside the mask** (:doc:`populations`) are not fitted; their intensity has to go somewhere, and a mask that
   is too small piles it onto its edge.
+- **Saturated bins of very large counts.** :math:`\log P(n \ge d)` near :math:`\mu \approx d` comes from JAX's
+  regularised lower gamma, whose error grows with :math:`d`: at :math:`d = 10^5` it is about 9e-2 in float32 and
+  9e-11 in float64 (the ratio, which uses :eq:`lik-loader`, about 1e-3 and 1e-11). Saturated bins are few; the
+  uniform asymptotic expansion for large :math:`a` would fix it.
