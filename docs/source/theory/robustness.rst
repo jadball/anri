@@ -1,11 +1,12 @@
-.. _theory_refinement:
+.. _theory_robustness:
 
-What a refiner can be robust to
-===============================
+What a fitted statistic is robust to
+====================================
 
-:doc:`limits` asks what the data determine; this chapter asks which statistics of the recorded cells
-(:doc:`recording`) a local refiner of orientation and strain can fit so that an error in the peak shapes and the
-counting noise leave it unbiased, and what each choice costs. The shapes are never known exactly: the point spread's
+:doc:`limits` asks what the data determine. This chapter asks which statistics of the recorded cells
+(:doc:`recording`) stay unbiased under an error in the peak shapes and under counting noise, and what each choice
+costs. It holds the lemmas the refiner (:doc:`refiner`) is built on, and the case against dividing merged light by its
+shape. It does not propose a method itself. The shapes are never known exactly: the point spread's
 wing, the sensor's depth kernel, the beam's convergence, thermal diffuse tails and the sample's own spread are
 measured to some precision, and the renderer draws each source of spread as a first-order Gaussian
 (:doc:`peak_shape`).
@@ -48,7 +49,7 @@ weighted least squares with any symmetric positive definite :math:`\matr{W}`, to
 
 which is :math:`(\matr{G}^T\matr{C}^{-1}\matr{G})^{-1}` at :math:`\matr{W} = \matr{C}^{-1}`.
 
-**Proof:** ``tests/theory/test_refinement.py::test_fitted_statistic_bias`` (exact for a linear model; Gauss-Newton
+**Proof:** ``tests/theory/test_robustness.py::test_fitted_statistic_bias`` (exact for a linear model; Gauss-Newton
 about :math:`\vec{\theta}_0` otherwise).
 
 So a wrong weight matrix never biases a fit: with :math:`\vec{\Delta} = 0` every :math:`\matr{W}` gives an unbiased
@@ -70,7 +71,7 @@ With nuisance parameters :math:`\vec{\eta}` fitted too (a population's spread, a
 so the part of :math:`\vec{\Delta}` that a change of :math:`\vec{\eta}` could make (:math:`\matr{P}\matr{G}_\eta =
 0`) biases nothing but :math:`\vec{\eta}`.
 
-**Proof:** ``tests/theory/test_refinement.py::test_profiled_bias``
+**Proof:** ``tests/theory/test_robustness.py::test_profiled_bias``
 
 A free spread therefore absorbs a wrong *width*; what it cannot absorb is a wrong *shape* at the same width (a wing, a
 skew, the aliasing below), nor any error in light shared with another population.
@@ -99,9 +100,9 @@ score of a Poisson or censored likelihood (:eq:`rec-likelihood`, :eq:`lik-censor
 counts grow) whatever is wrong with the width, the tails, the window (if it is symmetric too), the cut or the group
 rule, at the positions where :math:`\sigma` exists.
 
-**Proof:** ``tests/theory/test_refinement.py::test_group_rule_is_symmetric`` (the group rule's animals and their
+**Proof:** ``tests/theory/test_robustness.py::test_group_rule_is_symmetric`` (the group rule's animals and their
 boundaries map one to one under the reflection, every pixel of two detectors, groups of up to 4 pixels),
-``tests/theory/test_refinement.py::test_symmetric_estimating_equation`` (the centroid and the score of any even model,
+``tests/theory/test_robustness.py::test_symmetric_estimating_equation`` (the centroid and the score of any even model,
 any function of the model's light per cell, on centres and on edges).
 
 What symmetry does not protect: light that is not symmetric (a curved arc, :eq:`ref-spread-mean`; the sensor's
@@ -129,7 +130,7 @@ from the sawtooth's series (:eq:`det-pixel-moments`) and :math:`\operatorname{E}
 A_{\text{model}}` (over :math:`1 + A'`): zero on the symmetry points (:eq:`ref-symmetric`), largest between. Over a
 uniform sub-cell position it has mean zero and mean square :math:`\sum_k (\Delta\chi_k)^2 / (2\pi^2 k^2)`.
 
-**Proof:** ``tests/theory/test_refinement.py::test_alias_any_symmetric_spot`` (a core-and-wing mixture and a Laplace
+**Proof:** ``tests/theory/test_robustness.py::test_alias_any_symmetric_spot`` (a core-and-wing mixture and a Laplace
 spot against their cells' masses at 20 digits; the sines' orthogonality).
 
 The amplitude is set by :math:`\chi(2\pi)`, which the narrowest part of a spot dominates, not by its variance. The
@@ -138,7 +139,11 @@ Gaussian of its variance (sd 0.720 px, :math:`\chi(2\pi) = 3.6 \times 10^{-5}`) 
 0.0667 px (near a quarter pixel), 0.0472 px rms over the position, within the bound's 0.0676. At 180 mm a 75 µm
 pixel's 0.067 is :math:`2.8 \times 10^{-5}` rad, a strain of :math:`1.7 \times 10^{-4}` at :math:`\tan\theta = 0.08`.
 
-**Proof:** ``tests/theory/test_refinement.py::test_alias_numbers``
+**Proof:** ``tests/theory/test_robustness.py::test_alias_numbers``
+
+:eq:`ref-alias` is the error of a model whose shape is wrong. Without any spot model, the same series bounds the
+binned mean of every spot of which the point spread is a factor (:eq:`rf-alias-bound`). That general bound is the one
+the refiner uses; this one is its special case, and shows where it comes from.
 
 The same holds in omega in units of the frame width: a peak whose core is narrower than a frame (ID11's, AGENTS.md)
 has :math:`\chi(2\pi)` near 1. A spot of sd 0.5 cell or more has :math:`\chi(2\pi) \le 0.0072` and negligible aliasing
@@ -165,7 +170,7 @@ to
 
 while :math:`|\matr{R}\vec{g}| = |\vec{g}|` exactly.
 
-**Proof:** ``tests/theory/test_refinement.py::test_spread_mean`` (Rodrigues' formula expanded to second order, its
+**Proof:** ``tests/theory/test_robustness.py::test_spread_mean`` (Rodrigues' formula expanded to second order, its
 expectation with only the second moments of :math:`\vec{d}`).
 
 So the centroid of a population's light in Cartesian :math:`\vec{g}` reads an isotropic spread :math:`\sigma` as a
@@ -174,7 +179,7 @@ strain :math:`-\sigma^2`: :math:`-7.62 \times 10^{-5}` at 0.5°, :math:`-3.05 \t
 :math:`|\vec{g}|` (its 2θ) is exact at any spread. An anisotropic spread also moves the mean direction: about one axis
 at 45° to :math:`\vec{g}`, by :math:`\sigma^2/4`, :math:`7.62 \times 10^{-5}` rad at 1°.
 
-**Proof:** ``tests/theory/test_refinement.py::test_spread_numbers``
+**Proof:** ``tests/theory/test_robustness.py::test_spread_numbers``
 
 A first-order model makes the opposite error. The renderer spreads a peak along a straight line in :math:`(s, f)`
 (:eq:`ps-propagate`), tangent to the ring at the peak; a ring of radius :math:`\rho` pixels curves away from it, and a
@@ -190,7 +195,7 @@ spread of sd :math:`\sigma_t = \rho\sigma_\eta` along the tangent puts its cells
 (a detector normal to the beam, :math:`\rho = L\tan 2\theta`): :math:`-1.52 \times 10^{-4}` at
 :math:`\sigma_\eta = 1°`.
 
-**Proof:** ``tests/theory/test_refinement.py::test_tangent_spot_on_a_ring``
+**Proof:** ``tests/theory/test_robustness.py::test_tangent_spot_on_a_ring``
 
 So a strain refiner whose model draws spreads at first order carries a bias of order :math:`\sigma_\eta^2/2` per
 reflection, a function of each population's spread, which varies from voxel to voxel: not a common offset
@@ -214,7 +219,7 @@ mean carries at most
 of the first moment (per photon), since :math:`x\,\mathbb{1}(x \ge t) \le x^2/t` everywhere; a spot of two points
 (mass :math:`p` at :math:`t`) attains it as :math:`p \to 0`.
 
-**Proof:** ``tests/theory/test_refinement.py::test_tail_first_moment``
+**Proof:** ``tests/theory/test_robustness.py::test_tail_first_moment``
 
 At :math:`t = 4\sigma` that is :math:`\sigma/4`, against :math:`1.3 \times 10^{-4}\sigma` for a Gaussian: with the
 shape unknown beyond its variance, a region cut on one side is not robust at any practical margin. A region symmetric
@@ -264,8 +269,8 @@ the photons :math:`N` of the pair at which the two are equal:
 
 **Definition:** the fit's limit under a wrong shape, as :eq:`ref-bias`'s with the score as the statistic.
 **Proof:**
-``tests/theory/test_refinement.py::test_split_bias`` (the table, Newton on the expected score with its exact Jacobian),
-``tests/theory/test_refinement.py::test_log_pair_derivs``.
+``tests/theory/test_robustness.py::test_split_bias`` (the table, Newton on the expected score with its exact Jacobian),
+``tests/theory/test_robustness.py::test_log_pair_derivs``.
 
 Below :math:`d \approx 2` the fit merges the two into one wider spot (:math:`a = 0`), as for any two Gaussians of a
 free width. Between, every photon beyond a few hundred to a few thousand per pair makes the split more precise but no

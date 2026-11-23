@@ -10,6 +10,11 @@ or a bound computed from the geometry and the data. Where no bound can exist, th
 
 *Cell* means, as in :doc:`recording`, one pixel in one frame of one dty row.
 
+It builds on :doc:`robustness`, whose lemmas it uses: a wrong weight never biases a fit (:eq:`ref-bias`), symmetry
+protects a separated location (:eq:`ref-symmetric`), a spread moves a mean at second order (:eq:`ref-spread-mean`),
+light beyond a region is bounded by its variance (:eq:`ref-tail`), and splitting merged light by shape is
+bias-dominated (:eq:`ref-split`), which is why this refiner never does it.
+
 Assumptions
 -----------
 
@@ -252,7 +257,8 @@ The data are binned, so :math:`\hat{\vec{g}}_p` is the cell's centre, not the ph
     |\operatorname{E}[u]| \le \min\left(\tfrac{1}{2},\ \sum_{k \ge 1} \frac{|\chi_{\text{psf}}(2\pi k)|}{\pi k}\right),
     \qquad |\operatorname{E}[\sin 2\pi k x]| \le |\chi(2\pi k)|,
 
-from the sawtooth's series (:eq:`det-pixel-moments`), symmetric or not. The bound is 0.0676 px for the measured point
+from the sawtooth's series (:eq:`det-pixel-moments`), symmetric or not. It is the general form of :eq:`ref-alias`, which
+is the error of one wrongly shaped model. The bound is 0.0676 px for the measured point
 spread (a core of 0.25 px holding 72 %, a wing of 1.3 px). A feature's first-order binning error is its gradient times
 :math:`\operatorname{E}[u]`, and :math:`\bar\Delta` takes it per region with the gradient's largest value there.
 

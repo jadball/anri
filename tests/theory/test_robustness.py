@@ -1,4 +1,4 @@
-"""Proofs for docs/source/theory/refinement.rst: what a refiner's statistics are robust to (shape errors, the cut, the
+"""Proofs for docs/source/theory/robustness.rst: what a fitted statistic is robust to (shape errors, the cut, the
 pixels, a population's spread) and what splitting merged light costs."""
 
 from __future__ import annotations

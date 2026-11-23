@@ -51,10 +51,11 @@ Measurement and limits
    sums for any spot shape, what a region's choice and a window's edge do to them.
 10. :doc:`limits`: what the data determine: the Fourier slice, the dislocations it misses, the beam, separation,
     localisation, second moments, model error, and what a method must keep to reach the limits.
-11. :doc:`refinement`: what a refiner's statistics are robust to: weights and shape errors, symmetry, the pixels'
-    aliasing, a spread's second-order mean, light beyond a region, and the cost of splitting merged light.
+11. :doc:`robustness`: what a fitted statistic is robust to: weights and shape errors, symmetry, the pixels'
+    aliasing, a spread's second-order mean, light beyond a region, and the cost of splitting merged light by shape.
+    The lemmas the refiner uses.
 12. :doc:`refiner`: a refiner that needs no spot shape: deformation moments as a linear tomography, with the
-    noise, the cut, the group rule and the pixels each bounded, and what no estimator can do.
+    noise, the cut, the group rule and the pixels each bounded, and what no estimator can do. The method.
 
 Indexer
 =======
@@ -86,7 +87,7 @@ Calibration
     recording
     moments
     limits
-    refinement
+    robustness
     refiner
     indexing
     search
