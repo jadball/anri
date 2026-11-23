@@ -41,7 +41,7 @@ should be cited, please tell us.
    three-dimensional X-ray diffraction microscopy. Journal of Applied Crystallography 48, 1094–1101.
    https://doi.org/10.1107/S1600576715009899
 
-.. [Henningsson2023] Henningsson, A., Hall, S.A., 2023. An efficient system matrix factorization method for scanning
+.. [Henningsson2023] Henningsson, N.A., Hall, S.A., 2023. An efficient system matrix factorization method for scanning
    diffraction based strain tensor tomography. Acta Crystallographica Section A 79, 542–549.
    https://doi.org/10.1107/S2053273323008136
 
