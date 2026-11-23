@@ -255,25 +255,81 @@ Fixed window sizes keep array shapes fixed, so the renderer compiles once per si
 :func:`anri.fwd.render.render_row`.
 
 A window holds only part of a peak. What it holds is reported per peak as ``captured``, the sum of its cells' masses
-over the frames inside the scan (``in_range`` is the share of the omega profile inside the scan's omega range). The light
-beyond one face of a window is, for the Gaussian, the mass of its marginal along the face's normal beyond the face: for
-the omega faces exactly, at standardised distance :math:`t` from the centroid,
+over the frames inside the scan (``in_range`` is the share of the omega profile inside the scan's omega range). The
+rest is beyond the window's faces. A window moves from frame to frame, so its faces are defined on the cells the
+factorisation (:eq:`ps-factor`) cuts the Gaussian into, each cell outside the window belonging to exactly one face. With
+the window's frames :math:`j_o \ldots j_o + n_o - 1` (sorted omega order) and frame :math:`j`'s rows
+:math:`i_j \ldots i_j + n_s - 1` and columns :math:`c_j \ldots c_j + n_f - 1`:
+
+- faces 0 and 1: the scan's frames before the window's first frame, and after its last (every row and column);
+- faces 2 and 3: in each window frame, the rows before its row window, and after it (every column);
+- faces 4 and 5: in each window frame, and each row of its row window, the columns before its column window, and
+  after it.
+
+The cells beyond a face telescope (:eq:`det-pixel`), so the light beyond each is a sum of the conditionals' tails. With
+the frame masses :math:`P_j` and the conditionals :math:`N(\mu_{s|j}, \sigma^2_{s|j})` (:eq:`ps-condition`), the rows'
+slow masses :math:`P_{i|j}` and :math:`N(\mu_{f|ij}, \sigma^2_{f|ij})` (:eq:`ps-condition-f`), summed over the window's
+frames inside the scan, and :math:`t(x) = (x - \mu_\omega)/\sigma_\omega`:
 
 .. math::
-    :label: ps-face
+    :label: ps-faces
 
-    P(\text{beyond the face}) = \Phi(-t), \qquad
-    \text{captured} = \sum_{\text{cells}} P(\text{cell}) = \Phi(t_+) - \Phi(-t_-) \ \text{when the pixel window holds every
-    frame's slow and fast mass},
+    \begin{aligned}
+    L_0 &= \Phi(t(e_{j_o})) - \Phi(t(e_0)), &
+    L_1 &= \Phi(t(e_n)) - \Phi(t(e_{j_o + n_o})), \\
+    L_2 &= \sum_j P_j\, \Phi\!\left(\frac{i_j - \tfrac{1}{2} - \mu_{s|j}}{\sigma_{s|j}}\right), &
+    L_3 &= \sum_j P_j\, \Phi\!\left(\frac{\mu_{s|j} - i_j - n_s + \tfrac{1}{2}}{\sigma_{s|j}}\right), \\
+    L_4 &= \sum_j P_j \sum_i P_{i|j}\, \Phi\!\left(\frac{c_j - \tfrac{1}{2} - \mu_{f|ij}}{\sigma_{f|ij}}\right), &
+    L_5 &= \sum_j P_j \sum_i P_{i|j}\, \Phi\!\left(\frac{\mu_{f|ij} - c_j - n_f + \tfrac{1}{2}}{\sigma_{f|ij}}\right),
+    \end{aligned}
 
-and for the row and column faces of each frame the same with the conditional moments of that frame
-(:eq:`ps-condition`, :eq:`ps-condition-f`).
+with the frame indices :math:`j_o` and :math:`j_o + n_o` clipped to the scan's :math:`[0, n]` (a window reaching past
+the scan's end has no frames beyond that face).
 
-**Definition:** the Gaussian's marginal mass. Checked against the code by
+**Definition:** the light of the factorised Gaussian's cells beyond each face, summed by the telescoping of
+:eq:`det-pixel`; proved, with the sum below, by ``tests/theory/test_peak_shape.py::test_faces_partition``.
+
+They make up the rest of the scan's light:
+
+.. math::
+    :label: ps-face-sum
+
+    \text{captured} + \sum_{k=0}^{5} L_k = \Phi(t(e_n)) - \Phi(t(e_0)) = \text{in\_range}.
+
+**Proof:** ``tests/theory/test_peak_shape.py::test_faces_partition`` (each face's cells telescope to its tail, and with
+the window's cells they add up to the scan's light), ``tests/theory/test_peak_shape.py::test_faces_code`` (each
+:math:`L_k` of a correlated peak, against :eq:`ps-faces` at 30 digits, and :eq:`ps-face-sum`),
 ``tests/theory/test_peak_shape.py::test_captured_code``.
 
-A spot that is not Gaussian (the sum of a banana's populations, a mixture of point spreads) has no such closed form. For
-any spot of variance :math:`\sigma^2` along the face's normal, the light beyond a face at distance :math:`t` from its mean
+The faces are exact for the factorised Gaussian: they are the light the renderer would put in the cells beyond them.
+They are in the units of ``captured`` (fractions of the peak's Gaussian, after the beam's fold :eq:`int-fold`, before
+the beam's and the frames' weights). A mixture rendered over one window (a thick sensor's slices,
+:eq:`det-sensor-mix`; a mixed point spread, :eq:`det-psf-mix`, whose components share every window origin, since the
+origins depend only on the centroid and the omega profile) has the faces of its components summed by their weights:
+the faces are linear in the light, so no shape is assumed.
+
+How far beyond a face the light reaches follows from the same tails. Let :math:`T_g(m)` be the light of one Gaussian
+:math:`g` of a face beyond the face moved :math:`m` cells out (frames of equal width). Its cell masses are
+log-concave (:eq:`mom-logconcave`), so the ratios of its tails fall and
+
+.. math::
+    :label: ps-face-reach
+
+    \sum_g T_g(m) \le L\,\rho^m, \qquad \rho = \max_g \frac{T_g(1)}{T_g(0)}, \qquad L = \sum_g T_g(0):
+
+:math:`T(m + 1)/T(m)` is the mean of the cell ratios :math:`b_{k+1}/b_k` over the cells :math:`k \ge m`, weighted by
+:math:`b_k`; going from :math:`m` to :math:`m - 1` adds the cell :math:`m - 1`, whose ratio is at least every later one,
+and adding a value at least the mean raises the mean. A face holds one Gaussian per frame (faces 2, 3), per frame and
+row (faces 4, 5), per mixture component, and :math:`\sum_g T_g(0)\rho_g^m \le (\sum_g T_g(0)) \max_g \rho_g^m`.
+
+**Proof:** ``tests/theory/test_peak_shape.py::test_face_reach`` (the mean raised by a value above it; the ratios of a
+binned Gaussian's tails falling; the mixture's bound).
+
+**Code:** :func:`anri.fwd.render.render_row` (stats "face_light", the :math:`L_k`, and "face_decay", the :math:`\rho`,
+[n_peaks, 6] in face order), through ``_faces``.
+
+A spot that is not a mixture of Gaussians over one window has no such closed form, and a log-concave extrapolation from
+the cells inside the window does not bound a mixture (:eq:`mom-mixture`). For any spot of variance :math:`\sigma^2` along the face's normal, the light beyond a face at distance :math:`t` from its mean
 is bounded (Cantelli's inequality):
 
 .. math::
@@ -287,7 +343,7 @@ is bounded (Cantelli's inequality):
 At :math:`t = 3.5\sigma` this is 0.0755, against :math:`\Phi(-3.5) = 0.000233` for a Gaussian: a window sized for a
 Gaussian is not safe for a spot of unknown shape, whose missing light is known only to this bound.
 
-**Anri's rule:** a window's missing light must be known, per face. A model pixel is complete only where every peak
+**Anri's rule:** a window's missing light must be known, per face (:eq:`ps-faces`, :eq:`ps-face-reach`). A model pixel is complete only where every peak
 that can put light there covers it with its window; next to a face, the model lacks at most that face's light, and a
 comparison with the data there must account for it or leave the cell out. A missing light that is not bounded biases
 whatever is fitted towards the parameters that move light into the window. The measurement side, which cells a fit
@@ -300,9 +356,6 @@ refiner, ``origins`` (:func:`anri.fwd.render.window_origins`) fixes them over an
 
 **Code:** :func:`anri.fwd.render.window_origins`.
 
-**Where the code falls short:** :func:`anri.fwd.render.render_row` reports each peak's total ``captured`` fraction, not
-the light beyond each face, so a fit cannot yet tell which cells next to a window are incomplete.
-
 What is left out
 ----------------
 
@@ -312,5 +365,4 @@ What is left out
 - **Strain spread** within an entry (it would widen peaks in :math:`2\theta` as :math:`2\varepsilon\tan\theta`).
 - **Dead time** between frames: the frames tile the scan (:eq:`ps-edges`).
 - **The factorisation's higher cumulants** (:eq:`ps-edgeworth`), for peaks streaking across pixels within one frame.
-- **Light beyond each face** of a window, reported only as a total.
 - **Thermal diffuse tails**, seen on measured Si peaks over 5-9 frames.

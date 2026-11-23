@@ -246,6 +246,18 @@ class TestPointSpreadMixture(unittest.TestCase):
         want = np.array([0.7 * core.get(k, 0.0) + 0.3 * wing.get(k, 0.0) for k in sorted(keys)])
         np.testing.assert_allclose([mix[k] for k in sorted(keys)], want, rtol=1e-10, atol=1e-14)
         np.testing.assert_allclose(sm["captured"], 0.7 * s1["captured"] + 0.3 * s2["captured"], rtol=1e-12)
+        # the light beyond each face: the components' by their shares (one window); each face's decay the largest
+        np.testing.assert_allclose(sm["face_light"], 0.7 * s1["face_light"] + 0.3 * s2["face_light"], rtol=1e-12)
+        np.testing.assert_array_equal(sm["face_decay"], np.maximum(s1["face_decay"], s2["face_decay"]))
+
+    def test_faces_complete_the_window(self):
+        """captured + face_light = in_range, for one Gaussian, a mixed point spread and a thick sensor's slices."""
+        for extra in ({"sig_psf": 1.3}, {"psf_mix": ((0.7, 0.3), (0.3, 1.3))}, {"sensor": (1 / 400.0, 750.0)}):
+            _, st = self._render(extra)
+            self.assertEqual(st["face_light"].shape, (st["n_peaks"], 6))
+            self.assertGreater(st["face_light"][:, 2:].min(), 0.0)  # the 11 x 11 window leaves a tail on every side
+            np.testing.assert_allclose(st["captured"] + st["face_light"].sum(1), st["in_range"], rtol=0, atol=1e-12)
+            self.assertTrue(np.all((st["face_decay"] >= 0) & (st["face_decay"] < 1)))
 
     def test_fractions_must_sum_to_one(self):
         with self.assertRaises(ValueError):
@@ -799,6 +811,8 @@ class TestGrainMap(unittest.TestCase):
         per_frame = [d.reshape(-1, npix).sum(1) for d in dense]
         np.testing.assert_allclose(per_frame[1], per_frame[0], rtol=0, atol=2e-3 * per_frame[0].max())
         self.assertLess(np.abs(dense[1] - dense[0]).max(), 0.05 * dense[0].max())
+        for st in (a[3], b[3]):  # per peak (with splat, its spot's kernel's): the window and its faces are the scan's
+            np.testing.assert_allclose(st["captured"] + st["face_light"].sum(1), st["in_range"], rtol=0, atol=1e-9)
         with self.assertRaises(ValueError):  # one kernel per spot: sig_rot must be the same over a grain
             render_row({**self.grains, "sig_rot": np.arange(len(self.grains["pos"])) * 1e-5}, self.hkls, F2,
                        self.geom, self.row, self.det_shape, splat=True)  # fmt: skip

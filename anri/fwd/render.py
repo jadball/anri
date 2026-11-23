@@ -342,8 +342,8 @@ def _window_cells(
         frac [wo, ws, wf] (fraction of the Gaussian in each cell), inside [wo, ws, wf] (cells on the detector and in
         the row), fclip [wo] (sorted frame of each window frame, clipped), rows [wo, ws], cols [wo, wf], om_fr [wo]
         (mean omega of the mass in each frame, unwrapped), in_range (the share of the peak's omega profile within the
-        scan's omega range) and the origin (jo, i0, j0); with moments, also mean and var [wo, ws, wf, 3] (slow, fast,
-        omega within each cell; omega unwrapped as om_fr)
+        scan's omega range), the origin (jo, i0, j0) and the light beyond the window's faces (:func:`_faces`); with
+        moments, also mean and var [wo, ws, wf, 3] (slow, fast, omega within each cell; omega unwrapped as om_fr)
     """
     wo, ws, wf = window
     ns, nf = det_shape
@@ -411,7 +411,8 @@ def _window_cells(
 
     sd_o = jnp.sqrt(oo)
     in_range = ndtr((row["omega_edges"][-1] - mu_o) / sd_o) - ndtr((row["omega_edges"][0] - mu_o) / sd_o)
-    out = (frac, inside, fclip, rows, cols, omega_peak + d_o, in_range, (jo, i0, j0))
+    faces = _faces(jo, i0, j0, mu_o, sd_o, p_o, mu_s_o, sd_s_o, p_s, mu_f_so, sd_f_so, row, window)
+    out = (frac, inside, fclip, rows, cols, omega_peak + d_o, in_range, (jo, i0, j0), faces)
     if not moments:
         return out
     _, m_f, v_f = truncated_moments(
@@ -422,6 +423,58 @@ def _window_cells(
                       jnp.broadcast_to((omega_peak + d_o)[:, None, None], shp)], -1)  # fmt: skip
     var = jnp.stack([jnp.broadcast_to(v_s[:, :, None], shp), v_f, jnp.broadcast_to(v_o[:, None, None], shp)], -1)
     return (*out, mean, var)
+
+
+def _faces(
+    jo: jax.Array, i0: jax.Array, j0: jax.Array, mu_o: jax.Array, sd_o: jax.Array, p_o: jax.Array, mu_s: jax.Array,
+    sd_s: jax.Array, p_s: jax.Array, mu_f: jax.Array, sd_f: jax.Array, row: dict, window: tuple[int, int, int],
+) -> tuple:  # fmt: skip
+    """Return the light of a peak's factorised Gaussian beyond each face of its window (theory page: ps-faces).
+
+    Faces, in this order: the scan's frames below the window and above it; in each window frame, the rows below its
+    row window and above it (every column); and, within its rows, the columns below its column window and above it.
+    Each is a tail of the Gaussian the window's cells are cut from (the omega marginal; slow given the frame, mu_s,
+    sd_s [wo]; fast given the row and frame, mu_f, sd_f [wo, ws]), so the cells beyond a face sum to it exactly
+    (det-pixel's telescoping). With the window's own cells and the light outside the scan's omega range, they make up
+    the whole Gaussian.
+
+    Returns
+    -------
+    tuple
+        omega [2] (frames below, above), per_frame [wo, 4] (rows below, above, columns below, above; 0 in window frames
+        beyond the scan's ends), and decay [6]: per face, the largest ratio over its Gaussians of the light beyond the
+        face moved one cell further out to the light beyond it (ps-face-reach), 0 where a face has no light
+    """
+    wo, ws, wf = window
+    e = row["omega_edges"]
+    nfr = e.shape[0] - 1
+    frames = jo + jnp.arange(wo)
+    real = (frames >= 0) & (frames < nfr)
+    out = jnp.arange(2.0)  # the face, and one cell further out
+
+    def ratio(t: jax.Array, w: jax.Array) -> jax.Array:
+        """Return the largest t1 / t0 of tails t [..., 2] (at the face, one cell out) whose Gaussian has weight w > 0."""
+        ok = (w > 0) & (t[..., 0] > 0)
+        return jnp.max(jnp.where(ok, t[..., 1] / jnp.where(ok, t[..., 0], 1.0), 0.0))
+
+    # omega: the scan's frames below the window's first frame (to the scan's first edge), and above its last
+    lo, hi = jnp.clip(jo, 0, nfr), jnp.clip(jo + wo, 0, nfr)
+    t_lo = bin_fractions(e[0], e[jnp.maximum(lo - out.astype(int), 0)], mu_o, sd_o)  # [2]
+    t_hi = bin_fractions(e[jnp.minimum(hi + out.astype(int), nfr)], e[nfr], mu_o, sd_o)
+    # slow given the frame: every row below i0 and above i0 + ws - 1 (tails by ndtr, accurate far out, no infinities)
+    t_s_lo = ndtr(((i0 - 0.5)[:, None] - out - mu_s[:, None]) / sd_s[:, None])  # [wo, 2]
+    t_s_hi = ndtr((mu_s[:, None] - (i0 + ws - 0.5)[:, None] - out) / sd_s[:, None])
+    # fast given the row and frame, within the window's rows
+    t_f_lo = ndtr(((j0 - 0.5)[:, None, None] - out - mu_f[..., None]) / sd_f[..., None])  # [wo, ws, 2]
+    t_f_hi = ndtr((mu_f[..., None] - (j0 + wf - 0.5)[:, None, None] - out) / sd_f[..., None])
+    w_s = jnp.where(real, p_o, 0.0)  # [wo] each frame's slow Gaussian's weight
+    w_f = w_s[:, None] * p_s  # [wo, ws] each row's fast Gaussian's weight
+    per_frame = jnp.stack([w_s * t_s_lo[:, 0], w_s * t_s_hi[:, 0], jnp.sum(w_f * t_f_lo[..., 0], 1),
+                           jnp.sum(w_f * t_f_hi[..., 0], 1)], 1)  # fmt: skip
+    one = jnp.ones((), t_lo.dtype)
+    decay = jnp.stack([ratio(t_lo, one), ratio(t_hi, one), ratio(t_s_lo, w_s), ratio(t_s_hi, w_s), ratio(t_f_lo, w_f),
+                       ratio(t_f_hi, w_f)])  # fmt: skip
+    return jnp.stack([t_lo[0], t_hi[0]]), per_frame, decay
 
 
 SENSOR_SLICES = 4  # Gaussians standing for a thick sensor's depth kernel (anri.maths.utils.exponential_slices)
@@ -534,11 +587,14 @@ def _sensor_cells(
         return (ss + var * u[0] ** 2, ff + var * u[1] ** 2, oo, sf + var * u[0] * u[1], so, fo)
 
     out = _window_cells(mu, widened(jnp.mean(v + r**2)), org, row, window, det_shape)
-    frac = jnp.zeros_like(out[0])
-    for k in range(SENSOR_SLICES):
+    frac, per_frame, decay = jnp.zeros_like(out[0]), jnp.zeros_like(out[8][1]), jnp.zeros_like(out[8][2])
+    for k in range(SENSOR_SLICES):  # a mixture over one window: cells and faces add, each face's decay is the largest
         mk = jnp.stack([mu[0] + r[k] * u[0], mu[1] + r[k] * u[1], mu[2]])
-        frac = frac + _window_cells(mk, widened(v[k]), out[-1], row, window, det_shape)[0] / SENSOR_SLICES
-    return (frac, *out[1:])
+        cells = _window_cells(mk, widened(v[k]), out[7], row, window, det_shape)
+        frac = frac + cells[0] / SENSOR_SLICES
+        per_frame = per_frame + cells[8][1] / SENSOR_SLICES
+        decay = jnp.maximum(decay, cells[8][2])
+    return (frac, *out[1:8], (out[8][0], per_frame, decay))  # omega is not changed: its faces are the window's
 
 
 def _beam_fold(pos: jax.Array, mu: jax.Array, shape: tuple, row: dict, geom: dict) -> tuple:
@@ -622,9 +678,17 @@ def _render_peaks(
     window: tuple[int, int, int],
     det_shape: tuple[int, int],
     origins: tuple | None,
+    faces: bool = False,
 ) -> tuple:
-    """:func:`render_peaks`, also returning each peak's share of its omega profile in the scan and the window origins."""
+    """:func:`render_peaks`, also returning each peak's share of its omega profile in the scan and the window origins.
+
+    With faces, also the light beyond each face of each peak's window (:func:`_faces`' order): as a fraction of its
+    Gaussian [B, 6] (the units of captured), in the units of value [B, 6] (each frame's rows and columns weighted by
+    that frame's weight, the frames beyond the window by the weight of the window's end frame), and each face's
+    decay [B, 6].
+    """
     nf = det_shape[1]
+    nfr = row["omega_sorted"].shape[0]
 
     def one(e: jax.Array, h: jax.Array, br: jax.Array, org: tuple | None) -> tuple:
         ubi, pos, hkl = _entry_ubi(entries, e), entries["pos"][e], hkls[h]
@@ -634,8 +698,9 @@ def _render_peaks(
         # the beam's variation within the peak's omega profile folded into its Gaussian; each frame keeps the
         # residual of the true weight (its own dty, any profile) against that expansion, at its mean omega
         mu, shape, beam, (om_c, lb, beta, gam) = _beam_fold(pos, mu, shape, row, geom)
-        frac, inside, fclip, rows, cols, om_fr, in_range, origin = _sensor_cells(mu, mu, shape, org, row, window,
-                                                                                 det_shape, geom)  # fmt: skip
+        frac, inside, fclip, rows, cols, om_fr, in_range, origin, (f_o, f_fr, decay) = _sensor_cells(
+            mu, mu, shape, org, row, window, det_shape, geom
+        )
         d_fr = om_fr - om_c
         log_q = lb + beta * d_fr + 0.5 * gam * d_fr**2
         fw = _frame_weights(pos, om_fr, fclip, row, geom)
@@ -658,9 +723,16 @@ def _render_peaks(
         pixel = rows[:, :, None] * nf + cols[:, None, :]
         pixel_out = jnp.where(use, pixel, 0)
         frames = origin[0] + jnp.arange(window[0])
-        real = (frames >= 0) & (frames < row["omega_sorted"].shape[0])
+        real = (frames >= 0) & (frames < nfr)
         captured = jnp.sum(jnp.where(real[:, None, None], frac, 0.0))  # frames past the scan's ends are clipped copies
-        return frame_out.ravel(), pixel_out.ravel(), value.ravel(), captured, in_range, origin
+        out = (frame_out.ravel(), pixel_out.ravel(), value.ravel(), captured, in_range, origin)
+        if not faces:
+            return out
+        face = jnp.concatenate([f_o, jnp.sum(f_fr, 0)])
+        w = jnp.where(jnp.isfinite(per_frame), amp * per_frame, 0.0)  # [wo] each frame's light per unit of Gaussian
+        ends = jnp.clip(jnp.stack([-origin[0], nfr - 1 - origin[0]]), 0, window[0] - 1)  # the first and last real frame
+        light = jnp.concatenate([f_o * w[ends], jnp.sum(f_fr * w[:, None], 0)])
+        return (*out, (face, jnp.where(valid, light, 0.0), decay))
 
     return jax.vmap(one, in_axes=(0, 0, 0, None if origins is None else 0))(entry, hkl_idx, branch, origins)
 
@@ -957,10 +1029,11 @@ def _render_sharded(
     window: tuple[int, int, int],
     det_shape: tuple[int, int],
     mesh: Mesh,
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+) -> tuple:
     """:func:`render_peaks` then :func:`_merge` (GPUs) or :func:`_compact` (CPUs), split across the devices of ``mesh``.
 
-    Pixels shared between devices or batches (and on CPUs, all duplicates) are merged on the host.
+    Pixels shared between devices or batches (and on CPUs, all duplicates) are merged on the host. Also returns each
+    peak's captured, in_range, and the light beyond each face of its window and its decay (:func:`_faces`).
     """
     reduce = _compact if mesh.devices.flat[0].platform == "cpu" else _merge
 
@@ -974,14 +1047,16 @@ def _render_sharded(
         f2: jax.Array,
         g: dict,
         r: dict,
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-        frame, pixel, value, captured, in_range, _ = _render_peaks(e, h, b, ent, hk, f2, g, r, window, det_shape, None)
+    ) -> tuple:
+        frame, pixel, value, captured, in_range, _, (face, _, decay) = _render_peaks(
+            e, h, b, ent, hk, f2, g, r, window, det_shape, None, faces=True
+        )
         value = jnp.where(lv[:, None], value, 0.0)
         frame, pixel, value, count = reduce(frame, pixel, value)
-        return frame, pixel, value, count[None], captured, in_range
+        return frame, pixel, value, count[None], captured, in_range, face, decay
 
     specs = (P("d"),) * 4 + (P(),) * 5
-    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 6)(
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 8)(
         entry, hkl_idx, branch, live, entries, hkls, F2, geom, row
     )
 
@@ -1215,7 +1290,8 @@ def _splat_kernels(
     tuple
         kernel [nd S, wo, ws, wf]; each window frame's sorted frame (fclip) and mean omega (om_fr), and first slow and
         fast pixel of the kernel at cell (0, 0) (i0, j0), [nd S, wo] each; which window frames are in the scan
-        [nd S, wo]; captured and in_range [nd S], as render_peaks gives them
+        [nd S, wo]; captured and in_range [nd S], as render_peaks gives them; the light beyond each face of the
+        kernel's window and its decay [nd S, 6] (:func:`_faces`)
     """
     wo = window[0]
     nfr = row["omega_sorted"].shape[0]
@@ -1227,18 +1303,20 @@ def _splat_kernels(
             sig = ent["sig_rot"][e] if "sig_rot" in ent else None
             mu_det, shape, valid = _peak_shape(ubi, ent["pos"][e], hkl, etasign, sig, r, g)
             mu = jnp.stack([o[0].astype(mu_det.dtype), o[1].astype(mu_det.dtype), mu_det[2]])
-            frac, _, fclip, _, _, om_fr, in_range, (jo, i0, j0) = _sensor_cells(mu_det, mu, shape, None, r, window,
-                                                                                det_shape, g)  # fmt: skip
+            frac, _, fclip, _, _, om_fr, in_range, (jo, i0, j0), (f_o, f_fr, decay) = _sensor_cells(
+                mu_det, mu, shape, None, r, window, det_shape, g
+            )
             frames = jo + jnp.arange(wo)
             real = (frames >= 0) & (frames < nfr)
             captured = jnp.sum(jnp.where(real[:, None, None], frac, 0.0))
             kernel = jnp.where(real[:, None, None] & valid, frac * f2[h] * _peak_factors(ubi, hkl, etasign, g), 0.0)
-            return kernel, fclip, om_fr, i0, j0, real, captured, in_range
+            face = jnp.concatenate([f_o, jnp.sum(f_fr, 0)])
+            return kernel, fclip, om_fr, i0, j0, real, captured, in_range, face, decay
 
         return jax.vmap(one)(se, sh, sb, so)
 
     specs = (P("d"),) * 4 + (P(),) * 5
-    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 8)(
+    return shard_map(local, mesh=mesh, in_specs=specs, out_specs=(P("d"),) * 10)(
         spot_entry, spot_hkl, spot_branch, spot_origin, entries, hkls, F2, geom, row
     )
 
@@ -1376,8 +1454,8 @@ def _render_windows(
 
     In fixed-size batches split over the devices. Small problems use smaller batches: 1024 peaks per device times a
     power of 4, so a scan compiles few shapes. Each compile takes seconds, and XLA:GPU takes up to a minute for very
-    small batches. Padding peaks are marked not live. Fills stats "captured" and "in_range" at sel, and returns each
-    batch's sparse pixels.
+    small batches. Padding peaks are marked not live. Fills stats "captured", "in_range", "face_light" and "face_decay"
+    at sel, and returns each batch's sparse pixels.
     """
     nd = mesh.size
     per_device = _MIN_BATCH
@@ -1390,12 +1468,14 @@ def _render_windows(
         these = sel[start : start + size]
         idx = [np.pad(x[these], (0, size - these.size)) for x in peaks]
         live = np.arange(size) < these.size
-        fr, px, val, count, cap, inr = _render_sharded(
+        fr, px, val, count, cap, inr, face, decay = _render_sharded(
             *idx, live, entries, hkls, F2, geom, row, window, det_shape, mesh
         )
         parts.append(_shard_pixels(fr, px, val, count, per_device * window[0] * window[1] * window[2]))
         stats["captured"][these] = np.asarray(cap)[: these.size]
         stats["in_range"][these] = np.asarray(inr)[: these.size]
+        stats["face_light"][these] = np.asarray(face)[: these.size]
+        stats["face_decay"][these] = np.asarray(decay)[: these.size]
     return parts
 
 
@@ -1412,14 +1492,14 @@ def _render_spots(
     (S a power of 4, few compiles), with about as many window cells as ``batch`` peaks of ``cells_per_peak`` cells
     would use without splat: their tiles (:func:`_splat_tiles`), their voxel peaks added onto the tiles _SPLAT_CHUNK
     at a time (:func:`_splat_add`), then the convolution (:func:`_splat_out`). Every shape is fixed by (window, tile,
-    S), whatever the voxels. Fills stats "captured" and "in_range" (each spot's, given to its peaks), and returns
-    each batch's sparse pixels.
+    S), whatever the voxels. Fills stats "captured", "in_range", "face_light" and "face_decay" (each spot's kernel's,
+    given to its peaks), and returns each batch's sparse pixels.
     """
     nd = mesh.size
     e, h, b = peaks
     first, count, origin, tile = spots
     wo, ws, wf = window
-    kern = [[] for _ in range(8)]
+    kern = [[] for _ in range(10)]
     size = nd * _SPLAT_SPOTS
     for a in range(0, sel.size, size):
         these = np.resize(sel[a : a + size], size)  # padding repeats spots, then is discarded
@@ -1444,7 +1524,7 @@ def _render_spots(
             spot = np.pad(chunk, (0, per_device * nd - chunk.size))  # padding repeats spot 0, not live
             spot_live = np.arange(spot.size) < chunk.size
             ref = first[spot]
-            kernel, fclip, om_fr, i0, j0, real, cap, inr = (x[place[spot]] for x in kern)
+            kernel, fclip, om_fr, i0, j0, real, cap, inr, face, decay = (x[place[spot]] for x in kern)
             spot_args = (h[ref], b[ref], origin[spot])
             tiles = _splat_tiles((spot.size, wo, t, t), kernel.dtype, mesh)
             # each device's voxel peaks, numbered by their spot's place on the device, _SPLAT_CHUNK at a time
@@ -1463,6 +1543,8 @@ def _render_spots(
             parts.append(_shard_pixels(fr, px, val, cnt, per_shard))
             stats["captured"][peak_of] = np.repeat(np.asarray(cap)[: chunk.size], count[chunk])
             stats["in_range"][peak_of] = np.repeat(np.asarray(inr)[: chunk.size], count[chunk])
+            stats["face_light"][peak_of] = np.repeat(np.asarray(face)[: chunk.size], count[chunk], 0)
+            stats["face_decay"][peak_of] = np.repeat(np.asarray(decay)[: chunk.size], count[chunk], 0)
     return parts
 
 
@@ -1560,7 +1642,14 @@ def render_row(
         with "psf_mix", of its mixture)
         and "in_range" (the fraction of its omega profile within the scan's omega range: below 0.5 for the peaks
         selected beyond the ends of the scan); "window_frames" with max_frames. ``captured / in_range`` is the share
-        of what the scan sees that the window holds
+        of what the scan sees that the window holds. "face_light" [n_peaks, 6]: the fraction of the Gaussian (as
+        captured) beyond each face of the window, in the order: the scan's frames below the window, above it; then,
+        summed over the window's frames, the rows below each frame's row window, above it (every column), and,
+        within the window's rows, the columns below, above. ``captured + face_light.sum(1) == in_range``. With
+        "psf_mix" or "sensor", the components' sum by their shares. "face_decay" [n_peaks, 6]: per face, the largest
+        ratio over the face's Gaussians of the light beyond the face moved one cell out to the light beyond it, so
+        that the light beyond n more cells is at most face_light x face_decay^n (equal frame widths). With splat,
+        both are each spot's kernel's
     """
     mesh = anri.utils.mesh() if mesh is None else mesh
     psf_mix = geom.get("psf_mix")
@@ -1584,7 +1673,8 @@ def render_row(
         e, h, b, cls, classes = row_peaks(entries, hkls_j, geom, row_j, det_shape, window, max_frames, mesh,
                                           select_chunk)  # fmt: skip
     n_peaks = e.size
-    stats = {"n_peaks": n_peaks, "captured": np.zeros(n_peaks), "in_range": np.zeros(n_peaks)}
+    stats = {"n_peaks": n_peaks, "captured": np.zeros(n_peaks), "in_range": np.zeros(n_peaks),
+             "face_light": np.zeros((n_peaks, 6)), "face_decay": np.zeros((n_peaks, 6))}  # fmt: skip
     if splat:
         stats["n_spots"] = 0
     if n_peaks == 0:
@@ -1606,7 +1696,8 @@ def render_row(
         if psf_mix is not None:  # the same arrays and shapes: no new compile per component
             ent_k = {**entries, "density": entries["density"] * frac}
             geom_k = {**geom, "sig_psf": jnp.asarray(sd, dtype=jnp.asarray(geom["sig_psf"]).dtype)}
-            stats_k = {**stats, "captured": np.zeros(n_peaks), "in_range": np.zeros(n_peaks)}
+            stats_k = {**stats, **{k: np.zeros_like(stats[k]) for k in ("captured", "in_range", "face_light",
+                                                                         "face_decay")}}  # fmt: skip
         args = (ent_k, hkls_j, F2_j, geom_k, row_j, det_shape, mesh, batch, stats_k)
         for k, wo_k in enumerate(classes):
             sel = np.flatnonzero(cls == k)
@@ -1617,8 +1708,10 @@ def render_row(
                                        (first, count, origin, tile), *args)  # fmt: skip
             else:
                 parts += _render_windows(sel, (wo_k, ws, wf), (e, h, b), *args)
-        if psf_mix is not None:  # a peak's captured fraction: its components', by their shares of the intensity
-            stats["captured"] += frac * stats_k["captured"]
+        if psf_mix is not None:  # a peak's captured fraction and face light: its components', by their shares of the
+            stats["captured"] += frac * stats_k["captured"]  # intensity (one window: the point spread moves no origin)
+            stats["face_light"] += frac * stats_k["face_light"]
+            stats["face_decay"] = np.maximum(stats["face_decay"], stats_k["face_decay"])
             stats["in_range"] = stats_k["in_range"]
 
     # 3. Merge batches and devices: sort by (frame, pixel), sum duplicates, then drop the pixels below min_value
@@ -1720,8 +1813,8 @@ def render_phases(
     Returns
     -------
     frame, pixel, value, stats
-        As :func:`render_row`, over every phase: "n_peaks" summed, "captured", "in_range" (and "window_frames")
-        concatenated, phase by phase
+        As :func:`render_row`, over every phase: "n_peaks" summed, "captured", "in_range", "face_light", "face_decay"
+        (and "window_frames") concatenated, phase by phase
     """
     if len(phases) == 1:
         entries, hkls, F2 = phases[0]
@@ -1731,7 +1824,7 @@ def render_phases(
                                       np.concatenate([o[2] for o in out]), det_shape[0] * det_shape[1])  # fmt: skip
     frame, pixel, value = _at_least(frame, pixel, value, min_value)
     stats = {"n_peaks": sum(o[3]["n_peaks"] for o in out)}
-    for k in ("captured", "in_range"):
+    for k in ("captured", "in_range", "face_light", "face_decay"):
         stats[k] = np.concatenate([o[3][k] for o in out])
     if all("window_frames" in o[3] for o in out):
         stats["window_frames"] = np.concatenate([o[3]["window_frames"] for o in out])

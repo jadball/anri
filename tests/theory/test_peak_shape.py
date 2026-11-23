@@ -399,6 +399,132 @@ def test_captured_code():
     np.testing.assert_allclose(float(np.sum(np.asarray(frac))), expected, rtol=0, atol=507 * 1e3 * EPS)
 
 
+def test_faces_partition():
+    """:eq:`ps-faces` and :eq:`ps-face-sum`: the cells beyond each face telescope to a tail, and the window's cells and
+    the six faces add up to the scan's light. A window of 2 frames (of a scan of 4), 2 rows and 2 columns per frame,
+    with the tails as symbols: the cell masses of :eq:`ps-factor` are differences of Phi at the cells' edges."""
+    F = sp.Function("Phi")
+    k, K = sp.symbols("k K", integer=True, positive=True)
+    z, h = sp.symbols("z h", real=True)
+    # rows below a face at z (edges z - k h): K of them telescope to Phi(z) - Phi(z - K h), Phi(-oo) = 0
+    assert is_zero(sp.summation(F(z - (k - 1) * h) - F(z - k * h), (k, 1, K)).doit() - (F(z) - F(z - K * h)))
+    assert Phi(-sp.oo) == 0 and Phi(sp.oo) == 1  # K -> oo: no cells left beyond
+    # omega: edges e0..e4, window frames 1 and 2
+    e = sp.symbols("e0:5", real=True)
+    P = [Phi(e[j + 1]) - Phi(e[j]) for j in range(4)]
+    L0, L1 = Phi(e[1]) - Phi(e[0]), Phi(e[4]) - Phi(e[3])
+    captured, L2, L3, L4, L5 = 0, 0, 0, 0, 0
+    for j in (1, 2):
+        r = sp.symbols(f"r{j}_0:3", real=True)  # the row window's edges, standardised by slow given frame j
+        L2 += P[j] * Phi(r[0])
+        L3 += P[j] * Phi(-r[2])  # the upper tail, 1 - Phi(r[2]) (test_upper_tail_mass)
+        for i in (0, 1):
+            p_s = Phi(r[i + 1]) - Phi(r[i])
+            c = sp.symbols(f"c{j}{i}_0:3", real=True)  # the column window's edges, standardised by fast given the row
+            L4 += P[j] * p_s * Phi(c[0])
+            L5 += P[j] * p_s * Phi(-c[2])
+            captured += P[j] * p_s * ((Phi(c[1]) - Phi(c[0])) + (Phi(c[2]) - Phi(c[1])))
+    assert is_zero(captured + L0 + L1 + L2 + L3 + L4 + L5 - (Phi(e[4]) - Phi(e[0])))
+
+
+def _faces_sp(mu: np.ndarray, shape: tuple, edges: np.ndarray, origin: tuple, window: tuple) -> tuple:
+    """:eq:`ps-faces` evaluated with sympy at 30 digits: the six L_k, and per face the largest T(1) / T(0) over its
+    Gaussians (:eq:`ps-face-reach`)."""
+    mu_s, mu_f, mu_o = (sp.Float(x, 30) for x in mu)
+    ss, ff, oo, sf, so, fo = (sp.Float(x, 30) for x in shape)
+    jo, i0, j0 = (np.asarray(x) for x in origin)
+    wo, ws, wf = window
+    n = len(edges) - 1
+    det = ss * oo - so**2
+    g_s, g_o = (sf * oo - fo * so) / det, (fo * ss - sf * so) / det
+    V_f = ff - (g_s * sf + g_o * fo)
+    sd_o = sp.sqrt(oo)
+    E = [sp.Float(x, 30) for x in edges]
+
+    def t(x: sp.Expr) -> sp.Expr:
+        return Phi((x - mu_o) / sd_o)
+
+    lo, hi = min(max(int(jo), 0), n), min(max(int(jo) + wo, 0), n)
+    L = [t(E[lo]) - t(E[0]), t(E[n]) - t(E[hi]), 0, 0, 0, 0]
+    T1 = [t(E[max(lo - 1, 0)]) - t(E[0]), t(E[n]) - t(E[min(hi + 1, n)])]
+    rho = [T1[0] / L[0] if L[0] > 0 else 0, T1[1] / L[1] if L[1] > 0 else 0, 0, 0, 0, 0]
+    for a in range(wo):
+        fr = int(jo) + a
+        if not 0 <= fr < n:
+            continue
+        p_o, m_o, v_o = _n(truncated(E[fr], E[fr + 1], mu_o, sd_o))
+        kappa = so / oo
+        mu_so, var_so = _n((mu_s + kappa * (m_o - mu_o), ss - so**2 / oo + kappa**2 * v_o))
+        sd_so = sp.sqrt(var_so)
+        kk = kappa * v_o / var_so
+        for face, x in ((2, (i0[a] - sp.Rational(1, 2) - mu_so) / sd_so),
+                        (3, (mu_so - i0[a] - ws + sp.Rational(1, 2)) / sd_so)):  # fmt: skip
+            L[face] += p_o * Phi(x)
+            rho[face] = max(rho[face], Phi(x - 1 / sd_so) / Phi(x))
+        for b in range(ws):
+            rw = i0[a] + b
+            p_s, m_s, v_s = _n(truncated(rw - sp.Rational(1, 2), rw + sp.Rational(1, 2), mu_so, sd_so))
+            mean_f = mu_f + g_s * (m_s - mu_s) + g_o * (m_o + kk * (m_s - mu_so) - mu_o)
+            sd_f = sp.sqrt(V_f + g_o**2 * v_o * (1 - kk * kappa) + (g_s + g_o * kk) ** 2 * v_s)
+            for face, x in ((4, (j0[a] - sp.Rational(1, 2) - mean_f) / sd_f),
+                            (5, (mean_f - j0[a] - wf + sp.Rational(1, 2)) / sd_f)):  # fmt: skip
+                L[face] += p_o * p_s * Phi(x)
+                rho[face] = max(rho[face], Phi(x - 1 / sd_f) / Phi(x))
+    return np.array([float(sp.N(x, 30)) for x in L]), np.array([float(sp.N(x, 30)) for x in rho])
+
+
+def test_faces_code():
+    """_window_cells' light beyond each face of a correlated peak's window, and each face's decay, against
+    :eq:`ps-faces` and :eq:`ps-face-reach`; with the window's cells they make up the scan's light (:eq:`ps-face-sum`).
+    Two windows: one cutting the peak on every face, and one reaching past the scan's first frame."""
+    omega = np.arange(-0.2, 0.2001, 0.05)
+    shape = (0.8, 0.5, 0.0016, 0.2, 0.012, -0.008)  # (ss, ff, oo, sf, so, fo): positive definite
+    window = (3, 3, 3)
+    for mu in (np.array([20.3, 30.6, 0.013]), np.array([20.3, 30.6, -0.21])):
+        with float64():
+            r = make_row(omega, np.zeros_like(omega))
+            out = _window_cells(jnp.asarray(mu), tuple(jnp.asarray(x) for x in shape), None, r, window, (64, 64))
+        frac, origin, (f_o, f_fr, decay) = out[0], out[7], out[8]
+        face = np.concatenate([np.asarray(f_o), np.asarray(f_fr).sum(0)])
+        edges = np.asarray(r["omega_edges"])
+        L, rho = _faces_sp(mu, shape, edges, origin, window)
+        assert L.min() >= 0 and L[1] > 1e-3 and L[2:].min() > 1e-3  # every face but the clipped one holds light
+        # each L_k is a sum of at most wo x ws = 9 products of Phi of O(1) arguments, each argument from ~30
+        # operations of condition O(10) (as test_window_cells_code): 1e3 ulps per term, absolute
+        np.testing.assert_allclose(face, L, rtol=0, atol=9 * 1e3 * EPS)
+        # a ratio of two tails, each good to 1e3 ulps relative to its own size where it holds light (Phi is accurate
+        # relative to itself in the lower tail): 2e3 ulps relative
+        np.testing.assert_allclose(np.asarray(decay), rho, rtol=2e3 * EPS, atol=0)
+        real = (int(origin[0]) + np.arange(window[0]) >= 0) & (int(origin[0]) + np.arange(window[0]) < len(omega))
+        in_range = float(sp.N(Phi((edges[-1] - mu[2]) / sp.sqrt(sp.Float(shape[2], 30)))
+                              - Phi((edges[0] - mu[2]) / sp.sqrt(sp.Float(shape[2], 30))), 30))  # fmt: skip
+        # 27 cells and 6 faces, each good to the tolerances above
+        total = np.asarray(frac)[real].sum() + face.sum()
+        np.testing.assert_allclose(total, in_range, rtol=0, atol=(27 + 6 * 9) * 1e3 * EPS)
+        if mu[2] < omega[0]:
+            assert int(origin[0]) < 0 and face[0] == 0.0 and np.asarray(decay)[0] == 0.0  # no frames before the scan
+
+
+def test_face_reach():
+    """:eq:`ps-face-reach`: adding a value at least the mean raises a weighted mean, so the ratios of a log-concave
+    sequence's tails fall, T(m) <= T(0) rho^m; checked on a binned Gaussian's tails; and a mixture's bound."""
+    S, B, b, r_ = sp.symbols("S B b r", positive=True)
+    assert is_zero((S + b * r_) / (B + b) - S / B - b * (r_ * B - S) / (B * (B + b)))
+    bs = sp.symbols("b0:4", positive=True)
+    rs = sp.symbols("r0:4", positive=True)
+    S4, B4 = sum(x * y for x, y in zip(bs, rs)), sum(bs)
+    assert is_zero(r_ * B4 - S4 - sum(x * (r_ - y) for x, y in zip(bs, rs)))  # >= 0 when r >= every r_k
+    # a Gaussian of sd 0.7 in unit cells, its face 0.3 sd from its mean: the tails' ratios fall, T(m) <= T(0) rho^m
+    T = [Phi(sp.Rational(3, 10) / sp.Rational(7, 10) * -1 - sp.Rational(10, 7) * m) for m in range(8)]
+    ratios = [sp.N(T[m + 1] / T[m], 30) for m in range(7)]
+    assert all(x > y for x, y in zip(ratios, ratios[1:]))
+    assert all(sp.N(T[m] - T[0] * ratios[0] ** m, 30) <= 0 for m in range(8))
+    # the mixture: sum_g T_g rho_g^m <= (sum_g T_g) max_g rho_g^m, term by term
+    t1, t2, p1, p2 = sp.symbols("t1 t2 rho1 rho2", positive=True)
+    m = sp.symbols("m", positive=True)
+    assert is_zero((t1 + t2) * p1**m - (t1 * p1**m + t2 * p2**m) - t2 * (p1**m - p2**m))  # >= 0 for rho1 >= rho2
+
+
 def test_make_row_edges():
     """Frame edges are the midpoints between sorted frame centres, the end frames as wide as their neighbours."""
     omega = np.array([0.3, 0.0, 0.1, 0.25, 0.6])

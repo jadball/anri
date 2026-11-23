@@ -197,7 +197,8 @@ a face one pixel out from the core would bound the light two cells further out 7
 
 **Proof:** ``tests/theory/test_moments.py::test_mixture_not_log_concave``
 
-With such spots the exclusion must be bounded per mixture term, each a Gaussian.
+With such spots the exclusion must be bounded per mixture term, each a Gaussian: the renderer's light beyond each
+face, and its decay, are exact per term and summed (:eq:`ps-faces`, :eq:`ps-face-reach`).
 
 Absolute intensities and their gauge
 ------------------------------------
