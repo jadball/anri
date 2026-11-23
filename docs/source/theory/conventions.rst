@@ -23,7 +23,8 @@ Two branches per reflection
 
 Each reflection diffracts at two omegas per turn, one either side of the beam (:doc:`diffraction`). Anri calls them
 branches: ``etasign = +1`` (ImageD11's ``omega1``) and ``-1`` (``omega2``). A reflection :math:`h` gives predictions
-:math:`j = 2h + \text{branch}`.
+:math:`j = 2h + \text{branch}`. For a beam along :math:`x` and an untilted rotation axis, ``etasign`` is the sign of
+:math:`\eta` (:doc:`diffraction`, proved there).
 
 Symbols used throughout
 -----------------------

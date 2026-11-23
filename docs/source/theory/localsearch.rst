@@ -4,7 +4,8 @@ Coarse to fine in orientation and space
 =======================================
 
 The search grid (:doc:`search`) puts each orientation up to :math:`\Delta_{\max}` from the truth
-(:eq:`srch-cubic-delta`): 0.87° for a 1° cubic grid, 2.6° for 3°. The fit stage refines the filter's orientations
+(:eq:`srch-cubic-delta`): 0.87° for a 1° cubic grid, 2.6° for 3°
+(``tests/theory/test_localsearch.py::test_worst_cases_quoted``). The fit stage refines the filter's orientations
 before and while it fits the voxels (:doc:`likelihood`), without a finer grid over the whole fundamental zone, and
 sizes each level's voxels to the orientations' error.
 
@@ -25,16 +26,20 @@ lands closer to it than the grain's own grid point lands to the grain, that twin
 better, and takes occupancy where there is no twin.
 
 **The tomography.** A small rotation :math:`\vec{\delta}` of the lattice moves a reflection in :math:`\omega` by
-:math:`\Delta\omega = -\delta_z - \delta_y \cot\eta`. The voxel at distance :math:`r` from the rotation axis, at angle
-:math:`\phi`, is in the beam at :math:`y = r \sin(\omega - \phi)`, so the predicted row moves by
+:math:`\Delta\omega = -\delta_z - \delta_y \cot\eta` (:eq:`dif-rotation-motion`), up to :math:`e/|\sin\eta|` for an
+error up to :math:`e`. The voxel at :math:`(x_s, y_s) = r(\cos\phi, \sin\phi)` is in the beam at
+:math:`\text{dty} - y_0 = -r \sin(\omega + \phi)` (:eq:`dif-dty`, beam along :math:`x`), so the predicted row moves by
 
 .. math::
     :label: ls-row-shift
 
-    \Delta y = r \cos(\omega - \phi)\, \Delta\omega,
+    \Delta y = -r \cos(\omega + \phi)\, \Delta\omega,
 
-up to :math:`R\,e` for orientations off by up to :math:`e` in a sample of radius :math:`R`. Voxels much narrower than
-that cannot be fitted consistently with those orientations.
+**Proof:** ``tests/theory/test_localsearch.py::test_row_shift`` (to first order in :math:`\Delta\omega`).
+
+at most :math:`r|\Delta\omega|`: up to :math:`R\,e` in a sample of radius :math:`R` for a reflection at
+:math:`|\sin\eta| = 1`, and :math:`R\,e/|\sin\eta|` for the others (up to 5 times more at ``etacut`` 0.2). Voxels much
+narrower than that cannot be fitted consistently with those orientations.
 
 Refining on the row-summed data
 -------------------------------
@@ -49,7 +54,9 @@ rotations of a :math:`3 \times 3 \times 3` grid around it,
     \quad a, b, c \in \{-1, 0, 1\},
 
 with :math:`\matr{R}(\vec{r})` the exact rotation by the rotation vector :math:`\vec{r}` about sample axes (the
-middle child is :math:`\matr{U}` itself). The children are :math:`s/3` apart and their cells (approximately) tile the
+middle child is :math:`\matr{U}` itself).
+
+**Definition:** the children; ``tests/theory/test_localsearch.py::test_children_code`` checks the code against it. The children are :math:`s/3` apart and their cells (approximately) tile the
 parent's. All of them are fitted to the histogram summed over the rows by the filter's orientation fit
 (:doc:`search`), and those with a likelihood ratio above the filter's ``min_lr`` are kept (at most ``keep``). Each round
 divides the worst case by 3; they stop at ``refine_to`` (0.3°, a third of the bins). On the phantom, a 3° grid took 2
@@ -68,8 +75,13 @@ each of the ``levels`` after it subdivides the orientations by 3 again, with vox
 
     g_k = \max\!\left(1, \left\lceil \frac{R\, e / 3^k}{\Delta y_{\mathrm{step}}} \right\rceil \right)
 
-rows (:eq:`ls-row-shift`; :math:`e` the worst case after refining), the last level always on the dty step. On DTL1z45
-of ma4752 (:math:`R` = 141 µm, 0.25 µm steps): 0.29° on 0.75 µm voxels, then 0.096° on 0.25 µm. A coarser level sums
+rows (:eq:`ls-row-shift`; :math:`e` the worst case after refining), the last level always on the dty step.
+
+**Definition:** Anri's voxel widths, sized for reflections at :math:`|\sin\eta| = 1`;
+``tests/theory/test_localsearch.py::test_level_rows_code`` checks the code against it.
+
+On DTL1z45 of ma4752 (:math:`R` = 141 µm, 0.25 µm steps), refined to 0.29° (a 1° grid once or a 3° grid twice):
+0.29° on 0.75 µm voxels, then 0.096° on 0.25 µm (``tests/theory/test_localsearch.py::test_level_rows_quoted``). A coarser level sums
 the histogram's rows in groups (:func:`~anri.index.data.coarsen_rows`, :func:`~anri.index.data.coarsen_scan`).
 
 From one level to the next, each voxel keeps its orientations holding at least ``min_share`` (1%) of its occupancy,

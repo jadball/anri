@@ -23,6 +23,10 @@ compute each transform below with Anri's functions and check it.
 
 **Code:** :func:`anri.maths.rotation.rot_x`, :func:`anri.maths.rotation.rot_y`, :func:`anri.maths.rotation.rot_z`.
 
+``tests/theory/test_frames.py::test_rotations_right_handed`` proves them proper rotations whose derivative at zero is
+:math:`[\hat{e}]_\times`, so they turn vectors right-handedly; ``tests/theory/test_frames.py::test_rotations_code``
+checks the functions against them.
+
 Miller indices
 --------------
 
@@ -38,7 +42,11 @@ A reflection is labelled by integer Miller indices :math:`\vec{h} = (h, k, l)`. 
 with :math:`\vec{a}_i = (\vec{a}, \vec{b}, \vec{c})` the real-space and :math:`\vec{a}^*_j` the reciprocal basis
 vectors. There is no factor of :math:`2\pi` (:doc:`conventions`). The lattice parameters
 :math:`(a, b, c, \alpha, \beta, \gamma)` and :math:`(a^*, b^*, c^*, \alpha^*, \beta^*, \gamma^*)` follow from each other
-through the metric tensors :math:`\matr{G} = [\vec{a}_i \cdot \vec{a}_j]` and :math:`\matr{G}^* = \matr{G}^{-1}`.
+through the metric tensors :math:`\matr{G} = [\vec{a}_i \cdot \vec{a}_j]` and :math:`\matr{G}^* = \matr{G}^{-1}`: with the
+:math:`\vec{a}_i` as the rows of a matrix :math:`\matr{A}`, the :math:`\vec{a}^*_j` are the rows of :math:`\matr{A}^{-T}`.
+
+**Definition:** the reciprocal basis, and :math:`d^*`. **Proof:** ``tests/theory/test_frames.py::test_reciprocal_metric``
+(:math:`\matr{G}^* = \matr{G}^{-1}`), ``tests/theory/test_frames.py::test_metric_code``.
 
 **Code:** :func:`anri.crystal.lattice.lpars_to_mt`, :func:`anri.crystal.lattice.mt_to_rmt`,
 :func:`anri.crystal.lattice.mt_to_lpars`.
@@ -67,6 +75,9 @@ The columns of :math:`\matr{B}` are :math:`\vec{a}^*`, :math:`\vec{b}^*`, :math:
 :math:`\matr{B}^T\matr{B} = \matr{G}^*`. (FABLE writes the last element as :math:`c^* \sin\beta^* \sin\alpha`, which
 equals :math:`1/c`.)
 
+**Cited:** [BusingLevy1967]_. **Proof:** ``tests/theory/test_frames.py::test_B_matrix`` (:math:`\matr{B}^T\matr{B} =
+\matr{G}^*` for any lattice, and FABLE's last element is :math:`1/c`), ``tests/theory/test_frames.py::test_B_code``.
+
 **Code:** :func:`anri.crystal.lattice.lpars_rlpars_to_B`, :func:`anri.crystal.lattice.lpars_to_B`,
 :func:`anri.crystal.structure.B_matrix`.
 
@@ -91,7 +102,11 @@ The orientation :math:`\matr{U}`, a proper rotation, takes the crystal Cartesian
 A strained crystal has its own :math:`\matr{U}\matr{B}`, no longer :math:`\matr{U}` times the reference
 :math:`\matr{B}`, so Anri carries the UBI, :math:`(\matr{U}\matr{B})^{-1}`, which holds orientation and strain together.
 The rows of the UBI are the real-space lattice vectors :math:`\vec{a}`, :math:`\vec{b}`, :math:`\vec{c}` in the sample
-frame, since :math:`h_i = \vec{a}_i \cdot \vec{g}`.
+frame, since :math:`h_i = \vec{a}_i \cdot \vec{g}`, and :math:`\text{UBI}\,\text{UBI}^T = (\matr{B}^T\matr{B})^{-1} =
+\matr{G}` whatever :math:`\matr{U}`.
+
+**Definition:** the orientation. **Proof:** ``tests/theory/test_frames.py::test_ubi``,
+``tests/theory/test_frames.py::test_ubi_code``.
 
 **Code:** :func:`anri.crystal.lattice.U_B_to_UBI`, :func:`anri.crystal.lattice.UBI_to_mt`,
 :func:`anri.maths.utils.inv3`.
@@ -132,7 +147,11 @@ lab at
 
 with :math:`\matr{W}`, :math:`\matr{C}`, :math:`\matr{R}` right-handed rotations by wedge, chi and ω, and
 :math:`y_0` the dty at which the rotation axis crosses the beam. A direction (a reflection :math:`\vec{g}_s`, a
-wave-vector) is not translated: :math:`\vec{g}_{\text{lab}} = \matr{W}\matr{C}\matr{R}(\omega)\,\vec{g}_s`.
+wave-vector) is not translated: :math:`\vec{g}_{\text{lab}} = \matr{W}\matr{C}\matr{R}(\omega)\,\vec{g}_s`. The inverse
+is :math:`\vec{v}_s = \matr{R}^T\matr{C}^T\matr{W}^T (\vec{v}_{\text{lab}} - (0, \text{dty} - y_0, 0))`.
+
+**Definition:** the goniometer stack. **Proof:** ``tests/theory/test_frames.py::test_stack_inverse``,
+``tests/theory/test_frames.py::test_stack_code``.
 
 **Code:** :func:`anri.geom.gonio.sample_to_lab`, :func:`anri.geom.gonio.lab_to_sample`.
 
@@ -157,7 +176,8 @@ wave-vector) is not translated: :math:`\vec{g}_{\text{lab}} = \matr{W}\matr{C}\m
 directions across it are horizontal, :math:`\hat{e}_h = \hat{z} \times \hat{k} / |\hat{z} \times \hat{k}|`, and
 vertical, :math:`\hat{e}_v = \hat{k} \times \hat{e}_h`. For a beam along :math:`x` they are :math:`\hat{y}_l` and
 :math:`\hat{z}_l`. Divergence, polarisation and the beam's profile are defined along these, so they follow the beam
-wherever it points.
+wherever it points. They are orthonormal and right-handed, :math:`\hat{e}_h \times \hat{e}_v = \hat{k}` (proof:
+``tests/theory/test_frames.py::test_beam_frame``, ``tests/theory/test_frames.py::test_beam_frame_code``).
 
 **Code:** :func:`anri.geom.beam.beam_basis`.
 
@@ -176,7 +196,11 @@ so for a beam along :math:`x`, :math:`\eta = \operatorname{atan2}(-k_y, k_z)`: :
 o'clock on the detector, looking downstream), :math:`\eta = 90°` is at 3 o'clock (towards :math:`-y`) and
 :math:`\pm 180°` is straight down. That is FABLE's :math:`\eta`: positive clockwise looking downstream, zero upwards.
 Conversely :math:`\hat{k}_{\text{out}} = (\cos 2\theta,\ -\sin 2\theta \sin\eta,\ \sin 2\theta \cos\eta)` for a beam
-along :math:`x` (FABLE equation 2.16).
+along :math:`x` (FABLE equation 2.16), the case of :eq:`dif-kout` for a beam along :math:`x`, which inverts this for
+any beam.
+
+**Definition:** FABLE's :math:`\eta`. **Proof:** ``tests/theory/test_diffraction.py::test_kout`` (the inverse),
+``tests/theory/test_frames.py::test_eta_code``.
 
 **Code:** :func:`anri.diffract.scatter.k_out_to_tth_eta`, :func:`anri.diffract.scatter.tth_eta_to_k_out`.
 
@@ -198,6 +222,8 @@ where :math:`(y_{\text{det}}, z_{\text{det}})` are FABLE's detector coordinates:
 downstream, :math:`y_{\text{det}}` along :math:`\hat{y}_l` (left) and :math:`z_{\text{det}}` along :math:`\hat{z}_l`
 (up), for an untilted detector. With the identity, slow runs up and fast to the left, and pixel (0, 0) is at the lower
 right. The other seven choices (sign changes and a transpose) flip or transpose the image; FABLE tabulates them.
+
+**Definition:** the detector's orientation. **Proof:** ``tests/theory/test_frames.py::test_omatrix_code``.
 
 **Code:** :func:`anri.geom.detector.detector_orientation_matrix`.
 
@@ -228,12 +254,18 @@ with the pixel sizes :math:`p_y`, :math:`p_z`, the beam centre :math:`(z_{\text{
 rotation axis to where the beam meets the detector. These are ImageD11's parameters, and FABLE's "detector tilts I"
 (its equations 2.6 and 2.17), in which the beam centre is given in the tilted detector's pixels. Anri does not use
 FABLE's "detector tilts II", which gives the origin in the lab frame instead; its equation 2.27 converts between them.
+The code builds it as :math:`\matr{R}_x\matr{R}_y\matr{R}_z\,\matr{P}\,\matr{O}\,\operatorname{diag}(p_z, p_y, 1)\,(s -
+z_{\text{center}}, f - y_{\text{center}}, 0)^T + (L, 0, 0)^T`, with :math:`\matr{P}` the permutation taking
+:math:`(z', y', 0)` to :math:`(0, y', z')`; the detector tilts are in radians.
+
+**Definition:** ImageD11's detector parameters. **Proof:** ``tests/theory/test_frames.py::test_detector_factors`` (the
+code's product is this equation), ``tests/theory/test_frames.py::test_detector_code``.
 
 **Code:** :func:`anri.geom.detector.detector_transforms`, :func:`anri.geom.detector.detector_rotation_matrix`,
 :func:`anri.geom.detector.det_to_lab`, :func:`anri.geom.detector.lab_to_det`.
 
 For the ray trace, the transform is reduced to three vectors in the lab: pixel (0, 0) and one-pixel steps along slow
-and fast. A diffracted ray is then intersected with the detector plane by :eq:`dif-raytrace`.
+and fast, the derivatives of :eq:`frm-det` in :math:`s` and :math:`f` (constant, the detector being a plane). A diffracted ray is then intersected with the detector plane by :eq:`dif-raytrace`.
 
 **Code:** :func:`anri.geom.detector.detector_basis_vectors_lab`, :func:`anri.geom.detector.raytrace_to_det`.
 

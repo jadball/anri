@@ -17,11 +17,25 @@ Reflections and rings
 ---------------------
 
 Every :math:`\vec{h}` with :math:`d^* = |\matr{B}\vec{h}| \le d^*_{\max}` is listed, capped at :math:`2/\lambda`
-(:math:`2\theta = 180°`). The space group's systematic absences are removed: :math:`\vec{h}` is absent if some operation
+(:math:`2\theta = 180°`, by :eq:`dif-bragg`). The search over :math:`\vec{h}` is bounded by
+
+.. math::
+    :label: cry-bound
+
+    |h_i| = |\vec{a}_i \cdot \vec{g}| \le |\vec{a}_i|\, d^*_{\max},
+
+Cauchy-Schwarz, with :math:`|\vec{a}_i|` the lengths :math:`a, b, c` of the direct axes.
+
+**Proof:** ``tests/theory/test_crystal.py::test_index_bound``, ``tests/theory/test_crystal.py::test_reflections_code``.
+
+The space group's systematic absences are removed: :math:`\vec{h}` is absent if some operation
 :math:`(\matr{R}, \vec{t})` of the space group has :math:`\vec{h}\matr{R} = \vec{h}` and :math:`\vec{h} \cdot \vec{t}`
 not an integer, since then :math:`F(\vec{h}) = e^{2\pi i\, \vec{h} \cdot \vec{t}} F(\vec{h}) = 0`. That covers lattice
 centring, screw axes and glide planes. Reflections absent for other reasons (atoms on special positions) stay, and their
-structure factor is zero.
+structure factor is zero: in Fd-3m, 222 is allowed by the space group and zero only for the diamond structure. The
+transformation :math:`\vec{h} \cdot (\matr{R}\vec{x} + \vec{t}) = (\matr{R}^T\vec{h}) \cdot \vec{x} + \vec{h} \cdot \vec{t}` is
+proved in ``tests/theory/test_crystal.py::test_hkl_transform``; ``tests/theory/test_crystal.py::test_allowed_code``
+checks the absences of Fm-3m, Im-3m and Fd-3m.
 
 **Code:** :func:`anri.crystal.structure.reflections`, :func:`anri.crystal.lattice.allowed_hkls`.
 
@@ -43,7 +57,14 @@ fractional coordinates acts on reflections as :math:`\vec{h} \to \matr{R}^T\vec{
 
     \matr{S} = \matr{B}\, \matr{R}^T \matr{B}^{-1}, \qquad \matr{R} \to \matr{R} \det \matr{R}.
 
-That gives 24 rotations for m-3m, down to 1 for -1.
+:math:`\matr{S}\matr{B}\vec{h} = \matr{B}(\matr{R}^T\vec{h})` is another reflection, and :math:`\matr{S}` is a rotation:
+:math:`\matr{S}^T\matr{S} = \matr{B}^{-T}\matr{R}\matr{G}^*\matr{R}^T\matr{B}^{-1}`, the identity because a symmetry
+operation keeps the metric, :math:`\matr{R}\matr{G}^*\matr{R}^T = \matr{G}^*`, and :math:`\det(\matr{R}\det\matr{R}) = 1`.
+That gives 24 rotations for m-3m, 12 for m-3 and 6/mmm, 8 for 4/mmm, 6 for 6/m and -3m, 4 for 4/m and mmm, 3 for -3,
+2 for 2/m and 1 for -1.
+
+**Proof:** ``tests/theory/test_crystal.py::test_laue`` (the metric kept by every operation of each Laue class, on its
+lattice with free parameters, and the counts), ``tests/theory/test_crystal.py::test_laue_code``.
 
 **Code:** :func:`anri.crystal.orientation.laue_rotations`.
 
@@ -64,6 +85,10 @@ with occupancy :math:`o_a`, atomic form factor :math:`f_a`, anomalous dispersion
 isotropic displacement :math:`B_a = 8\pi^2 U_{\text{iso}}` and fractional position :math:`\vec{x}_a`. Anri does not
 compute it itself: Dans Diffraction [DansDiffraction]_ reads the CIF and evaluates it. Without displacement parameters
 in the CIF there is no Debye-Waller fall-off with :math:`s`, and Anri warns.
+
+**Definition:** the kinematic structure factor, as Dans Diffraction [DansDiffraction]_ evaluates it; Anri has no code
+of its own to check against it. **Proof:** ``tests/theory/test_crystal.py::test_structure_factor_s``
+(:math:`s = d^*/2`).
 
 **Code:** :func:`anri.crystal.structure.structure_factors`.
 

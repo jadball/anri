@@ -16,6 +16,8 @@ extinction factor folded in when a phase has one, :ref:`theory_extinction`), the
 :math:`w_{\text{beam}}`, and a transmission :math:`T`. The renderer then spreads :math:`I` over
 pixels and frames (:doc:`peak_shape`).
 
+**Definition:** the kinematic integrated intensity of a rotation scan; each factor is derived below.
+
 **Code:** :func:`anri.fwd.render.render_peaks`.
 
 The indexer uses the same factors in its system matrix (:doc:`indexing`). Densities are relative: there is no absolute
@@ -40,6 +42,9 @@ where the second form is ImageD11's ``refinegrains.lf`` [ImageD11]_. Kabsch writ
 the omega axis tilted by wedge and chi. :math:`L` diverges as :math:`\sin\eta \to 0`: reflections near the rotation axis
 pass slowly through the Ewald sphere, which is also why their peaks are wide in omega (:ref:`theory_rotation_motion`).
 
+**Cited:** [Kabsch1988]_. **Proof:** ``tests/theory/test_intensity.py::test_lorentz_vertical`` (the triple product is
+:math:`-\sin 2\theta\sin\eta`), ``tests/theory/test_intensity.py::test_lorentz_code``.
+
 **Code:** :func:`anri.diffract.factors.lorentz`.
 
 Polarisation factor
@@ -53,6 +58,9 @@ horizontal, 0: unpolarised),
 
     P = \tfrac{1}{2}(1 + p)\left(1 - (\hat{k}_{\text{out}} \cdot \hat{e}_h)^2\right)
       + \tfrac{1}{2}(1 - p)\left(1 - (\hat{k}_{\text{out}} \cdot \hat{e}_v)^2\right).
+
+**Cited:** [Kabsch1988]_ [Kahn1982]_. **Proof:** ``tests/theory/test_intensity.py::test_polarisation_forms`` (the
+unpolarised form and Kahn et al.'s), ``tests/theory/test_intensity.py::test_polarisation_code``.
 
 For a beam along :math:`x` this is ImageD11's ``refinegrains.polarization`` with ``eta0 = 0``. For :math:`p = 0` it is
 the familiar :math:`(1 + \cos^2 2\theta)/2`. It is Kabsch's vector form [Kabsch1988]_ (p. 922), whose field lies along
@@ -75,41 +83,143 @@ same flux:
 .. math::
     :label: int-profile
 
-    p(u) = \frac{1}{w}\left[\Phi\!\left(\frac{u + w/2}{\sigma}\right) - \Phi\!\left(\frac{u - w/2}{\sigma}\right)\right],
+    p(u) = \frac{1}{w}\left[\Phi\!\left(\frac{u + w/2}{\sigma}\right) - \Phi\!\left(\frac{u - w/2}{\sigma}\right)\right]
+    = \frac{1}{w}\int_{-w/2}^{w/2} \frac{1}{\sigma}\varphi\!\left(\frac{u - c}{\sigma}\right) dc,
 
 with :math:`\Phi` the standard normal cumulative distribution. A pencil beam is narrow both ways, a line beam wide one
 way, a box beam wide both ways.
 
+**Definition:** the family of beam profiles. **Proof:** ``tests/theory/test_intensity.py::test_profile`` (the two forms
+agree, and the profile integrates to 1).
+
 **Anri's choice:** this family covers the ID11 beams (Gaussian focused beams, slit-defined flat tops) with two numbers
 per direction; the beam's width is measured per experiment.
 
-How much of a voxel the beam lights is :math:`p` integrated over the voxel. Horizontally, a square voxel of side :math:`a` turned
-by :math:`\omega` has a chord along the beam that is a trapezoid in the across-beam coordinate :math:`u`, with half-widths
-:math:`\tfrac{a}{2}(|\cos\omega| + |\sin\omega|)` at its base and :math:`\tfrac{a}{2}\,\big||\cos\omega| - |\sin\omega|\big|` at its
-top, and area :math:`a^2`. The integral of :math:`p` against it is closed-form, from the first and second antiderivatives of the
-Gaussian cumulative distribution:
+How much of a voxel the beam lights is :math:`p` integrated over the voxel. It needs the first and second
+antiderivatives of the Gaussian cumulative distribution, both vanishing at :math:`-\infty`:
 
 .. math::
     :label: int-ramp
 
-    \int \Phi\!\left(\frac{x}{\sigma}\right) dx = x\,\Phi\!\left(\frac{x}{\sigma}\right) + \sigma\,\varphi\!\left(\frac{x}{\sigma}\right),
+    R_1(x) = \int_{-\infty}^x \Phi\!\left(\frac{t}{\sigma}\right) dt = x\,\Phi\!\left(\frac{x}{\sigma}\right) + \sigma\,\varphi\!\left(\frac{x}{\sigma}\right),
     \qquad
-    \iint \Phi\!\left(\frac{x}{\sigma}\right) = \frac{x^2 + \sigma^2}{2}\,\Phi\!\left(\frac{x}{\sigma}\right) + \frac{x\sigma}{2}\,\varphi\!\left(\frac{x}{\sigma}\right).
+    R_2(x) = \int_{-\infty}^x R_1 = \frac{x^2 + \sigma^2}{2}\,\Phi\!\left(\frac{x}{\sigma}\right) + \frac{x\sigma}{2}\,\varphi\!\left(\frac{x}{\sigma}\right).
 
-**Code:** :func:`anri.geom.beam.chord_weight`, :func:`anri.maths.utils.ramp_integral`,
-:func:`anri.maths.utils.ramp_integral2`.
+**Proof:** ``tests/theory/test_intensity.py::test_ramp_integrals``, ``tests/theory/test_intensity.py::test_ramp_integrals_code``.
 
-Vertically, a column voxel (2D map) takes the whole profile, which integrates to 1; a beam tilted by :math:`\alpha` out
-of the horizontal plane travels :math:`1/\cos\alpha` further through it. A cube (3D map) integrates the vertical profile
-over its height.
+**Code:** :func:`anri.maths.utils.ramp_integral`, :func:`anri.maths.utils.ramp_integral2`.
+
+So the profile's cumulative distribution is :math:`P_1(u) = [R_1(u + w/2) - R_1(u - w/2)]/w` and its integral
+:math:`P_2(u) = [R_2(u + w/2) - R_2(u - w/2)]/w` (for a Gaussian, :math:`\Phi(u/\sigma)` and :math:`R_1(u)`).
+
+Horizontally, a square voxel of side :math:`a` turned by :math:`\omega`, centred :math:`u` across the beam, has a chord
+along the beam that is a trapezoid :math:`t(y)` in the across-beam offset :math:`y`, with half-widths
+:math:`A = \tfrac{a}{2}(|\cos\omega| + |\sin\omega|)` at its base and :math:`B = \tfrac{a}{2}\,\big||\cos\omega| - |\sin\omega|\big|`
+at its top, plateau :math:`h = a^2/(A + B)` and area :math:`a^2`. The trapezoid is a sum of four ramps
+:math:`\rho(y) = \max(y, 0)`, and a ramp convolved with the profile is :math:`P_2`, so
+
+.. math::
+    :label: int-chord
+
+    W(u, \omega) = \int t(y)\, p(u + y)\, dy
+    = \frac{h}{A - B}\Big[P_2(u + A) - P_2(u + B) - P_2(u - B) + P_2(u - A)\Big],
+    \qquad
+    W = h\,\big[P_1(u + A) - P_1(u - A)\big] \ \ (A = B).
+
+**Proof:** ``tests/theory/test_intensity.py::test_chord_trapezoid`` (the chord's shape and area; the four ramps, region
+by region), ``tests/theory/test_intensity.py::test_chord_convolution`` (a ramp convolved with the Gaussian is :math:`R_1`,
+and averaged over the flat top :math:`P_2`), ``tests/theory/test_intensity.py::test_chord_weight_code``.
+
+**Code:** :func:`anri.geom.beam.chord_weight`.
+
+Near :math:`\omega = 0°, 90°, \ldots` the four-term difference cancels as :math:`A - B \to 0`, and the code switches to the
+rectangle's form when :math:`A - B < 10^{-6} a` (float64; :math:`3 \times 10^{-3} a` in float32), balancing the two errors.
+
+Vertically, a column voxel (2D map) takes the whole profile, which integrates to 1. A cube (3D map) of side :math:`a`,
+its centre :math:`\Delta z` above the beam's centre line, takes its height's share. A beam tilted by :math:`\alpha` out of
+the horizontal plane travels :math:`1/\cos\alpha` further through a voxel, and its vertical profile is measured
+vertically:
+
+.. math::
+    :label: int-beam-weight
+
+    w_{\text{beam}} = \frac{W(u, \omega - \psi)}{\cos\alpha} \times
+    \begin{cases} 1 & \text{column} \\ P_{1,v}(\Delta z + a/2) - P_{1,v}(\Delta z - a/2) & \text{cube} \end{cases},
+
+with :math:`\psi` the beam's azimuth and :math:`P_{1,v}` the vertical profile's cumulative distribution, its width and
+:math:`\sigma` divided by :math:`\cos\alpha`.
+
+**Definition:** the beam's weight of a voxel. For a tilted beam through a cube it treats the horizontal and vertical
+directions separately, which is exact only for :math:`\alpha = 0`. Checked against the code, for a horizontal beam, by
+``tests/theory/test_intensity.py::test_beam_weight_code``.
 
 **Code:** :func:`anri.geom.beam.beam_weight`, :func:`anri.geom.beam.beam_offsets`.
 
-The weight is evaluated at each frame's own dty and at the mean omega of the peak's intensity in that frame: in a fly
-scan dty moves during the rotation, and a voxel off the axis moves across the beam as omega turns, so a peak spread over
-many frames is lit differently in each.
+The beam's weight within a peak
+-------------------------------
+
+A voxel off the axis moves across the beam as omega turns, so within a peak's omega profile (often narrower than a
+frame) the beam's weight changes. The renderer expands :math:`\log w_{\text{beam}}` to second order in omega about the
+centroid, :math:`q(\omega) = \exp(\ell + \beta d + \tfrac{1}{2}\gamma d^2)` with :math:`d = \omega - \mu_\omega` (by automatic
+differentiation, any profile, at the row's middle dty), and multiplies the peak's Gaussian by it:
+
+.. math::
+    :label: int-fold
+
+    \int N(\omega; \mu_\omega, \Sigma_{\omega\omega})\, q(\omega)\, d\omega
+    = e^{\ell + \beta^2 \Sigma'_{\omega\omega}/2} \sqrt{\frac{\Sigma'_{\omega\omega}}{\Sigma_{\omega\omega}}},
+    \qquad
+    \Sigma'_{\omega\omega} = \frac{1}{1/\Sigma_{\omega\omega} - \gamma},
+    \qquad
+    \mu'_\omega = \mu_\omega + \Sigma'_{\omega\omega}\beta.
+
+Slow and fast keep their regression on omega (slopes :math:`\kappa_s`, :math:`\kappa_f`), so
+:math:`\Sigma'_{s\omega} = \kappa_s \Sigma'_{\omega\omega}`, :math:`\Sigma'_{ss} = \Sigma_{ss} - \kappa_s^2(\Sigma_{\omega\omega} - \Sigma'_{\omega\omega})`
+(likewise for fast, and :math:`\Sigma'_{sf} = \Sigma_{sf} - \kappa_s\kappa_f(\Sigma_{\omega\omega} - \Sigma'_{\omega\omega})`), and
+the centroid moves by :math:`\kappa_s (\mu'_\omega - \mu_\omega)` on the detector.
+
+**Proof:** ``tests/theory/test_intensity.py::test_beam_fold`` (the Gaussian integral, the new mean and variance, the
+conditional kept), ``tests/theory/test_intensity.py::test_beam_fold_code`` (the code's fold against :eq:`int-fold`, from its
+own :math:`\ell, \beta, \gamma`).
 
 **Code:** :func:`anri.fwd.render.render_peaks`.
+
+It is exact for a log-quadratic weight: a Gaussian beam, a voxel small compared with it, and motion across the beam linear
+over the peak. The renderer clamps :math:`\gamma \le 0` (the fold never widens a peak: at a square voxel's kinks the point
+curvature can come out large and positive) and :math:`|\beta| \le 3/\sqrt{\Sigma'_{\omega\omega}}`.
+
+Each frame :math:`f` then keeps the residual of the true weight against the expansion, at the mean omega
+:math:`\bar\omega_f` of the peak's mass in it and at the frame's own dty :math:`y_f`:
+
+.. math::
+    :label: int-frame-weight
+
+    I_f = I\; e^{\ell + \beta^2\Sigma'_{\omega\omega}/2}\sqrt{\Sigma'_{\omega\omega}/\Sigma_{\omega\omega}}\;
+    \frac{w_{\text{beam}}(\bar\omega_f, y_f)}{q(\bar\omega_f)}\; P'(\text{frame } f),
+
+with :math:`P'` the folded Gaussian's mass in the frame, before it is spread over pixels.
+
+**Definition:** Anri's per-frame weight. It is exact when :math:`w_{\text{beam}}/q` is constant over each frame's share of
+the peak (a log-quadratic weight, dty fixed), and right to first order in the residual's variation within a frame
+otherwise. Where dty differs between frames (a fly scan), the residual carries it.
+
+**Code:** :func:`anri.fwd.render.render_peaks`.
+
+Within one frame the code takes one dty reading. If dty moves by :math:`\Delta` during the frame, the voxel sees the
+profile averaged over that motion, a convolution with a box of width :math:`\Delta`:
+
+.. math::
+    :label: int-dty-motion
+
+    \sigma^2 \to \sigma^2 + \frac{\Delta^2}{12}, \qquad \text{mean unchanged}.
+
+**Proof:** ``tests/theory/test_intensity.py::test_dty_motion``.
+
+**Anri's rule:** a frame's weight is the profile integrated over the voxel and over the frame's motion, in omega and in
+dty. The renderer integrates omega within a frame (:eq:`int-fold`, :eq:`int-frame-weight`) but takes one dty per frame:
+it errs by the profile's change over :math:`\Delta`, second order, of relative size about :math:`\Delta^2/(12\sigma^2)`.
+In a fly scan where dty moves by one step over a turn of a few thousand frames, :math:`\Delta` is below a thousandth of
+the step.
 
 .. _theory_absorption:
 
@@ -123,8 +233,14 @@ through :math:`L_{\text{out}}` (Beer-Lambert):
     :label: int-absorption
 
     T = \exp\left(-\mu\,(L_{\text{in}} + L_{\text{out}})\right),
+    \qquad
+    L = \frac{D(v, \phi)}{\max(\cos\epsilon,\ 0.05)},
 
-with :math:`\mu` from :func:`anri.crystal.structure.attenuation`.
+with :math:`\mu` from :func:`anri.crystal.structure.attenuation`, and each path :math:`L` from the voxel's in-plane
+distance :math:`D(v, \phi)` to the sample's edge and the ray's elevation :math:`\epsilon` (below).
+
+**Definition:** Beer-Lambert attenuation along the two paths, through a prism. Checked against the code by
+``tests/theory/test_intensity.py::test_path_code``.
 
 **Code:** :func:`anri.geom.paths.transmission`.
 
@@ -176,6 +292,8 @@ With the diffracting power per unit length ([BeckerCoppens1974]_, equation 5)
 
     Q = \left(\frac{r_e\,|F|\,K}{V}\right)^2 \frac{\lambda^3}{\sin 2\theta},
 
+**Cited:** [BeckerCoppens1974]_ (equation 5).
+
 where :math:`r_e` is the classical electron radius, :math:`V` the cell volume and :math:`K = 1` for the field normal to
 the scattering plane, :math:`\cos 2\theta` in it, and :math:`\bar{a} = 3 r \sin 2\theta / (2\lambda)`, the primary
 (within a domain) and secondary (between domains) extinction parameters are (their equations 35, 40b, 41b and 42)
@@ -188,12 +306,16 @@ the scattering plane, :math:`\cos 2\theta` in it, and :math:`\bar{a} = 3 r \sin 
     \alpha = \frac{\bar{a}}{\sqrt{1 + \bar{a}^2 / 2g^2}} \;\text{(Gaussian)}, \quad
     \frac{\bar{a}}{1 + 2\bar{a}/3g} \;\text{(Lorentzian)},
 
+**Cited:** [BeckerCoppens1974]_ (equations 35, 40b, 41b, 42).
+
 and each factor has the form of their equation 37,
 
 .. math::
     :label: int-ext-y
 
     y_p = \left(1 + 2x + \frac{A x^2}{1 + B x}\right)^{-1/2}, \qquad y = y_p\, y_s,
+
+**Cited:** [BeckerCoppens1974]_ (equations 37, 38, 43, 43a).
 
 with :math:`A, B` functions of :math:`\cos 2\theta` fitted to their numerical solutions of the Darwin transfer
 equations (equation 38 for :math:`y_p`; 43 and 43a for :math:`y_s`, in :math:`X`, with :math:`2.12 X` for :math:`2X`
@@ -204,7 +326,15 @@ fraction :math:`w` of the incident intensity has its field normal to the scatter
 .. math::
     :label: int-ext-pol
 
-    P\,y = w\; y(x, X) + (1 - w)\cos^2 2\theta\; y(x\cos^2 2\theta,\, X\cos^2 2\theta).
+    P\,y = w\; y(x, X) + (1 - w)\cos^2 2\theta\; y(x\cos^2 2\theta,\, X\cos^2 2\theta),
+    \qquad
+    w = \tfrac{1}{2}(1 + p)(\hat{e}_h \cdot \hat{n})^2 + \tfrac{1}{2}(1 - p)(\hat{e}_v \cdot \hat{n})^2,
+
+with :math:`\hat{n}` the scattering plane's normal.
+
+**Cited:** [BeckerCoppens1974]_ (equations 45, 46). **Proof:** ``tests/theory/test_intensity.py::test_extinction_polarisation``
+(this :math:`w` makes :math:`w + (1 - w)\cos^2 2\theta` equal :eq:`int-pol`),
+``tests/theory/test_intensity.py::test_extinction_polarisation_code`` (no extinction gives :eq:`int-pol`).
 
 With absorption, the mean path through the crystal :math:`3R/2` becomes the absorption-weighted mean path
 :math:`\bar{T}_\mu` (their equations 52 and 53b), which is computed for a sphere by quadrature; :math:`x` is unchanged.
@@ -239,4 +369,7 @@ What is left out
   above and below are not followed. A sample built from a map is full wherever the map has entries, and empty elsewhere.
 - **Absorption in the global orientation fit** of the filter stage, which has no voxel positions
   (:ref:`theory_global_fit`).
-- **The detector's efficiency** versus angle of incidence and energy, and its gain: absorbed in the relative scale.
+- **The detector's efficiency** versus angle of incidence and energy, and its gain: absorbed in the relative scale
+  (a thick sensor's depth is in :doc:`detector`).
+- **dty motion within a frame** (:eq:`int-dty-motion`): one dty reading per frame.
+- **A tilted beam through a cube** (:eq:`int-beam-weight`): horizontal and vertical treated separately.

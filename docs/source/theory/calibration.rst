@@ -38,12 +38,15 @@ residual, the weighted mean :math:`2\theta` of its pixels minus its ring's:
 
     \rho_{rj} = \frac{\sum_{p \in (r, j)} w_p\, 2\theta_p}{\sum_{p \in (r, j)} w_p} - 2\theta_r(\lambda).
 
+**Definition:** the rings' residuals.
+
 **Code:** :func:`anri.calib.rings.assign`, :func:`anri.calib.rings.ring_offsets`.
 
 **Anri's choice:** every sector counts once, as each peak of ImageD11's sector-by-sector peak search does, so a bright
 spot does not outweigh the rest of its ring. The mean is over each pixel's exact :math:`2\theta`, so the arc's
 curvature within a sector does not bias it. Since a sector's mean is over the pixels within :math:`t`, the last
-tolerance must still span a few pixels (one Eiger pixel at 150 mm is 0.03°).
+tolerance must still span a few pixels (one Eiger pixel at 150 mm is 0.03°,
+``tests/theory/test_calibration.py::test_pixel_angle_quoted``).
 
 The fit
 ^^^^^^^
@@ -54,17 +57,22 @@ The free parameters :math:`\vec{x}` (by default the distance, the beam centre an
 :math:`\mu\,\operatorname{diag}(\matr{J}^T\matr{J})`, :math:`\mu` raised tenfold until a step lowers the cost and
 lowered after it. The pixels are re-assigned before every step, so each ring's window follows the ring. The fit runs in
 rounds of decreasing tolerance; from the second, sectors further than ``clip`` robust standard deviations
-(:math:`1.4826` times the median absolute residual) from their ring are left out (another phase, a spot on a ring's
+(:math:`1.4826 = 1/\Phi^{-1}(3/4)` times the median absolute residual, ``tests/theory/test_calibration.py::test_mad_factor``) from their ring are left out (another phase, a spot on a ring's
 tail). A round stops when every step is below a tenth of its parameter's error. The covariance of the free parameters
 is :math:`(\matr{J}^T\matr{J})^{-1}\, \chi^2 / (N - n)`, with :math:`N` sectors and :math:`n` free parameters.
 
 **Code:** :func:`anri.calib.rings.fit_rings`, :func:`anri.calib.stages.stage_rings`.
 
-**Anri's choice:** tilt_x turns the detector in its own plane, about the beam: it moves no ring, so rings cannot fit
-it. The wavelength stays as given. A ring of radius :math:`R` on a detector at distance :math:`L` has
-:math:`\tan 2\theta = R/L`, and :math:`2\theta \approx \lambda d^*` at small angles, so :math:`R \approx L\lambda d^*`:
-rings constrain the product :math:`L\lambda`, and the distance absorbs a wrong wavelength (1.8 % in the calibration
-guide's phantom, +2 % in the distance). Both are left for the scan.
+**Anri's choice:** tilt_x turns the detector about the beam, after the other tilts (:eq:`frm-det`): every pixel keeps
+its :math:`v_x` and :math:`v_y^2 + v_z^2`, so its :math:`2\theta`, and rings cannot fit it
+(``tests/theory/test_calibration.py::test_tilt_x_moves_no_ring``, ``tests/theory/test_calibration.py::test_tilt_x_code``).
+The wavelength stays as given. A ring of radius :math:`R` on an untilted detector at distance :math:`L` has
+:math:`\tan 2\theta = R/L` and :math:`\sin\theta = \lambda d^*/2`. At the fit, the columns of the Jacobian for
+:math:`\log L` and :math:`\log\lambda` are :math:`-\sin 2\theta\cos 2\theta` and :math:`-2\tan\theta`, in the ratio
+:math:`\cos^2\theta\cos 2\theta = 1 - 3\theta^2 + O(\theta^4)`
+(``tests/theory/test_calibration.py::test_rings_tie_distance_to_wavelength``): rings constrain the product
+:math:`L\lambda`, separating the two only through :math:`\theta^2`, and the distance absorbs a wrong wavelength (1.8 %
+in the calibration guide's phantom, +2 % in the distance). Both are left for the scan.
 
 Searching before fitting
 ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -81,6 +89,8 @@ histogram :math:`H_k(\vec{c})` of the pixels' radii about a trial centre :math:`
 
     \hat{\vec{c}} = \arg\max_{\vec{c}} \sum_k H_k(\vec{c})^2.
 
+**Definition:** Anri's centre search.
+
 It is searched on grids of 8, 2 and 0.5 pixels (bins of half the grid step), each around the best of the last, the
 first reaching ``max_shift`` pixels from the start.
 
@@ -96,6 +106,8 @@ background of the same total would put in them:
 
     s(L) = \sum_r \left[\sum_{p:\ u_p \in W_r(L)} \sqrt{w_p} \;-\; \bar{w}\, |W_r(L)| \right], \qquad
     W_r(L) = \frac{L}{L_0}\left[\tan(2\theta_r - t),\ \tan(2\theta_r + t)\right],
+
+**Definition:** Anri's distance search, for an untilted detector.
 
 over the rings whose windows lie within the pixels' range of :math:`u`, with :math:`\bar{w}` the summed
 :math:`\sqrt{w_p}` per unit :math:`u` over that range. :math:`L/L_0` runs over ``span`` in logarithmic steps that move
@@ -133,6 +145,8 @@ largest) gives the peak's Miller indices :math:`\vec{h}_{to} = \text{UBI}_o\, \v
 
     (\hat{t}, \hat{o}) = \arg\min_{t, o} \left|\vec{h}_{to} - \operatorname{round}(\vec{h}_{to})\right|,
 
+**Definition:** Anri's matching of a peak to an orientation, a reflection and a point along the beam.
+
 the reflection :math:`\operatorname{round}(\vec{h}_{\hat{t}\hat{o}})`, and the origin the occupancy-weighted mean of the
 points along the line where :math:`\hat{o}` is held. Of each round's matches, those within its tolerance are kept, one
 peak per (orientation, reflection, branch, dty row), the best matched; the branch is the one whose predicted
@@ -153,6 +167,8 @@ model's own centroid, :doc:`diffraction`), in units of the round's robust standa
     \vec{\rho}_i = \frac{(s_c, f_c, \omega)_i - \vec{c}\left(s\,\text{UBI}_{o}\, \matr{R}(\vec{a}_o)^T,\ \vec{v}_i,
     \vec{h}_i;\ \vec{x}\right)}{\vec{\sigma}},
 
+**Definition:** the scan's residuals.
+
 with :math:`\vec{x}` the free geometry, :math:`s` the lattice scale, and :math:`\matr{R}(\vec{a}_o)` a small rotation
 of orientation :math:`o` (a Rodrigues vector, refitted with the geometry). Peaks beyond ``clip`` :math:`\sigma` are
 left out. The Gauss-Newton normal equations have a block per orientation, coupled only through :math:`\vec{x}`:
@@ -166,13 +182,21 @@ Schur complement), leaving a system the size of :math:`\vec{x}`:
     \matr{S}\, \Delta\vec{x} = -\vec{b}_x + \sum_o \matr{H}_{xo} \matr{H}_{oo}^{-1} \vec{b}_o, \qquad
     \Delta\vec{a}_o = -\matr{H}_{oo}^{-1}\left(\vec{b}_o + \matr{H}_{ox} \Delta\vec{x}\right),
 
-the same step as solving for everything together, damped as above (Levenberg-Marquardt). The covariance of the free
-parameters is :math:`\matr{S}^{-1}\, \chi^2 / (3N - n - 3G)`, with :math:`N` peaks and :math:`G` orientations.
+the same step as solving for everything together, damped as above (Levenberg-Marquardt: :math:`\mu` times the diagonal
+of both blocks, and :math:`10^{-12}\operatorname{tr}\matr{H}_{oo}` added to each orientation's diagonal so that an
+orientation with too few peaks stays invertible).
+
+**Proof:** ``tests/theory/test_calibration.py::test_schur_step``, ``tests/theory/test_calibration.py::test_schur_code``.
+
+The covariance of the free parameters is :math:`\matr{S}^{-1}\, \chi^2 / (3N - n - 3G)`, with :math:`N` peaks and :math:`G` orientations.
 
 **Code:** :func:`anri.calib.fit.fit_geometry`.
 
 **What the scan separates.** Bragg's law and the Ewald condition depend on the wavelength and the lattice only through
-:math:`\lambda / d`: scaling :math:`\vec{g}` and :math:`\vec{k}` together leaves :eq:`dif-ewald` unchanged. So the
+:math:`\lambda / d`: scaling :math:`\vec{g}` and :math:`\vec{k}` together leaves :eq:`dif-ewald` unchanged. With
+:math:`\vec{k}_{\text{in}} = \hat{k}/\lambda` and :math:`\vec{g} = \vec{G}/s` (lattice scale :math:`s`), the condition
+times :math:`\lambda^2` is :math:`2t\,\hat{k}\cdot\vec{G} + t^2|\vec{G}|^2` with :math:`t = \lambda/s`, and the diffracted
+direction is :math:`\hat{k} + t\vec{G}` (``tests/theory/test_calibration.py::test_wavelength_lattice_gauge``). So the
 wavelength and the lattice scale cannot both be free: a calibrant (a certified lattice) frees the wavelength, any other
 sample (a known energy) the lattice scale. The distance is no longer tied to the wavelength as it was by the rings: a
 peak's :math:`\omega` fixes its :math:`\theta` through the Ewald condition, whatever the distance, and its radius on
@@ -206,7 +230,12 @@ symmetric. Its strain from the reference lattice :math:`\matr{B}` (scaled by :ma
     \varepsilon_{\text{h}} = \tfrac{1}{3}\operatorname{tr}\matr{E}, \qquad
     \matr{E}_{\text{dev}} = \matr{E} - \varepsilon_{\text{h}}\matr{I},
 
-in the sample frame. On a strain-free calibrant a right geometry leaves only noise, as ImageD11's silicon notebook
+in the sample frame: :math:`\matr{K}^T\matr{K} = (\matr{I} + \matr{E})^2` for any rotation, and :math:`\matr{I} +
+\matr{E}` is its positive square root.
+
+**Proof:** ``tests/theory/test_calibration.py::test_strain_from_ubi``, ``tests/theory/test_calibration.py::test_strain_code``.
+
+On a strain-free calibrant a right geometry leaves only noise, as ImageD11's silicon notebook
 estimates its precision. A deviatoric strain shared by every orientation (its peak-weighted mean) points to the tilts or
 the centre; a hydrostatic one to the wavelength or the distance against the reference lattice. The ratio of
 :math:`\chi^2` with free lattices to that without tells how much of the misfit the strains explain.

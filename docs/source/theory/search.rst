@@ -15,9 +15,13 @@ Because of the Laue group (:eq:`cry-laue`), only one fundamental zone of orienta
 **Cubic** (24 rotations): a regular grid of Rodrigues vectors :math:`\vec{r} = \tan(\theta/2)\,\hat{n}`, inside the cubic
 fundamental zone :math:`|r_i| \le \tan(\pi/8)`, :math:`|r_1| + |r_2| + |r_3| \le 1` [Frank1988]_: a cube truncated by
 eight planes, with corners at :math:`(\sqrt{2} - 1, \sqrt{2} - 1, 3 - 2\sqrt{2})` and their permutations and sign changes
-([Rosca2014]_, section 4.4). The grid is coarsest at the
-origin, so the largest misorientation from any orientation to its nearest grid point is that of half a cell diagonal
-there:
+([Rosca2014]_, section 4.4; ``tests/theory/test_search.py::test_cubic_zone_corners``). Rotations with Rodrigues
+vectors :math:`\vec{r}_1, \vec{r}_2` are misoriented by :math:`w` with :math:`\tan^2(w/2) = (|\vec{r}_1 - \vec{r}_2|^2 +
+|\vec{r}_1 \times \vec{r}_2|^2) / (1 + \vec{r}_1\cdot\vec{r}_2)^2`, so :math:`w = 2\arctan|\vec{r}|` from the identity, and
+a step :math:`d\vec{r}` at :math:`\vec{r}` turns by at most :math:`2|d\vec{r}| / \sqrt{1 + |\vec{r}|^2}`: a grid regular in
+:math:`\vec{r}` is coarsest, in angle, at the origin. The grid's step :math:`s` is that of neighbours there,
+:math:`\tan(s/2)` apart, and the largest misorientation from any orientation to its nearest grid point is that of
+half a cell diagonal there:
 
 .. math::
     :label: srch-cubic-delta
@@ -25,6 +29,12 @@ there:
     \Delta_{\max} = 2\arctan\left(\frac{\sqrt{3}}{2}\tan\frac{s}{2}\right)
 
 for a grid step :math:`s`.
+
+**Proof:** ``tests/theory/test_search.py::test_rodrigues_misorientation``,
+``tests/theory/test_search.py::test_rodrigues_metric_largest_at_origin``,
+``tests/theory/test_search.py::test_cubic_delta``, ``tests/theory/test_search.py::test_cubic_delta_code``. It is exact
+for a cell centred on the origin (its centre is half a diagonal from every corner); that no other point of the zone
+is farther from its nearest grid point follows from the metric only to first order in the cell's size.
 
 **Code:** :func:`anri.crystal.orientation.orientation_grid`, :func:`anri.crystal.orientation.cubic_grid_misorientation`.
 
@@ -74,9 +84,19 @@ larger bounds
     t_\omega = \frac{\Delta_{\max}}{\cos\theta\,|\sin\eta|} + \frac{\Delta\omega_{\text{frame}}}{2},
 
 with the ring's measured half-width :math:`h_r` (:func:`anri.index.data.ring_widths`), taken as a displacement on the
-detector across the ring, and half a frame. Checked numerically against the exact Ewald solution (random orientations,
-:math:`|\sin\eta| > 0.3`): the largest spot movement reaches 0.999 of the bound and never exceeds it. Peak widths are
-not added: a broad peak lights a broad region of the lit map.
+detector across the ring (on a flat detector normal to the beam, :math:`R = L\tan 2\theta`, a width :math:`h_r` in
+:math:`2\theta` is :math:`h_r / (\sin 2\theta\cos 2\theta)` along the ring), and half a frame. The largest moves are
+:math:`\Delta` times the lengths of the coefficient vectors of :eq:`dif-rotation-motion` (Cauchy-Schwarz), and the
+bounds exceed them: in :math:`\eta` their squares differ by :math:`(1 + \tan^2\theta)\, 2\tan\theta|\cot\eta| +
+\tan^4\theta\cot^2\eta \ge 0`, in omega by the factor :math:`1/\cos\theta \ge 1`. Peak widths are not added: a broad
+peak lights a broad region of the lit map.
+
+**Proof:** ``tests/theory/test_search.py::test_tolerance_bounds``,
+``tests/theory/test_search.py::test_ring_width_on_detector``, ``tests/theory/test_search.py::test_tolerance_code``.
+The bounds are first order in :math:`\Delta`.
+
+**Measured:** against the exact Ewald solution (random orientations, :math:`|\sin\eta| > 0.3`), the largest spot
+movement reached 0.999 of the bound and never exceeded it.
 
 **Code:** :func:`anri.index.search.match_tolerances`, :func:`anri.index.search.predict`.
 

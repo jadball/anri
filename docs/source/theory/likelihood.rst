@@ -17,7 +17,11 @@ deviance
 
     D(f) = 2 \sum_b \left[ d_b \log\frac{d_b}{\mu_b} - d_b + \mu_b \right],
 
-which is zero for a perfect fit.
+which is zero for a perfect fit. In each bin its gradient is :math:`2(1 - d_b/\mu_b)`, zero at :math:`\mu_b = d_b`, and
+its curvature :math:`2 d_b/\mu_b^2 > 0`.
+
+**Definition:** twice the Poisson log-likelihood ratio to a perfect fit. **Proof** of its gradient:
+``tests/theory/test_likelihood.py::test_deviance_gradient``, ``tests/theory/test_likelihood.py::test_deviance_code``.
 
 **Code:** :func:`anri.index.occupancy.deviance`.
 
@@ -36,8 +40,16 @@ The expectation-maximisation algorithm for this model [Dempster1977]_ is the MLE
 
     f_{vq} \leftarrow f_{vq}\, \frac{\left[A^T (d / A f)\right]_{vq}}{\left[A^T \mathbf{1}\right]_{vq}}.
 
-Each update keeps :math:`f \ge 0`, never decreases the likelihood, and needs one forward projection :math:`A f` and one
-back projection per iteration, which is all Anri can afford on billions of peaks.
+The update moves :math:`f_{vq}` by :math:`f_{vq}\, \partial\ell/\partial f_{vq} / [A^T\mathbf{1}]_{vq}`, with :math:`\ell`
+the Poisson log-likelihood: its fixed points are the Karush-Kuhn-Tucker points of the maximum likelihood under
+:math:`f \ge 0` (:math:`f_{vq}\,\partial\ell/\partial f_{vq} = 0`). After every update the model's total equals the
+data's, :math:`\sum_b (Af)_b = \sum_b d_b`. Each update keeps :math:`f \ge 0`, never decreases the likelihood, and needs
+one forward projection :math:`A f` and one back projection per iteration, which is all Anri can afford on billions of
+peaks.
+
+**Proof:** ``tests/theory/test_likelihood.py::test_mlem_fixed_point_is_kkt``,
+``tests/theory/test_likelihood.py::test_mlem_keeps_total``. **Cited:** that it never decreases the likelihood
+[Dempster1977]_ [LangeCarson1984]_.
 
 **Code:** :func:`anri.index.occupancy.mlem`, :func:`anri.index.occupancy.forward`,
 :func:`anri.index.occupancy.backward`.
@@ -57,10 +69,18 @@ MLEM updates :math:`f_1` and :math:`f_2`, then the extrapolated point
 
 and one more MLEM update from :math:`f'`.
 
-**Anri's choice** of safeguards: :math:`a \le -1`, so a step is never shorter than plain MLEM; :math:`f'` is kept above
-:math:`10^{-3} f_2`, since MLEM multiplies and an occupancy at zero could never come back; and if the result fits worse
-than :math:`f_2`, :math:`f_2` is kept, so the deviance never rises. One iteration costs three MLEM updates and goes
-about as far as ten or more.
+**Cited:** [VaradhanRoland2008]_.
+
+**Anri's choice** of safeguards: :math:`a \le -1`, so a step is never shorter than plain MLEM (at :math:`a = -1`,
+:math:`f' = f_2`); :math:`f'` is kept above :math:`10^{-3} f_2`, since MLEM multiplies and an occupancy at zero could
+never come back; and if :math:`f'` fits worse than :math:`f_1`, :math:`f_2` is kept instead of the update from
+:math:`f'`. Either way the next iterate's deviance is at most :math:`D(f_1) \le D(f)`, since an MLEM update never raises
+it. After a refused step, :math:`-a` is capped at a quarter of the refused step, the cap growing fourfold after a step
+taken at it: uncapped, near convergence :math:`-a` grew to 50-60 and every step was refused. One iteration costs three
+MLEM updates and goes about as far as ten or more.
+
+**Proof** of what Anri adds: ``tests/theory/test_likelihood.py::test_squarem_unit_step_is_two_updates``,
+``tests/theory/test_likelihood.py::test_squarem_code``.
 
 **Code:** :func:`anri.index.occupancy.squarem`.
 
@@ -87,8 +107,16 @@ data there it agrees; below, the data pull it up as usual.
     c / (2\mu_b) & d_b = 0,\ \mu_b \ge c
     \end{cases}
 
-**Anri's choice:** this is a simple stand-in for the likelihood of a censored observation, not that likelihood itself.
-:math:`c = 0` gives plain Poisson MLEM, the default.
+**Definition:** Anri's rule for empty and saturated bins.
+
+**Anri's choice:** this is a simple stand-in for the likelihood of a censored observation, not that likelihood itself,
+and the update and the deviance are not one objective's. Below :math:`c` an empty bin's deviance term and its gradient
+are zero, which is ratio 1, as used; the term is continuous at :math:`\mu_b = c`. Above :math:`c` its gradient (2)
+corresponds to ratio 0, while the update uses :math:`c/(2\mu_b)`, the Poisson ratio of a datum :math:`c/2`. So the
+censored MLEM's fixed point does not minimise the censored deviance that SQUAREM's safeguard compares. :math:`c = 0`
+gives plain Poisson MLEM, the default.
+
+**Proof:** ``tests/theory/test_likelihood.py::test_censored_terms``, ``tests/theory/test_likelihood.py::test_censored_code``.
 
 **Code:** :func:`anri.index.occupancy.censored_ratio`, :func:`anri.index.occupancy.deviance`.
 
@@ -113,6 +141,12 @@ over observed bins, with :math:`a_{qb}` the orientation's system entries (empty 
 degree of freedom [Wilks1938]_, so ``min_lr = 25`` is about 5σ. A small grain with clean spots scores well; a decoy that
 only borrows intensity from real grains does not.
 
+**Proof:** ``tests/theory/test_likelihood.py::test_likelihood_ratio_is_deviance_change`` (:math:`\Lambda_q =
+D(\mu - g_q a_q) - D(\mu)`), ``tests/theory/test_likelihood.py::test_likelihood_ratio_code``. The code sums the terms
+over the orientation's system entries (:eq:`idx-bilinear`'s corners of each prediction), with :math:`\mu_b - g_q a_{qb}`
+kept above :math:`10^{-6}\mu_b`; that is :math:`\Lambda_q` when no two of the orientation's entries share a bin, which
+none did in the checks (random and symmetric orientations of a bcc phase, 1° bins).
+
 **Code:** :func:`anri.index.orientations.fit`, :func:`anri.index.orientations.select_by_likelihood`.
 
 Two caveats on reading 25 as 5σ. An occupancy cannot be negative, so the null sits on the boundary and its
@@ -135,8 +169,10 @@ default): those with the largest first MLEM update from unit occupancy,
 
     f^{(1)}_{vq} = \frac{\left[A^T\left(d / A\mathbf{1}\right)\right]_{vq}}{\left[A^T\mathbf{1}\right]_{vq}},
 
-which scores each orientation by how well its predicted spots are lit, each bin down-weighted by how many (voxel,
-orientation) pairs could explain it. Then MLEM with SQUAREM runs on the candidates of every voxel jointly.
+the MLEM update :eq:`lik-mlem` from :math:`f = \mathbf{1}`. It scores each orientation by how well its predicted spots
+are lit, each bin down-weighted by how many (voxel, orientation) pairs could explain it.
+
+**Proof:** ``tests/theory/test_likelihood.py::test_candidates_are_first_update``. Then MLEM with SQUAREM runs on the candidates of every voxel jointly.
 
 **Code:** :func:`anri.index.occupancy.candidates`, :func:`anri.index.occupancy.fit_occupancy`.
 

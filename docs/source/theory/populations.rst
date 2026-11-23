@@ -13,7 +13,8 @@ Grouping
 
 All of a voxel's candidates (or its :math:`m` most occupied), above a fraction :math:`\epsilon` (0.02) of its most
 occupied one, are grouped greedily: the most occupied candidate not yet assigned seeds a population, and every
-unassigned candidate within a radius (1.8 steps of the search grid) of it joins, the distance being the misorientation over the
+unassigned candidate within a radius of it joins (the larger of one bin of the fit's histogram, 1°, and 1.8 times
+the spacing of the fit's last orientations: 4.5° for a plain fit of a 2.5° grid, 1° after the levels), the distance being the misorientation over the
 Laue group (:eq:`cry-laue`). Up to :math:`p` (4) populations per voxel, ordered by fraction, largest first: a population
 of several candidates can outweigh the one the most occupied candidate seeded. The cut is relative to the most occupied
 candidate, not the total, so an occupied voxel always has a population, even when its occupancy is spread thinly over
@@ -38,6 +39,11 @@ Each population gets
 
   [Moakher2002]_.
 
+  **Cited:** [Moakher2002]_. **Proof** for rotations about one axis, where the sum is :math:`\matr{R}_z(\phi)
+  \operatorname{diag}(\rho, \rho, \sum w_i)` with :math:`\rho\cos\phi = \sum w_i\cos a_i`, :math:`\rho\sin\phi = \sum
+  w_i \sin a_i`, so the mean is :math:`\matr{R}_z(\phi)`: ``tests/theory/test_populations.py::test_mean_of_coaxial_rotations``,
+  ``tests/theory/test_populations.py::test_mean_rotation_code``.
+
   **Code:** :func:`anri.maths.rotation.mean_rotation`;
 
 - its **spread**: the occupancy-weighted rms misorientation of the members from that mean.
@@ -45,14 +51,15 @@ Each population gets
   **Code:** :func:`anri.maths.rotation.rotation_angle`.
 
   The forward model takes a spread as the standard deviation :math:`\sigma` of each component of a small rotation
-  vector (``sig_rot``). For an isotropic spread the rms angle is :math:`\sqrt{3}\,\sigma`, so the populations
-  stage exports ``sig_rot`` as the spread divided by :math:`\sqrt{3}`.
+  vector (``sig_rot``). For an isotropic spread the rms angle is :math:`\sqrt{3}\,\sigma`
+  (``tests/theory/test_populations.py::test_isotropic_rms_angle``), so the populations stage exports ``sig_rot`` as the
+  spread divided by :math:`\sqrt{3}`.
 
 **Anri's choice:** populations closer than the radius come out as one, with a larger spread. What the data cannot
-separate is reported as a mean and a spread rather than as invented structure. The radius is set by the search grid's
-step even after the fit refined the orientations: they are a ninth of that step apart or less, and are grouped within
-the same radius, so the refinement sharpens each population's mean and spread but does not separate populations
-closer than the search grid could. The spread includes the spacing of the orientations fitted (one orientation between them shares
+separate is reported as a mean and a spread rather than as invented structure. The radius is the larger of what the
+data resolve and what the orientations' spacing smears: populations closer than a 1° bin share bins in every
+reflection, and one orientation between the fitted ones is shared among neighbours up to a cell diagonal,
+:math:`\sqrt{3}` steps, apart (``tests/theory/test_populations.py::test_radius_quoted``). The spread includes the spacing of the orientations fitted (one orientation between them shares
 itself among its neighbours), so it is an upper bound on the sample's: the spacing of the fit's last level.
 
 What is reported
@@ -76,10 +83,11 @@ them large occupancies that explain almost nothing. The fit is restricted to a m
   axis is in the beam at :math:`\text{dty} = y_0 - r\cos(\omega - \phi)`, so it stays in range at every omega when
   :math:`r` is at most the distance from :math:`y_0` to the nearer end of the scan. Over a full turn a voxel within the
   distance to the farther end is in a scanned row for at least half the turn, every direction once, so the disc
-  reaches the farther end: a half-sample scan (dty from one edge of the sample to just past the axis) is reconstructed
+  reaches the farther end (``tests/theory/test_populations.py::test_disc_half_turn``): a half-sample scan (dty from one edge of the sample to just past the axis) is reconstructed
   whole, where the nearer end would keep only a few um round the axis. It can be grown by ``pad`` for a
   sample a little larger than the disc: a voxel at :math:`r` is in the beam over a fraction
-  :math:`\tfrac{2}{\pi}\arcsin(r_{\text{disc}}/r)` of the rotation.
+  :math:`\tfrac{2}{\pi}\arcsin(r_{\text{disc}}/r)` of the rotation
+  (``tests/theory/test_populations.py::test_disc_fraction``).
 
   **Code:** :func:`anri.index.mask.disc_mask`.
 

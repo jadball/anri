@@ -39,6 +39,8 @@ where :math:`\mu_b` is the expected intensity in a data bin :math:`b` and :math:
 orientation :math:`q` in voxel :math:`v` lands in it. Fitting all voxels jointly is a tomography: one image never says which voxel
 along the ray made which part of a peak; only consistency across rows (dty) and across omega places it.
 
+**Cited:** [Hayashi2015]_ [Poulsen2004]_; :math:`A` is Anri's, below.
+
 The histogram
 -------------
 
@@ -53,6 +55,8 @@ histogram over rings, :math:`\eta`, omega and dty rows:
 at the scale of the orientation grid: bins of 1° in :math:`\eta` and 1° in omega for the fit, and a finer, row-summed
 "lit" histogram (0.5° × 0.25°) for the search. Each pixel's :math:`(2\theta, \eta)` is computed from the lab origin (no
 parallax), and the pixel goes to the nearest ring if within that ring's tolerance.
+
+**Definition:** the histogram the indexer fits, in place of the pixels.
 
 **Code:** :func:`anri.index.data.pixel_angles`, :func:`anri.index.data.histogram`,
 :func:`anri.index.data.histogram_pixels`.
@@ -84,13 +88,31 @@ the measured share :math:`c` of that ring's detector area in that :math:`\eta` b
 detector; :func:`anri.index.data.detector_coverage`), and with absorption the transmission along the incoming and
 diffracted paths (:eq:`int-absorption`). The prediction's weight is shared:
 
-- over the 2 × 2 nearest (:math:`\eta`, omega) bins, bilinearly;
+- over the 2 × 2 nearest (:math:`\eta`, omega) bins, bilinearly (:eq:`idx-bilinear`);
 - over dty rows by where the voxel is at that omega (:eq:`dif-dty`): either linearly between the two nearest rows,
   or, given the beam's width, by the beam profile integrated over the voxel's chord in each row
   (:eq:`int-profile`, the same function the renderer uses), each row weighted by its exposure.
 
 **Code:** :func:`anri.index.occupancy.system`, :func:`anri.index.occupancy.beam_rows`,
 :func:`anri.index.search.predictions`.
+
+**Definition:** the weight of a point-like prediction; its factors are derived in :doc:`intensity` and :doc:`crystal`.
+
+Along each of :math:`\eta` and omega, a prediction at angle :math:`a`, in bins of width :math:`b` from :math:`a_0` (bin
+:math:`i` centred on :math:`a_0 + (i + \tfrac{1}{2})b`), goes to bins :math:`\lfloor x \rfloor` and
+:math:`\lfloor x \rfloor + 1` with weights
+
+.. math::
+    :label: idx-bilinear
+
+    1 - t \quad\text{and}\quad t, \qquad x = \frac{a - a_0}{b} - \frac{1}{2}, \quad t = x - \lfloor x \rfloor,
+
+which sum to 1 and whose weighted bin centre is :math:`a`: the prediction keeps its weight and its position.
+
+**Proof:** ``tests/theory/test_indexing.py::test_bilinear_keeps_weight_and_position``,
+``tests/theory/test_indexing.py::test_bilinear_code``.
+
+**Code:** :func:`anri.index.data.eta_omega_corners`.
 
 **Fly and helical scans.** When dty moves during the rotation, the frames of one omega bin were taken up to half a step
 away from their row's nominal dty. The real dty per (row, omega bin) is measured from the frames' own motor readings and

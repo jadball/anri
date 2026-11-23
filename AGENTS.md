@@ -129,7 +129,22 @@ Example of what this rule prevents: whether single-axis scanning 3DXRD determine
 voxel took a day of runs, when a Fourier-slice argument answers it in minutes. With g nearly perpendicular to the
 beam, each spatial frequency k ≠ 0 determines the deformation gradient applied to the directions of k and of the
 rotation axis, but not applied to the horizontal direction perpendicular to k. That part is seen only through
-sin θ terms and parallax.
+sin θ terms and parallax (`docs/source/theory/limits.rst`: those are the dislocations threading the slice).
+
+### The theory pages are the specification
+
+`docs/source/theory/` is the single source of truth for Anri's maths: the forward model, the detector's pixels and
+windows, the threshold, the moments of recorded light, and what the data determine. Code follows it, not the other
+way round.
+
+- Every numbered equation has a status line: **Proof:** (a sympy test in `tests/theory/`), **Definition:**,
+  **Cited:** or **Measured:** (`tests/theory/test_pages.py` checks). A proof either reduces an identity to zero or
+  checks that the anri function named in the **Code:** line agrees with the proved expression in float64.
+- **Anri's rule:** paragraphs are requirements. New code meets them; code that breaks one is a bug, not a choice.
+- New maths goes on the pages first, with its proof, before the code that uses it. A derivation that lives only in
+  a sandbox README or a commit message does not exist.
+- A numerical test that re-checks a proved identity is not needed; test what the proofs cannot (compilation,
+  shapes, the integration of the parts).
 
 ## Reason through code before running it
 
