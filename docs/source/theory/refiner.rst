@@ -721,7 +721,7 @@ for the Hessian. Then :math:`\matr{D}` has full column rank, and
 
 is the orthogonal projector onto the seen fields; the weak part is :math:`(\matr{I} - \matr{P})`. The normal equations
 :math:`\matr{D}^T\matr{D}\vec{\phi} = \matr{D}^T\vec{v}` carry the boundary conditions implicitly (in the continuum
-limit: Neumann for the gradient; for the Hessian, those of a free plate edge, not derived here). They are sparse,
+limit: Neumann for the gradient; for the Hessian, those of a free plate edge, :eq:`rf-plate`). They are sparse,
 symmetric and positive definite: conjugate gradients per domain. In one dimension every field is a gradient and nothing
 is weak, as the slice argument says.
 
