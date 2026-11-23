@@ -928,8 +928,9 @@ term, crossed with the :math:`2\theta` interval, and mapped to the cells whose :
 **Proof:** ``tests/theory/test_refiner.py::test_arc_box`` (the image's covariance; the support function attained
 and, by Cauchy-Schwarz in the metric :math:`\matr{S}`, not exceeded; the second-order term).
 
-Most bananas need no such box. An arc made of many voxels' slightly different orientations along a ray (dislocation
-cells, a random walk of misorientation) is, after the indexer, many populations with small spreads. Their region is
+Most bananas need no such box. A banana on the detector is the sum, in each frame, of the spots of every voxel the
+beam lights along its ray over the frame's omega range. Their slightly different orientations (dislocation cells, a
+random walk of misorientation) spread it along the arc. After the indexer it is many populations with small spreads. Their region is
 the union of their small boxes, and it follows the arc by construction. Only a single population with a large
 anisotropic spread (bending about one axis, AGENTS.md) needs the ellipse. Its :math:`\matr{S}` comes from the
 indexer, since boxes are fixed once (:eq:`rf-box-margin`).
