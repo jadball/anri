@@ -32,7 +32,14 @@ the shape of the detector's point spread beyond (A5). The assumptions are:
   point spread; the sensor's depth, up to its mean, which the geometry holds).
 - **(A5) The point spread is a factor.** Every spot is the point spread convolved with something non-negative and
   otherwise arbitrary: the sample, the beam and the sensor add spread, never remove it. Only its characteristic
-  function at :math:`2\pi k` per pixel is used (:eq:`rf-alias-bound`).
+  function at :math:`2\pi k` per pixel is used (:eq:`rf-alias-bound`). In words: no spot is ever sharper than the
+  detector's own blur, so a spot's centre is pinned well within a pixel.
+- **(A6) The instrument's omega kernel is a factor.** Every peak's omega profile is the instrument's omega kernel
+  convolved with something non-negative and otherwise arbitrary. The kernel is a Gaussian whose variance is
+  :eq:`rf-omega-kernel` with three widths (horizontal and vertical convergence, bandwidth), measured on a single
+  rotation of an undeformed Si crystal and taken at the low end of their uncertainty. It is an operating condition of
+  the refinement: such a Si scan, with reflections on at least two rings, is measured with every experiment
+  (:eq:`rf-omega-identify`). The kernel is never fitted to the sample.
 
 The geometry (detector, beam profile across dty, wavelength) is known from calibration (:doc:`calibration`).
 
@@ -238,23 +245,70 @@ spread (a core of 0.25 px holding 72 %, a wing of 1.3 px). A feature's first-ord
 **Proof:** ``tests/theory/test_refiner.py::test_alias_bound_any_spot`` (the bound; asymmetric spots, the point spread
 convolved with exponentials of either sign, against their cells' masses).
 
-In omega, a bound like :eq:`rf-alias-bound` would need a factor common to every peak's omega profile: the
-instrument's own omega kernel (horizontal and vertical convergence, bandwidth, the axis' wobble), measured as a
-distribution. Those terms do convolve independently with the sample's spread, but each depends on :math:`\eta`
-and :math:`\theta` (:eq:`ps-omega`), and they are known only roughly. A model of them would be a model of what widens
-peaks in omega: exactly what this refiner does not trust, and what earlier refiners absorbed into spreads. Anri's
-choice, proposed here, is not to model them. The binning in omega then costs, per reflection:
+**Omega.** Frames bin omega as pixels bin the detector, and (A6) does for omega what (A5) does for the pixels. With
+no lattice rotation, :eq:`ps-omega` gives a reflection's omega shift as three independent terms, so the instrument's
+omega kernel has variance
 
-- at most :math:`h/2` in the rotation about the axis, for any peak, by :eq:`rf-alias-bound`'s :math:`\min(\tfrac{1}{2},
-  \cdot)` in frames. It is the content of :eq:`det-crlb`: without a shape, a cell's content says nothing of where in
-  the cell its light fell;
-- nothing in :math:`|\vec{g}|^2`, at any width (:eq:`rf-invariant`);
-- nothing in the rotations that move a peak along the ring (:math:`\eta`) or across it.
+.. math::
+    :label: rf-omega-kernel
 
-Over :math:`M` reflections whose sub-frame positions are independent and uniform, the per-reflection errors have mean
-0 and rms at most :math:`h/\sqrt{12}` (:eq:`rec-sheppard`), so a voxel's rotation about the axis is off by
-:math:`h/\sqrt{12M}` in rms. The worst case stays :math:`h/2`: the positions are set by the geometry, not drawn. The
-bound enters :math:`\bar\Delta` (:eq:`rf-linear`) for the omega features only, and is reported, not fitted away.
+    v(\eta, \theta) = \sigma_h^2 + \sigma_v^2\cot^2\eta + \sigma_\lambda^2\,\frac{\tan^2\theta}{\sin^2\eta}
+    \quad (\text{radians}^2), \qquad
+    N(0, v) = N(0, v_{\text{lo}}) * N(0, v - v_{\text{lo}}),
+
+with :math:`\sigma_h`, :math:`\sigma_v` the horizontal and vertical convergence and :math:`\sigma_\lambda` the
+bandwidth. A lower variance :math:`v_{\text{lo}} \le v` is still a factor of the kernel, so the low end of the
+measured widths can be used safely.
+
+**Proof:** ``tests/theory/test_refiner.py::test_omega_kernel_variance``
+
+With :math:`r = \sqrt{v_{\text{lo}}}/h` the floor's sd in frames, :eq:`rf-alias-bound` in frames gives
+
+.. math::
+    :label: rf-omega-bound
+
+    |\operatorname{E}[\omega_j - \omega]| \le h\,\min\Big(\tfrac{1}{2},\ \sum_{k \ge 1} \frac{e^{-2\pi^2k^2r^2}}{\pi k}\Big):
+    \quad 0.5,\ 0.355,\ 0.151,\ 0.054,\ 0.0023 \text{ frames at } r = 0.05,\ 0.1,\ 0.2,\ 0.3,\ 0.5.
+
+**Proof:** ``tests/theory/test_refiner.py::test_omega_floor_table``
+
+The guarantee is useful once the instrument alone spreads every peak over 0.2-0.3 of a frame. At ID11 with 0.05°
+frames, the bandwidth gives 0.012 frames at :math:`|\sin\eta| = 1` and 0.058 at 0.2 (3e-4 FWHM, :math:`\tan\theta =
+0.08`), and horizontal convergence of :math:`8 \times 10^{-5}` rad gives 0.092. So the bound pins omega near
+:math:`\eta = 0` and 180°, where vertical convergence times :math:`|\cot\eta|` widens the kernel. Elsewhere sharp
+peaks keep a worst case of about a third of a frame. Finer frames shrink it in proportion. The bound concerns only the
+rotation about the axis: it does not touch :math:`|\vec{g}|^2` (:eq:`rf-invariant`), nor the rotations that move a peak
+along or across the ring. Over :math:`M` reflections whose sub-frame positions are independent and uniform, the errors
+have mean 0 and rms at most :math:`h/\sqrt{12}`, so a voxel's rotation about the axis is off by :math:`h/\sqrt{12M}` in
+rms. The guarantee stays the worst case, because the positions are set by the geometry, not drawn.
+
+**The three widths are determined by one Si rotation.** A peak narrower than a frame cannot show its own width in its
+own frames. What shows the kernel is many reflections whose predicted omegas fall at different places in their
+frames. Si's orientation is known after calibration far better than a frame, so each reflection's predicted position
+:math:`\mu` within its frame is known. Two facts then decide it.
+
+.. math::
+    :label: rf-omega-identify
+
+    \frac{\partial}{\partial v}\Big[\Phi\big(\tfrac{a}{\sqrt{v}}\big) - \Phi\big(\tfrac{b}{\sqrt{v}}\big)\Big]
+    = -\frac{a\,\varphi(a/\sqrt{v}) + |b|\,\varphi(b/\sqrt{v})}{2v^{3/2}} < 0, \qquad
+    \det\begin{bmatrix} 1 & c_1 & t_1(1 + c_1) \\ 1 & c_2 & t_1(1 + c_2) \\ 1 & c_1 & t_2(1 + c_1) \end{bmatrix}
+    = (c_2 - c_1)(t_2 - t_1)(1 + c_1),
+
+with :math:`a = \tfrac{1}{2} - \mu > 0 > b = -\tfrac{1}{2} - \mu` (in frames), :math:`c = \cot^2\eta` and
+:math:`t = \tan^2\theta`. First, the share of a reflection's light in its own frame falls strictly with its kernel's
+variance, so each reflection's frames determine its :math:`v`. That needs only some light outside the frame: zero
+information comes only from a peak wholly inside it. Second, :math:`v = \sigma_h^2 + \sigma_v^2 c +
+\sigma_\lambda^2 t(1 + c)` is linear in the three variances, and three reflections on two rings at two values of
+:math:`\eta` determine them (the determinant). On one ring the third column is :math:`t` times the sum of the first
+two, and the rank is 2 for any number of reflections. Bandwidth and convergence then cannot be told apart.
+
+**Proof:** ``tests/theory/test_refiner.py::test_omega_identifiable`` (the derivative; the determinant; one ring's rank).
+
+So 500 or more Si reflections on two or more rings determine the kernel; the condition is the rings, not the count.
+Only reflections within a few kernel widths of a frame's edge carry information. With a kernel of sd :math:`\sigma`
+frames that is about a fraction :math:`6\sigma` of them, about 35 of 500 at :math:`\sigma = 0.012`: still many more
+than three unknowns.
 
 The cut
 -------
@@ -442,7 +496,8 @@ absorbed there, at whatever value of the spread it takes.
     s_{\text{weak}} \propto \sin\theta, \qquad
     \vec{g}_w^T\matr{P}_\eta\vec{g}_w \le \vec{g}_w^T\vec{g}_w .
 
-**Proof:** ``tests/theory/test_refiner.py::test_weak_amplification``, ``tests/theory/test_refiner.py::test_sin_theta_numbers``
+**Proof:** ``tests/theory/test_refiner.py::test_weak_amplification``,
+``tests/theory/test_refiner.py::test_sin_theta_numbers``
 
 **On a voxel grid they are seen through the model's geometry.** :eq:`rf-weak-any` is exact for continuous fields.
 A field constant on voxels of step :math:`h`, :math:`\matr{\beta}(\vec{x}) = \sum_v \matr{B}_v\chi(\vec{x} -
@@ -664,10 +719,11 @@ for the Hessian. Then :math:`\matr{D}` has full column rank, and
     \matr{P} = \matr{D}(\matr{D}^T\matr{D})^{-1}\matr{D}^T, \qquad
     \matr{P} = \matr{P}^T = \matr{P}^2, \qquad \matr{P}\matr{D} = \matr{D}
 
-is the orthogonal projector onto the seen fields; the weak part is :math:`(\matr{I} - \matr{P})`. The normal
-equations :math:`\matr{D}^T\matr{D}\vec{\phi} = \matr{D}^T\vec{v}` carry the boundary conditions implicitly (in the
-continuum limit: Neumann for the gradient; for the Hessian, those of a free plate edge, not derived here). They are
-sparse, symmetric and positive definite: conjugate gradients per domain. In one dimension every field is a gradient and nothing is weak, as the slice argument says.
+is the orthogonal projector onto the seen fields; the weak part is :math:`(\matr{I} - \matr{P})`. The normal equations
+:math:`\matr{D}^T\matr{D}\vec{\phi} = \matr{D}^T\vec{v}` carry the boundary conditions implicitly (in the continuum
+limit: Neumann for the gradient; for the Hessian, those of a free plate edge, not derived here). They are sparse,
+symmetric and positive definite: conjugate gradients per domain. In one dimension every field is a gradient and nothing
+is weak, as the slice argument says.
 
 **Proof:** ``tests/theory/test_refiner.py::test_discrete_projector``
 
@@ -940,7 +996,7 @@ Under (A1)-(A5), with regions fixed independently of the noise of the data they 
 4. **The group rule** biases by at most :eq:`rf-group` where every lit cell's neighbours hold enough light, and by an
    unbounded amount otherwise: the faint compact spots of :doc:`recording`.
 5. **The pixels** bias a feature by at most its gradient times :eq:`rf-alias-bound`. Omega binning biases nothing in
-   the strain (:eq:`rf-invariant`) and up to half a frame in the rotation about the axis.
+   the strain (:eq:`rf-invariant`) and, in the rotation about the axis, at most :eq:`rf-omega-bound` under (A6).
 
 The refiner reports, per population, :math:`\hat{\vec{Y}}`, its block-sandwich covariance, and the bias bound
 :math:`\sum_j |A_{ij}|\bar\Delta_j`. That bound is computed from the geometry, the regions and the point spread's
@@ -966,7 +1022,10 @@ What is left out
   anisotropic :math:`\matr{S}` the indexer does not yet report.
 - **Absorption's variation within a spot** is bounded by :eq:`rf-weight-bound`; its exact coefficient through
   :math:`\matr{Y}^{(2)}` is not written out.
-- **Omega binning** is bounded at :math:`h/2` per reflection, not modelled (the choice proposed above).
+- **The omega kernel's Gaussian form** (:eq:`rf-omega-kernel`) is the instrument's, as the point spread's mixture
+  is; a non-Gaussian bandwidth or convergence profile would change :eq:`rf-omega-bound`'s numbers, not its form.
+- **The precision of the Si fit** (how well 500 reflections fix the three widths) is not derived, only that they are
+  determined.
 - **The group rule's bound** (:eq:`rf-group-psf`) is rigorous but weak; a sharper one needs where in a cell the light
   falls.
 - **The precision** :math:`\epsilon` and confidence :math:`z` of :eq:`rf-smin` are the maintainer's to set.

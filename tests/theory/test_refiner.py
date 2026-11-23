@@ -852,3 +852,72 @@ def test_group_rule_numbers():
     assert rounds_to(6 * phi / ell, "781")
     assert rounds_to(mid, "0.0346") and rounds_to(mid / ell, "2.8")
     assert rounds_to(sp.Rational(100, 180000 - 100) * 10**4, "5.6")
+
+
+def test_omega_kernel_variance():
+    """rf-omega-kernel: with no lattice rotation, ps-omega gives a reflection's omega shift as k_y - k_z cot(eta) -
+    (d lambda / lambda) tan(theta) / sin(eta), three independent zero-mean terms, so its variance is
+    s_h^2 + s_v^2 cot^2(eta) + s_l^2 tan^2(theta) / sin^2(eta): linear in the three variances, with coefficients known
+    from each reflection's (eta, theta). A Gaussian of variance v is a Gaussian of variance v_lo convolved with one of
+    v - v_lo (their characteristic functions multiply), so any v_lo <= v is a factor of the kernel, as (A5) needs."""
+    ky, kz, dl = sp.symbols("k_y k_z d_l", real=True)
+    sh, sv, sl = sp.symbols("s_h s_v s_l", positive=True)
+    eta, th = sp.symbols("eta theta", positive=True)
+    shift = ky - kz * sp.cot(eta) - dl * sp.tan(th) / sp.sin(eta)
+    coeffs = [sp.diff(shift, q) for q in (ky, kz, dl)]
+    var = sum(c**2 * s**2 for c, s in zip(coeffs, (sh, sv, sl)))  # independent, zero mean
+    assert is_zero(var - (sh**2 + sv**2 * sp.cot(eta) ** 2 + sl**2 * sp.tan(th) ** 2 / sp.sin(eta) ** 2))
+    w, v, vlo = sp.symbols("w v v_lo", positive=True)
+    assert is_zero(sp.exp(-(w**2) * vlo / 2) * sp.exp(-(w**2) * (v - vlo) / 2) - sp.exp(-(w**2) * v / 2))
+
+
+def test_omega_identifiable():
+    """rf-omega-identify: (1) for a reflection whose predicted omega mu (in frames, |mu| < 1/2 from its frame's
+    centre) is known, the share of its light in that frame, Phi((1/2 - mu)/sqrt v) - Phi((-1/2 - mu)/sqrt v), falls
+    strictly with the kernel's variance v (its derivative is -(a phi(a/sqrt v) + |b| phi(b/sqrt v)) / (2 v^(3/2)) with
+    a = 1/2 - mu > 0 > b = -1/2 - mu), so each reflection's frames determine its v. (2) v = s_h^2 + s_v^2 c + s_l^2 t (1 + c),
+    c = cot^2(eta), t = tan^2(theta): three reflections (c1, t1), (c2, t1), (c1, t2) give a determinant
+    (c2 - c1)(t2 - t1)(1 + c1) != 0, so the three variances are determined; on one ring (t fixed) the third column is
+    t times (1, c) and the rank is 2, whatever the number of reflections."""
+    mu = sp.Symbol("mu", real=True)
+    v = sp.Symbol("v", positive=True)
+
+    def Phi(x):
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    def phi(x):
+        return sp.exp(-(x**2) / 2) / sp.sqrt(2 * sp.pi)
+
+    a, b = sp.Rational(1, 2) - mu, -sp.Rational(1, 2) - mu
+    share = Phi(a / sp.sqrt(v)) - Phi(b / sp.sqrt(v))
+    expect = -(a * phi(a / sp.sqrt(v)) - b * phi(b / sp.sqrt(v))) / (2 * v ** sp.Rational(3, 2))
+    assert is_zero(sp.simplify(sp.diff(share, v) - expect))  # -b = |b| > 0 and a > 0: strictly negative
+    c1, c2, t1, t2 = sp.symbols("c1 c2 t1 t2", positive=True)
+
+    def row(c, t):
+        return [1, c, t * (1 + c)]
+
+    D = sp.Matrix([row(c1, t1), row(c2, t1), row(c1, t2)]).det()
+    assert is_zero(sp.factor(D) - (c2 - c1) * (t2 - t1) * (1 + c1))
+    cs = sp.symbols("k0:5", positive=True)
+    t = sp.Symbol("t", positive=True)
+    assert sp.Matrix([row(c, t) for c in cs]).rank() == 2
+
+
+def test_omega_floor_table():
+    """rf-omega-bound's table: sum_k exp(-2 pi^2 k^2 r^2) / (pi k), capped at 1/2, for a floor of sd r frames:
+    0.5 at 0.05, 0.355 at 0.1, 0.151 at 0.2, 0.054 at 0.3, 0.0023 at 0.5; and the ID11 terms in frames of 0.05 deg:
+    bandwidth (3e-4 FWHM, tan theta = 0.08) 0.012 at |sin eta| = 1 and 0.058 at 0.2, horizontal convergence (8e-5 rad)
+    0.092."""
+    import mpmath as mp
+
+    mp.mp.dps = 20
+    quoted = {"0.05": "0.5", "0.1": "0.355", "0.2": "0.151", "0.3": "0.054", "0.5": "0.0023"}
+    for r, q in quoted.items():
+        rr = mp.mpf(r)
+        b = mp.nsum(lambda k, rr=rr: mp.exp(-2 * mp.pi**2 * k**2 * rr**2) / (mp.pi * k), [1, mp.inf])
+        assert rounds_to(sp.Float(str(min(b, mp.mpf("0.5"))), 20), q)
+    h = sp.pi / 180 * sp.Rational(5, 100)
+    sd_bw = sp.Rational(3, 10**4) / (2 * sp.sqrt(2 * sp.log(2))) * sp.Rational(8, 100)
+    assert rounds_to(sd_bw / h, "0.012") and rounds_to(sd_bw / sp.Rational(1, 5) / h, "0.058")
+    assert rounds_to(sp.Rational(8, 10**5) / h, "0.092")
