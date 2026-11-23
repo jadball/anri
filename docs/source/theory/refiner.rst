@@ -187,6 +187,20 @@ residuals :math:`\vec{e} = (\matr{I} - \matr{H})\vec{T}`, :math:`\matr{H} = \mat
 
 **Proof:** ``tests/theory/test_refiner.py::test_linear_estimator``
 
+**Cited:** the linear model of a ray's mean diffraction vector in the nine components of :math:`\matr{U}\matr{B}`,
+and its strain counterpart in the six of :math:`\varepsilon`, and their factorisation into scalar tomographic
+projections followed by diagonal weights (the Miller indices, or the strain's directional cosines, over the path
+length), so that the operator and its adjoint are never assembled [Henningsson2023]_. :eq:`rf-linear` is that model
+with three changes. Its unknowns are volume integrals, fitted from unnormalised sums of recorded values together with
+the counts, not volume averages over a path length; so it stays linear where density, beam or absorption vary along
+the ray. Its strain is read from :math:`|\vec{g}|^2` per cell (:eq:`rf-invariant`), not from the centroid by a Taylor
+expansion that needs the mosaicity to be moderate (:eq:`ref-spread-mean` gives the bias). And its cells are divided by
+their own Lorentz and polarisation factors (:eq:`rf-weight`). The factorisation carries over unchanged: :math:`\matr{G}`
+is a sum of scalar projections, one per component of each moment, weighted by powers of :math:`\vec{g}_0`. Their
+demonstration regularises with a smooth radial basis, which removes the voxel grid's aliases (:eq:`rf-discrete`), and
+generates its data with the model itself, so that no misfit reaches the weak directions (:eq:`rf-amplify`); anri does
+neither (AGENTS.md rules out basis-function priors), which is why it needs :eq:`rf-project`.
+
 The model is linear in the unknowns; no linearisation in the deformation is made. What stays non-linear is which
 cells form each region, a discrete function of where the populations' spots are. It is fixed for an iteration, as
 the window origins are (:doc:`peak_shape`), and re-made from the new estimates.

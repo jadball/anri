@@ -20,6 +20,12 @@ follows them, and new maths is written here, with its proof, before the code tha
 - Each chapter ends with **What is left out**: the approximations made, so that you know when a result can't be
   trusted.
 
+**A note on citations.** Much of the text of these pages was written with the help of a large language model. Such a
+model has learnt from a great deal of published work, but not where each idea came from, so a result here that is
+already in the literature may at first appear without its citation. We search for the work each result rests on, with
+effort, and cite it as we find it (:doc:`references`). If you recognise a result whose source is missing, please tell
+us: we are glad to credit those whose work this builds on.
+
 The forward model (:mod:`anri.fwd` and the layers below it), the detector and what it records, the measurements a
 refiner is built on and the limits of what the data determine, the indexer (:mod:`anri.index`) and the calibration
 of the geometry (:mod:`anri.calib`). Where the maths is ahead of the code (the threshold's model, region moments), the
