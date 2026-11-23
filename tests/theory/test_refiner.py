@@ -533,3 +533,66 @@ def test_beam_quarter_period():
     root = sp.pi / (2 * sp.sqrt(sp.log(2) * sp.log(4)))
     assert is_zero(sp.simplify(T.subs(L, root) - sp.Rational(1, 4)))
     assert rounds_to(root, "1.6")
+
+
+def test_smin():
+    """rf-smin: in whitened units (noise covariance I), a unit data pattern u has noise Var(u^T xi) = u^T u = 1 and,
+    with each misfit component bounded |Delta_j| <= D_j, bias |u^T Delta| <= sum_j |u_j| D_j (the triangle
+    inequality, not checked here). So the estimate along v_i errs by at most (z + sum_j |u_ij| D_j) / s_i at z standard deviations,
+    and is kept iff that is <= epsilon: s_min = (z + sum_j |u_ij| D_j) / epsilon. A weak column whose coefficient in
+    reflection h is s_h a_h (seen: a_h) has squared norm sum_h s_h^2 a_h^2: its gain relative to the seen column's is
+    the a^2-weighted rms of s_h."""
+    u = sp.Matrix(sp.symbols("u0:3", real=True))
+    Cid = sp.eye(3)
+    assert is_zero((u.T * Cid * u)[0] - u.dot(u))
+    a = sp.symbols("a0:4", real=True)
+    s = sp.symbols("s0:4", positive=True)
+    weak = sum((s[h] * a[h]) ** 2 for h in range(4))
+    seen = sum(a[h] ** 2 for h in range(4))
+    rms2 = sum(a[h] ** 2 * s[h] ** 2 for h in range(4)) / seen
+    assert is_zero(sp.simplify(weak / seen - rms2))
+
+
+def test_histogram_linear():
+    """rf-hist: the expected recorded sum over a bin B of cells (each divided by its L P) is sum_k a V_k times
+    int K_B(F) d mu_k, K_B(F) the probability that a photon of a sub-volume F is counted in B: linear in each
+    population's distribution mu_k, for any bins (three sub-volumes, two populations, symbolic). Each moment of
+    rf-moments is a linear functional of the histogram over the cells themselves: sum_p f(g_p) n_p = sum_B f(g_B)
+    n_B when each bin is one cell."""
+    K = sp.symbols("K0:3", nonnegative=True)  # K_B of three sub-volumes
+    w = sp.symbols("w0:3", nonnegative=True)  # their volumes in population 1
+    w2 = sp.symbols("x0:3", nonnegative=True)  # and in population 2
+    a1, a2, lam = sp.symbols("a1 a2 lambda", positive=True)
+    E = a1 * sum(K[i] * w[i] for i in range(3)) + a2 * sum(K[i] * w2[i] for i in range(3))
+    mixed = E.subs({w[i]: lam * w[i] for i in range(3)})
+    assert is_zero(sp.diff(mixed, lam, 2))  # linear in population 1's distribution
+    n = sp.symbols("n0:4")
+    f = sp.Function("f")
+    g = sp.symbols("g0:4")
+    assert is_zero(sum(f(g[p]) * n[p] for p in range(4)) - sum(f(g[B]) * n[B] for B in range(4)))
+
+
+def test_bin_edge():
+    """rf-bin-edge: a photon is moved by the instrument (A4) by e, independent of it, with E|e|^2 = sigma^2; it leaves
+    a bin only if |e| >= d, its distance to the bin's edge, and 1(|e| >= d) <= |e|^2 / d^2, so
+    |K_B(F) - 1_B(F g0)| <= sigma^2 / d^2 (Chebyshev), whatever the instrument's shape."""
+    e2, d = sp.symbols("e2 d", positive=True)  # |e|^2 and the distance
+    # for |e| >= d: e2 / d^2 >= 1; for |e| < d: e2 / d^2 >= 0 = the indicator
+    assert sp.simplify((e2 / d**2 - 1).subs(e2, d**2 + sp.Symbol("t", nonnegative=True))) >= 0
+
+
+def test_discrete_projector():
+    """rf-split-grid: on the voxel grid, with D the discrete gradient (or Hessian) restricted to a domain and its gauge
+    (constants, or affine functions) removed so D has full column rank, P = D (D^T D)^-1 D^T is the orthogonal
+    projector onto the seen fields: P = P^T, P^2 = P, P D = D, and (I - P) D = 0 (a 4 x 2 symbolic D). Its natural
+    boundary conditions are those of the normal equations D^T D phi = D^T v; nothing else is imposed."""
+    D = sp.Matrix(4, 2, sp.symbols("d0:8", real=True))
+    P = D * (D.T * D).inv() * D.T
+    assert is_zero(sp.simplify(P - P.T))
+    assert is_zero(sp.simplify(P * P - P))
+    assert is_zero(sp.simplify(P * D - D))
+    # a 1D example: forward differences on 4 nodes (3 edges), gauge fixed by dropping node 0's value
+    G = sp.Matrix([[1, 0, 0], [-1, 1, 0], [0, -1, 1]])  # phi_1 - phi_0, phi_2 - phi_1, phi_3 - phi_2 with phi_0 = 0
+    assert G.rank() == 3
+    PG = G * (G.T * G).inv() * G.T
+    assert PG == sp.eye(3)  # in 1D every edge field is a gradient: nothing is weak

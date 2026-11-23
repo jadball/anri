@@ -578,6 +578,87 @@ attenuated by the beam's transfer :math:`T(\vec{k})` (:eq:`lim-transfer`), so it
 (``tests/theory/test_refiner.py::test_beam_quarter_period``). That is the map's resolution. It is reported as a
 resolution, not filtered, since filtering would be a smoothness prior.
 
+**The split on the voxel grid.** On a grid the split needs no boundary conditions of its own. Let :math:`\matr{D}` be
+the discrete gradient (for the first moments' in-plane columns) or the discrete Hessian (for the metric's in-plane
+block), restricted to the domain's voxels, with its gauge removed: a constant for the gradient, an affine function
+for the Hessian. Then :math:`\matr{D}` has full column rank, and
+
+.. math::
+    :label: rf-split-grid
+
+    \matr{P} = \matr{D}(\matr{D}^T\matr{D})^{-1}\matr{D}^T, \qquad
+    \matr{P} = \matr{P}^T = \matr{P}^2, \qquad \matr{P}\matr{D} = \matr{D}
+
+is the orthogonal projector onto the seen fields; the weak part is :math:`(\matr{I} - \matr{P})`. The normal
+equations :math:`\matr{D}^T\matr{D}\vec{\phi} = \matr{D}^T\vec{v}` carry the boundary conditions implicitly (in the
+continuum limit: Neumann for the gradient; for the Hessian, those of a free plate edge, not derived here). They are
+sparse, symmetric and positive definite: conjugate gradients per domain. In one dimension every field is a gradient and nothing is weak, as the slice argument says.
+
+**Proof:** ``tests/theory/test_refiner.py::test_discrete_projector``
+
+The level :math:`s_{\min}`
+--------------------------
+
+Whitened by the noise covariance, a unit data pattern :math:`\vec{u}_i` has noise of variance
+:math:`\vec{u}_i^T\vec{u}_i = 1`. Its bias, with each misfit component bounded by :math:`\bar\Delta_j`
+(:eq:`rf-linear`), is at most :math:`\sum_j |u_{ij}|\bar\Delta_j` by the triangle inequality. So the estimate along
+:math:`\vec{v}_i` errs, at :math:`z` standard deviations, by at most :math:`(z + \sum_j |u_{ij}|\bar\Delta_j)/s_i`, and
+
+.. math::
+    :label: rf-smin
+
+    \text{keep } \vec{v}_i \iff s_i \ge s_{\min,i} = \frac{z + \sum_j |u_{ij}|\bar\Delta_j}{\epsilon},
+    \qquad
+    \frac{s_{\text{weak}}^2}{s_{\text{seen}}^2} = \frac{\sum_h s_h^2 a_h^2}{\sum_h a_h^2},
+
+with :math:`\epsilon` the precision the map must reach. A weak column's coefficient in reflection :math:`h` is
+:math:`s_h a_h`, where the seen column's is :math:`a_h`. So its gain relative to the seen one is the rms of the
+reflections' :math:`s_h \sim \sin\theta_h`, weighted by how much each reflection sees.
+
+**Proof:** ``tests/theory/test_refiner.py::test_smin``
+
+The level is per direction and comes from the bounds of :eq:`rf-cut-bound`, :eq:`rf-group` and
+:eq:`rf-alias-bound`, not from a choice. Where the bias bound is small, the noise sets it, and where the bias bound is
+large it sets it. Only :math:`\epsilon` and :math:`z` are choices: the precision sought, and the confidence.
+
+Histograms
+----------
+
+The moments keep a few numbers per region. The arc's profile, how its light is spread along the ring and in omega,
+carries each voxel's whole orientation distribution: its populations, not only their mean and spread (AGENTS.md).
+The same linearity holds for it. For any bin :math:`B` of cells (in rotation space, along the arc), the expected
+recorded sum over :math:`B`, each cell divided by its :math:`LP`, is
+
+.. math::
+    :label: rf-hist
+
+    \sum_k a_{bk}|F_h|^2 A_{kh} \int K_B(\matr{F})\, d\mu_k(\matr{F}),
+
+with :math:`K_B(\matr{F})` the probability that a photon of a sub-volume :math:`\matr{F}` is counted in :math:`B`:
+linear in each population's distribution, for any bins. The moments are linear functionals of the finest histogram,
+the cells themselves. So the histogram keeps everything the moments keep and more. Its tomography is the indexer's
+linear model (:eq:`idx-linear`) with the exact kernel and the bounds of this page, at bins as fine as the kernel
+allows.
+
+**Proof:** ``tests/theory/test_refiner.py::test_histogram_linear``
+
+The kernel's shape is the instrument's: the point spread (trusted, (A5)), the bandwidth and the beam's divergence
+(A4). Those last two are known only roughly. Bins much wider than the instrument need only its variance
+:math:`\sigma^2`. A photon at distance :math:`d` from its bin's edge leaves the bin only if the instrument moves it by
+at least :math:`d`, so for any instrument shape
+
+.. math::
+    :label: rf-bin-edge
+
+    |K_B(\matr{F}) - \mathbb{1}_B(\matr{F}\vec{g}_0)| \le \frac{\sigma^2}{d^2}.
+
+**Proof:** ``tests/theory/test_refiner.py::test_bin_edge`` (:math:`\mathbb{1}(|e| \ge d) \le |e|^2/d^2`).
+
+Light within a few :math:`\sigma` of a bin's edge is the bins' misfit, bounded like the box's tails. Bins of a few
+instrument widths are the finest that need no instrument shape. Finer bins need the instrument's kernel, as
+deconvolution does. The weak combinations are the same for histograms (:eq:`rf-weak-any`): bins resolve a voxel's
+populations, not what single-axis data cannot see.
+
 The guarantee
 -------------
 
@@ -617,11 +698,10 @@ What is left out
   written out.
 - **A bound in omega** needs the beam's angular spread as a factor of every spot's omega profile, as (A5) is for
   the detector; it is not established.
-- **The metric's split on a domain**: the in-plane block's seen part is the closure of the Hessians
-  :math:`\nabla\nabla\phi` on :math:`\Omega`. Its projector is a fourth-order (biharmonic) problem whose natural
-  boundary conditions are not derived here.
 - **The box margins** are first order in :math:`e`, as :eq:`dif-rotation-motion` is.
-- **The level** :math:`s_{\min}`, and how the seen and unseen parts are reported per voxel, are not chosen here.
+- **The precision** :math:`\epsilon` and confidence :math:`z` of :eq:`rf-smin` are the maintainer's to set.
+- **Histograms at scale**: their unknowns are each voxel's density over a rotation grid, many more than the moments'
+  16; how the two are combined (histograms for populations, moments for their means) is not derived.
 - **Boxes for curved arcs.** A box in :math:`(s, f, \omega)` around an arc of several degrees holds many cells the
   arc misses, and :eq:`rf-cut-bound` grows with them: boxes should follow the arc, defined in rotation space.
 - **The beam profile and runout** enter :math:`\matr{G}`; :eq:`rf-centre` bounds how they reach the deformation,
