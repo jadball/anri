@@ -74,11 +74,12 @@ def plot_rings(fig: Figure, cov: dict) -> Callable:
 
 
 def plot_survival(fig: Figure, probe: dict) -> Callable:
-    """Draw how many peaks the cut removes against density; ``update(density)`` shows what each peak keeps there.
+    """Draw how many peaks the recording loses against density; ``update(density)`` shows what each peak keeps there.
 
-    Left: the share of peaks with no pixel above the cut (gone from the data), and the median share of a peak's
-    intensity above it, against density. Right: each peak's kept share at the chosen density. The faint ends and tails
-    of peaks go first, then whole weak reflections and small grains.
+    Left: the share of peaks expected to keep less than ``lost_share`` of their light (gone from the data), and the
+    median expected share of a peak's light recorded (Poisson counts, the cut and the group rule), against density.
+    Right: each peak's kept share at the chosen density. The faint ends and tails of peaks go first, then whole weak
+    reflections, small grains and compact spots of fewer pixels than the group rule needs.
 
     Parameters
     ----------
@@ -90,12 +91,12 @@ def plot_survival(fig: Figure, probe: dict) -> Callable:
     d, lost, kept = probe["densities"], probe["lost_below"], probe["kept_share"]
     ax = fig.subplots(1, 2)
     gone = np.array([(lost > x).mean() for x in d])
-    ax[0].semilogx(d, gone, color="tab:red", label="peaks gone (no pixel above the cut)")
+    ax[0].semilogx(d, gone, color="tab:red", label=f"peaks gone (keeping < {probe['lost_share']:.0%} of their light)")
     ax[0].semilogx(d, np.median(kept, 0), color="tab:blue", label="median share of a peak kept")
     ax[0].semilogx(d, np.percentile(kept, 10, 0), color="tab:blue", ls=":", label="10th percentile")
     v = ax[0].axvline(probe["density"], color="k")
     ax[0].set(xlabel="density (counts per unit density)", ylabel="fraction", ylim=(0, 1.02),
-              title=f"cut {probe['cut']:g}; {len(lost)} peaks, rows {probe['rows']}")  # fmt: skip
+              title=f"cut {probe['cut']:g}, groups of {probe['pixels_in_spot']}; {len(lost)} peaks, rows {probe['rows']}")  # fmt: skip
     ax[0].legend(fontsize=8)
     drawn: list = []
 
@@ -105,7 +106,7 @@ def plot_survival(fig: Figure, probe: dict) -> Callable:
         for art in drawn:
             art.remove()
         drawn[:] = list(ax[1].hist(share, bins=np.linspace(0, 1, 51), color="tab:blue", log=True)[2])
-        ax[1].set(xlabel="share of the peak's intensity above the cut", ylabel="peaks", title=f"density {d[k]:.3g}")
+        ax[1].set(xlabel="expected share of the peak's light recorded", ylabel="peaks", title=f"density {d[k]:.3g}")
         v.set_xdata([density, density])
         fig.canvas.draw_idle()
         return (f"density {d[k]:.3g}: {(lost > d[k]).mean() * 100:.1f}% of the peaks gone; a peak keeps "

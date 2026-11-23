@@ -11,6 +11,8 @@ from collections.abc import Callable
 import h5py
 import numpy as np
 
+from anri.io.imaged11 import PIXELS_IN_SPOT
+
 
 def footprint(p: dict) -> dict:
     """Return where the sample is against the scanned dty range, to check the rows cover it (``dty_step``, ``margin``).
@@ -86,16 +88,20 @@ def ring_coverage(p: dict, n_tth: int = 300, n_eta: int = 720) -> dict:
 
 
 def probe_rows(p: dict, rows: list, cut: float = 1.0, window: tuple = (3, 7, 7), max_frames: int | None = 31,
-               densities: np.ndarray | None = None, batch: int = 8192, log: Callable = print) -> dict:  # fmt: skip
-    """Render a few rows without writing them: how each peak survives the cut at any density, and its window.
+               densities: np.ndarray | None = None, batch: int = 8192, log: Callable = print,
+               pixels_in_spot: int = PIXELS_IN_SPOT, lost_share: float = 0.05) -> dict:  # fmt: skip
+    """Render a few rows without writing them: how much of each peak the recording keeps at any density, and its window.
 
     Each peak is rendered on its own (as :func:`anri.fwd.render.render_peaks`, on the peaks :func:`anri.fwd.render.row_peaks`
     selects, as the renderer does) and looked up in the row's summed pixels, so overlapping peaks count. A peak is
     judged in the row that sees its voxel best: where the voxel crosses the beam within half a dty step of the row's
     dty, at the peak's omega (peaks of voxels at the beam's edge are faint in this row and bright in their own), and
     centred in the scan's omega range (a peak centred beyond its ends has its Friedel mate in the scan).
-    Intensities scale with the density, so one render gives every density: a peak vanishes below the density at which
-    its brightest pixel rounds to the cut.
+
+    What a peak keeps is the expectation of what :func:`anri.simulate.stages.record` writes: Poisson counts, the cut
+    and the group rule, each pixel's expected recorded value (:func:`anri.io.imaged11.recorded_moments`, from the row's
+    summed light around it) shared between the peaks lighting it in proportion to their light. Intensities scale with
+    the density, so one render gives every density.
 
     Parameters
     ----------
@@ -103,20 +109,23 @@ def probe_rows(p: dict, rows: list, cut: float = 1.0, window: tuple = (3, 7, 7),
         From :func:`anri.simulate.stages.load_prepare`
     rows
         Row indices to render (e.g. the middle row and one near the sample's edge)
-    cut, window, max_frames
-        See :func:`anri.simulate.stages.stage_render`
+    cut, window, max_frames, pixels_in_spot
+        See :func:`anri.simulate.stages.stage_render` (``pixels_in_spot`` at most 3)
     densities
         The densities to evaluate (default: 1/100 to 1000 times the prepare file's, log-spaced)
     batch
         Peaks rendered at once
+    lost_share
+        A peak counts as gone at a density where it keeps, in expectation, less than this share of its light
 
     Returns
     -------
     dict
-        "densities" [F], "lost_below" [n] (each peak's density below which no pixel of it is above the cut),
-        "kept_share" [n, F] (share of each peak's intensity in pixels above the cut, at each density), "rows",
-        "density" (the prepare file's), "cut"; and for the windows "captured" (the share of each peak within the
-        scan's omega range that its window holds), "n_outside" (peaks centred beyond its ends), "window_frames"
+        "densities" [F], "lost_below" [n] (each peak's lowest density of ``densities`` at which it keeps at least
+        ``lost_share``; inf if none), "kept_share" [n, F] (the expected share of each peak's light recorded, at each
+        density), "rows", "density" (the prepare file's), "cut", "pixels_in_spot", "lost_share"; and for the windows
+        "captured" (the share of each peak within the scan's omega range that its window holds), "n_outside" (peaks
+        centred beyond its ends), "window_frames"
     """
     import time
 
@@ -125,6 +134,7 @@ def probe_rows(p: dict, rows: list, cut: float = 1.0, window: tuple = (3, 7, 7),
 
     from anri.fwd.render import _as_jax, _render_peaks, make_row, render_phases, row_peaks
     from anri.geom.gonio import find_dty_for_beam_xy
+    from anri.io.imaged11 import neighbourhoods, recorded_moments
 
     d0 = float(p["prov"]["options"]["density"])
     densities = d0 * np.logspace(-2, 3, 101) if densities is None else np.asarray(densities, float)
@@ -133,7 +143,9 @@ def probe_rows(p: dict, rows: list, cut: float = 1.0, window: tuple = (3, 7, 7),
     npix = p["det_shape"][0] * p["det_shape"][1]
     _, ws, wf = window
     render = jax.jit(_render_peaks, static_argnums=(8, 9))  # as render_peaks, also giving each peak's in_range
-    lost, kept, captured, frames, n_out = [], [], [], [], 0
+    share_fn = jax.jit(lambda nb, f: recorded_moments(nb * f, cut, pixels_in_spot)[0] / jnp.maximum(nb[:, 2, 2] * f, 1e-30))
+    chunk = 1 << 15  # pixels per call: one compile
+    kept, captured, frames, n_out = [], [], [], 0
     for i in rows:
         t0 = time.perf_counter()
         row = make_row(p["omega"][i], p["dty"][i])
@@ -141,6 +153,12 @@ def probe_rows(p: dict, rows: list, cut: float = 1.0, window: tuple = (3, 7, 7),
                                                 max_frames=max_frames)  # fmt: skip
         key_m = np.asarray(frame).astype(np.int64) * npix + np.asarray(pixel)  # sorted by (frame, pixel)
         value_m = np.asarray(value)
+        nb = neighbourhoods(np.asarray(frame), np.asarray(pixel), value_m.astype(np.float32), p["det_shape"])
+        nb = np.concatenate([nb, np.zeros((-len(nb) % chunk, 5, 5), np.float32)])
+        share_m = np.stack([np.concatenate([np.asarray(share_fn(jnp.asarray(nb[c0 : c0 + chunk]), f))
+                                            for c0 in range(0, len(nb), chunk)])[: len(value_m)]
+                            for f in factors], 1)  # [pixels, F]: E[r] / lambda of each pixel at each density
+        share_m = np.concatenate([share_m, np.zeros((1, len(factors)), np.float32)])  # row for pixels not lit
         inr = np.asarray(st["in_range"])
         inside = inr >= 0.5
         captured.append(np.asarray(st["captured"])[inside] / inr[inside])
@@ -163,10 +181,10 @@ def probe_rows(p: dict, rows: list, cut: float = 1.0, window: tuple = (3, 7, 7),
                     v[fr < 0] = 0.0
                     total = v.sum(1)
                     key = fr.astype(np.int64) * npix + px
-                    M = v  # the row's summed pixel where the row has it, else the peak's own value
+                    j = np.full(key.shape, len(key_m))  # each cell's pixel in the row (the zero row if not lit)
                     if len(key_m):
-                        j = np.minimum(np.searchsorted(key_m, key), len(key_m) - 1)
-                        M = np.where(key_m[j] == key, value_m[j], v)
+                        at = np.minimum(np.searchsorted(key_m, key), len(key_m) - 1)
+                        j = np.where(key_m[at] == key, at, len(key_m))
                     # the peak's omega: its brightest frame; its voxel's dty at that omega
                     best = np.pad(fr[np.arange(n), np.argmax(v, 1)], (0, batch - n))  # fixed shapes: one compile
                     om = np.asarray(p["omega"][i])[np.maximum(best, 0)]
@@ -176,13 +194,16 @@ def probe_rows(p: dict, rows: list, cut: float = 1.0, window: tuple = (3, 7, 7),
                     own &= np.asarray(in_scan)[:n] >= 0.5  # peaks centred beyond the scan's ends: their mates count
                     if not own.any():
                         continue
-                    v, M, total = v[own], M[own], total[own]
-                    lost.append(d0 * (cut + 0.5) / np.maximum(M.max(1), 1e-30))
-                    kept.append(np.stack([(v * (M * f >= cut + 0.5)).sum(1) for f in factors], 1) / total[:, None])
+                    v, j, total = v[own], j[own], total[own]
+                    kept.append(np.einsum("nc,ncf->nf", v, share_m[j]) / total[:, None])
                     n_row += int(own.sum())
         log(f"row {i}: {st['n_peaks']} peaks, {n_row} of them judged here ({time.perf_counter() - t0:.1f} s)")
-    return {"densities": densities, "lost_below": np.concatenate(lost), "kept_share": np.concatenate(kept),
-            "rows": list(rows), "density": d0, "cut": cut, "captured": np.concatenate(captured), "n_outside": n_out,
+    kept_share = np.concatenate(kept)
+    reach = kept_share >= lost_share  # rises with the density: every pixel's expected recorded share does
+    lost = np.where(reach.any(1), densities[np.argmax(reach, 1)], np.inf)
+    return {"densities": densities, "lost_below": lost, "kept_share": kept_share, "rows": list(rows), "density": d0,
+            "cut": cut, "pixels_in_spot": pixels_in_spot, "lost_share": lost_share,
+            "captured": np.concatenate(captured), "n_outside": n_out,
             "window_frames": np.concatenate(frames) if frames else None}  # fmt: skip
 
 
