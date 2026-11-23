@@ -279,37 +279,10 @@ moments (:eq:`mom-raysum`), exact for any shape, and they determine the merged c
 What follows for a refiner
 --------------------------
 
-Together with :doc:`limits` these results say which local refiner of orientation and strain is fault tolerant:
-
-1. **Unknowns per population, no coupling between voxels:** its mean deformation :math:`\matr{\beta}` (9), its spread
-   :math:`\matr{S}` (6, rotation; strain spreads only where :eq:`lim-mom2-rank` says they are seen) and its density.
-2. **Regions fixed by the model, per dty row and reflection:** connected sets of cells holding every contributor's
-   light down to a tolerance far below the cut, so that each region is complete for each contributor it holds; cells
-   near a window's faces left out (:doc:`moments`). Fixed for an iteration, like the window origins
-   (:doc:`peak_shape`). A population separated in a reflection is alone in its region there, and its region can be
-   made symmetric about it (:eq:`ref-symmetric`); merged populations share one.
-3. **Statistics:** counts, first and second moments over each region in each cell's own angles, its 2θ (exact for
-   strain at any spread, :eq:`ref-spread-mean`) and its position along the ring and in omega; sums of recorded values,
-   never ratios, compared with the model's expected recorded sums (:eq:`rec-expected`, from the model's light in every
-   cell of the 5 × 5 stencil).
-4. **Model:** each region's expected statistics are the ray sums of the contributors' own moments (:eq:`mom-raysum`),
-   with the second-order mean terms of their spreads (:eq:`ref-spread-mean`), through the cut at the faint edges.
-5. **Weights and errors:** the covariance of the region sums with the group rule's pairs (:eq:`rec-cov-pair`, a
-   :math:`(4m - 3) \times (4m - 3)` stencil, regions closer than :math:`2(m-1)` pixels correlated); a wrong one costs
-   efficiency and error bars, never accuracy (:eq:`ref-bias`).
-6. **Report what the data cannot resolve:** merged populations' separations are not fitted from shape
-   (:eq:`ref-split`); their mean and the spread of the merged light are. The weak combinations of :doc:`limits` are
-   reported as such, or filled by the curl-free constraint the maintainer allows within a merged domain.
-
-What it costs: the information on separation within merged light (by :eq:`ref-split`, information that could not be
-used without bias), and, for spots narrower than about 0.3 cell, the sub-cell information the pixels carry
-(:eq:`det-crlb`), which only a correctly shaped likelihood could use and which aliasing (:eq:`ref-alias`) makes
-shape-sensitive. For a separated Gaussian spot of sd half a cell or more, with no cut, the first moments are
-efficient: their variance :math:`(\sigma^2 + 1/12)/N` is the bound of :eq:`det-crlb`.
-
-What remains shape-sensitive, and must be measured rather than assumed: the narrowest part of each spot (aliasing),
-its asymmetric parts that differ between voxels, the second-order spread terms where :math:`\matr{S}` is poorly
-determined, and the cut's deficit (:eq:`mom-deficit`) at the faint edges of merged light, where it is not symmetric.
+Every statistic above that is robust either keeps one population's light alone or a set of populations' light
+whole: none divides light by its shape. With no spot shape trusted at all, :doc:`refiner` builds the refiner on that:
+deformation moments as an exactly linear tomography of region sums, and the noise, the cut, the group rule and the
+pixels each bounded.
 
 What is left out
 ----------------

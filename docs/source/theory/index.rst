@@ -47,20 +47,22 @@ Measurement and limits
     localisation, second moments, model error, and what a method must keep to reach the limits.
 11. :doc:`refinement`: what a refiner's statistics are robust to: weights and shape errors, symmetry, the pixels'
     aliasing, a spread's second-order mean, light beyond a region, and the cost of splitting merged light.
+12. :doc:`refiner`: a refiner that needs no spot shape: deformation moments as a linear tomography, with the
+    noise, the cut, the group rule and the pixels each bounded, and what no estimator can do.
 
 Indexer
 =======
 
-12. :doc:`indexing`: the data as a linear tomography of orientation occupancies, and the histogram it is fitted to.
-13. :doc:`search`: which orientations to try: grids over the fundamental zone, and completeness.
-14. :doc:`likelihood`: fitting occupancies: Poisson likelihood, MLEM, SQUAREM, censoring and the likelihood ratio.
-15. :doc:`localsearch`: refining the orientations off the search grid, and fitting the voxels coarse to fine.
-16. :doc:`populations`: from occupancies to orientation populations per voxel, and the sample mask.
+13. :doc:`indexing`: the data as a linear tomography of orientation occupancies, and the histogram it is fitted to.
+14. :doc:`search`: which orientations to try: grids over the fundamental zone, and completeness.
+15. :doc:`likelihood`: fitting occupancies: Poisson likelihood, MLEM, SQUAREM, censoring and the likelihood ratio.
+16. :doc:`localsearch`: refining the orientations off the search grid, and fitting the voxels coarse to fine.
+17. :doc:`populations`: from occupancies to orientation populations per voxel, and the sample mask.
 
 Calibration
 ===========
 
-17. :doc:`calibration`: the detector and beam geometry from powder rings, then from the indexed scan's peaks.
+18. :doc:`calibration`: the detector and beam geometry from powder rings, then from the indexed scan's peaks.
 
 :doc:`references` lists every work cited.
 
@@ -79,6 +81,7 @@ Calibration
     moments
     limits
     refinement
+    refiner
     indexing
     search
     likelihood
