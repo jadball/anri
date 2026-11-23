@@ -302,9 +302,11 @@ the bias a wrong spot shape gives it, projected as in :eq:`lim-common`. From the
   every voxel along a ray through the light the voxels share.
 - Second moments with free spreads add to the means only through their noise correlation (above), not yet sized.
 
-Between these lie statistics over parts of a blob. Which statistic reaches the limits with a bias below the noise
-is not yet derived: it needs the information kept and the shape bias of statistics over regions of a given size, as
-a function of the populations' separation and own widths. Until that is on this page, no method follows from it.
+Between these lie statistics over parts of a blob. :doc:`refinement` derives their shape bias: a separated
+population's location is protected by symmetry (:eq:`ref-symmetric`) up to the pixels' aliasing (:eq:`ref-alias`),
+while splitting merged light by its shape is bias-dominated above a few hundred to a few thousand photons for
+plausible shape errors (:eq:`ref-split`). So the statistics a robust refiner keeps are moments over regions complete
+for their contributors: separated light alone in its region, merged light as a ray sum.
 
 What is left out
 ----------------

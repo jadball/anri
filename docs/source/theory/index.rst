@@ -45,20 +45,22 @@ Measurement and limits
    sums for any spot shape, what a region's choice and a window's edge do to them.
 10. :doc:`limits`: what the data determine: the Fourier slice, the dislocations it misses, the beam, separation,
     localisation, second moments, model error, and what a method must keep to reach the limits.
+11. :doc:`refinement`: what a refiner's statistics are robust to: weights and shape errors, symmetry, the pixels'
+    aliasing, a spread's second-order mean, light beyond a region, and the cost of splitting merged light.
 
 Indexer
 =======
 
-11. :doc:`indexing`: the data as a linear tomography of orientation occupancies, and the histogram it is fitted to.
-12. :doc:`search`: which orientations to try: grids over the fundamental zone, and completeness.
-13. :doc:`likelihood`: fitting occupancies: Poisson likelihood, MLEM, SQUAREM, censoring and the likelihood ratio.
-14. :doc:`localsearch`: refining the orientations off the search grid, and fitting the voxels coarse to fine.
-15. :doc:`populations`: from occupancies to orientation populations per voxel, and the sample mask.
+12. :doc:`indexing`: the data as a linear tomography of orientation occupancies, and the histogram it is fitted to.
+13. :doc:`search`: which orientations to try: grids over the fundamental zone, and completeness.
+14. :doc:`likelihood`: fitting occupancies: Poisson likelihood, MLEM, SQUAREM, censoring and the likelihood ratio.
+15. :doc:`localsearch`: refining the orientations off the search grid, and fitting the voxels coarse to fine.
+16. :doc:`populations`: from occupancies to orientation populations per voxel, and the sample mask.
 
 Calibration
 ===========
 
-16. :doc:`calibration`: the detector and beam geometry from powder rings, then from the indexed scan's peaks.
+17. :doc:`calibration`: the detector and beam geometry from powder rings, then from the indexed scan's peaks.
 
 :doc:`references` lists every work cited.
 
@@ -76,6 +78,7 @@ Calibration
     recording
     moments
     limits
+    refinement
     indexing
     search
     likelihood

@@ -102,9 +102,11 @@ so that a peak with no broadening at all still renders.
 
 **Code:** :func:`anri.fwd.render.render_peaks`.
 
-**Anri's choice:** first order is right for spreads up to a few degrees; beyond that a peak is a curved arc
-(:ref:`theory_rotation_motion`) and a Gaussian is the wrong shape. AGENTS.md asks for exact rotations at large spreads;
-the renderer does not do that yet.
+**Anri's choice:** first order is right for the shape of spreads up to a few degrees; beyond that a peak is a curved
+arc (:ref:`theory_rotation_motion`) and a Gaussian is the wrong shape. AGENTS.md asks for exact rotations at large
+spreads; the renderer does not do that yet. For a peak's *mean* first order is not enough at the precision a strain
+refiner needs: a straight spot of spread :math:`\sigma_\eta` along a curved ring reads as a strain of about
+:math:`-\sigma_\eta^2/2`, :math:`1.5 \times 10^{-4}` at 1° (:eq:`ref-ring`, :eq:`ref-spread-mean`).
 
 Frames
 ------
