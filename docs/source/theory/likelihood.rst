@@ -287,7 +287,8 @@ for the censored deviance; :math:`\delta` is the directional derivative), ``test
 
 Each SQUAREM iteration makes two plain updates, :math:`f \to f_1 \to f_2`, so each gives :math:`\rho^2 =
 \delta_1/\delta_0` and the remaining deviance :math:`\hat{G} = \delta_1 / (2(1 - \rho))` at :math:`f_1`, which the
-iteration's result improves on. The fit stops once :math:`\hat{G} \le` ``tol`` on two iterations running, by
+iteration's result improves on. The fit stops once :math:`\hat{G} \le` ``tol`` and the deviance itself fell by at most
+``tol`` (or eight float32 ulps of it, where that is larger) over the iteration, on two iterations running, by
 default 1: a log-likelihood
 ratio of 1/2 to the optimum, which no test can tell from it (:eq:`lik-lr`'s threshold is 25). The cost is one more
 reduction per update, brought to the host with the deviance in one transfer.
@@ -296,8 +297,9 @@ reduction per update, brought to the host with the deviance in one transfer.
 the modes' mean weighted by their :math:`\delta`, below the slowest's, so the slowest mode's remainder is
 underestimated, by up to the factor :math:`(1 - \rho)/(1 - \rho_{\max})`. It is worst just after a start, when the
 fast modes dominate :math:`\delta`, and along near-null directions (near-duplicate orientations, :eq:`ls-start`),
-where :math:`\rho_{\max} \to 1`: hence two iterations running, and, after pricing, the rigorous bound :eq:`ls-gap`
-beside it. SQUAREM's extrapolation changes the
+where :math:`\rho_{\max} \to 1`. On a half-sample phantom it swung from 6 to 251 between successive iterations while
+the deviance fell by tens to hundreds per iteration. Hence the deviance's own fall as a second condition, two
+iterations running, and, after pricing, the rigorous bound :eq:`ls-gap` beside it. SQUAREM's extrapolation changes the
 contraction from iteration to iteration, but the two plain updates that measure it are plain MLEM. The deviance
 counts in the histogram's units (monitor-normalised sums of counts: the Poisson approximation above).
 

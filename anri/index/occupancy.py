@@ -729,8 +729,10 @@ def squarem(
     by the voxel fit (:func:`mlem`) and the global orientation fit (:func:`anri.index.orientations.fit`).
 
     Convergence: the two plain MLEM updates of each iteration give the deviance still to fall,
-    :func:`remaining_deviance` of their :func:`step_decrease`. The fit stops once that is at most ``tol`` on two
-    iterations running (the first iteration after a start sees only the fast modes), a deviance
+    :func:`remaining_deviance` of their :func:`step_decrease`. The fit stops once that is at most ``tol``, and the
+    deviance fell by at most ``tol`` (or 8 float32 ulps of it) over the iteration, on two iterations running (the
+    estimate alone can be fooled: the first iteration after a start sees only the fast modes, and SQUAREM's
+    alternating steps make it swing), a deviance
     (twice a log-likelihood ratio) too small for the data to tell from the optimum. Stopping at ``n_iter`` first is a
     filter (theory page, likelihood), reported as not converged.
 
@@ -768,7 +770,7 @@ def squarem(
        https://doi.org/10.1111/j.1467-9469.2007.00585.x
     """
     step_max = float("inf")  # no cap until a step is refused
-    remaining, it, below = float("inf"), 0, 0
+    remaining, it, below, dev_prev = float("inf"), 0, 0, float("inf")
     for it in range(1, n_iter + 1):
         f1, _, delta0 = step(f)
         f2, dev1, delta1 = step(f1)
@@ -786,8 +788,13 @@ def squarem(
         length = float(-a)
         log(f"  {label} {it} (SQUAREM step {length:.1f}{'' if taken else ', not taken'}): deviance {dev:.6g}, "
             f"~{remaining:.3g} to go")  # fmt: skip
-        below = below + 1 if remaining <= tol else 0
-        if below >= 2:  # twice running: the first iteration after a start sees the fast modes only
+        # the estimate, twice running (the first iteration after a start sees the fast modes only), and the deviance's
+        # own fall over the iteration, to within tol or the float32 resolution of the deviance (8 ulps)
+        fell = dev_prev - dev
+        settled = fell <= max(tol, 8.0 * float(np.spacing(np.float32(abs(dev)))))
+        dev_prev = dev
+        below = below + 1 if (remaining <= tol and settled) else 0
+        if below >= 2:
             break
         if not taken:
             step_max = max(1.0, length / 4)
@@ -1097,10 +1104,14 @@ def fit_occupancy(
             cand = jnp.concatenate([cand, jnp.zeros((cand.shape[0], PRICE_NEW), cand.dtype)], 1)
         cand_n, f_n, stats = price(H, mu, f, cand, pred, ring_j, pos_p, scan, dims, vb_all, qc=qc, censor=censor,
                                    saturated=sat, eps=price_eps)  # fmt: skip
-        log(price_message(stats, price_eps) + f": {time.perf_counter() - t0:.1f} s")
+        last_pass = rnd == price_rounds
+        msg = price_message(stats, price_eps)
+        if last_pass and stats["added"]:
+            msg = msg.replace(f"{stats['added']} added", f"{stats['added']} would be added (no rounds left)")
+        log(msg + f": {time.perf_counter() - t0:.1f} s")
         if not info["converged"]:
             log("pricing: the fit had not converged, so the certificate does not apply")
-        if stats["added"] == 0 or rnd == price_rounds:
+        if stats["added"] == 0 or last_pass:
             break
         t0 = time.perf_counter()
         f, info = mlem(H, cand_n, pred, ring_j, pos_p, scan, dims, f_n, n_iter, vb, log=log, censor=censor,
