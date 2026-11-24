@@ -172,16 +172,14 @@ So a single slice determines everything about a deformation except, at each freq
 whose Burgers vector lies along the ray, and the shear :math:`\partial_k u_\xi`. All three are seen only through
 :math:`\sin\theta`.
 
-**Anri's choice** (maintainer, 2026-11-23; corrected 2026-11-24, to be confirmed by the maintainer): this page first
-stated that the weak part is the dislocation density with lines along :math:`z`, applied the curl to
-:math:`\matr{\beta}^*` and concluded that a curl-free constraint fills all three weak numbers. That was wrong
-(:eq:`lim-weak-parts`): a constraint of no dislocations, :math:`\alpha_{\xi z} = \alpha_{\xi\xi} = 0`, fills only
-:math:`\varepsilon_{\xi\xi}` and :math:`\varepsilon_{\xi z} - w_k`, and no physical constraint from one slice fills
-:math:`\varepsilon_{k\xi} + w_z`. Such a constraint is also a differential relation between neighbouring voxels: a
-coupling, which AGENTS.md rules out as a default. It is therefore never applied implicitly. Where it is used, it is an
-explicit, named output beside the unconstrained one, with its bias stated: the dislocation content it assumes away.
-Equilibrium constrains only the strains, needs the stress's derivatives along :math:`z` (a stack of slices) and the
-elastic constants, and what it fills is not derived here.
+**Anri's rule** (maintainer, 2026-11-24): no constraint between voxels fills the weak part. A constraint of no
+dislocations, :math:`\alpha_{\xi z} = \alpha_{\xi\xi} = 0`, would fill only :math:`\varepsilon_{\xi\xi}` and
+:math:`\varepsilon_{\xi z} - w_k` (:eq:`lim-weak-parts`), never :math:`\varepsilon_{k\xi} + w_z`, and it is a
+differential relation between neighbouring voxels: a coupling, which suppresses exactly the dislocation content
+Anri exists to measure. (An earlier version of this page proposed it, applied the curl to :math:`\matr{\beta}^*`
+and concluded it filled all three.) The weak combinations are estimated per voxel from their :math:`\sin\theta`
+terms, with their error bars, and reported as not determined where those are too large. Equilibrium would also
+couple voxels, through the stress's derivatives.
 
 The beam
 --------

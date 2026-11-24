@@ -27,7 +27,7 @@ Anri targets everything from perfect crystals to heavily deformed metals. At the
 Consequences for models:
 
 - **A voxel's orientation distribution is a small mixture of populations** (cells, domains, variants), each nearly constant with a small intrinsic spread. Represent it with multiple map entries per voxel, each with its own density (volume fraction) and, where needed, its own spread.
-- **No coupling between voxels:** no smoothness, interpolation, total variation or basis-function priors on orientation or strain. They suppress exactly the local variation Anri exists to measure, as ImageD11's path averaging does.
+- **No coupling between voxels:** no smoothness, interpolation, total variation or basis-function priors on orientation or strain, no constraints between neighbours (compatibility, no dislocations, equilibrium), no truncated spectra. They suppress exactly the local variation Anri exists to measure, as ImageD11's path averaging does. Couplings that remain in the code are written out as filters on the theory pages (the indexer's coarse-to-fine levels: `docs/source/theory/localsearch.rst`); don't add new ones.
 - **Report what the data cannot resolve:** populations closer than the instrument resolution cannot be separated, so report a mean and a spread rather than inventing structure.
 - **Test on realistic phantoms:** with orientation spread along the rays (cell structures, twins, AM-like hierarchies), not uniform grains or linear gradients on a voxel grid. A uniform orientation per voxel turns a gradient into an unphysical ladder of sub-peaks.
 

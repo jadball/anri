@@ -233,7 +233,8 @@ their own Lorentz and polarisation factors (:eq:`rf-weight`). The factorisation 
 is a sum of scalar projections, one per component of each moment, weighted by powers of :math:`\vec{g}_0`. Their
 demonstration regularises with a smooth radial basis, which removes the voxel grid's aliases (:eq:`rf-discrete`), and
 generates its data with the model itself, so that no misfit reaches the weak directions (:eq:`rf-amplify`); anri does
-neither (AGENTS.md rules out basis-function priors), which is why it needs :eq:`rf-project`.
+neither (AGENTS.md rules out basis-function priors and coupling between voxels), so it reports each voxel's error bar
+and bias bound instead (:eq:`rf-linear`).
 
 The model is linear in the unknowns; no linearisation in the deformation is made. What stays non-linear is which
 cells form each region, a discrete function of where the populations' spots are. It is fixed for an iteration, as
@@ -640,16 +641,18 @@ from Friedel pairs), and can be fitted as one function of omega for the whole ma
 
 **Proof:** ``tests/theory/test_refiner.py::test_centred_features``
 
-**What to estimate.** Every combination is estimated, with its covariance and its bias bound
-:math:`\langle|\vec{u}_i|, \bar{\vec{\Delta}}\rangle/s_i` (:eq:`rf-smin`), and those whose bound exceeds the precision
-sought are flagged as not determined. Nothing is removed from the estimate.
+**What to estimate.** Every voxel's numbers are estimated by the left inverse of :eq:`rf-linear`, each with its own
+covariance and its own bias bound :math:`\sum_j |A_{ij}|\bar\Delta_j`, and reported as not determined where the bound
+or the error bar exceeds the precision sought. Nothing is removed from the estimate and no voxel's value depends on a
+prior over its neighbours'; the singular directions (:eq:`rf-smin`) are a diagnostic of which combinations are weak,
+not a step of the estimate.
 
-**Filter:** keeping only the combinations with :math:`s_i \ge s_{\min}` (a truncated singular value decomposition) is
-a filter. Its estimate is :math:`P_{\text{seen}}\vec{Y}`, not :math:`\vec{Y}`: the right singular vectors span many
-voxels, so each voxel's value becomes a combination of its neighbours' (the resolution matrix
-:math:`P_{\text{seen}} = \sum_{s_i \ge s_{\min}}\vec{v}_i\vec{v}_i^T`), and the directions it drops include those the
-beam's transfer attenuates (:eq:`lim-transfer`), so it is also a low-pass filter. It is not a default; where it is used,
-the unfiltered estimate and :math:`P_{\text{seen}}` are reported beside it.
+**Anri's rule:** no truncation. Keeping only the singular directions with :math:`s_i \ge s_{\min}` would estimate
+:math:`P_{\text{seen}}\vec{Y}` (:eq:`rf-project`), not :math:`\vec{Y}`: the right singular vectors span many voxels,
+so each voxel's value would become a combination of its neighbours' (the resolution matrix :math:`P_{\text{seen}} =
+\sum_{s_i \ge s_{\min}}\vec{v}_i\vec{v}_i^T`), and the directions dropped include those the beam's transfer
+attenuates (:eq:`lim-transfer`): a coupling between voxels and a low-pass filter. Its bias bound, below, is stated so
+that the cost of what Anri does not do is known.
 
 .. math::
     :label: rf-project
@@ -660,13 +663,10 @@ the unfiltered estimate and :math:`P_{\text{seen}}` are reported beside it.
 
 **Proof:** ``tests/theory/test_refiner.py::test_projected_estimator``
 
-**Filter:** a constraint of no dislocations within a merged domain (:doc:`limits`, the maintainer's choice, to be
-confirmed). It fills two of the three weak combinations of the first moments, :math:`\varepsilon_{\xi\xi}` and
-:math:`\varepsilon_{\xi z} - w_k` (:eq:`lim-weak-parts`), never the third, :math:`\varepsilon_{k\xi} + w_z`. It couples
-neighbouring voxels, so it is a filter, and its bias is the dislocation content with Burgers vector along the ray that
-it assumes away. Neither the flag nor the constraint recovers the weak combinations. Separated populations are not
-affected: alone in their regions, they are seen in every reflection with all nine numbers (:doc:`limits`), with no
-tomography to weaken them.
+No constraint between voxels fills the weak combinations (:doc:`limits`, Anri's rule): a no-dislocation
+constraint would fill two of the three and couple neighbouring voxels. Separated populations are not affected: alone
+in their regions, they are seen in every reflection with all nine numbers (:doc:`limits`), with no tomography to
+weaken them.
 
 One linear solve, and its split
 -------------------------------
@@ -811,28 +811,22 @@ refiners.
 **Proof:** ``tests/theory/test_refiner.py::test_split_metric``
 
 **The solve.** In each merged domain the in-plane columns of :math:`\matr{M}` are written as :math:`\nabla\phi_i +
-\vec{w}_i`, with the third column, the mean, and the populations of separated light as they are. Two estimates follow,
-as the two outputs:
+\vec{w}_i`, with the third column, the mean, and the populations of separated light as they are. This is an invertible
+change of variables (:eq:`rf-split-grid`: the seen part and its complement span every field), so the least-squares
+estimate in it is the per-voxel estimate exactly: it couples no voxels. It separates the weak part for its error bars
+and for the iteration's conditioning (:eq:`rf-cost`). One estimate follows:
 
-- **(A)**, the default: :math:`\vec{w}_i` fitted too, reported with its covariance and flagged as seen only through
-  :math:`\sin\theta` (or as not determined where its bias bound exceeds the precision sought, :eq:`rf-project`);
-- **(B)**, a filter and never a default: no dislocations, i.e. :math:`\vec{w}_z = 0` and
-  :math:`\hat{\vec{\xi}}^T\hat{\matr{M}}\hat{\vec{\xi}} = 0` (:eq:`rf-curl-reciprocal`), with the solenoidal parts of rows :math:`x` and :math:`y` along
-  :math:`\hat{\vec{k}}` still fitted as in (A). Its bias is the dislocation content with Burgers vector along the ray.
-  Setting every :math:`\vec{w}_i = 0` would also remove the strain gradients of :eq:`rf-curl-reciprocal` and the shear
-  :math:`\partial_k u_\xi` of a dislocation-free field: it is not a physical constraint.
-
-Because each reflection's :math:`\vec{g}_0` holds :math:`s\,\hat{\vec{\xi}}`, the seen and weak columns overlap in the
-data at order :math:`s`. So (A) and (B) differ in their seen parts by order :math:`s` times the weak part. That
-difference is itself a diagnostic: where it exceeds the error bars, the constraint matters. The same split applies to
-the metric and the spreads, with the Hessian in place of the gradient; there the doubly weak part is the strain's
-incompatibility (:eq:`rf-split-metric`), the same entry as :math:`\varepsilon_{\xi\xi}` above.
+- :math:`\vec{w}_i` fitted with everything else, per voxel, reported with its covariance and flagged as seen only
+  through :math:`\sin\theta` (or as not determined where its bias bound or error bar exceeds the precision sought).
+  The same split applies to the metric and the spreads, with the Hessian in place of the gradient; there the doubly
+  weak part is the strain's incompatibility (:eq:`rf-split-metric`), the same entry as :math:`\varepsilon_{\xi\xi}`
+  above.
 
 What the split does not remove is the beam's own weak family. A seen component at frequency :math:`\vec{k}` is
 attenuated by the beam's transfer :math:`T(\vec{k})` (:eq:`lim-transfer`), so its noise and bias are amplified by
 :math:`1/T`, by more than 4 at periods below 1.6 beam FWHM
 (``tests/theory/test_refiner.py::test_beam_quarter_period``). That is the map's resolution. It is reported as a
-resolution, not filtered, since filtering would be a smoothness prior.
+resolution, through each voxel's error bar, never filtered: filtering would couple voxels.
 
 **The split on the voxel grid.** On a grid the split needs no boundary conditions of its own. Let :math:`\matr{D}` be
 the discrete gradient (for the first moments' in-plane columns) or the discrete Hessian (for the metric's in-plane
@@ -887,7 +881,7 @@ Whitened by the noise covariance, a unit data pattern :math:`\vec{u}_i` has nois
 .. math::
     :label: rf-smin
 
-    \text{keep } \vec{v}_i \iff s_i \ge s_{\min,i} = \frac{z + \sum_j |u_{ij}|\bar\Delta_j}{\epsilon},
+    \vec{v}_i \text{ determined} \iff s_i \ge s_{\min,i} = \frac{z + \sum_j |u_{ij}|\bar\Delta_j}{\epsilon},
     \qquad
     \frac{s_{\text{weak}}^2}{s_{\text{seen}}^2} = \frac{\sum_h s_h^2 a_h^2}{\sum_h a_h^2},
 
@@ -899,7 +893,8 @@ reflections' :math:`s_h \sim \sin\theta_h`, weighted by how much each reflection
 
 The level is per direction and comes from the bounds of :eq:`rf-cut-bound`, :eq:`rf-group` and
 :eq:`rf-alias-bound`, not from a choice. Where the bias bound is small, the noise sets it, and where the bias bound is
-large it sets it. Only :math:`\epsilon` and :math:`z` are choices: the precision sought, and the confidence.
+large it sets it. Only :math:`\epsilon` and :math:`z` are choices: the precision sought, and the confidence. The level
+says which combinations the map determines; it removes none of them from the estimate (no truncation, above).
 
 Histograms
 ----------

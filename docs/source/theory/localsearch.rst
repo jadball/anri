@@ -101,8 +101,63 @@ parents' occupancy matters: started equal, 10 iterations left each grain spread 
 ``refine_to = 0, levels = 0`` fits the grid orientations as they are, on the dty step: the map a calibration needs
 (:doc:`calibration`).
 
+How coarse to fine couples voxels
+---------------------------------
+
+No voxel's value is tied to its neighbours' by a prior (:doc:`indexing`). The coarse-to-fine levels still couple them,
+in three ways, through what the last level may fit and where it starts. Each is a filter; none is wanted (AGENTS.md:
+no coupling between voxels), and each stays documented here until it is removed.
+
+**Filter: coarse levels bin space.** Level :math:`k` fits one set of occupancies per voxel :math:`g_k` rows wide: the
+constraint that each :math:`g_k \times g_k` block is uniform. It reaches the last level only through the next two.
+
+**Filter: inherited candidates restrict the support.** A fine voxel may hold only the children of orientations its
+3 × 3 coarse neighbourhood held, each at least ``min_share`` of a coarse voxel. A feature filling :math:`n` of a
+coarse voxel's :math:`g^2` fine voxels, with nothing of it in the neighbours, holds :math:`n/g^2` of that voxel's
+volume at most, so
+
+.. math::
+    :label: ls-support
+
+    \text{it can reach the last level only if}\quad \frac{n}{g^2} \ge \texttt{min\_share}
+    \qquad (n \ge 1 \text{ for } g \le 10 \text{ at the default } 0.01),
+
+if the coarse fit puts its occupancy where it is. A lamella one fine voxel thick in a coarse voxel 3 rows wide is
+:math:`1/3` of it; one fine voxel alone, :math:`1/9`.
+
+**Definition:** the inherited support (a volume fraction; ``tests/theory/test_localsearch.py::test_support_share``
+checks the numbers).
+
+**Filter: the start persists where the data do not decide.** MLEM run to convergence (:eq:`lik-converged`) reaches the
+maximum likelihood, which (for plain Poisson bins) is unique when its Hessian :math:`-A^T\operatorname{diag}(d/\mu^2)A` is negative definite:
+when the columns of :math:`A` over the recorded bins are linearly independent. Where they are not, the likelihood is
+flat along a direction, and MLEM keeps its start along it. Two candidates with the same column receive the same factor
+at every update, so
+
+.. math::
+    :label: ls-start
+
+    A_{:,1} = A_{:,2} \;\Rightarrow\; \frac{f_1^{(n)}}{f_2^{(n)}} = \frac{f_1^{(0)}}{f_2^{(0)}} \quad \text{for every } n:
+
+their split is the start's. Children started from their parents' occupancy keep the coarse voxel's split wherever the
+data cannot tell them apart.
+
+**Proof:** ``tests/theory/test_localsearch.py::test_unique_optimum`` (the Hessian),
+``tests/theory/test_localsearch.py::test_start_persists`` (two equal columns, every update).
+
+What would remove them, for the maintainer to choose:
+
+- the last level's candidates chosen per fine voxel from every orientation at the last level's resolution
+  (:eq:`lik-candidates`), with no inheritance: no binning, no inherited support. Its cost is a candidate pass over
+  every fine voxel and every refined orientation, and it brings back the crowding of near-duplicate orientations
+  (refined globally to 0.1°, a grain's duplicates filled each voxel's candidates), which needs its own derivation;
+- the start's split made visible instead of hidden: where the Fisher information of a voxel's candidates is singular,
+  report the occupancies along its null directions as not determined, not the start's values.
+
 What is left out
 ----------------
+
+- **The couplings above** (binning, inherited support, the start along null directions).
 
 - **Orientations the filter missed**: the refinement and the levels only move what was kept, by up to :math:`s/3` per
   round. A grain the filter dropped stays missing.
