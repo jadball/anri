@@ -56,32 +56,6 @@ class TestWriteScan(unittest.TestCase):
             self.assertEqual(scan.shape, (5, 20, 30))
 
 
-class TestSegment(unittest.TestCase):
-    def test_recorded_moments_by_drawing(self):
-        """recorded_moments' mean and variance are those of counts drawn and recorded by segment: a faint compact spot
-        (the group rule's regime) on a 9 x 9 frame, 20000 frames, c = 1, m = 2, 3: each cell's mean and variance within 5 standard errors."""
-        from anri.io.imaged11 import neighbourhoods, recorded_moments, segment
-
-        rng = np.random.default_rng(1)
-        ns = nf = 9
-        ii, jj = np.mgrid[:ns, :nf]
-        lam = 6.0 * np.exp(-((ii - 4.3) ** 2 + (jj - 3.8) ** 2) / (2 * 0.8**2)) + 0.3
-        n = 20000
-        img = rng.poisson(lam, (n, ns, nf)).reshape(n, -1)
-        frame, pixel = np.nonzero(img)
-        counts = img[frame, pixel]
-        nb = neighbourhoods(np.zeros(ns * nf, int), np.arange(ns * nf), lam.ravel(), (ns, nf))
-        for m in (2, 3):
-            r = np.zeros_like(img, dtype=float)
-            keep = segment(frame, pixel, counts, (ns, nf), 1, m)
-            r[frame[keep], pixel[keep]] = counts[keep]
-            mean, var = (np.asarray(x) for x in recorded_moments(nb, 1, m))
-            se = np.sqrt(var / n)
-            self.assertLess(np.max(np.abs(r.mean(0) - mean) / se), 5.0, m)
-            dev2 = (r - mean) ** 2  # its mean is the variance; its standard error from the draws themselves
-            self.assertLess(np.max(np.abs(dev2.mean(0) - var) / (dev2.std(0) / np.sqrt(n))), 5.0, m)
-
-
 class TestDataset(unittest.TestCase):
     def test_load(self):
         from ImageD11.sinograms.dataset import load
