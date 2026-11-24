@@ -386,6 +386,8 @@ tomography, which also holds what the map does not (pores, unindexed phases). A 
 :math:`\sum w_i \mu_i / \sum w_i` over its entries, 0 without any
 (``tests/theory/test_intensity.py::test_attenuation_map_code``).
 
+``tests/theory/test_intensity.py::test_add_absorption_code`` checks the optical depths of a two-phase, two-layer map.
+
 **Code:** :func:`anri.fwd.render.add_absorption`, :func:`anri.geom.paths.attenuation_map`,
 :func:`anri.fwd.render.render_row`.
 

@@ -1,6 +1,8 @@
 """Proofs of docs/source/theory/diffraction.rst: the Ewald condition, Bragg's law, the omega solutions and their
 branches, the diffracted ray, dty in scanning 3DXRD, the ray trace and how a small rotation moves a peak."""
 
+from __future__ import annotations
+
 import jax
 import numpy as np
 import sympy as sp
@@ -13,6 +15,7 @@ from tests.theory.common import (
     EPS,
     agree,
     beam_frame,
+    cayley,
     ev,
     evaluate,
     is_zero,
@@ -362,6 +365,182 @@ def test_raytrace_code():
         k_, o_, S_, F_, d_ = arrs
         t = tol(np.linalg.norm(k_) * 75.0 * (np.linalg.norm(d_) + np.linalg.norm(o_)) / abs(k_ @ np.cross(S_, F_)))
         agree(ev(sf, vals), lambda *a: np.array(detector.raytrace_to_det(*a)), *arrs, **t)
+
+
+def centroid_expr(ubi: np.ndarray, pos: np.ndarray, hkl: tuple, etasign: float, lam: sp.Expr, kdir: np.ndarray,
+                  ky: sp.Expr, kz: sp.Expr, wedge: float, chi: float, dty: float | None, y0: float, det: tuple,
+                  column: bool, delta: sp.MatrixBase | None = None, dom: sp.Expr = 0) -> dict:  # fmt: skip
+    """The centroid chain from the page's equations: g = UBI^-1 h (frm-g), turned to first order by a sample-frame
+    rotation delta (ps-rotation); k_in along k + k_y e_h + k_z e_v, normalised to 1 / lambda; omega (dif-omega,
+    dif-omega-harmonic) for that k_in in the sample frame (frm-stack at omega = 0), plus dom (to differentiate);
+    k_out = g_lab + k_in (dif-laue); dty (dif-dty, if None) and the origin (frm-stack, raised for a column by
+    dif-column, the beam's k_in); the pixel (dif-raytrace)."""
+    F = lambda x: sp.Float(float(x), 30)
+    U = sp.Matrix(3, 3, [F(x) for x in np.ravel(ubi)])
+    g = U.inv() * sp.Matrix(hkl)
+    if delta is not None:
+        g = g + delta.cross(g)
+    psi, a = sp.atan2(F(kdir[1]), F(kdir[0])), sp.atan2(F(kdir[2]), sp.sqrt(F(kdir[0]) ** 2 + F(kdir[1]) ** 2))
+    kh, e_h, e_v = beam_frame(psi, a)
+    kin_dir = kh + ky * e_h + kz * e_v
+    k_in = kin_dir / sp.sqrt(kin_dir.dot(kin_dir)) / lam
+    WC = ry(sp.rad(F(wedge))) * rx(sp.rad(F(chi)))
+    k_s = WC.T * k_in
+    g_par = g.dot(Z) * Z
+    al, be = k_s.dot(g - g_par), k_s.dot(Z.cross(g - g_par))
+    de = -g.dot(g) / 2 - k_s.dot(g_par)
+    R = sp.sqrt(al**2 + be**2)
+    phi = sp.atan2(al, be)
+    om_exact = sp.asin(de / R) - phi if etasign > 0 else -sp.asin(de / R) - phi - sp.pi
+    # downstream of omega, omega is the symbol dom's value plus its own (dom = 0): its derivatives stay small
+    om = (om_exact if delta is not None else sp.N(om_exact, 40)) + dom
+    WCR = WC * rz(om)
+    k_out = WCR * g + k_in
+    v = sp.Matrix([F(x) for x in pos])
+    lab0 = WCR * v
+    if dty is None:
+        dty = sp.Float(y0, 30) + kin_dir[1] / kin_dir[0] * lab0[0] - lab0[1]
+    lab = lab0 + sp.Matrix([0, dty - F(y0), 0])
+    if column:
+        lab = lab + Z * (lab[0] * sp.cos(psi) + lab[1] * sp.sin(psi)) * sp.tan(a)
+    Sv, Fv, d0 = (sp.Matrix([F(x) for x in d]) for d in det)
+    n = k_out.dot(Sv.cross(Fv))
+    sc, fc = k_out.dot(Fv.cross(d0 - lab)) / n, k_out.dot((d0 - lab).cross(Sv)) / n
+    return {"centroid": sp.Matrix([sc, fc, sp.deg(om)]), "dty": dty, "k_in": kin_dir, "k_out": k_out, "lab": lab,
+            "R": R, "delta": de, "g": g, "n": n, "det": (Sv, Fv, d0)}  # fmt: skip
+
+
+def centroid_tol(e: dict, dom: sp.Symbol, k: np.ndarray, lam: float) -> tuple:
+    """Rounding bounds of the chain in float64: omega as test_omega_code (|k|^2 + |g|^2 over R, times arcsin's
+    condition, in degrees, plus 360 for the shifts); the pixel as test_raytrace_code (terms |k_out| |f| (|d0| + |o|)
+    over |n|), plus omega's error through d(s, f) / d omega, and the origin's (16 ulps of |o|) over a pixel."""
+    ev0 = lambda x: float(sp.N(x.subs(dom, 0), 30))
+    gg, R, de = ev0(e["g"].dot(e["g"])), ev0(e["R"]), ev0(e["delta"])
+    t_om = 16 * EPS * (np.degrees((1 / lam**2 + gg) / R / np.sqrt(1 - (de / R) ** 2)) + 360.0)
+    ds = [abs(ev0(sp.diff(e["centroid"][i], dom))) for i in range(2)]
+    Sv, Fv, d0 = (np.array([float(x) for x in v]) for v in e["det"])
+    ko, o = ev0(e["k_out"].norm()), np.array([ev0(x) for x in e["lab"]])
+    px = min(np.linalg.norm(Sv), np.linalg.norm(Fv))
+    t_ray = 16 * EPS * ko * np.linalg.norm(Fv) * (np.linalg.norm(d0) + np.linalg.norm(o)) / abs(ev0(e["n"]))
+    t_sf = [t_ray + np.radians(t_om) * d + 16 * EPS * np.linalg.norm(o) / px for d in ds]
+    return t_om, t_sf
+
+
+def centroid_rotation_jacobian(ubi: np.ndarray, pos: np.ndarray, hkl: tuple, etasign: float, lam: float,
+                               kdir: np.ndarray, wedge: float, chi: float, dty: float, y0: float, det: tuple,
+                               column: bool) -> np.ndarray:  # fmt: skip
+    """d(s_c, f_c, omega in degrees) / d delta at delta = 0, for a sample-frame rotation of the lattice (ps-rotation:
+    g -> g + delta x g, so dg / d delta = -[g]x), by the chain rule through g and omega: the chain of centroid_expr
+    with g and omega as symbols, omega's dependence on g from dif-omega (dif-omega-harmonic in g), each part
+    differentiated exactly."""
+    F = lambda x: sp.Float(float(x), 30)
+    G, w = vec("G"), sp.Symbol("w")
+    U = sp.Matrix(3, 3, [F(x) for x in np.ravel(ubi)])
+    g0 = U.inv() * sp.Matrix(hkl)
+    psi, a = sp.atan2(F(kdir[1]), F(kdir[0])), sp.atan2(F(kdir[2]), sp.sqrt(F(kdir[0]) ** 2 + F(kdir[1]) ** 2))
+    kh, _, _ = beam_frame(psi, a)
+    k_in = kh / F(lam)
+    WC = ry(sp.rad(F(wedge))) * rx(sp.rad(F(chi)))
+    k_s = WC.T * k_in
+    g_par = G.dot(Z) * Z
+    al, be = k_s.dot(G - g_par), k_s.dot(Z.cross(G - g_par))
+    de = -G.dot(G) / 2 - k_s.dot(g_par)
+    om = sp.asin(de / sp.sqrt(al**2 + be**2)) - sp.atan2(al, be)
+    om = om if etasign > 0 else -sp.asin(de / sp.sqrt(al**2 + be**2)) - sp.atan2(al, be) - sp.pi
+    at_g = dict(zip(G, g0))
+    w0 = sp.N(om.subs(at_g), 40)
+    dw_dG = sp.Matrix([[sp.N(sp.diff(om, x).subs(at_g), 30) for x in G]])
+    WCR = WC * rz(w)
+    k_out = WCR * G + k_in
+    lab = WCR * sp.Matrix([F(x) for x in pos]) + sp.Matrix([0, F(dty) - F(y0), 0])
+    if column:
+        lab = lab + Z * (lab[0] * sp.cos(psi) + lab[1] * sp.sin(psi)) * sp.tan(a)
+    Sv, Fv, d0 = (sp.Matrix([F(x) for x in d]) for d in det)
+    n = k_out.dot(Sv.cross(Fv))
+    sf = sp.Matrix([k_out.dot(Fv.cross(d0 - lab)) / n, k_out.dot((d0 - lab).cross(Sv)) / n])
+    at = {**at_g, w: w0}
+    dsf_dG = sp.Matrix(2, 3, lambda i, j: sp.N(sp.diff(sf[i], G[j]).subs(at), 30))
+    dsf_dw = sp.Matrix([sp.N(sp.diff(sf[i], w).subs(at), 30) for i in range(2)])
+    dG = -skew(g0)
+    J = sp.Matrix.vstack((dsf_dG + dsf_dw * dw_dG) * dG, dw_dG * dG * 180 / sp.pi)
+    return np.array(J.evalf(30).tolist(), float)
+
+
+def _centroid_case() -> dict:
+    """A rotated Fe grain off the axis, a tilted beam and goniometer, and a tilted detector at 150 mm."""
+    from anri.crystal.lattice import lpars_to_B
+    from anri.geom.detector import detector_basis_vectors_lab, detector_transforms
+
+    pars = {"y_center": 1024.0, "y_size": 75.0, "tilt_y": 2e-3, "z_center": 1030.0, "z_size": 75.0, "tilt_z": -1e-3,
+            "tilt_x": 3e-3, "distance": 150e3, "o11": 1, "o12": 0, "o21": 0, "o22": 1}  # fmt: skip
+    with float64():
+        B = np.asarray(lpars_to_B(np.array([2.8694] * 3 + [90.0] * 3)))
+        det = tuple(np.asarray(x) for x in detector_basis_vectors_lab(*detector_transforms(*pars.values())))
+    U = np.asarray(evaluate(cayley(sp.Matrix([sp.Rational(2, 10), sp.Rational(-3, 10), sp.Rational(1, 10)])), {}))
+    return {"ubi": np.linalg.inv(U @ B), "pos": np.array([20.0, -10.0, 5.0]), "lam": 0.3, "wedge": 1.0, "chi": -2.0,
+            "k": np.array([1.0, 0.02, 0.01]), "y0": 0.7, "det": det}  # fmt: skip
+
+
+def test_divergence_code():
+    """hkl_to_k_omega: k_in is k + k_y e_h + k_z e_v (before normalising), and k_out, omega follow dif-laue and
+    dif-omega for it, tilted beam and goniometer."""
+    from anri.fwd.peak import hkl_to_k_omega
+
+    c = _centroid_case()
+    dom = sp.Symbol("dom")
+    for hkl, es in (((1, 1, 0), 1.0), ((2, 0, 0), -1.0)):
+        e = centroid_expr(c["ubi"], c["pos"], hkl, es, sp.Float(c["lam"], 30), c["k"], sp.Float(2e-4, 30),
+                          sp.Float(-3e-4, 30), c["wedge"], c["chi"], None, c["y0"], c["det"], True, dom=dom)  # fmt: skip
+        args = (c["ubi"], np.array(hkl, float), es, c["lam"], c["k"], 2e-4, -3e-4, c["wedge"], c["chi"])
+        t_om, _ = centroid_tol(e, dom, c["k"], c["lam"])
+        # k_in: a unit vector plus small tilts along unit vectors, 16 ulps of 1; k_out: g turned (16 ulps of |g| =
+        # 2 sin(theta) / lambda < 2 / lambda) by omega, whose error moves it by |g| times it in radians
+        sub = lambda x: x.subs(dom, 0)
+        agree(ev(sub(e["k_in"]), {}), lambda *z: hkl_to_k_omega(*z)[0], *args, **tol(1.0))
+        t_ko = 16 * EPS * 2 / c["lam"] + 2 / c["lam"] * np.radians(t_om)
+        agree(ev(sub(e["k_out"]), {}), lambda *z: hkl_to_k_omega(*z)[1], *args, rtol=0, atol=t_ko)
+        om = (float(evaluate(sub(e["centroid"][2]), {})) + 180) % 360 - 180
+        agree(om, lambda *z: hkl_to_k_omega(*z)[2], *args, rtol=0, atol=t_om)
+
+
+def test_centroid_code():
+    """get_centroid (column and cube, given dty), get_centroid_scan (dty from dif-dty) and get_centroid_box (dty = y0
+    = 0, a cube) against the chain, tilted beam, goniometer and detector, both branches."""
+    from anri.fwd.box import get_centroid_box
+    from anri.fwd.peak import get_centroid
+    from anri.fwd.scan import get_centroid_scan
+
+    c = _centroid_case()
+    dom = sp.Symbol("dom")
+    L, z = sp.Float(c["lam"], 30), sp.Integer(0)
+    common = (c["lam"], c["k"], 0.0, 0.0, c["wedge"], c["chi"])
+    for hkl, es in (((1, 1, 0), 1.0), ((2, 0, 0), -1.0), ((2, 1, 1), 1.0)):
+        h = np.array(hkl, float)
+        args = (c["ubi"], c["pos"], h, es, *common)
+        cases = [  # (dty, y0, column) and the call
+            ((1.3, c["y0"], True), lambda a=args: get_centroid(*a, 1.3, c["y0"], *c["det"], True)),
+            ((1.3, c["y0"], False), lambda a=args: get_centroid(*a, 1.3, c["y0"], *c["det"], False)),
+            ((None, c["y0"], True), lambda a=args: get_centroid_scan(*a, c["y0"], *c["det"])),
+            ((0.0, 0.0, False), lambda a=args: get_centroid_box(*a, *c["det"])),
+        ]
+        for (dty, y0, column), fn in cases:
+            e = centroid_expr(c["ubi"], c["pos"], hkl, es, L, c["k"], z, z, c["wedge"], c["chi"], dty, y0, c["det"],
+                              column, dom=dom)  # fmt: skip
+            t_om, t_sf = centroid_tol(e, dom, c["k"], c["lam"])
+            want = [float(evaluate(e["centroid"][i].subs(dom, 0), {})) for i in range(3)]
+            want[2] = (want[2] + 180) % 360 - 180
+            with float64():
+                got, valid = fn()
+            assert bool(valid)
+            got = np.asarray(got, float)
+            for i, t in enumerate([*t_sf, t_om]):
+                np.testing.assert_allclose(got[i], want[i], rtol=0, atol=t)
+            if dty is None:  # the scan's dty: as test_dty_code, plus omega's error through d dty / d omega
+                d = sp.diff(e["dty"], dom).subs(dom, 0)
+                t = 16 * EPS * (np.abs(c["pos"]).max() * 3 + abs(c["y0"])) + abs(float(evaluate(d, {}))) * np.radians(
+                    t_om
+                )
+                np.testing.assert_allclose(got[3], float(evaluate(e["dty"].subs(dom, 0), {})), rtol=0, atol=t)
 
 
 def motion() -> tuple:

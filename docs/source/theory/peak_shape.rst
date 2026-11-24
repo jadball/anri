@@ -25,8 +25,8 @@ Gaussian about its nominal value, and pushed through the centroid to first order
     \matr{J} = \frac{\partial \vec{c}}{\partial (\lambda, k_y, k_z, \vec{\delta})}.
 
 **Cited:** [GUM2008]_. **Proof:** ``tests/theory/test_peak_shape.py::test_propagate_diagonal`` (the sum of columns),
-``tests/theory/test_peak_shape.py::test_propagate_code`` (the propagator against :math:`\matr{J}\matr{\Sigma}\matr{J}^T`,
-diagonal and full).
+``tests/theory/test_peak_shape.py::test_propagate_code`` (the propagator and ``propagate_cov`` against
+:math:`\matr{J}\matr{\Sigma}\matr{J}^T`, diagonal and full), ``tests/theory/test_peak_shape.py::test_cov_in_code``.
 
 With a diagonal :math:`\matr{\Sigma}_{\text{in}}` the sum needs one Jacobian column at a time, and JAX's forward-mode
 differentiation computes each as one Jacobian-vector product of the centroid function [JAX2018]_: no derivative is
@@ -64,6 +64,10 @@ The inputs, independent of each other:
 
   which is exact to first order, all that :eq:`ps-propagate` uses. Its contribution is :math:`\matr{J}_\delta \matr{S} \matr{J}_\delta^T`,
   linear in :math:`\matr{S}`: an anisotropic spread (a dominant rotation axis) gives each reflection its own streak.
+
+``tests/theory/test_peak_shape.py::test_peak_cov_rotation_code`` checks the renderer's term against
+:math:`\matr{J}_\delta \matr{S} \matr{J}_\delta^T` with :math:`\matr{J}_\delta` the centroid chain's exact
+derivative, every element of the (:math:`s_c, f_c, \omega`) covariance, for a full and an isotropic spread.
 
 **Code:** :func:`anri.maths.rotation.skew`, :func:`anri.maths.rotation.rmat_from_axis_angle`,
 :func:`anri.fwd.render.render_peaks` (an entry's "sig_rot", [N] or [N, 3, 3]).
@@ -255,7 +259,10 @@ Windows
 Each peak is evaluated over a fixed window of cells around its centroid, (frames, rows, columns), each odd. Each frame's
 row and column window is centred on the peak's mean position *in that frame* (:eq:`ps-condition`), so a peak that moves
 across the detector with omega stays inside its window. Peaks broad in omega can be given more frames (``max_frames``).
-Fixed window sizes keep array shapes fixed, so the renderer compiles once per size.
+Fixed window sizes keep array shapes fixed, so the renderer compiles once per size. The first frame is the one holding
+:math:`\mu_\omega` less half the window; each frame's first row is :math:`\operatorname{round}(\mu_{s \mid F})` and first
+column :math:`\operatorname{round}(\mu_f + \Sigma_{f\omega}/\Sigma_{\omega\omega}\,(m_\omega - \mu_\omega))`, less half the window
+(``tests/theory/test_peak_shape.py::test_window_origin_code``).
 
 **Code:** :func:`anri.fwd.render.render_peaks`, :func:`anri.fwd.render.window_origins`,
 :func:`anri.fwd.render.render_row`.

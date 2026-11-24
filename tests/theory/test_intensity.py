@@ -26,6 +26,7 @@ from tests.theory.common import (
     EPS,
     agree,
     beam_frame,
+    ev,
     evaluate,
     is_zero,
     rng,
@@ -111,6 +112,19 @@ def test_polarisation_code():
             got = float(polarisation(jnp.array([1.0, 0, 0]), jnp.asarray(v), f))
         # ~15 operations, each term in [0, 1] and their sum >= cos^2 2theta > 0.5: 64 ulps
         np.testing.assert_allclose(got, float(evaluate(expr, {**dict(zip(k, v)), p: f})), rtol=64 * EPS)
+    # a tilted beam: int-pol in its own frame (frames.rst), the same 64 ulps plus the frame's rounding (16 more)
+    psi, tilt = 0.3, -0.15
+    kh, e_h, e_v = beam_frame(sp.Float(psi, 30), sp.Float(tilt, 30))
+    kin = 2.0 * np.array([float(x) for x in ev(kh, {})])
+    for v, f in zip(_random_k_out(rng(27), 4), (0.0, 0.9, 1.0, 0.5)):
+        o = sp.Matrix([sp.Float(x, 30) for x in v])
+        R = (rz(sp.Float(psi, 30)) * ry(-sp.Float(tilt, 30)))  # takes x to the beam, y to e_h, z to e_v
+        o = R * o
+        u = o / sp.sqrt(o.dot(o))
+        want = float(sp.N((1 + f) / 2 * (1 - u.dot(e_h) ** 2) + (1 - f) / 2 * (1 - u.dot(e_v) ** 2), 30))
+        with float64():
+            got = float(polarisation(jnp.asarray(kin), jnp.asarray(ev(o, {})), f))
+        np.testing.assert_allclose(got, want, rtol=80 * EPS)
 
 
 def test_extinction_polarisation():
@@ -868,6 +882,32 @@ def test_attenuation_map_code():
         want[key] = float(sum(a * b for a, b in ab) / sum(b for _, b in ab))
     # float64 sums of a few terms, then one rounding to float32: half an ulp of float32, relative
     np.testing.assert_allclose(got, want, rtol=float(np.finfo(np.float32).eps), atol=0)
+
+
+def test_add_absorption_code():
+    """add_absorption from the map's own entries: each entry's optical depth along +x is the trapezoid of mu over the
+    voxels it crosses (test_edge_trapezoid), mu being each voxel's phase's (attenuation_map), layer by layer; two
+    phases side by side, two layers. Exactly (multiples of 1/8 in float32)."""
+    from anri.fwd.render import add_absorption
+    from anri.geom.scan import recon_positions
+
+    step = 2.0
+    grid = np.asarray(recon_positions(5, step))
+    grid = grid[(np.abs(grid[:, 0]) <= 2) & (np.abs(grid[:, 1]) <= 2)]  # 3 x 3 voxels
+    left = grid[:, 0] < 0
+    mu = [0.25, 0.5]  # phase 1 on the left column, phase 2 elsewhere
+    layers = [grid, grid[:4] + [0, 0, step]]  # the second layer holds four voxels
+    ents = []
+    for m in (left, ~left):
+        pos = np.concatenate([L[m[: len(L)]] for L in layers])
+        ents.append(({"ubi": np.zeros((len(pos), 3, 3)), "pos": pos, "density": np.ones(len(pos))}, None, None))
+    out = add_absorption(ents, step, mu=mu, n_phi=4)
+    for (e, _, _), (o, _, _) in zip(ents, out):
+        for p, d in zip(e["pos"], o["optical_depth"]):
+            layer = [q for L in layers for q in L if q[2] == p[2]]
+            row = sorted((q for q in layer if q[1] == p[1] and q[0] >= p[0]), key=lambda q: q[0])
+            m_ = [mu[0] if q[0] < 0 else mu[1] for q in row]
+            assert d[0] == (sum(m_) - m_[0] / 2) * step, (p, d[0])
 
 
 if __name__ == "__main__":

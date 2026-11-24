@@ -130,7 +130,9 @@ any beam it is a unit vector at :math:`2\theta` from :math:`\hat{k}` whose :eq:`
 
 Beam divergence enters here: an incoming ray tilted by small angles :math:`(k_y, k_z)` (radians) across the beam is
 :math:`\vec{k}_{\text{in}} \propto \hat{k} + k_y\hat{e}_h + k_z\hat{e}_v`, normalised to :math:`1/\lambda`. The forward model
-evaluates the centroid at :math:`k_y = k_z = 0` and uses the tilts only through their derivatives (:doc:`peak_shape`).
+evaluates the centroid at :math:`k_y = k_z = 0` and uses the tilts only through their derivatives (:doc:`peak_shape`);
+``tests/theory/test_diffraction.py::test_divergence_code`` checks :func:`anri.fwd.peak.hkl_to_k_omega`'s incoming
+and diffracted wave-vectors and omega for tilts.
 
 Where the voxel scatters from
 -----------------------------
@@ -205,9 +207,12 @@ parameters [FABLEgeom]_. The solution does not depend on the length of :math:`\h
 **Code:** :func:`anri.geom.detector.raytrace_to_det`, :func:`anri.geom.detector.detector_basis_vectors_lab`.
 
 Chaining :eq:`frm-g`, :eq:`dif-omega`, the origin and :eq:`dif-raytrace` gives the forward model's one centroid
-function, which the renderer, the box-beam and the scanning models all call.
+function, which the renderer, the box-beam and the scanning models all call. Checked as a chain, tilted beam,
+goniometer and detector, for a column at a given dty, a cube, the scan's dty (:eq:`dif-dty`) and the box beam's
+(dty = :math:`y_0` = 0), by ``tests/theory/test_diffraction.py::test_centroid_code``.
 
-**Code:** :func:`anri.fwd.peak.get_centroid`.
+**Code:** :func:`anri.fwd.peak.get_centroid`, :func:`anri.fwd.scan.get_centroid_scan`,
+:func:`anri.fwd.box.get_centroid_box`.
 
 .. _theory_rotation_motion:
 

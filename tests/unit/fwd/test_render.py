@@ -9,15 +9,11 @@ import anri.geom
 import anri.maths.rotation
 from anri.diffract.factors import polarisation
 from anri.fwd.render import (
-    _VAR_FLOOR,
     _centroid,
     _compact,
     _free_memory,
-    _map_shape,
     _merge,
     _merge_host,
-    _peak_shape,
-    _undistort,
     _valid_from_shards,
     add_absorption,
     check_render,
@@ -170,38 +166,6 @@ class TestSinglePeak(unittest.TestCase):
         self.assertGreater(n_rows_checked, 5)
 
 
-class TestPointSpread(unittest.TestCase):
-    def test_sharp_spot_centroid(self):
-        """A spot much narrower than a pixel has its pixel centroid snapped to the pixel centre; a PSF fixes that."""
-        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
-        one = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
-        sharp = {**geom, "sig_wavelength": geom["wavelength"] * 1e-5, "sig_ky": 1e-5, "sig_kz": 1e-5}
-        centroid, _ = get_centroid_scan(
-            jnp.asarray(one["ubi"][0]), jnp.zeros(3), jnp.asarray(hkl), 1.0, geom["wavelength"], geom["k_in_lab"],
-            0.0, 0.0, 0.0, 0.0, geom["y0"], geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
-        )  # fmt: skip
-        omega = (np.floor(omega_c / 0.05) + np.arange(-20, 21)) * 0.05 + 0.025
-        row = make_row(omega, np.zeros_like(omega))
-        errors = {}
-        for psf in (0.0, 0.7):
-            _, pixel, value, _ = render_row(
-                one,
-                hkl[None],
-                np.ones(1),
-                {**sharp, "sig_psf": psf},
-                row,
-                det_shape,
-                window=(5, 9, 9),
-                min_value=0.0,
-                batch=BATCH,
-            )
-            s, f = pixel // det_shape[1], pixel % det_shape[1]
-            measured = np.array([(s * value).sum(), (f * value).sum()]) / value.sum()
-            errors[psf] = np.abs(measured - np.asarray(centroid[:2])).max()
-        self.assertLess(errors[0.7], 0.01)
-        self.assertGreater(errors[0.0], errors[0.7])
-
-
 class TestPointSpreadMixture(unittest.TestCase):
     """geom "psf_mix": a point spread that is a mixture of Gaussians, rendered one component at a time."""
 
@@ -247,55 +211,6 @@ class TestPointSpreadMixture(unittest.TestCase):
             self._render({"psf_mix": ((0.7, 0.3), (0.2, 1.3))})
 
 
-class TestSensorDepth(unittest.TestCase):
-    """geom "sensor": a thick sensor smears each spot outward along its ray by where its photons stop."""
-
-    def _moments(self, geom_extra):
-        pars, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
-        one = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
-        omega = (np.floor(omega_c / 0.05) + np.arange(-10, 11)) * 0.05 + 0.025
-        row = make_row(omega, np.zeros_like(omega))
-        _, pixel, value, _ = render_row(one, hkl[None], np.ones(1), {**geom, "sig_psf": 0.7, **geom_extra}, row,
-                                        det_shape, window=(5, 15, 15), min_value=0.0, batch=BATCH)  # fmt: skip
-        x = np.stack([pixel // det_shape[1], pixel % det_shape[1]], 1).astype(float)
-        w = value / value.sum()
-        mean = w @ x
-        d = x - mean
-        return pars, mean, (d * w[:, None]).T @ d
-
-    def test_radial_exponential(self):
-        """A truncated exponential of scale sin(phi) / attenuation and cut thickness tan(phi) (phi: the ray's angle to the
-        sensor normal), along the radial direction (the detector is nearly normal to the beam), its mean removed."""
-        mu_abs, thick = 1.0 / 1000.0, 750.0  # a long absorption length, so the smear is a few tenths of a pixel
-        pars, m0, c0 = self._moments({})
-        _, m1, c1 = self._moments({"sensor": (mu_abs, thick)})
-        _, _, geom, _, _, _ = _single_peak_setup()
-        # the ray's angle to the sensor normal (the tilted detector's: ~0.2 deg more than 2theta here)
-        s_lab, f_lab = np.asarray(geom["s_step_lab"]), np.asarray(geom["f_step_lab"])
-        ray = np.asarray(geom["det_origin_lab"]) + m0[0] * s_lab + m0[1] * f_lab
-        normal = np.cross(s_lab, f_lab)
-        phi = np.arccos(abs(ray @ normal) / np.linalg.norm(ray) / np.linalg.norm(normal))
-        # radial: the direction in which 2theta grows, from a spot rendered at a slightly longer wavelength
-        _, m_long, _ = self._moments({"wavelength": pars["wavelength"] * 1.001})
-        u = (m_long - m0) / np.linalg.norm(m_long - m0)
-        x = np.linspace(0, thick * np.tan(phi) / 75.0, 100001)  # pixels
-        p = np.exp(-x / (np.sin(phi) / mu_abs / 75.0))
-        p /= p.sum()
-        var = (x**2 * p).sum() - ((x * p).sum()) ** 2
-        self.assertGreater(var, 0.02)
-        dc = c1 - c0
-        self.assertAlmostEqual(u @ dc @ u, var, delta=0.03 * var)  # radial: widened by the kernel
-        v = np.array([-u[1], u[0]])
-        self.assertLess(abs(v @ dc @ v), 0.01 * var)  # tangential: not
-        self.assertLess(np.linalg.norm(m1 - m0), 0.01)  # the mean is the calibration's
-
-    def test_thin_sensor_changes_nothing(self):
-        _, m0, c0 = self._moments({})
-        _, m1, c1 = self._moments({"sensor": (1.0, 750.0)})  # absorbed within a micron
-        np.testing.assert_allclose(m1, m0, atol=1e-6)
-        np.testing.assert_allclose(c1, c0, atol=1e-4)
-
-
 class TestSpatialDistortion(unittest.TestCase):
     """geom "spatial": peaks rendered on the raw pixels of a distorted detector, through the inverse distortion."""
 
@@ -321,41 +236,6 @@ class TestSpatialDistortion(unittest.TestCase):
             np.testing.assert_array_equal(f1, f0)
             np.testing.assert_array_equal(p1, p0)
             np.testing.assert_allclose(v1, v0, rtol=1e-9, atol=1e-12 * v0.max())
-
-    def test_affine_map_is_a_skewed_detector(self):
-        """An affine map, c = A x + b, is exactly an undistorted detector with basis s' = A00 s + A10 f,
-        f' = A01 s + A11 f and origin moved by b. The peak's Gaussian on the raw pixels must be that detector's: the same
-        centroid, and the same covariance except the variance floor, which _peak_shape adds in corrected pixels and
-        the map then carries (A^-1 floor A^-T, against the floor itself on the skewed detector). Without a point
-        spread: the psf is a length on the sensor, isotropic in corrected pixels, where the skewed detector would add it
-        isotropic in raw pixels."""
-        _, _, geom, entries, hkl, omega_c = _single_peak_setup()
-        omega = (np.floor(omega_c / 0.05) + np.arange(-10, 11)) * 0.05 + 0.025
-        row = make_row(omega, np.zeros_like(omega))
-        G = np.array([[0.02, 0.01], [-0.012, 0.025]])  # d(slow, fast) per (slow, fast) pixel: large, so a weak
-        d0 = np.array([0.2, -0.3])  # inverse (e.g. fixed-point steps) shows
-        s, f = np.mgrid[0:2162, 0:2068].astype(float)
-        dy = G[0, 0] * (s - 1000) + G[0, 1] * (f - 1000) + d0[0]
-        dx = G[1, 0] * (s - 1000) + G[1, 1] * (f - 1000) + d0[1]
-        A, b = np.eye(2) + G, d0 - G @ np.array([1000.0, 1000.0])
-        S, F = geom["s_step_lab"], geom["f_step_lab"]
-        g0 = {**geom, "sig_psf": 0.0}
-        skewed = {**g0, "s_step_lab": A[0, 0] * S + A[1, 0] * F, "f_step_lab": A[0, 1] * S + A[1, 1] * F,
-                  "det_origin_lab": geom["det_origin_lab"] + b[0] * S + b[1] * F}  # fmt: skip
-
-        def shape(g):
-            mu, sh, _ = _peak_shape(jnp.asarray(entries["ubi"][0]), jnp.zeros(3), jnp.asarray(hkl), 1.0, None, row, g)
-            return np.asarray(mu), sh
-
-        mu_c, sh_c = shape(g0)
-        mu_s, sh_s = shape(skewed)
-        x0, Ainv = _undistort(jnp.asarray(mu_c[:2]), {"spatial": (dx, dy)})
-        np.testing.assert_allclose(np.asarray(x0), mu_s[:2], rtol=0, atol=1e-9)
-        np.testing.assert_allclose(np.asarray(Ainv), np.linalg.inv(A), rtol=0, atol=1e-14)
-        floor = np.diag(_VAR_FLOOR[:2])
-        dfl = np.linalg.inv(A) @ floor @ np.linalg.inv(A).T - floor
-        expect = np.array([float(x) for x in sh_s]) + np.array([dfl[0, 0], dfl[1, 1], 0.0, dfl[0, 1], 0.0, 0.0])
-        np.testing.assert_allclose([float(x) for x in _map_shape(sh_c, Ainv)], expect, rtol=1e-12, atol=1e-15)
 
 
 class TestOmegaSpread(unittest.TestCase):
@@ -395,37 +275,6 @@ class TestOrientationSpread(unittest.TestCase):
         mean = w @ x
         d = x - mean
         return mean, (d * w[:, None]).T @ d
-
-    def test_matches_rotated_sub_entries(self):
-        """One entry with sig_rot adds the same to the peak's moments as 400 sub-entries with rotations drawn from it."""
-        from scipy.spatial.transform import Rotation
-
-        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
-        sig = 2e-3  # rad per component, 0.11 degrees: comparable to this setup's beam spreads
-        omega = (np.floor(omega_c / 0.04) + np.arange(-15, 16)) * 0.04 + 0.02
-        row = make_row(omega, np.zeros_like(omega))
-        win = (31, 17, 17)  # wide enough (+-4 sigma) that no peak is clipped: clipping would bias the moments
-        ubi = entries["ubi"][:1]
-        one = {"ubi": ubi, "pos": np.zeros((1, 3)), "density": np.ones(1), "sig_rot": np.array([sig])}
-        rng = np.random.default_rng(0)
-        rv = rng.normal(size=(200, 3)) * sig
-        rv = np.concatenate([rv, -rv])  # antithetic pairs: first-order errors in the mean cancel
-        R = Rotation.from_rotvec(rv).as_matrix()  # UB -> R UB, so UBI -> UBI R^T
-        cloud = {"ubi": ubi[0] @ np.swapaxes(R, -1, -2), "pos": np.zeros((400, 3)), "density": np.full(400, 1 / 400)}
-        base = {k: v for k, v in one.items() if k != "sig_rot"}
-        res = []
-        for ent in (base, one, cloud):
-            frame, pixel, value, stats = render_row(ent, hkl[None], np.ones(1), geom, row, det_shape, window=win,
-                                                    min_value=0.0, batch=BATCH)  # fmt: skip
-            self.assertGreater(stats["captured"].min(), 0.999)
-            res.append(self._moments(frame, pixel, value, omega, det_shape[1]))
-        (_, c0), (m1, c1), (m2, c2) = res
-        for a, b_, tol in zip(m1, m2, (2e-3, 0.02, 0.02)):  # degrees, pixels
-            self.assertLess(abs(a - b_), tol)
-        d1, d2 = c1 - c0, c2 - c0  # what the spread adds, over the beam's own spreads
-        self.assertGreater(d2[0, 0], 0.5 * c0[0, 0])  # the spread matters in omega here
-        self.assertAlmostEqual(d1[0, 0] / d2[0, 0], 1.0, delta=0.2)  # Monte Carlo, 400 samples: ~7% statistical
-        self.assertLess(np.linalg.norm(d1 - d2) / np.linalg.norm(d2), 0.2)
 
     def test_off_axis_rows(self):
         """Off the rotation axis, the spread's parts diffract at different omegas, where the voxel sits at different
@@ -469,42 +318,6 @@ class TestOrientationSpread(unittest.TestCase):
                            min_value=0.0, batch=BATCH) for s in (np.array([sig]), (sig**2 * np.eye(3))[None]))  # fmt: skip
         for x, y in zip(a[:3], b[:3]):
             np.testing.assert_allclose(x, y, rtol=1e-12, atol=1e-15)
-
-    def test_anisotropic_matches_rotated_sub_entries(self):
-        """A [3, 3] rotation covariance adds the same to the peak's moments as 400 sub-entries rotated by draws with
-        that covariance (sds 3e-3, 1e-3, 0.3e-3 rad along tilted axes: every element of the peak's covariance changes;
-        off-diagonal entries of the input matter, which an isotropic spread cannot show)."""
-        from scipy.spatial.transform import Rotation
-
-        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
-        Q = Rotation.from_rotvec([0.4, -0.7, 0.3]).as_matrix()
-        S = Q @ np.diag(np.array([3e-3, 1e-3, 0.3e-3]) ** 2) @ Q.T
-        omega = (np.floor(omega_c / 0.04) + np.arange(-20, 21)) * 0.04 + 0.02
-        row = make_row(omega, np.zeros_like(omega))
-        win = (41, 21, 21)
-        ubi = entries["ubi"][:1]
-        one = {"ubi": ubi, "pos": np.zeros((1, 3)), "density": np.ones(1), "sig_rot": S[None]}
-        rng = np.random.default_rng(2)
-        rv = rng.multivariate_normal(np.zeros(3), S, size=200)
-        rv = np.concatenate([rv, -rv])  # antithetic pairs
-        R = Rotation.from_rotvec(rv).as_matrix()
-        cloud = {"ubi": ubi[0] @ np.swapaxes(R, -1, -2), "pos": np.zeros((400, 3)), "density": np.full(400, 1 / 400)}
-        # the cloud realises its own covariance (mean exactly zero: antithetic pairs), so the entry is given that one:
-        # what remains is the linearised propagation against exact rotations (second order, ~sigma^2 relative)
-        one_hat = {**one, "sig_rot": (rv.T @ rv / len(rv))[None]}
-        base = {k: v for k, v in one.items() if k != "sig_rot"}
-        res = []
-        for ent in (base, one_hat, cloud):
-            frame, pixel, value, stats = render_row(ent, hkl[None], np.ones(1), geom, row, det_shape, window=win,
-                                                    min_value=0.0, batch=BATCH)  # fmt: skip
-            # light f lost beyond a window ~a sd out changes a covariance by ~f a^2 (a ~ 5: 25 f): f < 1e-5 keeps that
-            # 40x below the 1e-2 compared here (measured: f 7e-8)
-            self.assertLess(1.0 - stats["captured"].min(), 1e-5)
-            res.append(self._moments(frame, pixel, value, omega, det_shape[1]))
-        (_, c0), (_, c1), (_, c2) = res
-        d1, d2 = c1 - c0, c2 - c0
-        self.assertGreater(d2[0, 0], c0[0, 0])  # the spread matters: it more than doubles the omega variance
-        self.assertLess(np.linalg.norm(d1 - d2) / np.linalg.norm(d2), 1e-2)
 
     def test_absent_equals_zero(self):
         """No "sig_rot" and sig_rot = 0 render the same pixels."""
@@ -659,7 +472,7 @@ class TestExtinction(unittest.TestCase):
     def test_rendered_peak(self):
         """With entries' "extinction", a peak is the unextinguished one times polarisation_extinction / polarisation
         at its wave-vectors, in the same pixels."""
-        from anri.diffract.factors import polarisation, polarisation_extinction
+        from anri.diffract.factors import polarisation_extinction
         from anri.fwd.peak import hkl_to_k_omega
 
         _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
@@ -1002,20 +815,6 @@ class TestMerge(unittest.TestCase):
         finally:
             logging.getLogger("jax").removeHandler(handler)
         self.assertEqual(len(compiles), n_first)
-
-
-class TestPolarisationDirection(unittest.TestCase):
-    def test_rotating_the_setup(self):
-        # rotating beam and scattered ray together about lab z, or about lab y (a beam tilted up or down, e.g.
-        # grazing incidence), keeps horizontal polarisation horizontal: the factor must not change
-        rng = np.random.default_rng(0)
-        k_in = jnp.array([1.0, 0.0, 0.0])
-        k_out = jnp.asarray(rng.normal(size=(50, 3)) + [3.0, 0.0, 0.0])
-        pol = jax.vmap(polarisation, in_axes=(None, 0, None))
-        for factor in (1.0, 0.9, 0.0):
-            reference = pol(k_in, k_out, factor)
-            for R in (anri.maths.rotation.rot_z(40.0), anri.maths.rotation.rot_y(-25.0)):
-                np.testing.assert_allclose(pol(R @ k_in, k_out @ R.T, factor), reference, rtol=1e-12)
 
 
 class TestMakeRow(unittest.TestCase):
