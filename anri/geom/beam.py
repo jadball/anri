@@ -4,8 +4,6 @@ Its profile across it, horizontally and vertically, is a flat top of some width 
 Gaussian with zero width), and integrates to 1.
 """
 
-from functools import partial
-
 import jax
 import jax.numpy as jnp
 from jax.scipy.special import ndtr
@@ -78,15 +76,19 @@ def _smoothed(order: int, x: ArrayLike, width: ArrayLike, sigma: ArrayLike) -> j
 
     Order 1 is the profile's cumulative distribution, order 2 its integral. The profile integrates to 1. For a
     width much smaller than sigma it is the Gaussian's (the difference quotient below would lose precision).
+
+    Both ends of the flat top are evaluated as one array (callers stack their points too): each call of the ramp
+    integrals inlines a copy of ndtr, and the beam weight is differentiated twice in the renderer.
     """
     x, width, sigma = jnp.asarray(x), jnp.asarray(width), jnp.asarray(sigma)
     gauss = width < 0.01 * sigma
     w = jnp.where(gauss, 1.0, width)  # double-where: no NaN gradients from either branch
+    ends = jnp.stack([x + w / 2, x - w / 2])
     if order == 1:
-        flat_top = (ramp_integral(x + w / 2, sigma) - ramp_integral(x - w / 2, sigma)) / w
-        return jnp.where(gauss, ndtr(x / sigma), flat_top)
-    flat_top = (ramp_integral2(x + w / 2, sigma) - ramp_integral2(x - w / 2, sigma)) / w
-    return jnp.where(gauss, ramp_integral(x, sigma), flat_top)
+        r = ramp_integral(ends, sigma)
+        return jnp.where(gauss, ndtr(x / sigma), (r[0] - r[1]) / w)
+    r = ramp_integral2(ends, sigma)
+    return jnp.where(gauss, ramp_integral(x, sigma), (r[0] - r[1]) / w)
 
 
 def chord_weight(
@@ -109,9 +111,10 @@ def chord_weight(
     tol = 1e-6 if jnp.finfo(jnp.result_type(a)).eps < 1e-10 else 3e-3
     is_box = (a - b) < tol * voxel_size
     ab = jnp.where(is_box, 1.0, a - b)
-    s2 = partial(_smoothed, 2, width=width, sigma=sigma)
-    trapezoid = height / ab * (s2(u + a) - s2(u + b) - s2(u - b) + s2(u - a))
-    box = height * (_smoothed(1, u + a, width, sigma) - _smoothed(1, u - a, width, sigma))
+    s2 = _smoothed(2, jnp.stack([u + a, u + b, u - b, u - a]), width, sigma)
+    trapezoid = height / ab * (s2[0] - s2[1] - s2[2] + s2[3])
+    s1 = _smoothed(1, jnp.stack([u + a, u - a]), width, sigma)
+    box = height * (s1[0] - s1[1])
     return jnp.where(is_box, box, trapezoid)
 
 
@@ -147,5 +150,6 @@ def beam_weight(pos_lab: jax.Array, omega: ArrayLike, geom: dict) -> jax.Array:
     w = chord_weight(u, omega - psi, size, geom["sig_beam"], geom["width_beam"]) / cos_alpha
     sig_v = jnp.where(geom["voxel_3d"], geom["sig_beam_v"], 1.0) / cos_alpha  # unused for columns
     width_v = geom["width_beam_v"] / cos_alpha
-    v = _smoothed(1, dz + size / 2, width_v, sig_v) - _smoothed(1, dz - size / 2, width_v, sig_v)
+    v = _smoothed(1, jnp.stack([dz + size / 2, dz - size / 2]), width_v, sig_v)
+    v = v[0] - v[1]
     return w * jnp.where(geom["voxel_3d"], v, 1.0)

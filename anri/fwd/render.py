@@ -616,11 +616,14 @@ def _beam_fold(pos: jax.Array, mu: jax.Array, shape: tuple, row: dict, geom: dic
         w = beam_weight(lab, o, geom)
         return jnp.log(jnp.maximum(w, jnp.finfo(w.dtype).tiny))  # tiny of the dtype: 1e-300 is 0 in float32
 
-    lb, beta = jax.value_and_grad(log_beam)(om_c)
+    # value, slope and curvature in one forward-over-forward pass: a third of the program reverse mode traced (the
+    # beam model is large, and this was half of render_peaks' compile time)
+    one = jnp.ones_like(om_c)
+    (lb, beta), (_, gam) = jax.jvp(lambda o: jax.jvp(log_beam, (o,), (one,)), (om_c,), (one,))
     # clamped: at a kink of a square voxel's chord through the beam (wherever the square lines up with it, every 90
     # degrees) the point curvature can come out large and positive; the fold may narrow the profile, never widen it.
     # Any error of the expansion is corrected at frame resolution by each frame's residual (render peaks).
-    gam = jnp.minimum(jax.grad(jax.grad(log_beam))(om_c), 0.0)
+    gam = jnp.minimum(gam, 0.0)
     # far outside the beam its weight underflows to 0 and the derivatives are not finite: no fold (per-frame weights)
     beta, gam = jnp.where(jnp.isfinite(beta), beta, 0.0), jnp.where(jnp.isfinite(gam), gam, 0.0)
     oo_b = 1.0 / (1.0 / oo - gam)
