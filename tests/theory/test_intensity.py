@@ -7,10 +7,12 @@ operations with condition number c is good to about n c eps.
 
 from __future__ import annotations
 
+import math
 import unittest
 
 import jax
 import jax.numpy as jnp
+import mpmath
 import numpy as np
 import sympy as sp
 
@@ -25,6 +27,7 @@ from tests.theory.common import (
     evaluate,
     is_zero,
     rng,
+    rounds_to,
 )
 
 
@@ -204,6 +207,100 @@ def test_chord_convolution():
     assert is_zero(sp.integrate(R1(v - c, s), (c, -w / 2, w / 2)) - (R2(v + w / 2, s) - R2(v - w / 2, s)))
 
 
+def test_profile_even():
+    """:eq:`int-even`: P1(x) + P1(-x) = 1 and P2(x) - P2(-x) = x for the Gaussian and the flat top (P2 - P2(-x) has
+    derivative P1(x) + P1(-x) = 1 and vanishes at 0); so the four terms of :eq:`int-chord` at -u are those at u."""
+    x, u, A, B = sp.symbols("x u A B", real=True)
+    s, w = sp.symbols("sigma w", positive=True)
+    gauss = (Phi(x / s), R1(x, s))
+    flat = ((R1(x + w / 2, s) - R1(x - w / 2, s)) / w, (R2(x + w / 2, s) - R2(x - w / 2, s)) / w)
+    for P1, P2 in (gauss, flat):
+        assert is_zero(P1 + P1.subs(x, -x) - 1)
+        assert is_zero(sp.diff(P2, x) - P1)
+        odd = P2 - P2.subs(x, -x)
+        assert is_zero(sp.diff(odd, x) - 1) and is_zero(odd.subs(x, 0))
+    # any P2 with P2(y) = P2(-y) + y: the linear parts cancel in the four terms
+    P2f, Q = sp.Function("P2"), sp.Function("Q")
+
+    def terms(v: sp.Expr, F: object) -> sp.Expr:
+        return F(v + A) - F(v + B) - F(v - B) + F(v - A)
+
+    assert is_zero(terms(-u, lambda y: Q(-y) + y) - terms(u, Q))
+    assert terms(u, P2f) != 0  # (the terms are not trivially zero)
+
+
+def _monic_legendre_mean_square(n: int) -> sp.Expr:
+    """The mean over [-1, 1] of prod (x - x_i)^2 over the n Gauss-Legendre nodes: the monic Legendre polynomial."""
+    x = sp.symbols("x", real=True)
+    P = sp.legendre(n, x)
+    monic = sp.expand(P / sp.Poly(P, x).LC())
+    return sp.integrate(monic**2, (x, -1, 1)) / 2
+
+
+def test_chord_mean():
+    """:eq:`int-chord-mean`. The four terms are the integral of f(t) = P1(u + t) - P1(u - t) over [B, A] (they vanish
+    at A = B, and their derivative in A is f(A)). A Gauss rule integrates the Hermite interpolant of a function g at
+    its nodes exactly (degree 2n - 1), and g minus it is g^(2n)(xi) / (2n)! prod (x - x_i)^2, of one sign: the error
+    is g^(2n)(xi) / (2n)! times the mean of prod (x - x_i)^2, the monic Legendre polynomial squared. With
+    g = f(m + L x / 2) that gives K_n L^(2n) M_2n; d_m^i d_L^j E is the same functional applied to
+    g = (x / 2)^j f^(i + j)(m + L x / 2), whose 2n-th derivative is Leibniz's sum (|x| <= 1). phi^(k) = (-1)^k He_k
+    phi, and |He_k phi| peaks where its derivative -He_(k+1) phi vanishes."""
+    u, A, B = sp.symbols("u A B", real=True)
+    s, w = sp.symbols("sigma w", positive=True)
+    for P1, P2 in ((lambda y: Phi(y / s), lambda y: R1(y, s)),
+                   (lambda y: (R1(y + w / 2, s) - R1(y - w / 2, s)) / w,
+                    lambda y: (R2(y + w / 2, s) - R2(y - w / 2, s)) / w)):  # fmt: skip
+        four = P2(u + A) - P2(u + B) - P2(u - B) + P2(u - A)
+        assert is_zero(four.subs(A, B))
+        assert is_zero(sp.diff(four, A) - (P1(u + A) - P1(u - A)))
+    n, L, m, x = sp.symbols("n L m x", real=True)
+    K = sp.factorial(n) ** 4 / ((2 * n + 1) * sp.factorial(2 * n) ** 3)
+    for k in range(1, 7):  # c_n / (2n)! (L / 2)^(2n) = K_n L^(2n)
+        assert is_zero(
+            (L / 2) ** (2 * k) * _monic_legendre_mean_square(k) / sp.factorial(2 * k) - K.subs(n, k) * L ** (2 * k)
+        )
+    # Leibniz: the 2n-th derivative in x of (x / 2)^j f^(i+j)(m + L x / 2), n = 6, i + j <= 2, as the bound's sum
+    f = sp.Function("f")
+    nn = 6
+    for i, j in ((0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (2, 0)):
+        g = (x / 2) ** j * sp.diff(f(m + L * x / 2), m, i + j)
+        lhs = sp.diff(g, x, 2 * nn)
+        rhs = sum(sp.binomial(2 * nn, k) * sp.diff((x / 2) ** j, x, k) * (L / 2) ** (2 * nn - k)
+                  * sp.diff(f(m + L * x / 2), m, 2 * nn + i + j - k) for k in range(j + 1))  # fmt: skip
+        assert is_zero(lhs - rhs)
+        for k in range(j + 1):  # |d^k (x / 2)^j| <= j! / (j - k)! 2^-j on [-1, 1], and c_n / (2n)! = K_n 2^(2n)
+            assert is_zero(sp.factorial(j) / sp.factorial(j - k) / 2**j * (L / 2) ** (2 * nn - k) * 2 ** (2 * nn)
+                           - sp.factorial(j) / sp.factorial(j - k) * sp.Integer(2) ** (k - j) * L ** (2 * nn - k))  # fmt: skip
+    # probabilists' Hermite polynomials by their recurrence; max |phi^(k)| at a root of He_(k+1)
+    He = [sp.Integer(1), x]
+    for k in range(1, 15):
+        He.append(sp.expand(x * He[k] - k * He[k - 1]))
+    for k in (11, 12, 13):
+        assert is_zero(sp.diff(phi(x), x, k) - (-1) ** k * He[k] * phi(x))
+        assert is_zero(sp.diff(He[k] * phi(x), x) + He[k + 1] * phi(x))
+    M = {k + 1: 2 * max(abs(sp.N((He[k] * phi(x)).subs(x, r), 40)) for r in sp.Poly(He[k + 1], x).real_roots())
+         for k in (11, 12, 13)}  # M_k sigma^k  # fmt: skip
+    K6 = K.subs(n, nn)
+    assert rounds_to(K6 * M[12], "4.37e-13")  # the error, times (L / sigma)^12
+
+    def bound(j: int, r: sp.Expr) -> sp.Expr:  # |d_L^j E| sigma^j / h at L = r sigma
+        terms = (sp.binomial(2 * nn, k) * sp.factorial(j) / sp.factorial(j - k) * sp.Integer(2) ** (k - j)
+                 * r ** (2 * nn - k) * M[2 * nn + j - k] for k in range(j + 1))  # fmt: skip
+        return K6 * sum(terms)
+
+    for r, quoted in (
+        (sp.Rational(5, 2), ("2.6e-8", "1.7e-7", "1.1e-6")),
+        (sp.Rational(1, 2), ("1.1e-16", "2.8e-15", "6.6e-14")),
+    ):
+        assert all(rounds_to(bound(j, r), q) for j, q in enumerate(quoted))  # at the switches
+    # the code's nodes and weights are the 6-point rule's
+    xs, ws = np.polynomial.legendre.leggauss(6)
+    np.testing.assert_allclose(np.polynomial.legendre.legval(xs, [0] * 6 + [1]), 0, atol=8 * EPS)
+    np.testing.assert_allclose(
+        [np.sum(ws * xs**k) for k in range(12)], [2 / (k + 1) * (k % 2 == 0) for k in range(12)], atol=16 * EPS
+    )
+
+
 def _chord_expr(u: sp.Expr, om_deg: float, a: float, s: sp.Expr, w: float) -> sp.Expr:
     """:eq:`int-chord` (the four ramps convolved with the profile), or its rectangle limit at omega = 0."""
     c, sn = abs(sp.cos(sp.rad(sp.nsimplify(om_deg)))), abs(sp.sin(sp.rad(sp.nsimplify(om_deg))))
@@ -234,6 +331,78 @@ def test_chord_weight_code():
         # the four-term difference cancels: condition ~ 4 h max|S2| / ((A - B) |W|), each S2 a few tens of
         # operations; with A - B >= a / 4 and |W| >= 0.1 here, the bound is below 1e-12
         np.testing.assert_allclose(got, expected, rtol=1e-12)
+
+
+def _chord_sym(u: sp.Expr, om: sp.Symbol, a: sp.Expr, s: sp.Expr, w: float) -> sp.Expr:
+    """:eq:`int-chord` with omega (degrees) a symbol, to differentiate; not at A = B."""
+    w = sp.nsimplify(w)  # exact: a float's 53 bits would cap evalf's precision of every term that holds it
+    c, sn = sp.Abs(sp.cos(sp.pi * om / 180)), sp.Abs(sp.sin(sp.pi * om / 180))
+    A, B = a * (c + sn) / 2, a * sp.Abs(c - sn) / 2
+    if w == 0:
+        S2 = lambda t: R1(t, s)
+    else:
+        S2 = lambda t: (R2(t + w / 2, s) - R2(t - w / 2, s)) / w
+    return a**2 / (A + B) / (A - B) * (S2(u + A) - S2(u + B) - S2(u - B) + S2(u - A))
+
+
+def test_chord_weight_near_box_code():
+    """chord_weight and its first two omega derivatives near omega = 90 deg, where the four terms cancel and the code
+    takes :eq:`int-chord-mean`'s 6-point mean (below A - B = 0.5 sigma in float64), and just past the switch; and in a
+    tail, where it evaluates :eq:`int-even` at -|u|."""
+    om = sp.symbols("omega", real=True)
+    a, s = sp.Rational(7, 10), sp.Rational(9, 20)
+    av, sv = 0.7, 0.45
+    pmax, dpmax = 1 / np.sqrt(2 * np.pi) / sv, np.exp(-0.5) / np.sqrt(2 * np.pi) / sv**2  # max p, max |p'| (Gaussian)
+    with float64():  # value, slope and curvature in omega, compiled once for every point
+
+        @jax.jit
+        def code(u: jax.Array, o: jax.Array, wd: jax.Array) -> tuple:
+            f = lambda t: chord_weight(u, t, av, sv, wd)
+            return f(o), jax.grad(f)(o), jax.grad(jax.grad(f))(o)
+
+    for w in (0.0, 1.5):
+        for uv in (0.0, 2 * sv):
+            W = _chord_sym(sp.Float(uv, 60), om, a, s, w)
+            # the same expressions, evaluated by mpmath at 50 digits (sympy's evalf is ~50x slower here)
+            # (Abs's second derivative holds DiracDelta terms, zero away from the kinks sampled here)
+            ders = (W, sp.diff(W, om), sp.diff(W, om, 2))
+            exprs = [sp.lambdify(om, e.replace(sp.DiracDelta, lambda *_: 0), "mpmath") for e in ders]
+            for omv in (90 + 1e-6, 90 - 1e-3, 90 + 0.5, 90 - 3.0, 100.0, 110.0, 27.3):
+                with mpmath.workdps(50):  # the four terms at A - B = 1e-8 a cancel 8 digits, 1 / L^3 24 more
+                    ref = [float(e(mpmath.mpf(repr(omv)))) for e in exprs]
+                with float64():
+                    got = [float(v) for v in code(np.float64(uv), np.float64(omv), np.float64(w))]
+                # the 6-point mean's error and its derivatives are below 1e-16 h at L <= 0.5 sigma (int-chord-mean);
+                # its rounding: chain-rule terms of at most S0 = h, S1 = h max(p) a (pi / 180) and
+                # S2 = h (max|p'| a^2 + max(p) a) (pi / 180)^2, each rounded over ~16 operations. Past the switch
+                # (L >= 0.5 sigma), the four-term form's rounding, amplified by j! |dL / domega|^j / L^(j+1)
+                c, sn = abs(np.cos(np.radians(omv))), abs(np.sin(np.radians(omv)))
+                A, B = av * (c + sn) / 2, av * abs(c - sn) / 2
+                h = av**2 / (A + B)
+                four = A - B >= 0.5 * sv
+                dL = np.sqrt(2) * av * np.pi / 180  # |dA / domega|, |dB / domega| <= a / sqrt(2) per radian
+                scale = [h, h * pmax * av * np.pi / 180, h * (dpmax * av**2 + pmax * av) * (np.pi / 180) ** 2]
+                for k in range(3):
+                    extra = h * (A + sv) * math.factorial(k) * dL**k / (A - B) ** (k + 1) if four else 0.0
+                    tol = 16 * EPS * (scale[k] + extra)
+                    np.testing.assert_allclose(got[k], ref[k], rtol=0, atol=tol)
+    # a tail: u = 5 sigma, every term at -|u| +- A, B small. R1(x) at x << 0 is x Phi + sigma phi, cancelling with
+    # condition (|x Phi| + sigma phi) / R1 (int-ramp's code check), then the four terms with their own condition
+    uv, omv = 5 * sv, 27.3
+    expected = _chord_expr(sp.Float(uv, 40), omv, sp.Float(av, 40), sp.Float(sv, 40), 0.0)
+    c, sn = abs(np.cos(np.radians(omv))), abs(np.sin(np.radians(omv)))
+    pts = [-uv + av * (c + sn) / 2, -uv + av * abs(c - sn) / 2, -uv - av * abs(c - sn) / 2, -uv - av * (c + sn) / 2]
+    x = sp.symbols("x", real=True)
+    cond_r = max(
+        float(sp.N((abs(xv * Phi(sp.Float(xv, 30) / s)) + s * phi(sp.Float(xv, 30) / s)) / R1(sp.Float(xv, 30), s), 30))
+        for xv in pts
+    )
+    four = [float(sp.N(R1(x, s).subs(x, sp.Float(xv, 30)), 30)) for xv in pts]
+    cond_4 = sum(abs(v) for v in four) / abs(four[0] - four[1] - four[2] + four[3])
+    with float64():
+        got = float(chord_weight(uv, omv, av, sv, 0.0))
+    np.testing.assert_allclose(got, float(sp.N(expected, 30)), rtol=16 * EPS * cond_r * cond_4)
+    assert cond_r * cond_4 < 1e3  # at +u the four terms would grow like u and cancel to the tail: no digits left
 
 
 def test_beam_weight_code():
