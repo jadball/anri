@@ -123,3 +123,107 @@ def test_start_persists():
         ratio = sp.Matrix([d[i] / (A * f)[i] for i in range(3)])
         f = sp.Matrix([f[j] * (A.T * ratio)[j] / norm[j] for j in range(3)])
         assert sp.simplify(f[0] / f[1] - r0) == 0
+
+
+def test_tails_log_concave():
+    """ls-concave: log Q(c + 1, mu) (an empty bin) and log P(d, mu) (a saturated bin) are concave in mu. With
+    Q' = -p and p' = p (c / mu - 1), (log Q)'' = -p (Q (c / mu - 1) + p) / Q^2, so concavity is Q (1 - c / mu) <= p,
+    trivially for mu <= c; for mu > c, c log u <= c log mu + c (u - mu) / mu (log y <= y - 1) bounds the integrand of
+    Gamma(c + 1, mu) by an exponential whose integral is mu^c e^-mu / (1 - c / mu). The saturated bin likewise, on
+    [0, mu] for mu < d - 1."""
+    mu, u = sp.symbols("mu u", positive=True)
+    c = sp.Symbol("c", positive=True)
+    Q = sp.uppergamma(c + 1, mu) / sp.gamma(c + 1)
+    p = mu**c * sp.exp(-mu) / sp.gamma(c + 1)
+    assert sp.simplify(sp.diff(Q, mu) + p) == 0
+    assert sp.simplify(sp.diff(p, mu) - p * (c / mu - 1)) == 0
+    Qs, ps = sp.symbols("Q p", positive=True)  # (log Q)'' with Q' = -p, Q'' = -p (c / mu - 1)
+    second = (Qs * (-ps * (c / mu - 1)) - ps**2) / Qs**2
+    assert sp.simplify(second + ps * (Qs * (c / mu - 1) + ps) / Qs**2) == 0
+    # the integrand's bound: c log(u / mu) - c (u - mu) / mu = c (log y - (y - 1)), y = u / mu
+    y = sp.Symbol("y", positive=True)
+    assert sp.simplify((c * sp.log(u / mu) - c * (u - mu) / mu).subs(u, y * mu) - c * (sp.log(y) - (y - 1))) == 0
+    k = sp.Symbol("k", positive=True)  # k = 1 - c / mu > 0
+    bound = sp.integrate(mu**c * sp.exp(-mu) * sp.exp(-k * (u - mu)), (u, mu, sp.oo))
+    assert sp.simplify(bound - mu**c * sp.exp(-mu) / k) == 0
+    # saturated: P' = g, g' = g ((d - 1) / mu - 1); concavity is P ((d - 1) / mu - 1) <= g; on [0, mu] the integrand
+    # is below g's exponential continuation, whose integral to mu from -oo is g mu^(d-1)... / ((d - 1) / mu - 1)
+    d = sp.Symbol("d", positive=True)
+    P = sp.lowergamma(d, mu) / sp.gamma(d)
+    g = mu ** (d - 1) * sp.exp(-mu) / sp.gamma(d)
+    assert sp.simplify(sp.diff(P, mu) - g) == 0
+    assert sp.simplify(sp.diff(g, mu) - g * ((d - 1) / mu - 1)) == 0
+    k2 = sp.Symbol("k2", positive=True)  # (d - 1) / mu - 1 > 0
+    bound2 = sp.integrate(sp.exp(k2 * (u - mu)), (u, -sp.oo, mu))
+    assert sp.simplify(bound2 - 1 / k2) == 0
+
+
+def test_certificate():
+    """ls-kkt: for plain Poisson terms l = sum d log mu - mu, mu = A f, l(f) - l(f^) - grad l(f^) . (f - f^) =
+    sum d (log y - (y - 1)) with y = mu / mu^, at most 0 (log y <= y - 1); and with grad_j <= 0 everywhere and
+    grad_j f^_j = 0, grad . (f - f^) = sum grad_j f_j <= 0 for f >= 0."""
+    A = sp.Matrix(3, 2, sp.symbols("a0:6", positive=True))
+    f = sp.Matrix(sp.symbols("f0:2", positive=True))
+    fh = sp.Matrix(sp.symbols("h0:2", positive=True))
+    dd = sp.Matrix(sp.symbols("d0:3", positive=True))
+
+    def ll(x: sp.Matrix) -> sp.Expr:
+        m = A * x
+        return sum(dd[b] * sp.log(m[b]) - m[b] for b in range(3))
+
+    grad = sp.Matrix([sp.diff(ll(fh), fh[j]) for j in range(2)])
+    lhs = ll(f) - ll(fh) - (grad.T * (f - fh))[0]
+    mu, muh = A * f, A * fh
+    yb = [mu[b] / muh[b] for b in range(3)]
+    rhs = sum(dd[b] * (sp.log(yb[b]) - (yb[b] - 1)) for b in range(3))
+    assert sp.simplify(sp.expand_log(lhs - rhs, force=True)) == 0
+    gj = sp.symbols("g0:2", nonpositive=True)
+    fj = sp.symbols("x0:2", nonnegative=True)
+    # complementary slackness: grad . f^ = 0, so grad . (f - f^) = grad . f, a sum of non-positive terms
+    assert sum(gj[j] * fj[j] for j in range(2)).is_nonpositive
+
+
+def test_gain_bound():
+    """ls-gain: phi(t) = sum d log(1 + t a / mu) - t sum a is concave, so 2 phi(t) <= 2 phi'(0) t = 2 (S - 1) N for the
+    N = t sum a photons it adds; and phi'' = -sum d a^2 / (mu + t a)^2 >= -h,
+    h = sum d a^2 / mu^2, for t >= 0, so phi(t) >= g t - h t^2 / 2 (phi - g t + h t^2 / 2 is convex with value and slope
+    0 at 0) and 2 max phi >= g^2 / h. Two equal columns have equal scores, so a duplicate of an active column (score 1)
+    has g = 0 and, phi being concave, gains nothing."""
+    t = sp.Symbol("t", nonnegative=True)
+    a = sp.symbols("a0:3", positive=True)
+    m = sp.symbols("m0:3", positive=True)
+    dd = sp.symbols("d0:3", positive=True)
+    phi = sum(dd[b] * sp.log(1 + t * a[b] / m[b]) for b in range(3)) - t * sum(a)
+    d2 = sp.diff(phi, t, 2)
+    assert sp.simplify(d2 + sum(dd[b] * a[b] ** 2 / (m[b] + t * a[b]) ** 2 for b in range(3))) == 0
+    for b in range(3):  # each term's curvature is at most its value at t = 0: (m + t a)^2 >= m^2 for t >= 0
+        assert sp.factor((m[b] + t * a[b]) ** 2 - m[b] ** 2).is_nonnegative
+    g, h = sp.symbols("g h", positive=True)
+    q = g * t - h * t**2 / 2
+    tstar = sp.solve(sp.diff(q, t), t)[0]
+    assert sp.simplify(2 * q.subs(t, tstar) - g**2 / h) == 0
+    g0 = sp.diff(phi, t).subs(t, 0)
+    S = sum(dd[b] / m[b] * a[b] for b in range(3)) / sum(a)  # the column's score
+    assert sp.simplify(g0 - sum(a) * (S - 1)) == 0
+    # concavity's upper bound: phi(t) <= phi'(0) t, as phi'' <= 0 (each term of d2 is negative); N = t sum a photons
+    assert all(term.is_negative for term in sp.Add.make_args(sp.expand(d2)))
+    N = t * sum(a)
+    assert sp.simplify(2 * g0 * t - 2 * (S - 1) * N) == 0
+
+
+def test_gap_bound():
+    """ls-gap: d log mu <= d log(d / r) - d + r mu for d, r, mu > 0 (log y <= y - 1 at y = r mu / d); with
+    r~ = rho / s_max feasible (A^T r~ <= A^T 1 when every score is at most s_max), sum (r~ - 1) mu = f . A^T (r~ - 1) <= 0,
+    and at rho = d / mu^ the bound minus l(f^) is (sum d) log s_max + sum mu^ - sum d."""
+    d, r, mu = sp.symbols("d r mu", positive=True)
+    y = r * mu / d
+    gap = d * sp.log(d / r) - d + r * mu - d * sp.log(mu)
+    assert sp.simplify(sp.expand_log(gap - d * ((y - 1) - sp.log(y)), force=True)) == 0
+    dd = sp.symbols("d0:3", positive=True)
+    mh = sp.symbols("m0:3", positive=True)
+    s = sp.Symbol("s", positive=True)
+    rt = [dd[b] / mh[b] / s for b in range(3)]
+    dual = sum(dd[b] * sp.log(dd[b] / rt[b]) - dd[b] for b in range(3))
+    primal = sum(dd[b] * sp.log(mh[b]) - mh[b] for b in range(3))
+    want = sum(dd) * sp.log(s) + sum(mh) - sum(dd)
+    assert sp.simplify(sp.expand_log(dual - primal - want, force=True)) == 0

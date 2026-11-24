@@ -287,13 +287,17 @@ for the censored deviance; :math:`\delta` is the directional derivative), ``test
 
 Each SQUAREM iteration makes two plain updates, :math:`f \to f_1 \to f_2`, so each gives :math:`\rho^2 =
 \delta_1/\delta_0` and the remaining deviance :math:`\hat{G} = \delta_1 / (2(1 - \rho))` at :math:`f_1`, which the
-iteration's result improves on. The fit stops once :math:`\hat{G} \le` ``tol``, by default 1: a log-likelihood
+iteration's result improves on. The fit stops once :math:`\hat{G} \le` ``tol`` on two iterations running, by
+default 1: a log-likelihood
 ratio of 1/2 to the optimum, which no test can tell from it (:eq:`lik-lr`'s threshold is 25). The cost is one more
 reduction per update, brought to the host with the deviance in one transfer.
 
 **Anri's choice:** :math:`\hat{G}` is an estimate, not a bound. With several modes the measured :math:`\rho^2` is
 the modes' mean weighted by their :math:`\delta`, below the slowest's, so the slowest mode's remainder is
-underestimated, by up to the factor :math:`(1 - \rho)/(1 - \rho_{\max})`. SQUAREM's extrapolation changes the
+underestimated, by up to the factor :math:`(1 - \rho)/(1 - \rho_{\max})`. It is worst just after a start, when the
+fast modes dominate :math:`\delta`, and along near-null directions (near-duplicate orientations, :eq:`ls-start`),
+where :math:`\rho_{\max} \to 1`: hence two iterations running, and, after pricing, the rigorous bound :eq:`ls-gap`
+beside it. SQUAREM's extrapolation changes the
 contraction from iteration to iteration, but the two plain updates that measure it are plain MLEM. The deviance
 counts in the histogram's units (monitor-normalised sums of counts: the Poisson approximation above).
 

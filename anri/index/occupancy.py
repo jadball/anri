@@ -467,6 +467,143 @@ def candidates(
     return f1, cand
 
 
+@partial(jax.jit, static_argnames=("dims", "qc", "k"))
+def _price_block(
+    r: jax.Array, f_b: jax.Array, cand_b: jax.Array, pos_b: jax.Array, pred: tuple, ring_j: jax.Array, scan: dict,
+    dims: tuple, qc: int, k: int,
+) -> tuple:  # fmt: skip
+    """Score ``S = A^T r / A^T 1`` of every (voxel, orientation) of one block at a fit, and each voxel's best k non-candidates.
+
+    Theory page, coarse to fine: ls-kkt, ls-gain. ``r`` is the bins' EM ratio at the fit. A candidate at zero
+    occupancy counts as a non-candidate: MLEM cannot move it. One chunk of qc orientations at a time, with a running
+    top k, so memory does not grow with the orientations.
+    """
+    vb, dt = pos_b.shape[0], r.dtype
+    held = jnp.where(f_b > 0, cand_b, -1)  # [vb, K]
+
+    def chunk(carry: tuple, ch: tuple) -> tuple:
+        sv, si, s_all = carry
+        (e, o, u, w), c = ch
+        idx, wt = system(e[None], o[None], u[None], w[None], ring_j, pos_b, scan, *dims)
+        num = jnp.sum(wt * take_cells(r, idx), (2, 3))  # [vb, qc]
+        den = jnp.sum(wt, (2, 3))
+        q = c * qc + jnp.arange(qc, dtype=jnp.int32)
+        s = (num / jnp.maximum(den, 1e-30)).astype(dt)  # wt may be float64 (jax_enable_x64)
+        out = jnp.any(held[:, :, None] == q[None, None, :], 1) | (den <= 0)  # candidates, and columns seeing nothing
+        s_all = jnp.maximum(s_all, jnp.max(jnp.where(den > 0, s, -jnp.inf), 1))
+        v, i = jax.lax.top_k(jnp.concatenate([sv, jnp.where(out, -jnp.inf, s)], 1), k)
+        ids = jnp.concatenate([si, jnp.broadcast_to(q, (vb, qc))], 1)
+        return (v, jnp.take_along_axis(ids, i, 1), s_all), None
+
+    init = (jnp.full((vb, k), -jnp.inf, dt), jnp.zeros((vb, k), jnp.int32), jnp.full(vb, -jnp.inf, dt))
+    chunks = tuple(_chunks(p, qc) for p in pred)
+    (sv, si, s_all), _ = jax.lax.scan(chunk, init, (chunks, jnp.arange(chunks[0].shape[0], dtype=jnp.int32)))
+    return sv, si, s_all
+
+
+@partial(jax.jit, static_argnames=("eps", "drop"))
+def _assign(f: jax.Array, cand: jax.Array, sv: jax.Array, si: jax.Array, eps: float, drop: float) -> tuple:
+    """Put each voxel's non-candidates scoring above 1 + eps into its free slots (empty, or holding < drop of it).
+
+    Each starts at a tenth of the voxel's mean occupancy: the start changes how fast MLEM gets there, not where
+    (the likelihood is concave), and MLEM cannot move an occupancy from 0.
+    """
+
+    def one(f_v: jax.Array, c_v: jax.Array, s_v: jax.Array, i_v: jax.Array) -> tuple:
+        share = f_v / jnp.maximum(jnp.sum(f_v), 1e-30)
+        free = (c_v < 0) | (share < drop)
+        slots = jnp.argsort(jnp.where(free, share, jnp.inf))[: s_v.shape[0]]  # free slots first, the emptiest first
+        want = s_v > 1.0 + eps  # top_k sorted the scores, largest first
+        n = jnp.minimum(jnp.sum(free), jnp.sum(want))
+        use = jnp.arange(s_v.shape[0]) < n
+        start = jnp.maximum(0.1 * jnp.sum(f_v) / jnp.maximum(jnp.sum(f_v > 0), 1), 1e-30)
+        c_new = c_v.at[slots].set(jnp.where(use, i_v, c_v[slots]))
+        f_new = f_v.at[slots].set(jnp.where(use, start, f_v[slots]))
+        return c_new, f_new, n, jnp.sum(want) > jnp.sum(free)
+
+    return jax.vmap(one)(f, cand, sv, si)
+
+
+PRICE_NEW = 8  # slots added per voxel per pricing round
+PRICE_DROP = 1e-4  # a slot holding less than this share of its voxel is free
+PRICE_UNEXPLAINED = 1e20  # the ratio of a recorded bin the model leaves empty: infinite, kept finite in float32
+
+
+def price(
+    d: jax.Array, mu: jax.Array, f: jax.Array, cand: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array,
+    scan: dict, dims: tuple, vb: int, qc: int = 16, censor: float = 0.0, saturated: jax.Array | None = None,
+    eps: float = 1e-4, k_new: int = PRICE_NEW, drop: float = PRICE_DROP,
+) -> tuple:  # fmt: skip
+    """Price every orientation of every voxel at a fit: the certificate of ls-kkt, and the candidates to add.
+
+    A fit converged on its candidates is the maximum likelihood over every orientation of ``pred`` if and only if no
+    other orientation's score ``S = A^T rho / A^T 1`` exceeds 1 (theory page, coarse to fine: ls-kkt). Adding N
+    photons of an orientation lowers the deviance by at most ``2 (S - 1) N`` (ls-gain), so ``max S - 1 <= eps`` says
+    no orientation outside the candidates could lower it by more than 2 eps per photon it explains. Each voxel's
+    non-candidates above ``1 + eps``, the highest first, take its free slots. One pass over every (voxel,
+    orientation), as :func:`candidates`.
+
+    Parameters
+    ----------
+    d, mu
+        [n_cells] histogram and the fit's model ``A f``
+    f, cand
+        [Nv, K] the fit's occupancies and orientation indices, Nv a multiple of vb
+    pred, ring_j, pos, scan, dims, vb, qc
+        As :func:`candidates`
+    censor, saturated
+        As :func:`mlem`
+    eps
+        The certificate's precision: non-candidates scoring above 1 + eps are violators, and are added
+    k_new
+        At most this many added per voxel per pass
+    drop
+        Slots holding less than this share of their voxel are free
+
+    Returns
+    -------
+    cand, f0: jax.Array
+        [Nv, K] the candidates with the additions, and starting occupancies
+    stats: dict
+        "max_score" (the largest S - 1 of any non-candidate: <= eps is the certificate), "violating" (voxels with a
+        non-candidate above 1 + eps), "added", "no_slot" (voxels whose violators found no free slot), "gap" (ls-gap's
+        bound on the deviance from the optimum over every orientation; plain Poisson only, else None)
+    """
+    # light where the model has none: the likelihood's gradient is infinite there (log 0), so any column reaching
+    # such a bin scores without bound. MLEM's ratio sets it to 0, which is harmless to MLEM and fatal to pricing
+    r = jnp.where((mu <= 0) & (d > 0), PRICE_UNEXPLAINED, censored_ratio(d, mu, censor, saturated))
+    nv, K = cand.shape
+    k = min(k_new, K, pred[0].shape[0])
+    out = [
+        _price_block(r, f[b : b + vb], cand[b : b + vb], pos[b : b + vb], pred, ring_j, scan, dims, qc, k)
+        for b in range(0, nv, vb)
+    ]
+    sv, si, s_all = (jnp.concatenate([o[i] for o in out]) for i in range(3))
+    c_new, f_new, n_add, no_slot = _assign(f, cand, sv, si, float(eps), float(drop))
+    s_max = jnp.maximum(1.0, jnp.max(s_all))
+    gap = 2.0 * (jnp.sum(d) * jnp.log(s_max) + jnp.sum(mu) - jnp.sum(d))
+    vals = np.asarray(
+        jnp.stack([jnp.max(sv[:, 0]) - 1.0, jnp.sum(sv[:, 0] > 1.0 + eps), jnp.sum(n_add), jnp.sum(no_slot), gap])
+    )
+    plain = censor == 0 and (saturated is None or np.size(saturated) == 0)
+    stats = {"max_score": float(vals[0]), "violating": int(vals[1]), "added": int(vals[2]),
+             "no_slot": int(vals[3]), "gap": float(vals[4]) if plain else None}  # fmt: skip
+    return c_new, f_new, stats
+
+
+def price_message(stats: dict, eps: float) -> str:
+    """One line on a pricing pass, for the log."""
+    gap = "" if stats["gap"] is None else f"; deviance at most {stats['gap']:.3g} from the optimum (ls-gap)"
+    head = (
+        f"certificate holds: no orientation outside the candidates could lower the deviance by more than "
+        f"{2 * max(stats['max_score'], 0.0):.3g} per photon"
+        if stats["violating"] == 0
+        else f"{stats['violating']} voxels have an orientation outside their candidates scoring above 1 + {eps:g} "
+        f"(largest score - 1: {stats['max_score']:.3g})"
+    )
+    return f"pricing: {head}; {stats['added']} added, {stats['no_slot']} voxels out of slots{gap}"
+
+
 @partial(jax.jit, static_argnames=("n_cells", "dims", "vb"))
 def forward(
     f: jax.Array, cand: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array, scan: dict, dims: tuple,
@@ -592,7 +729,8 @@ def squarem(
     by the voxel fit (:func:`mlem`) and the global orientation fit (:func:`anri.index.orientations.fit`).
 
     Convergence: the two plain MLEM updates of each iteration give the deviance still to fall,
-    :func:`remaining_deviance` of their :func:`step_decrease`. The fit stops once that is at most ``tol``, a deviance
+    :func:`remaining_deviance` of their :func:`step_decrease`. The fit stops once that is at most ``tol`` on two
+    iterations running (the first iteration after a start sees only the fast modes), a deviance
     (twice a log-likelihood ratio) too small for the data to tell from the optimum. Stopping at ``n_iter`` first is a
     filter (theory page, likelihood), reported as not converged.
 
@@ -630,7 +768,7 @@ def squarem(
        https://doi.org/10.1111/j.1467-9469.2007.00585.x
     """
     step_max = float("inf")  # no cap until a step is refused
-    remaining, it = float("inf"), 0
+    remaining, it, below = float("inf"), 0, 0
     for it in range(1, n_iter + 1):
         f1, _, delta0 = step(f)
         f2, dev1, delta1 = step(f1)
@@ -648,13 +786,14 @@ def squarem(
         length = float(-a)
         log(f"  {label} {it} (SQUAREM step {length:.1f}{'' if taken else ', not taken'}): deviance {dev:.6g}, "
             f"~{remaining:.3g} to go")  # fmt: skip
-        if remaining <= tol:
+        below = below + 1 if remaining <= tol else 0
+        if below >= 2:  # twice running: the first iteration after a start sees the fast modes only
             break
         if not taken:
             step_max = max(1.0, length / 4)
         elif length >= step_max * (1 - 1e-6):
             step_max *= 4
-    return f, {"iterations": it, "remaining": remaining, "converged": remaining <= tol}
+    return f, {"iterations": it, "remaining": remaining, "converged": below >= 2}
 
 
 def convergence_message(label: str, info: dict, tol: float) -> str:
@@ -843,6 +982,8 @@ def fit_occupancy(
     saturated: ArrayLike | None = None,
     given: tuple | None = None,
     tol: float = 1.0,
+    price_rounds: int | None = None,
+    price_eps: float = 1e-4,
 ) -> tuple:
     """Fit sparse occupancies: candidates per voxel, then MLEM until it converges.
 
@@ -885,6 +1026,15 @@ def fit_occupancy(
         instead of picking them (k is then not used), e.g. from :func:`inherit_candidates`
     tol
         Convergence: the estimated deviance still to fall (:func:`squarem`); how the fit ended is logged
+    price_rounds
+        None: no pricing. Otherwise, after the fit, price every orientation (:func:`price`), add each voxel's
+        violators and resume the fit, up to this many times, then price once more: the log says whether the
+        certificate holds (theory page, coarse to fine: ls-kkt). 0: the certificate only. Each round adds
+        PRICE_NEW empty slots per voxel, so a candidate the fit still uses is never pushed out; at the end the slots
+        are cut back to what the fullest voxel holds, so the returned k may be larger than given
+    price_eps
+        The certificate's precision (:func:`price`): no orientation outside the candidates could lower the deviance by
+        more than 2 price_eps per photon it explains
     log
         Progress messages
 
@@ -938,6 +1088,32 @@ def fit_occupancy(
                    callback=callback, saturated=sat, tol=tol)  # fmt: skip
     log(convergence_message("MLEM", info, tol))
     log(f"MLEM {info['iterations']} iterations: {time.perf_counter() - t0:.1f} s")
+    k_fit = cand.shape[1]
+    for rnd in range(-1 if price_rounds is None else price_rounds + 1):
+        t0 = time.perf_counter()
+        mu = forward(f, cand, pred, ring_j, pos_p, scan, dims, H.shape[0], vb)
+        if rnd < (price_rounds or 0):  # room for the additions: a candidate the fit still uses is never pushed out
+            f = jnp.concatenate([f, jnp.zeros((f.shape[0], PRICE_NEW), f.dtype)], 1)
+            cand = jnp.concatenate([cand, jnp.zeros((cand.shape[0], PRICE_NEW), cand.dtype)], 1)
+        cand_n, f_n, stats = price(H, mu, f, cand, pred, ring_j, pos_p, scan, dims, vb_all, qc=qc, censor=censor,
+                                   saturated=sat, eps=price_eps)  # fmt: skip
+        log(price_message(stats, price_eps) + f": {time.perf_counter() - t0:.1f} s")
+        if not info["converged"]:
+            log("pricing: the fit had not converged, so the certificate does not apply")
+        if stats["added"] == 0 or rnd == price_rounds:
+            break
+        t0 = time.perf_counter()
+        f, info = mlem(H, cand_n, pred, ring_j, pos_p, scan, dims, f_n, n_iter, vb, log=log, censor=censor,
+                       callback=callback, saturated=sat, tol=tol)  # fmt: skip
+        cand = cand_n
+        log(convergence_message(f"MLEM after pricing {rnd + 1}", info, tol) + f": {time.perf_counter() - t0:.1f} s")
+    if cand.shape[1] > k_fit:  # each voxel's occupied slots first; keep as many columns as the fullest voxel needs
+        order = jnp.argsort(-f, 1)
+        f, cand = jnp.take_along_axis(f, order, 1), jnp.take_along_axis(cand, order, 1)
+        held = f[:nv] >= PRICE_DROP * jnp.sum(f[:nv], 1, keepdims=True)  # MLEM never sets an occupancy exactly to 0
+        k_keep = max(k_fit, int(jnp.max(jnp.sum(held, 1))))  # the voxels, not the blocks' padding
+        f, cand = f[:, :k_keep], cand[:, :k_keep]
+        log(f"pricing: {k_keep} candidate slots per voxel (from {k_fit})")
     if return_model:
         mu = forward(f, cand, pred, ring_j, pos_p, scan, dims, H.shape[0], vb)
         return np.asarray(f)[:nv], np.asarray(cand)[:nv], np.asarray(mu)

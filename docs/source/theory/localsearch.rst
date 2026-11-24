@@ -106,7 +106,8 @@ How coarse to fine couples voxels
 
 No voxel's value is tied to its neighbours' by a prior (:doc:`indexing`). The coarse-to-fine levels still couple them,
 in three ways, through what the last level may fit and where it starts. Each is a filter; none is wanted (AGENTS.md:
-no coupling between voxels), and each stays documented here until it is removed.
+no coupling between voxels). Pricing (below) checks and removes the effect of the first two on the likelihood; the
+third remains, and each stays documented here.
 
 **Filter: coarse levels bin space.** Level :math:`k` fits one set of occupancies per voxel :math:`g_k` rows wide: the
 constraint that each :math:`g_k \times g_k` block is uniform. It reaches the last level only through the next two.
@@ -145,19 +146,121 @@ data cannot tell them apart.
 **Proof:** ``tests/theory/test_localsearch.py::test_unique_optimum`` (the Hessian),
 ``tests/theory/test_localsearch.py::test_start_persists`` (two equal columns, every update).
 
-What would remove them, for the maintainer to choose:
+Is coarse to fine sound?
+------------------------
 
-- the last level's candidates chosen per fine voxel from every orientation at the last level's resolution
-  (:eq:`lik-candidates`), with no inheritance: no binning, no inherited support. Its cost is a candidate pass over
-  every fine voxel and every refined orientation, and it brings back the crowding of near-duplicate orientations
-  (refined globally to 0.1°, a grain's duplicates filled each voxel's candidates), which needs its own derivation;
-- the start's split made visible instead of hidden: where the Fisher information of a voxel's candidates is singular,
-  report the occupancies along its null directions as not determined, not the start's values.
+The levels are a way to reach one well-defined answer: the maximum likelihood over the last level's orientations
+:math:`\mathcal{D}` (every child of every orientation kept anywhere at the level before), each voxel free to hold any
+of them. Whether a fit reached it can be checked, and where it did not, mended, without trusting the path.
+
+**The likelihood is concave.** A recorded bin's term :math:`d\log\mu - \mu` is concave in :math:`\mu`. An empty bin's,
+:math:`\log P(n \le c)`, and a saturated bin's, :math:`\log P(n \ge d)`, are logarithms of a Poisson tail, which as
+functions of :math:`\mu` are a tail and a cumulative distribution of a gamma variable with a log-concave density
+(shape :math:`c + 1 \ge 1`, :math:`d \ge 1`), and so log-concave:
+
+.. math::
+    :label: ls-concave
+
+    \frac{\partial^2}{\partial\mu^2}\log Q(c + 1, \mu) \le 0 \iff Q(c + 1, \mu)\left(1 - \frac{c}{\mu}\right) \le p_c(\mu),
+    \qquad
+    \Gamma(c + 1, \mu) \le \frac{\mu^c e^{-\mu}}{1 - c/\mu} \quad (\mu > c),
+
+with :math:`p_c = \mu^c e^{-\mu}/\Gamma(c + 1)`; the bound follows from :math:`c\log u \le c\log\mu + c(u - \mu)/\mu`
+under the integral, and the saturated term likewise. :math:`\mu = Af` is linear, so :math:`\ell = -D/2` is concave in
+:math:`f`.
+
+**Proof:** ``tests/theory/test_localsearch.py::test_tails_log_concave``
+
+**The certificate.** With the score of a column :math:`j` (a voxel and an orientation) at a fit,
+:math:`S_j = [A^T\rho]_j/[A^T\mathbf{1}]_j` (:math:`\rho` the bins' EM ratios, :eq:`lik-censored`), the gradient is
+:math:`\partial\ell/\partial f_j = [A^T\mathbf{1}]_j(S_j - 1)`. A concave function on :math:`f \ge 0` is at its maximum
+exactly where its first-order conditions hold, so a fit :math:`\hat f` over the candidates, converged on them, is the
+maximum over all of :math:`\mathcal{D}` if and only if
+
+.. math::
+    :label: ls-kkt
+
+    S_j(\hat f) \le 1 \quad \text{for every } j \in \mathcal{D} \text{ not a candidate},
+    \qquad
+    \ell(f) \le \ell(\hat f) + \nabla\ell(\hat f)\cdot(f - \hat f) \le \ell(\hat f) \ \ \forall f \ge 0 .
+
+A recorded bin that the fit leaves empty (:math:`\hat\mu_b = 0 < d_b`) makes the gradient of every column reaching it
+infinite: such a column always violates. (MLEM's own ratio is 0 there, since no candidate reaches the bin; pricing
+must not use it.) Then the levels, the inherited candidates and the binning have changed nothing in the likelihood: the answer is the
+one the full problem has. Only the split among columns the data cannot tell apart (:eq:`ls-start`) still depends on
+the path.
+
+**Proof:** ``tests/theory/test_localsearch.py::test_certificate`` (the first-order inequality of a concave function;
+both conditions on :math:`f \ge 0`).
+
+**What a missing column would gain.** Adding column :math:`j` alone at :math:`\hat f` and moving it by :math:`t \ge 0`
+changes :math:`\ell` by :math:`\phi(t)`, concave, with :math:`\phi'(0) = g_j = [A^T\mathbf{1}]_j(S_j - 1)`; it puts
+:math:`N_j = t[A^T\mathbf{1}]_j` expected photons in the data. Concavity bounds the gain from above, and on recorded
+bins and plain empty bins (:math:`c = 0`) its curvature, :math:`\phi''(t) = -\sum_b d_b a_{bj}^2/(\hat\mu_b + t
+a_{bj})^2 \ge -h_j`, :math:`h_j = \sum_b d_b a_{bj}^2/\hat\mu_b^2`, bounds it from below:
+
+.. math::
+    :label: ls-gain
+
+    \Delta D_j(N_j) = 2\phi(t) \le 2(S_j - 1)\,N_j, \qquad
+    \max_{t \ge 0} 2\phi(t) \ge \frac{g_j^2}{h_j} \quad (g_j > 0), \qquad
+    a_{:,j} = a_{:,i},\ \hat f_i > 0 \;\Rightarrow\; S_j = S_i = 1,\ \Delta D_j = 0 .
+
+So :math:`S_j - 1` is a column's gain per photon, at most: :math:`\max_{j \notin \text{candidates}} S_j - 1 \le \epsilon`
+says no orientation outside the candidates could lower the deviance by more than :math:`2\epsilon` per photon it
+explains, a bound that holds for any shape of the gain. A duplicate of a column the fit already uses gains nothing,
+and a near-duplicate gains to second order in its difference from it; a column that explains light no candidate
+explains has :math:`S_j` far above 1 (infinite where the fit leaves a recorded bin empty). Ranking by :math:`S_j` at
+the fit, not by the first update from a uniform start (:eq:`lik-candidates`), is what keeps near-duplicates of what is
+already fitted out of the slots. The lower bound :math:`g_j^2/h_j` is weak where the fit is far below the data
+(:math:`\hat\mu_b \ll d_b` makes :math:`h_j` large at :math:`t = 0` only), which is why the ranking does not use it.
+
+**Proof:** ``tests/theory/test_localsearch.py::test_gain_bound`` (concavity's upper bound; the curvature bound, the
+quadratic's maximum; an exact duplicate's score).
+
+**How far from the optimum, at most.** For plain Poisson bins, any :math:`\tilde\rho \ge 0` with
+:math:`A^T\tilde\rho \le A^T\mathbf{1}` bounds the maximum, since :math:`d\log\mu \le d\log(d/\tilde\rho) - d +
+\tilde\rho\mu` (from :math:`\log y \le y - 1`). With :math:`\tilde\rho = \rho/s_{\max}`, :math:`s_{\max} = \max(1,
+\max_{j \in \mathcal{D}} S_j)`, the gap is
+
+.. math::
+    :label: ls-gap
+
+    D(\hat f) - D^* \le 2\Big[\Big(\sum_b d_b\Big)\log s_{\max} + \sum_b \hat\mu_b - \sum_b d_b\Big],
+
+exactly 0 when the certificate holds, and rigorous whatever the fit. It is loose (the total counts times
+:math:`s_{\max} - 1`), so it bounds the gap where the gains of :eq:`ls-gain` only estimate it.
+
+**Proof:** ``tests/theory/test_localsearch.py::test_gap_bound`` (the inequality per bin; the dual point's
+feasibility).
+
+**Code:** :func:`anri.index.occupancy.price`, :func:`anri.index.occupancy.fit_occupancy` (``price_rounds``).
+
+**Pricing.** At the last level, after the fit converges, one pass over every fine voxel and every orientation of
+:math:`\mathcal{D}` computes each column's :math:`S_j`: the cost of a candidate pass (:eq:`lik-candidates`), with the
+fit's ratio in place of the first update's. Each voxel's non-candidates with :math:`S_j > 1 + \epsilon`
+(``price_eps``, default :math:`10^{-4}`), the highest first, take free slots: each round first adds empty slots, so
+a candidate the fit still uses is never pushed out, and a slot holding under :math:`10^{-4}` of its voxel is free
+(its column is priced again in the next pass). Each new column starts at a tenth of its voxel's mean occupancy (MLEM
+cannot move an occupancy from 0; the likelihood being concave, the start changes how fast the fit gets there, not
+where). The fit is resumed and priced again, up to ``price_rounds`` times, and the slots are cut back to what the
+fullest voxel holds. The log reports the largest :math:`S_j - 1` left outside the candidates, the voxels still
+violating, those out of slots, and, for plain Poisson bins, :eq:`ls-gap`. A last pass with no violator is the
+certificate :eq:`ls-kkt`, to :math:`2\epsilon` per photon.
+
+Near-duplicates are not all kept out: where the fit leaves light unexplained, every orientation reaching it scores
+far above 1, a missing grain's near-duplicate children with it, and a round may spend a voxel's new slots on them.
+They split that grain's occupancy along a near-null direction (:eq:`ls-start`), which :doc:`populations` merges back;
+the next round's scores, at the fit, no longer favour them.
+
+What remains: :math:`\mathcal{D}` itself is inherited (an orientation below ``min_share`` of every coarse voxel at the
+level before has no children in it), and the certificate is relative to :math:`\mathcal{D}`.
 
 What is left out
 ----------------
 
-- **The couplings above** (binning, inherited support, the start along null directions).
+- **The couplings above** (binning, inherited support, the start along null directions): pricing makes the
+  likelihood independent of the first two, relative to :math:`\mathcal{D}`; the third remains.
 
 - **Orientations the filter missed**: the refinement and the levels only move what was kept, by up to :math:`s/3` per
   round. A grain the filter dropped stays missing.

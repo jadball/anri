@@ -148,6 +148,12 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
         help="at most this many MLEM iterations at each level, SQUAREM-accelerated (3 MLEM updates each; default 10). A "
         "level that reaches it before --tol is logged as not converged: stopping early is a filter",
     )
+    p.add_argument("--price-rounds", type=int, default=1, help="at the last level, price every orientation in every "
+                   "voxel after the fit, add those that would raise the likelihood and refit, up to this many times, then "
+                   "check once more: the log says whether the map is the maximum likelihood over every orientation "
+                   "(default 1; 0: the check only; -1: none)")  # fmt: skip
+    p.add_argument("--price-eps", type=float, default=1e-4, help="the pricing check's precision: no orientation "
+                   "outside the candidates could lower the deviance by more than 2 x this per photon (default 1e-4)")  # fmt: skip
     p.add_argument("--tol", type=float, default=1.0, help="stop each level's MLEM once the estimated deviance still to "
                    "fall is at most this (default 1: a likelihood ratio the data cannot tell from the optimum)")  # fmt: skip
     p.add_argument("--cand", type=int, default=256, help="candidate orientations per voxel (default 256)")
@@ -325,6 +331,8 @@ def main() -> None:
                                  keep=args.keep, censor=args.censor, command=command, log=log)  # fmt: skip
     if cmd in ("fit", "run"):
         source = ix.stages.stage_fit(source, out, y0=args.y0, drift=args.drift, cand=args.cand, n_iter=args.n_iter, tol=args.tol,
+                              price_rounds=None if args.price_rounds < 0 else args.price_rounds,
+                              price_eps=args.price_eps,
                               refine_to=args.refine_to, levels=args.levels, min_share=args.min_share,
                               per_voxel=args.per_voxel, beam=args.beam, mask=args.mask, pad=args.pad, absorption=not args.no_absorption, mu=args.mu, block_gb=args.block_gb, censor=args.censor,
                               command=command, log=log)  # fmt: skip
