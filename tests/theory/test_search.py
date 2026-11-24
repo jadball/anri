@@ -1,6 +1,7 @@
 """Proofs for docs/source/theory/search.rst: misorientations on the cubic Rodrigues grid, its fundamental zone, and
 the matching tolerances."""
 
+import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
@@ -240,4 +241,112 @@ def test_zone_sizes():
         U, _ = orientation_grid(6.0, S)
         ratio = len(U) * len(S) / n_all
         assert 1.0 <= ratio < 1.3
+
+
+# ---------------------------------------------------------------------------------------------- completeness
+
+
+def test_summed_area():
+    """A summed-area table T[i, j] = sum of a[:i, :j] counts any box exactly: sum of a[i0:i1, j0:j1] =
+    T[i1, j1] - T[i0, j1] - T[i1, j0] + T[i0, j0]. Checked for every box of a 3 x 3 array of symbols."""
+    a = sp.Matrix(3, 3, sp.symbols("a0:9"))
+    T = lambda i, j: sum((a[p, q] for p in range(i) for q in range(j)), sp.Integer(0))
+    for i0 in range(4):
+        for i1 in range(i0, 4):
+            for j0 in range(4):
+                for j1 in range(j0, 4):
+                    box = sum((a[p, q] for p in range(i0, i1) for q in range(j0, j1)), sp.Integer(0))
+                    assert sp.expand(T(i1, j1) - T(i0, j1) - T(i1, j0) + T(i0, j0) - box) == 0
+
+
+def _lit(seed: int = 28) -> np.ndarray:
+    return rng(seed).random((2, 12, 10)) < 0.15  # [ring, eta, omega]
+
+
+def test_lit_table_code():
+    """lit_table is test_summed_area's table of the lit map tiled three times along eta (so that a box may wrap past
+    either end), with a zero first row and column: exactly, as integers."""
+    from anri.index.data import lit_table
+
+    lit = _lit()
+    t = np.concatenate([lit, lit, lit], 1).astype(np.int64)
+    want = np.zeros((2, t.shape[1] + 1, t.shape[2] + 1), np.int64)
+    for r in range(2):
+        for i in range(t.shape[1] + 1):
+            for j in range(t.shape[2] + 1):
+                want[r, i, j] = t[r, :i, :j].sum()
+    np.testing.assert_array_equal(np.asarray(lit_table(jnp.asarray(lit))), want)
+
+
+def test_completeness_code():
+    """completeness: the share of a orientation's predictions on the scan whose box (eta bin +- ceil(tol_e / b_e),
+    periodic; omega bin +- ceil(tol_o / b_o), clipped to the scan) holds a lit bin of its ring, counted directly on the
+    lit map. Exactly."""
+    from anri.index.data import lit_table
+    from anri.index.search import completeness
+
+    lit = _lit()
+    n_e, n_o, b_e, b_o, om0 = 12, 10, 30.0, 2.0, 5.0
+    g = rng(29)
+    eta = g.uniform(-180, 180, (3, 6))
+    om = g.uniform(om0 - 2, om0 + n_o * b_o + 2, (3, 6))  # some past the scan's ends
+    ok = g.random((3, 6)) < 0.9
+    ring_j = g.integers(0, 2, 6).astype(np.int32)
+    te, to = g.uniform(1, 70, (3, 6)), g.uniform(0.5, 5, (3, 6))
+    want = []
+    for q in range(3):
+        hit = n = 0
+        for j in range(6):
+            ie, io = int(np.floor((eta[q, j] + 180) / b_e)) % n_e, int(np.floor((om[q, j] - om0) / b_o))
+            if not ok[q, j] or not 0 <= io < n_o:
+                continue
+            n += 1
+            de, do = min(int(np.ceil(te[q, j] / b_e)), n_e - 1), int(np.ceil(to[q, j] / b_o))
+            es = [(ie + k) % n_e for k in range(-de, de + 1)]
+            os_ = range(max(io - do, 0), min(io + do + 1, n_o))
+            hit += any(lit[ring_j[j], e, o] for e in es for o in os_)
+        want.append(hit / max(n, 1))
+    got, _ = completeness(lit_table(jnp.asarray(lit)), jnp.asarray(eta), jnp.asarray(om), jnp.asarray(ok),
+                          jnp.asarray(ring_j), jnp.asarray(te), jnp.asarray(to), om0, b_e, b_o, n_e, n_o)  # fmt: skip
+    np.testing.assert_array_equal(np.asarray(got, np.float64), np.asarray(want, np.float32).astype(np.float64))
+
+
+def test_lit_map_code():
+    """lit_map: the bins above lit times the median of the non-empty bins of the row-summed histogram, as
+    test_lit_table_code's table."""
+    from anri.index.data import lit_table
+    from anri.index.search import lit_map
+
+    H = np.floor(rng(30).exponential(3.0, (2, 12, 10))) * (rng(31).random((2, 12, 10)) < 0.6)
+    scan = {"n_e": 12, "n_o": 10, "om0": 0.0, "omega_step": 0.25}
+    med = np.median(H[H > 0])  # small integers: exact
+    out = lit_map(H.ravel(), scan, 2, 1.5, 0.1)
+    np.testing.assert_array_equal(np.asarray(out["table"]), np.asarray(lit_table(jnp.asarray(H > 1.5 * med))))
+
+
+def test_tolerance_measured():
+    """**Measured** (search.rst): exact spot moves of random orientations turned by 0.5 deg about random axes, from
+    predict (the exact Ewald solution) in float64, stay within match_tolerances' first-order bounds (|sin eta| > 0.3)."""
+    from anri.crystal.structure import B_matrix, reflections
+    from anri.index.search import match_tolerances, predict
+    from anri.maths.rotation import random_rotations, rmat_from_axis_angle
+    from anri.maths.utils import float64
+
+    a, lam = 2.8665, 12.398419843320026 / 43.0
+    B = B_matrix(np.array([a] * 3 + [90.0] * 3))
+    r = reflections([a] * 3 + [90.0] * 3, 229, lam, 2 * np.sin(np.radians(9.0)) / lam)
+    hkls = r["hkl"].astype(float)
+    ring_tth, ring_j = np.unique(np.round(r["tth"], 6), return_inverse=True)
+    geom = {"wavelength": lam, "k_in_lab": np.array([1.0, 0, 0]), "wedge": 0.0, "chi": 0.0, "pol_factor": 1.0}
+    g = np.random.default_rng(0)
+    U0 = random_rotations(200, g)
+    with float64():
+        dU = np.asarray(rmat_from_axis_angle(g.normal(size=(200, 3)), np.full(200, 0.5)))
+        e0, o0, k0, _ = (np.asarray(x) for x in predict(U0, B, hkls, geom))
+        e1, o1, k1, _ = (np.asarray(x) for x in predict(dU @ U0, B, hkls, geom))
+        te, to = (np.asarray(x) for x in match_tolerances(e0, np.repeat(ring_j, 2), ring_tth, np.zeros(len(ring_tth)), 1.0, 0.0))
+    use = k0 & k1 & (np.abs(np.sin(np.radians(e0))) > 0.3)
+    de = np.abs((e1 - e0 + 180) % 360 - 180)
+    do = np.abs((o1 - o0 + 180) % 360 - 180)
+    assert (de / te)[use].max() <= 1.0 and (do / to)[use].max() <= 1.0, ((de / te)[use].max(), (do / to)[use].max())
 

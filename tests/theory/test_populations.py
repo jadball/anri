@@ -191,3 +191,54 @@ def test_disc_half_turn():
     -a <= -r cos u <= b, whenever cos u <= 0: at least half a turn, and for every direction one of u, u + pi."""
     u = sp.symbols("u", real=True)
     assert is_zero(sp.cos(u + sp.pi) + sp.cos(u))
+
+
+def test_disc_mask_code():
+    """disc_mask: the voxels within r of the axis, r the distance from y0 to the nearer end of the scanned dty range,
+    or to the farther end over a full turn with y0 inside the range (test_disc_half_turn), plus the pad; exactly, on
+    recon_positions' grid."""
+    from anri.geom.scan import recon_positions
+    from anri.index.data import B_O
+    from anri.index.mask import disc_mask
+
+    for dty0, n_rows, y0, n_o, pad in ((-5.0, 11, 0.0, 0, 0.0), (-8.0, 11, 0.0, round(360 / B_O), 0.0),
+                                       (-8.0, 11, 0.0, round(180 / B_O), 0.0), (-5.0, 11, 2.0, 0, 1.5),
+                                       (-8.0, 11, 3.0, round(360 / B_O), 0.0)):  # fmt: skip
+        scan = {"dty0": dty0, "ystep": 1.0, "n_rows": n_rows, "n_o": n_o}
+        lo, hi = dty0 - 0.5, dty0 - 0.5 + n_rows
+        near, far = min(y0 - lo, hi - y0), max(y0 - lo, hi - y0)
+        r = (far if n_o * B_O >= 360 and near >= 0 else near) + pad
+        nr = 21
+        pos = np.asarray(recon_positions(nr, 1.0))
+        want = (np.hypot(pos[:, 0], pos[:, 1]) <= r).reshape(nr, nr)
+        np.testing.assert_array_equal(disc_mask(scan, y0, nr, pad=pad), want)
+
+
+def test_ramp_filter():
+    """The Hamming-windowed ramp, |f| (0.54 + 0.46 cos 2 pi f), is the ramp |f| at low frequency and 0.08 |f| at
+    Nyquist (f = 1/2): the window's value 0.54 - 0.46."""
+    f = sp.symbols("f", real=True)
+    H = sp.Abs(f) * (sp.Rational(54, 100) + sp.Rational(46, 100) * sp.cos(2 * sp.pi * f))
+    assert H.subs(f, 0) == 0 and sp.limit(H / sp.Abs(f), f, 0) == 1
+    assert H.subs(f, sp.Rational(1, 2)) == sp.Rational(8, 100) / 2
+
+
+def test_ramp_filter_code():
+    """ramp_filter: each projection zero-padded to nf = 2^ceil(log2 2n), multiplied in the discrete Fourier domain by
+    the Hamming-windowed ramp at frequencies k / nf (folded), and cut back to n; against the DFT written out as sums."""
+    from anri.index.mask import ramp_filter
+
+    x = rng(37).normal(size=(2, 11))
+    n = x.shape[1]
+    nf = 2 ** int(np.ceil(np.log2(2 * n)))
+    fr = np.array([k / nf if k < nf / 2 else (k - nf) / nf for k in range(nf)])
+    H = np.abs(fr) * (0.54 + 0.46 * np.cos(2 * np.pi * fr))
+    jj, kk = np.meshgrid(np.arange(nf), np.arange(nf), indexing="ij")
+    W = np.exp(-2j * np.pi * jj * kk / nf)
+    xp = np.zeros((2, nf))
+    xp[:, :n] = x
+    want = np.real((xp @ W) * H @ np.conj(W) / nf)[:, :n]
+    # two transforms of nf terms each: nf ulps of sum |x| (the filter is at most 1/2), for the FFT and for the sums
+    t = 2 * nf * EPS * np.abs(x).sum(1).max()
+    np.testing.assert_allclose(ramp_filter(x), want, rtol=0, atol=t)
+

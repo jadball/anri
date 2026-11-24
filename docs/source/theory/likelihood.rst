@@ -111,7 +111,7 @@ same relation as a recorded bin's, so the update and the deviance are one object
 the function MLEM climbs. :math:`c = 0` gives a recorded zero (ratio 0, :math:`D_b = 2\mu_b`): plain Poisson MLEM, the
 default.
 
-**Proof:** ``tests/theory/test_likelihood.py::test_censored_em``
+**Proof:** ``tests/theory/test_likelihood.py::test_censored_em``, ``tests/theory/test_likelihood.py::test_censored_ratio_code``
 
 **Code:** :func:`anri.index.occupancy.censored_ratio`, :func:`anri.index.occupancy.deviance`.
 
@@ -249,6 +249,11 @@ are lit, each bin down-weighted by how many (voxel, orientation) pairs could exp
 **Coarse to fine**: the fit stage runs this fit level by level, the first on voxels sized to the orientations' error
 and with every orientation as a candidate, the later ones on finer voxels and orientations, each voxel over what its
 coarser neighbourhood held (:doc:`localsearch`).
+
+A coarse row is the sum of :math:`g` rows: its dty their mean, its voxels :math:`g` times wider, the beam's flat top
+:math:`(g - 1)` steps wider, its exposure the group's mean and its offset the group's exposure-weighted mean real dty
+less its own (``tests/theory/test_likelihood.py::test_coarsen_rows_code``,
+``tests/theory/test_likelihood.py::test_coarsen_scan_code``).
 
 **Code:** :func:`anri.index.occupancy.inherit_candidates`, :func:`anri.index.data.coarsen_rows`,
 :func:`anri.index.data.coarsen_scan`.

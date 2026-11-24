@@ -101,6 +101,8 @@ them large occupancies that explain almost nothing. The fit is restricted to a m
   :math:`\tfrac{2}{\pi}\arcsin(r_{\text{disc}}/r)` of the rotation
   (``tests/theory/test_populations.py::test_disc_fraction``).
 
+  ``tests/theory/test_populations.py::test_disc_mask_code`` checks the radius rule.
+
   **Code:** :func:`anri.index.mask.disc_mask`.
 
 - **auto**: the sample's support in the projections. Each omega's projection (the histogram summed over rings and
@@ -111,7 +113,10 @@ them large occupancies that explain almost nothing. The fit is restricted to a m
   **Code:** :func:`anri.index.mask.support_mask`, :func:`anri.index.mask.support`.
 
 - a **thresholded reconstruction**, as ImageD11's: filtered back-projection of log intensities with a Hamming-windowed
-  ramp filter [KakSlaney1988]_, thresholded by Otsu's method [Otsu1979]_, then the convex hull.
+  ramp filter [KakSlaney1988]_, :math:`|f|(0.54 + 0.46\cos 2\pi f)` on each projection zero-padded to a power of 2 at
+  least twice its length (``tests/theory/test_populations.py::test_ramp_filter``,
+  ``tests/theory/test_populations.py::test_ramp_filter_code``), thresholded by Otsu's method [Otsu1979]_, then the
+  convex hull.
 
   **Code:** :func:`anri.index.mask.reconstruct`, :func:`anri.index.mask.ramp_filter`, :func:`anri.index.mask.otsu`,
   :func:`anri.index.mask.threshold_mask`.

@@ -3,6 +3,7 @@ likelihood ratio and the voxel fit's candidates."""
 
 import contextlib
 
+import jax.numpy as jnp
 import mpmath as mp
 import numpy as np
 import sympy as sp
@@ -266,6 +267,69 @@ def test_censored_code():
             assert np.all(np.abs(got[1] / np.array([w[1] for w in want]) - 1) <= 16 * eps), (dd, dtype)
 
 
+def test_censored_ratio_code():
+    """censored_ratio, bin by bin: d / mu where recorded, lik-censored's empty ratio where d = 0 (n <= c), its
+    saturated ratio where flagged (n >= d), 0 where mu = 0; at test_censored_code's bounds."""
+    from anri.index.occupancy import censored_ratio
+    from anri.maths.utils import float64
+
+    mu = np.array([0.0, 0.5, 2.0, 7.5, 30.0, 4.0, 12.0])
+    d = np.array([3.0, 0.0, 0.0, 6.0, 30.0, 0.0, 15.0])
+    c = 2.7
+    sat = np.array([6])  # the last bin holds a saturated pixel
+    want = [0.0, _exact_below(0.5, c)[1], _exact_below(2.0, c)[1], 6.0 / 7.5, 1.0, _exact_below(4.0, c)[1],
+            _exact_above(12.0, 15.0)[1]]  # fmt: skip
+    with float64():
+        got = np.asarray(censored_ratio(d, mu, c, sat))
+    # recorded bins: one quotient; the censored ones within test_censored_code's 64 ulps of their scale, the
+    # saturated one within 16 ulps relative
+    scale = np.array([1.0, *(c * abs(np.log(x)) + x + float(sp.loggamma(c + 1)) + 1 for x in mu[1:])])
+    np.testing.assert_array_less(np.abs(got - np.array(want, float)), 64 * EPS * scale * np.maximum(1, np.abs(want)))
+
+
+def test_coarsen_rows_code():
+    """coarsen_rows: row k of a histogram goes to k // g, the last group holding what is left; exactly."""
+    from anri.index.data import coarsen_rows
+
+    n_rows, g = 7, 3
+    H = rng(32).integers(0, 9, (5, n_rows)).astype(float)
+    want = np.zeros((5, 3))
+    for k in range(n_rows):
+        want[:, k // g] += H[:, k]
+    Hc, n = coarsen_rows(H.ravel(), n_rows, g)
+    assert n == 3
+    np.testing.assert_array_equal(np.asarray(Hc).reshape(5, 3), want)
+
+
+def test_coarsen_scan_code():
+    """coarsen_scan: a coarse row is the sum of g rows, so its dty is their mean (dty0 + (g - 1) / 2 steps, step g
+    steps), its voxels g times wider and the beam's flat top (g - 1) steps wider; its exposure the group's mean (a
+    partial last group: its share of g rows), and its offset the exposure-weighted mean real dty less its own. Exactly,
+    in units of a step (powers of two)."""
+    from anri.index.data import coarsen_scan
+
+    n, g, ystep, n_o = 7, 3, 0.5, 4
+    r = rng(33)
+    ex = r.integers(0, 3, (n, n_o)).astype(np.float32)
+    dd = (r.integers(-4, 4, (n, n_o)) / 8).astype(np.float32)
+    scan = {"dty0": -1.5, "ystep": ystep, "n_rows": n, "voxel": 0.5, "width_beam": 0.0}
+    out = coarsen_scan({**scan, "exposure": jnp.asarray(ex), "ddty": jnp.asarray(dd)}, g)
+    assert (out["dty0"], out["ystep"], out["n_rows"], out["voxel"], out["width_beam"]) == (-1.0, 1.5, 3, 1.5, 1.0)
+    want_ex, want_dd = np.zeros((3, n_o)), np.zeros((3, n_o))
+    for c in range(3):
+        rows = range(c * g, min(c * g + g, n))
+        want_ex[c] = sum(ex[k] for k in rows) / g
+        w = sum(ex[k] for k in rows)
+        real = sum(ex[k] * (dd[k] + k * ystep) for k in rows)
+        want_dd[c] = np.where(w > 0, real / np.where(w > 0, w, 1) - ((g - 1) / 2 * ystep + c * g * ystep), 0.0)
+    # float32 sums of a few multiples of 1/8 and their quotient by the weight: one rounding of the quotient
+    e32 = float(np.finfo(np.float32).eps)
+    np.testing.assert_allclose(np.asarray(out["exposure"]), want_ex, rtol=e32, atol=0)
+    np.testing.assert_allclose(np.asarray(out["ddty"]), want_dd, rtol=0, atol=4 * e32 * n * ystep)
+    part = coarsen_scan(scan, g)  # no exposure: the partial last group's share
+    np.testing.assert_allclose(np.asarray(part["exposure"])[:, 0], [1.0, 1.0, 1 / 3], rtol=e32, atol=0)  # float32
+
+
 def _lr(d_: sp.Expr, m: sp.Expr, ga: sp.Expr) -> sp.Expr:
     return 2 * (d_ * sp.log(m / (m - ga)) - ga)
 
@@ -393,7 +457,8 @@ def test_remaining_deviance_code():
         d0 = float(r.uniform(1, 100))
         d1 = rho**2 * d0
         want = d1 / (2 * (1 - rho))
-        np.testing.assert_allclose(remaining_deviance(d0, d1), want, rtol=1e-12)
+        # rho = sqrt(d1 / d0) rounds by an ulp or two, amplified by 1 / (1 - rho) in d1 / (2 (1 - rho))
+        np.testing.assert_allclose(remaining_deviance(d0, d1), want, rtol=16 * EPS * (1 + rho / (1 - rho)))
     assert remaining_deviance(1.0, 1.0) == float("inf") and remaining_deviance(1.0, 0.0) == 0.0
     f = r.uniform(0.1, 2, 20)
     f[3] = 0.0  # an occupancy at 0 stays there and adds nothing

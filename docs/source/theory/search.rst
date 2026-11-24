@@ -80,8 +80,12 @@ Completeness
 
 An orientation's completeness is the fraction of its predicted reflections that land on intensity [Lauridsen2001]_
 [Schmidt2014]_. Anri measures it against a lit map: the row-summed (ring, :math:`\eta`, omega) histogram, thresholded at
-``lit`` times its median non-empty bin. A prediction counts if any lit bin lies within its own tolerance box; a
-summed-area table makes each box a constant-time lookup.
+``lit`` times its median non-empty bin. A prediction counts if any lit bin lies within its own tolerance box
+(:math:`\pm\lceil t_\eta / b_\eta\rceil` bins in :math:`\eta`, periodic, :math:`\pm\lceil t_\omega / b_\omega\rceil` in omega, clipped to the
+scan); a summed-area table makes each box a constant-time lookup, by
+:math:`T[i_1, j_1] - T[i_0, j_1] - T[i_1, j_0] + T[i_0, j_0]` (``tests/theory/test_search.py::test_summed_area``,
+``tests/theory/test_search.py::test_lit_table_code``, ``tests/theory/test_search.py::test_lit_map_code``,
+``tests/theory/test_search.py::test_completeness_code``).
 
 **Code:** :func:`anri.index.search.completeness`, :func:`anri.index.data.lit_table`, :func:`anri.index.search.lit_map`.
 
@@ -116,7 +120,7 @@ peak lights a broad region of the lit map.
 The bounds are first order in :math:`\Delta`.
 
 **Measured:** against the exact Ewald solution (random orientations, :math:`|\sin\eta| > 0.3`), the largest spot
-movement reached 0.999 of the bound and never exceeded it.
+movement reached 0.999 of the bound and never exceeded it (``tests/theory/test_search.py::test_tolerance_measured``).
 
 **Code:** :func:`anri.index.search.match_tolerances`, :func:`anri.index.search.predict`.
 
