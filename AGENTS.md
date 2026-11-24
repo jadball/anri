@@ -36,18 +36,10 @@ Consequences for models:
 Sub-grain orientation shifts are the main thing Anri's refinement is after. They show in the data like this:
 
 - **A peak is a histogram along the ray, not one voxel's spot.** At one (dty, ω), the detector sums every orientation the beam lights along the ray, each voxel's populations weighted by density, projected into that reflection.
-- **Orientation moves intensity along the ring; strain moves it across.** A rotation keeps |g|, so orientation variation spreads a peak along the Debye-Scherrer ring: an arc curved in η, also spread over frames in ω. Strain moves intensity in 2θ (Δ2θ = 2 ε tan θ).
+- **Orientation moves intensity along the ring; strain moves it across.** A rotation keeps |g|, so orientation variation spreads a peak along the Debye-Scherrer ring: an arc curved in η, also spread over frames in ω. Strain moves intensity in 2θ (`docs/source/theory/conventions.rst` for its sign).
 - **So sub-grain variation gives smeared, banana-shaped peaks, often with a single local maximum.** Many cells with small, accumulating misorientations along a ray blur together. Separated sub-spots are the exception, not the rule.
 - **Each reflection sees only part of a rotation.** A rotation about g is invisible to that reflection. A dominant rotation axis (bending, a geometrically necessary boundary) gives long, thin bananas along axis × g, different for each reflection, and almost none where g is parallel to the axis.
-- **How a rotation maps onto the detector** (beam along x, rotation axis z, η from vertical; checked numerically): a small lattice rotation δ = (δx, δy, δz) moves a peak by
-
-      Δω = −δz − δy cot η        Δη = δx − δy tan θ / sin η        Δ2θ = 0
-
-  - about the rotation axis (z): the peak moves only in ω, not on the detector;
-  - about the beam (x): it moves only in η, by the same angle, along the ring;
-  - about y: both, magnified near η = 0 and 180° (12 and 6 o'clock), where ω and η couple into a tilted banana.
-
-  So an isotropic spread σ gives σ / |sin η| in ω and σ √(1 + tan²θ / sin²η) in η: the size and shape of a banana depend on η, and peaks near the rotation axis (small |sin η|) are smeared most (why the indexer has `--etacut`). An anisotropic spread gives bananas whose length and direction differ from reflection to reflection.
+- **How a rotation moves a peak**, in ω, η and 2θ, and how a spread widens it: `docs/source/theory/diffraction.rst` (how a small rotation moves a peak) and `peak_shape.rst`. Peaks near the rotation axis (small |sin η|) are smeared most, which is why the indexer has `--etacut`.
 - **Spreads range from instrument-limited (< 0.01°) to ~10°.** Methods must work across that whole range: at large spreads, use exact rotations, not small-angle approximations.
 - **No single image says which voxel made which part of a banana.** Only consistency across rows (dty) and across reflections at other ω places it. Refinement is a tomography of these per-ray orientation histograms.
 
@@ -75,7 +67,7 @@ Most data come from scanning 3DXRD at ID11. The beam is focused by one of these,
 - **Stations:** NSCOPE and TDXRD. TDXRD has a bigger rotation stage with ~1 µm radial runout, comparable to the voxel size: the sample moves across the beam by up to ~1 µm, periodically in omega. That shifts voxels between dty rows (a position error); it does not widen peaks in omega, which only rotations do.
 - **Measured resolution** (`anri/sandbox/indexer/peak_widths.py` on undeformed Si crystals, Al CRLs, 0.05° frames, both stations): peak cores are narrower than one frame at every η, ~0.05° near η = 0 (~0.15 mrad vertical convergence). Bright peaks also have weak tails over 5-9 frames, most likely thermal diffuse scattering (they are not fitted as extra populations). So measured omega widths beyond this are the sample's.
 - **Overfocusing:** a transfocator ~60 m from the source is sometimes set to overfocus, sending a divergent beam into the lenses. This enlarges the beam at the sample, by an amount chosen per experiment. E.g. the Si cube calibration of ma7389: Al CRLs focused to 0.5 µm FWHM at the focus, then transfocated upstream to ~2 µm FWHM.
-- **Monochromator and bandwidth:** double Laue Si(111), nominal Δλ/λ 2e-3 FWHM (the simulator's default). Across the ring (Δ2θ = 2 (Δλ/λ) tan θ) it looks much smaller: on an undeformed 100 µm Si cube at 72.24 keV (Al CRLs, `python -m anri.calib detector` with the sensor's depth kernel), the high-2θ spots allow at most ~3e-4 FWHM. The 1e-3 used so far (the sandbox refiner, the detector stage's default) came from an older Si fit without the depth kernel, which it probably absorbed. Not settled: the beam's convergence is not yet in that fit, and a residual 2θ dependence there is unexplained. Ask for it, and measure it; don't assume one value.
+- **Monochromator and bandwidth:** double Laue Si(111), nominal Δλ/λ 2e-3 FWHM (the simulator's default). Across the ring it looks much smaller: on an undeformed 100 µm Si cube at 72.24 keV (Al CRLs, `python -m anri.calib detector` with the sensor's depth kernel), the high-2θ spots allow at most ~3e-4 FWHM. The 1e-3 used so far (the sandbox refiner, the detector stage's default) came from an older Si fit without the depth kernel, which it probably absorbed. Not settled: the beam's convergence is not yet in that fit, and a residual 2θ dependence there is unexplained. Ask for it, and measure it; don't assume one value.
 - **Detector:** Eiger2 CdTe, 750 µm sensor; absorption length 111 µm at 43.6 keV, 328 µm at 65.3, 431 µm at 72.2 (xraylib: `module load jupyter-slurm`). A thick sensor smears each spot outward along its ray by where its photons stop (the renderer's `geom["sensor"]`). Photon counting with a double threshold at the photon energy, the lower one about half of it: when that is below the Cd / Te K lines (23-31 keV), escaped fluorescence is counted a pixel or two away. So the point spread is a core of ~0.2-0.3 px plus a wing of ~1.1-1.5 px holding ~28% of a spot's counts at 43.6 keV but ~8% at 72 keV (thresholds above the K lines). One Gaussian cannot be it (the renderer's `geom["psf_mix"]`); measure it per energy and threshold with `python -m anri.calib detector`. A wrong one is not harmless: the sandbox refiner absorbed the missing wing as voxel-to-voxel strain.
 - **Beam profile:** Gaussian across dty, its width measured per experiment. The dty step is usually set to the beam FWHM, sometimes a little over- or undersampled (the indexer assumes FWHM = dty step).
 - **Frames integrate through motion, always.** Omega rotates continuously, so every frame integrates over its whole omega step. In some scans dty also moves slowly during the rotation, so a frame integrates through dty too; each frame has its own dty reading (the indexer bins frames by it). A model must integrate each frame over its omega range, and over its dty range where dty moves: never treat a frame as one omega or one dty.
@@ -85,23 +77,7 @@ Most data come from scanning 3DXRD at ID11. The beam is focused by one of these,
 Consequences:
 
 - **Convergence at the sample** is at most about effective aperture / f: ~0.2 mrad (0.012°) for the Al CRLs, ~0.4-0.5 mrad for the Si lenses, whatever comes in upstream. It also widens spots across the ring: σ ~ 8e-5 rad (Al CRLs) at 180 mm is ~0.2 px, the size of the core the detector stage fits on Si, which does not model convergence yet.
-- **What widens a peak in omega**, to first order: any small rotation δ (of the crystal, or of the incoming beam) shifts omega by δ · n / (z · n), with n = (0, -cos η, sin η) the normal of the scattering plane (η from vertical, so |sin η| = 1 at 3 and 9 o'clock). Independent of 2θ:
-  - horizontal beam convergence (about z): the same width at every η (the renderer's `sig_ky`);
-  - vertical convergence (about y): δ |cot η|, zero at 3 o'clock;
-  - an isotropic orientation spread: σ / |sin η|;
-  - rotation about the beam (x): nothing in omega; it moves the peak in η by the same angle;
-  - a tilt of the rotation axis about y acts like vertical convergence (|cot η|): a steady wobble shifts peaks, a vibration faster than a peak's frames widens them;
-  - energy bandwidth: (Δλ/λ) tan θ / |sin η|, the only term that grows with 2θ.
-
-  Example: a uniaxial load along the rotation axis (z) rotates lattices about axes perpendicular to the load
-  (z × b for slip direction b), i.e. horizontal axes: omega widths grow as |cot η| (none at 3 and 9 o'clock), and
-  peaks spread in η into arcs.
-
-  A peak's width is three-dimensional. Omega sees only two of the three rotation components; η sees the third (and
-  part of the others); 2θ sees strain, Δ2θ = 2 ε tan θ (plus the energy bandwidth). An orientation spread is
-  measured from omega and η together, a strain spread from 2θ.
-
-  So near η = 0 and 180° (12 and 6 o'clock) every term but the horizontal one is magnified (×6-7 for |sin η| ~ 0.15). Peaks there measure the vertical convergence and the sample spread; peaks near 3 and 9 o'clock measure the horizontal convergence plus the spread. An undeformed single crystal (e.g. a Si cube) separates instrument from sample.
+- **What widens a peak in omega and η** (convergence, bandwidth, orientation spread, axis wobble) and which reflections measure which: `docs/source/theory/peak_shape.rst` (`ps-omega`) and `refiner.rst` (the instrument's omega kernel). Near η = 0 and 180° every term but the horizontal convergence is magnified; an undeformed single crystal (e.g. a Si cube) separates instrument from sample.
 - **Which optics, energy and overfocus a dataset used** is not in the data files: ask the maintainer. The beam size across dty depends on it.
 
 ## Use JAX
@@ -126,16 +102,16 @@ those predictions, never to discover by trial what could have been derived. Buil
 wastes the maintainer's time.
 
 Example of what this rule prevents: whether single-axis scanning 3DXRD determines every strain component in every
-voxel took a day of runs, when a Fourier-slice argument answers it in minutes. With g nearly perpendicular to the
-beam, each spatial frequency k ≠ 0 determines the deformation gradient applied to the directions of k and of the
-rotation axis, but not applied to the horizontal direction perpendicular to k. That part is seen only through
-sin θ terms and parallax (`docs/source/theory/limits.rst`: those are the dislocations threading the slice).
+voxel took a day of runs, when a Fourier-slice argument answers it in minutes (`docs/source/theory/limits.rst`). The
+first version of that argument applied the real-space Nye tensor to the reciprocal deformation and passed its own
+tests, because the tests assumed what they proved. A derivation is only as good as its proof from definitions.
 
 ### The theory pages are the specification
 
-`docs/source/theory/` is the single source of truth for Anri's maths: the forward model, the detector's pixels and
-windows, the threshold, the moments of recorded light, and what the data determine. Code follows it, not the other
-way round.
+**Hard rule: all code follows the maths in `docs/source/theory/`.** Those pages are the single source of truth for
+Anri's maths and physics models: the frames and conventions, the forward model, the detector, the threshold, the
+moments of recorded light, what the data determine, the indexer and the refiner. This file holds no formulas: look
+them up there. Where code and the pages disagree, the code is wrong, or the page is changed first, with its proof.
 
 - Every numbered equation has a status line: **Proof:** (a sympy test in `tests/theory/`), **Definition:**,
   **Cited:** or **Measured:** (`tests/theory/test_pages.py` checks). A proof either reduces an identity to zero or
@@ -143,6 +119,12 @@ way round.
 - **Anri's rule:** paragraphs are requirements. New code meets them; code that breaks one is a bug, not a choice.
 - New maths goes on the pages first, with its proof, before the code that uses it. A derivation that lives only in
   a sandbox README or a commit message does not exist.
+- **Proofs stand alone.** A proof derives its equation from the definitions on the pages (anri's frames, the UBI,
+  the physics), never by checking a formula against an assumed form of itself. A code check compares the anri
+  function with the proved expression, computed independently.
+- **No implicit filtering.** Priors or constraints coupling voxels, truncated spectra, smoothing and iterations stopped
+  early are filters. Avoid them where possible; where one is used it is a **Filter** paragraph on the pages (what it
+  removes, its bias), it is never a default, and the unfiltered result is reported beside it.
 - A numerical test that re-checks a proved identity is not needed; test what the proofs cannot (compilation,
   shapes, the integration of the parts).
 

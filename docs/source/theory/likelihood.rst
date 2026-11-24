@@ -253,11 +253,16 @@ coarser neighbourhood held (:doc:`localsearch`).
 **Code:** :func:`anri.index.occupancy.inherit_candidates`, :func:`anri.index.data.coarsen_rows`,
 :func:`anri.index.data.coarsen_scan`.
 
+**Filter:** MLEM run for a fixed number of iterations, short of convergence, keeps the occupancies' smooth,
+well-determined part and leaves the rest near its start: an implicit spectral filter, as in emission tomography, where
+noise grows with iterations. The indexer does this today (a fixed count per level). The filter is to be avoided where
+possible: run to a convergence test on the deviance, and report the deviance's change at the last iteration with the
+map. Until then the iteration count is a filter parameter, and is recorded in the stage's provenance.
+
 What is left out
 ----------------
 
-- **Regularisation**: none, by design (:doc:`indexing`). MLEM's early stopping (a fixed number of iterations) is the
-  only implicit one: noise grows with iterations, as in emission tomography.
+- **Regularisation**: none by design (:doc:`indexing`), but see the filter below.
 - **Uncertainties** of the occupancies: not computed.
 - **Voxels outside the mask** (:doc:`populations`) are not fitted; their intensity has to go somewhere, and a mask that
   is too small piles it onto its edge.

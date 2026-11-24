@@ -13,9 +13,10 @@ The results, in brief:
 - **Separated light is well determined.** Where a population's light is its own in a reflection, that reflection
   sees it alone: all nine numbers of its deformation at counting precision, and its position to
   :math:`\sigma_{\text{beam}}/\sqrt{N}`, finer than the beam.
-- **Merged light is a tomography with three weak combinations per spatial frequency**: the dislocation density with
-  lines along the rotation axis. Six combinations are resolved to about 1.5-2 beam widths; region means of all nine
-  are robust.
+- **Merged light is a tomography with three weak combinations per spatial frequency**: the dislocation content whose
+  Burgers vector lies along the ray, and the gradient along the frequency of the displacement along the ray, which a
+  dislocation-free field carries too. Six combinations are resolved to about 1.5-2 beam widths; region means of all
+  nine are robust.
 - **Errors common to every voxel bias only region means**, never the variation across a map.
 - **Second moments carry no information on the means through their expectation** once each voxel's own spread is
   free; they can only lower the means' noise through their correlation with the first moments (:doc:`moments`).
@@ -28,23 +29,44 @@ plus its own spread). Two populations on one ray are *separated* in a reflection
 The linear model
 ----------------
 
-Write a population's deformation as :math:`\matr{\beta}` (3 × 3: rotation and strain together), so that a
-reciprocal-lattice vector moves from :math:`\vec{g}_0` to :math:`(\matr{I} + \matr{\beta})\,\vec{g}_0`. A
-reflection is seen at one omega (:doc:`diffraction`), so each reflection is one projection direction :math:`\vec{\xi}`
-(the incident beam in the sample frame). The mean scattering vector of a blob is a ray sum over the voxels the beam
-lights (:doc:`moments`):
+Two descriptions of one deformation must not be confused. A population's **distortion** :math:`\matr{\beta}` (3 × 3:
+rotation and strain together) acts on its real-space lattice vectors, :math:`\vec{a}_i \to (\matr{I} +
+\matr{\beta})\vec{a}_i`, with :math:`\matr{\beta} = \varepsilon + [\vec{w}]_\times`: :math:`\varepsilon` (symmetric) is
+the lattice strain and :math:`\vec{w}` the lattice rotation. For a compatible field, :math:`\beta_{ij} = \partial_j
+u_i`. The data measure reciprocal-lattice vectors. The rows of the UBI are the :math:`\vec{a}_i` (:eq:`frm-g`), so the
+UBI becomes :math:`\text{UBI}\,(\matr{I} + \matr{\beta})^T` and :math:`\vec{g} = \text{UBI}^{-1}\vec{h}` becomes
+
+.. math::
+    :label: lim-reciprocal
+
+    \vec{g} = (\matr{I} + \matr{\beta})^{-T}\vec{g}_0 = (\matr{I} + \matr{\beta}^*)\,\vec{g}_0 + O(\beta^2),
+    \qquad \matr{\beta}^* = -\matr{\beta}^T = -\varepsilon + [\vec{w}]_\times .
+
+**Proof:** ``tests/theory/test_limits.py::test_reciprocal_distortion`` (the inverse of the deformed UBI, exactly and to
+first order), ``tests/theory/test_limits.py::test_reciprocal_distortion_code`` (:func:`anri.maths.utils.inv3` on a
+deformed UBI, against :math:`(\matr{I} + \matr{\beta})^{-T}\vec{g}_0`).
+
+The rotation keeps its sign; the strain changes sign (a tensile strain shortens :math:`\vec{g}`); and the transpose
+moves :math:`\matr{\beta}`'s derivative index from the column to the row. **Anri's rule:** :math:`\matr{\beta}` and
+:math:`\varepsilon` are always the real-space distortion and strain; the reciprocal deformation is
+:math:`\matr{\beta}^*` (or, exactly, :math:`\matr{F} = (\matr{I} + \matr{\beta})^{-T}`, :doc:`refiner`). A statement
+about dislocations or compatibility is about :math:`\matr{\beta}`, never about :math:`\matr{\beta}^*`.
+
+A reflection is seen at one omega (:doc:`diffraction`), so each reflection is one projection direction
+:math:`\vec{\xi}` (the incident beam in the sample frame). The mean scattering vector of a blob is a ray sum over the
+voxels the beam lights (:doc:`moments`):
 
 .. math::
     :label: lim-model
 
-    N_b\, \vec{m}_b = \sum_v a_{bv}\, N_v \left(\vec{g}_0 + \matr{\beta}_v \vec{g}_0\right),
+    N_b\, \vec{m}_b = \sum_v a_{bv}\, N_v \left(\vec{g}_0 + \matr{\beta}^*_v \vec{g}_0\right),
     \qquad
     N_b = \sum_v a_{bv} N_v,
 
 with :math:`a_{bv}` the beam's weight of voxel :math:`v` in the blob's row and :math:`N_v` its counts.
 
 **Definition:** the blob's first moment is exactly this ray sum for any spot shape (:doc:`moments`); this page
-linearises it in :math:`\matr{\beta}`.
+linearises it in :math:`\matr{\beta}` by :eq:`lim-reciprocal`.
 
 The ray is almost perpendicular to every :math:`\vec{g}` it sees:
 
@@ -61,69 +83,105 @@ The Fourier slice
 Take the voxels' :math:`\matr{\beta}(\vec{x})` in one slice and its Fourier coefficient
 :math:`\hat{\matr{\beta}}(\vec{k})` at an in-plane frequency :math:`\vec{k}`. A ray sum along :math:`\vec{\xi}`
 carries only frequencies perpendicular to :math:`\vec{\xi}`, so :math:`\vec{k}` is carried by rays along
-:math:`\vec{\xi} = \hat{\vec{z}} \times \hat{\vec{k}}`, whose :math:`\vec{g}` lie in the plane of :math:`\vec{k}` and
-:math:`\vec{z}` up to :math:`\sin\theta` (:eq:`lim-ray`). For :math:`\vec{g} = a\hat{\vec{k}} + c\hat{\vec{z}}`:
+:math:`\hat{\vec{\xi}} = \hat{\vec{z}} \times \hat{\vec{k}}`, whose :math:`\vec{g}_0` lie in the plane of
+:math:`\vec{k}` and :math:`\vec{z}` up to :math:`\sin\theta` (:eq:`lim-ray`). For :math:`\vec{g}_0 = a\hat{\vec{k}} +
+c\hat{\vec{z}} + s\hat{\vec{\xi}}`, by :eq:`lim-reciprocal`:
 
 .. math::
     :label: lim-slice
 
-    \hat{\matr{\beta}}\,\vec{g} = a\,\hat{\matr{\beta}}\hat{\vec{k}} + c\,\hat{\matr{\beta}}\hat{\vec{z}} .
+    \hat{\matr{\beta}}^*\vec{g}_0 = -\left(a\,\hat{\matr{\beta}}^T\hat{\vec{k}} + c\,\hat{\matr{\beta}}^T\hat{\vec{z}}
+    + s\,\hat{\matr{\beta}}^T\hat{\vec{\xi}}\right) .
 
-**Proof:** ``tests/theory/test_limits.py::test_fourier_slice``
+**Proof:** ``tests/theory/test_limits.py::test_fourier_slice`` (from the deformed UBI's first order, not from
+:eq:`lim-reciprocal`'s result).
 
-So at each :math:`\vec{k} \neq 0` the data see :math:`\hat{\matr{\beta}}` applied to :math:`\hat{\vec{k}}` and
-:math:`\hat{\vec{z}}` (six numbers) directly, and :math:`\hat{\matr{\beta}}\hat{\vec{\xi}}` (three numbers) only with
-weight :math:`\sin\theta`. At :math:`\vec{k} = 0` (means over regions) all nine are seen. Split into strain
-:math:`\varepsilon` and rotation :math:`w`, with :math:`\vec{k}` along :math:`x` and :math:`\vec{\xi}` along :math:`y`:
+So at each :math:`\vec{k} \neq 0` the data see the **rows** :math:`\hat{\vec{k}}` and :math:`\hat{\vec{z}}` of
+:math:`\hat{\matr{\beta}}` (six numbers) directly, and its row :math:`\hat{\vec{\xi}}` (three numbers) only with weight
+:math:`s \sim \sin\theta`. A row :math:`i` of :math:`\matr{\beta}` is, for a compatible field, the gradient of the
+displacement component :math:`u_i`. At :math:`\vec{k} = 0` (means over regions) all nine are seen. In strain and
+rotation, with :math:`\vec{k}` along :math:`x` and :math:`\vec{\xi}` along :math:`y`:
 
 .. math::
     :label: lim-seen-weak
 
     \text{seen:}\quad \varepsilon_{xx},\ \varepsilon_{zz},\ \varepsilon_{xz},\ w_y,\
-    \varepsilon_{xy} + w_z,\ \varepsilon_{yz} - w_x;
+    \varepsilon_{xy} - w_z,\ \varepsilon_{yz} + w_x;
     \qquad
-    \text{weak:}\quad \varepsilon_{yy},\ \varepsilon_{xy} - w_z,\ \varepsilon_{yz} + w_x .
+    \text{weak:}\quad \varepsilon_{yy},\ \varepsilon_{xy} + w_z,\ \varepsilon_{yz} - w_x .
 
-**Proof:** ``tests/theory/test_limits.py::test_seen_and_weak``
+**Proof:** ``tests/theory/test_limits.py::test_seen_and_weak`` (the rows of :math:`\varepsilon + [\vec{w}]_\times`).
 
 Orientation and strain are entangled in two pairs only: the rotation about :math:`z` with the in-plane shear, and the
 rotation about :math:`\vec{k}` with :math:`\varepsilon_{\xi z}`. An orientation map at full resolution therefore carries
 an error the size of the unresolved shear (1e-4 to 1e-3 rad) unless something below resolves it.
 
-The weak part is the dislocation density
-----------------------------------------
+What the weak part is
+---------------------
 
-The three weak numbers are the Nye tensor's components with line direction :math:`z`, the rotation axis:
+The Nye tensor is the curl of the distortion, :math:`\alpha_{ij} = \epsilon_{jkl}\,\partial_k\beta_{il}` (Burgers
+component :math:`i`, line direction :math:`j`). For a plane wave :math:`\matr{\beta} = \hat{\matr{\beta}}
+e^{i\vec{k}\cdot\vec{x}}` with :math:`\vec{k}` in-plane, its columns along the three directions are
 
 .. math::
     :label: lim-nye
 
-    i\,\hat{\matr{\beta}}(\vec{k})\,\vec{\xi} = \widehat{(\operatorname{curl}\matr{\beta})}_{\cdot z},
-    \qquad
-    \vec{\xi} = \hat{\vec{z}} \times \vec{k},
-    \qquad
-    (\operatorname{curl}\matr{\beta})_{iz} = \partial_x \beta_{iy} - \partial_y \beta_{ix} .
+    \hat{\matr{\alpha}}\hat{\vec{z}} = i|\vec{k}|\,\hat{\matr{\beta}}\hat{\vec{\xi}}, \qquad
+    \hat{\matr{\alpha}}\hat{\vec{\xi}} = -i|\vec{k}|\,\hat{\matr{\beta}}\hat{\vec{z}}, \qquad
+    \hat{\matr{\alpha}}\hat{\vec{k}} = 0,
 
-**Proof:** ``tests/theory/test_limits.py::test_nye``
+**Proof:** ``tests/theory/test_limits.py::test_nye`` (the curl of a plane wave, by differentiation with the
+Levi-Civita symbol).
 
-A compatible field, the gradient of a displacement (:math:`\matr{\beta} = \nabla\vec{u}`), has no weak part at all:
+So the weak row :math:`\hat{\vec{\xi}}^T\hat{\matr{\beta}}` meets the dislocation density in two of its entries, and
+not in the third:
+
+.. math::
+    :label: lim-weak-parts
+
+    \hat\beta_{\xi\xi} = \frac{\hat\alpha_{\xi z}}{i|\vec{k}|}, \qquad
+    \hat\beta_{\xi z} = -\frac{\hat\alpha_{\xi\xi}}{i|\vec{k}|}, \qquad
+    \frac{\partial\hat{\matr{\alpha}}}{\partial\hat\beta_{\xi k}} = 0 .
+
+**Proof:** ``tests/theory/test_limits.py::test_nye`` (the three entries, from the same curl).
+
+A compatible field, the gradient of a displacement, has no dislocations, and its weak part is not zero:
 
 .. math::
     :label: lim-compatible
 
-    \hat{\matr{\beta}} = i\,\vec{u}\,\vec{k}^T \;\Rightarrow\; \hat{\matr{\beta}}\,\vec{\xi} = 0 .
+    \matr{\beta} = \nabla\vec{u},\ \vec{u} = \hat{\vec{u}}e^{i\vec{k}\cdot\vec{x}}
+    \;\Rightarrow\;
+    \hat{\matr{\alpha}} = 0, \qquad
+    \hat{\matr{\beta}}^T\hat{\vec{\xi}} = i|\vec{k}|\,\hat u_\xi\,\hat{\vec{k}} .
 
-**Proof:** ``tests/theory/test_limits.py::test_compatible_no_weak``
+**Proof:** ``tests/theory/test_limits.py::test_compatible_weak`` (by differentiation; and a simple shear
+:math:`u_\xi = \gamma\,\hat{\vec{k}}\cdot\vec{x}` through the deformed UBI, which moves no :math:`\vec{g}` in the plane of
+:math:`\hat{\vec{k}}` and :math:`\hat{\vec{z}}`).
 
-So a single slice determines everything about a deformation except where geometrically necessary dislocations thread
-the slice, and those only through :math:`\sin\theta`.
+So the three weak numbers per frequency are:
 
-**Anri's choice** (maintainer, 2026-11-23): inside a merged domain (populations whose orientations agree within their
-own widths), :math:`(\operatorname{curl}\matr{\beta})_{\cdot z} = 0` may be imposed. It is a physical constraint, not
-a smoothness prior: dislocation walls with a misorientation larger than the spot width separate their light and are
-resolved by separation, so only walls below the spot width are assumed away, and that is the size of the bias if the
-assumption is wrong. It fills all three weak combinations at every :math:`\vec{k}` from one slice; equilibrium fills
-only two and needs a stack of slices and the elastic constants.
+- :math:`\varepsilon_{\xi\xi}` (:math:`\beta_{\xi\xi}`): the dislocation density with Burgers vector along the ray
+  and lines along :math:`z`, :math:`\alpha_{\xi z}`;
+- :math:`\varepsilon_{\xi z} - w_k` (:math:`\beta_{\xi z}`): the dislocation density with Burgers vector and lines
+  along the ray (screw), :math:`\alpha_{\xi\xi}`;
+- :math:`\varepsilon_{k\xi} + w_z` (:math:`\beta_{\xi k}`): the gradient along :math:`\vec{k}` of the displacement
+  along the ray. No dislocation density fixes it, and a dislocation-free elastic field carries it.
+
+So a single slice determines everything about a deformation except, at each frequency, the dislocation content
+whose Burgers vector lies along the ray, and the shear :math:`\partial_k u_\xi`. All three are seen only through
+:math:`\sin\theta`.
+
+**Anri's choice** (maintainer, 2026-11-23; corrected 2026-11-24, to be confirmed by the maintainer): this page first
+stated that the weak part is the dislocation density with lines along :math:`z`, applied the curl to
+:math:`\matr{\beta}^*` and concluded that a curl-free constraint fills all three weak numbers. That was wrong
+(:eq:`lim-weak-parts`): a constraint of no dislocations, :math:`\alpha_{\xi z} = \alpha_{\xi\xi} = 0`, fills only
+:math:`\varepsilon_{\xi\xi}` and :math:`\varepsilon_{\xi z} - w_k`, and no physical constraint from one slice fills
+:math:`\varepsilon_{k\xi} + w_z`. Such a constraint is also a differential relation between neighbouring voxels: a
+coupling, which AGENTS.md rules out as a default. It is therefore never applied implicitly. Where it is used, it is an
+explicit, named output beside the unconstrained one, with its bias stated: the dislocation content it assumes away.
+Equilibrium constrains only the strains, needs the stress's derivatives along :math:`z` (a stack of slices) and the
+elastic constants, and what it fills is not derived here.
 
 The beam
 --------
@@ -175,7 +233,7 @@ so two populations misoriented by :math:`\vec{\delta}` are separated in every re
 close to parallel with :math:`\vec{\delta}`, once :math:`|\vec{\delta}|` exceeds a few own widths. A reflection that
 separates a population sees it alone: no ray sum, no Fourier slice, all nine numbers at counting precision from its
 reflections. Strain rarely separates light on its own: a strain :math:`\varepsilon` moves a spot by
-:math:`\Delta 2\theta = 2\varepsilon\tan\theta` (:doc:`diffraction`), and one 75 µm pixel at 180 mm (4e-4 rad) is
+:math:`\Delta 2\theta = -2\varepsilon\tan\theta` (:doc:`diffraction`), and one 75 µm pixel at 180 mm (4e-4 rad) is
 2.5e-3 in strain at :math:`\tan\theta = 0.08`, more than most strain contrasts. Strain is resolved where orientation
 separates.
 
@@ -231,7 +289,7 @@ spread (projected per reflection). With :math:`\matr{\Sigma}_v` free, the expect
 information on :math:`\matr{\beta}_v`. Their noise is correlated with the first moments' (the same counts), so where a
 voxel's spread is seen by more second-moment sums than it has free numbers, they lower the noise of the means as a
 control variate (:eq:`mom-info`); that gain is proved to exist but not yet sized. More precisely, the central second moment of a
-blob changes with a voxel's :math:`x_v` (any projection of :math:`\matr{\beta}_v \vec{g}_0`) as
+blob changes with a voxel's :math:`x_v` (any projection of :math:`\matr{\beta}^*_v \vec{g}_0`) as
 
 .. math::
     :label: lim-mom2-jac
@@ -270,7 +328,8 @@ Model error
 
 An error in the model biases the solution along each singular direction by the projection of the whitened error on
 that direction's data pattern: an error in the range of the model is absorbed as a wrong parameter, not amplified;
-along a direction of information :math:`\mu` the bias is at worst :math:`1/\mu` times the error. Which errors fall
+along a direction of information :math:`\mu` (a singular value :math:`\sqrt{\mu}`) the bias is at worst
+:math:`1/\sqrt{\mu}` times the error (:eq:`rf-amplify`). Which errors fall
 where:
 
 - **Common to every voxel** (instrument shape, the energy, the geometry): a shift :math:`s` shared by every voxel's
@@ -286,7 +345,8 @@ where:
   The data change is constant over rays, so it lives at :math:`\vec{k} = 0`: it biases region means (like a wrong
   d0) and never the variation across a map.
 - **Per voxel** (a spot's shape where it is cut by the threshold, a region boundary, a window): spatially varying,
-  so amplified along the weak directions, by up to :math:`1/\sin^2\theta` (~60-1000) for the dislocation combinations.
+  so amplified along the weak directions, by up to :math:`1/\sin\theta` (5-25) for the weak combinations of the
+  first moments, and :math:`1/\sin^2\theta` only for the metric's doubly weak :math:`C_{\xi\xi}` (:eq:`rf-amplify`).
 
 What a method must keep
 -----------------------
@@ -317,8 +377,8 @@ What is left out
 - **The full Schur complement** of the weak combinations over a ring set is not written out. Their gain relative to
   the seen ones is the reflections' rms :math:`\sin\theta` (:eq:`rf-smin`), and a fitted nuisance can only lower it
   (:eq:`rf-amplify`).
-- **Several slices** are treated in :eq:`rf-3d`: a stack adds no weak directions beyond the slice's; the weak part
-  at a tilted frequency is the Nye component along :math:`\hat{\vec{k}}\times\hat{\vec{\xi}}`.
+- **Several slices** are treated in :eq:`rf-3d`: a stack adds no weak directions beyond the slice's; at a tilted
+  frequency :math:`\hat{\vec{z}}` in :eq:`lim-weak-parts` becomes :math:`\hat{\vec{k}}\times\hat{\vec{\xi}}`.
 - **Large rotations.** Everything here is linearised; a population's own arc is curved at spreads of degrees. The
   refiner's moments are exact at any spread (:eq:`rf-moments`), and its box margins to all orders
   (:eq:`rf-box-margin-exact`).

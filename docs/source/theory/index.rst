@@ -15,6 +15,13 @@ follows them, and new maths is written here, with its proof, before the code tha
 - Every displayed equation Anri computes is followed by a **Code** line naming the function that computes it. A test
   (``tests/unit/test_theory_docs.py``) imports every name these pages give, so a renamed function fails CI instead of
   leaving a dead link here.
+- **No implicit filtering.** Anything that suppresses part of what the data determine is a filter: a prior or
+  constraint coupling voxels, a truncated spectrum, a smoothing, an iteration stopped before convergence. Filters are
+  avoided where possible. Where one is used it is named on these pages in a paragraph starting **Filter**, with what
+  it removes and its bias, and the unfiltered result is reported beside it.
+- **Proofs stand alone.** A proof derives its equation from definitions stated on the pages (the frames, the
+  physics), never by re-checking a formula against itself; a code check compares anri's function with the proved
+  expression.
 - Where an equation comes from the literature, it cites the paper (:ref:`theory_references`). Where it is Anri's own
   choice or approximation, the page says so in a paragraph starting **Anri's choice**, with the reason.
 - Each chapter ends with **What is left out**: the approximations made, so that you know when a result can't be

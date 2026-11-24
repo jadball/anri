@@ -18,6 +18,19 @@ Reciprocal space and units
 - **UBI.** A crystal's state is its :math:`(\matr{U}\matr{B})^{-1}` matrix, "UBI", whose rows are its real-space lattice vectors
   in the sample frame (ImageD11's ``ubi``). It holds orientation and strain together.
 
+Distortion and strain
+---------------------
+
+- **Real space.** A distortion :math:`\matr{\beta}` acts on real-space lattice vectors, :math:`\vec{a} \to (\matr{I} +
+  \matr{\beta})\vec{a}`, :math:`\matr{\beta} = \varepsilon + [\vec{w}]_\times`; :math:`\varepsilon` is the lattice
+  strain, positive in tension, and :math:`\vec{w}` the lattice rotation. For a compatible field :math:`\beta_{ij} =
+  \partial_j u_i`, and the Nye tensor is :math:`\alpha_{ij} = \epsilon_{jkl}\partial_k\beta_{il}`.
+- **Reciprocal space.** Reciprocal-lattice vectors move by the inverse transpose, :math:`\vec{g} \to (\matr{I} +
+  \matr{\beta})^{-T}\vec{g} \approx (\matr{I} - \matr{\beta}^T)\vec{g}` (:eq:`lim-reciprocal`). So a strain
+  :math:`\varepsilon` along :math:`\vec{g}` moves a peak by :math:`\Delta 2\theta = -2\varepsilon\tan\theta`.
+- Statements about dislocations and compatibility are about :math:`\matr{\beta}`, never about the reciprocal
+  deformation.
+
 Two branches per reflection
 ---------------------------
 

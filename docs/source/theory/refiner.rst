@@ -26,7 +26,10 @@ the shape of the detector's point spread beyond (A5). The assumptions are:
 - **(A2) Kinematic scattering.** Every photon of a sub-volume in reflection :math:`h` has the scattering vector
   :math:`\vec{g} = \matr{F}\vec{g}_0` of that sub-volume. Here :math:`\vec{g}_0 = \matr{U}_k\matr{B}\vec{h}` is
   fixed per population :math:`k` (the indexer's orientation), and :math:`\matr{F}` is the sub-volume's
-  reciprocal-lattice deformation: any 3 × 3 matrix, its rotation and its strain together.
+  reciprocal-lattice deformation: any 3 × 3 matrix, its rotation and its strain together. For a real-space
+  distortion :math:`\matr{\beta}`, :math:`\matr{F} = (\matr{I} + \matr{\beta})^{-T} \approx \matr{I} - \matr{\beta}^T`
+  (:eq:`lim-reciprocal`): statements about dislocations or compatibility are about :math:`\matr{\beta}`, not
+  :math:`\matr{F}`.
 - **(A3) Integrated intensity.** Over a complete rotation through the reflection, a sub-volume of volume
   :math:`dV` gives :math:`a_{bk}\,|F_h|^2 A_{kh}\, L(\vec{g}) P(\vec{g})\, dV` photons. :math:`a_{bk}` is the beam's
   weight of the population's voxel in the frames of dty row :math:`b`, :math:`|F_h|^2` the structure factor and
@@ -107,10 +110,11 @@ of each sub-volume (A3). That factor varies across the population with the sub-v
 .. math::
     :label: rf-weight
 
-    \operatorname{E}\left[(1 + \vec{l}^T\vec{d})(\matr{I} + [\vec{d}]_\times)\right]
-    = \matr{I} + [\matr{S}\vec{l}]_\times + O(d^3), \qquad \matr{S} = \operatorname{Cov}(\vec{d}),
+    \operatorname{E}\left[(1 + \vec{l}^T\vec{d})\exp([\vec{d}]_\times)\right]
+    = \matr{I} + \tfrac{1}{2}(\matr{S} - \operatorname{tr}\matr{S}\,\matr{I}) + [\matr{S}\vec{l}]_\times + O(d^3),
+    \qquad \matr{S} = \operatorname{Cov}(\vec{d}),
 
-with :math:`|\vec{l}| \approx |\cot\eta|`. That is a turn of :math:`|\matr{S}\vec{l}| \sim \sigma^2|\cot\eta|`:
+the unweighted mean (:eq:`ref-spread-mean`) plus a turn, with :math:`|\vec{l}| \approx |\cot\eta|`. That is a turn of :math:`|\matr{S}\vec{l}| \sim \sigma^2|\cot\eta|`:
 :math:`1.49 \times 10^{-3}` rad for a 1° spread at :math:`|\sin\eta| = 0.2`, against orientation contrasts
 of :math:`10^{-4}` rad. Each photon's factor depends only on where it diffracts, so dividing every cell by its own
 :math:`L P` makes every reflection weight a population's sub-volumes by their volume alone. The cell's position
@@ -144,7 +148,8 @@ The instrument
 
 By (A4), a photon's measured vector is :math:`\hat{\vec{g}} = s(\vec{g} + \vec{D})`. The scale :math:`s =
 \lambda/\lambda_0` (the wavelength) and the shift :math:`\vec{D}` (the incoming wavevector less its mean) are
-independent of :math:`\vec{g}`, with :math:`\operatorname{E}[\vec{D}] = 0`. Then, exactly,
+independent of :math:`\vec{g}`, with :math:`\operatorname{E}[\vec{D}] = 0`. Then, exactly for this model of the
+measurement,
 
 .. math::
     :label: rf-instrument
@@ -152,6 +157,9 @@ independent of :math:`\vec{g}`, with :math:`\operatorname{E}[\vec{D}] = 0`. Then
     \operatorname{E}[\hat{\vec{g}}] = \operatorname{E}[s]\operatorname{E}[\vec{g}], \qquad
     \operatorname{E}|\hat{\vec{g}}|^2 = \operatorname{E}[s^2]\left(\operatorname{E}|\vec{g}|^2 + \operatorname{E}|\vec{D}|^2\right).
 
+The model leaves one thing out: a photon from another incoming direction or wavelength diffracts at a slightly
+different omega, while the statistic turns every photon back by its frame's centre, a rotation about the axis
+correlated with :math:`\vec{D}`. Its mean is zero to first order; its second order is not bounded here.
 Each is a factor and an offset common to every population: a scale fixed by calibration, or left free as one number
 for the whole map (:eq:`lim-common`: it biases only region means, like :math:`d_0`).
 
@@ -552,7 +560,9 @@ function :math:`f`,
     \vec{g}_0^T\matr{C}\vec{g}_0 = a^2 C_{kk} + c^2 C_{zz} + 2ac\, C_{kz} + 2as\, C_{k\xi} + 2cs\, C_{z\xi} + s^2 C_{\xi\xi}.
 
 So the data at frequency :math:`\vec{k}` see each population's :math:`\matr{F}` acting on :math:`\hat{\vec{k}}`
-and :math:`\hat{\vec{z}}`, and its action on :math:`\hat{\vec{\xi}}` only through :math:`s`. This holds whatever is
+and :math:`\hat{\vec{z}}`, and its action on :math:`\hat{\vec{\xi}}` only through :math:`s`. To first order
+:math:`\matr{F}\hat{\vec{\xi}} - \hat{\vec{\xi}} = -\matr{\beta}^T\hat{\vec{\xi}}`, the row :math:`\hat{\vec{\xi}}` of the
+real-space distortion (:eq:`lim-slice`, :eq:`lim-weak-parts`). This holds whatever is
 computed from them: pixels, histograms or moments of any order, the cut and the group rule included, since all of
 these are functions of the photons' :math:`\vec{g}`. The metric's :math:`C_{\xi\xi}` is seen through :math:`s^2`. The
 weak combinations are a property of single-axis scanning, not of a method. The second moments
@@ -582,7 +592,7 @@ absorbed there, at whatever value of the spread it takes.
 ``tests/theory/test_refiner.py::test_sin_theta_numbers``
 
 **On a voxel grid they are seen through the model's geometry.** :eq:`rf-weak-any` is exact for continuous fields.
-A field constant on voxels of step :math:`h`, :math:`\matr{\beta}(\vec{x}) = \sum_v \matr{B}_v\chi(\vec{x} -
+A reciprocal deformation constant on voxels of step :math:`h`, :math:`\matr{\beta}^*(\vec{x}) = \sum_v \matr{B}_v\chi(\vec{x} -
 \vec{x}_v)`, has the transform :math:`\hat\chi(\vec{k})\matr{B}(\vec{k})`, with :math:`\matr{B}(\vec{k}) = \sum_v
 \matr{B}_v e^{-i\vec{k}\cdot\vec{x}_v}` periodic on the reciprocal lattice. The reflections that carry an alias
 :math:`\vec{k}_n = \vec{k} + 2\pi\vec{n}/h` see :math:`\matr{B}(\vec{k})` applied to :math:`\hat{\vec{k}}_n` and
@@ -630,10 +640,16 @@ from Friedel pairs), and can be fitted as one function of omega for the whole ma
 
 **Proof:** ``tests/theory/test_refiner.py::test_centred_features``
 
-**What to estimate.** The combinations whose :math:`s_i` is above a level :math:`s_{\min}` are estimated, with
-bias at most :math:`|\vec{\Delta}|/s_{\min}`. The rest are reported as not determined, with their covariance. This is
-not a smoothness prior. It does not change the data's fit along the seen directions, and it reports what the data
-cannot resolve (AGENTS.md) instead of filling it with model error.
+**What to estimate.** Every combination is estimated, with its covariance and its bias bound
+:math:`\langle|\vec{u}_i|, \bar{\vec{\Delta}}\rangle/s_i` (:eq:`rf-smin`), and those whose bound exceeds the precision
+sought are flagged as not determined. Nothing is removed from the estimate.
+
+**Filter:** keeping only the combinations with :math:`s_i \ge s_{\min}` (a truncated singular value decomposition) is
+a filter. Its estimate is :math:`P_{\text{seen}}\vec{Y}`, not :math:`\vec{Y}`: the right singular vectors span many
+voxels, so each voxel's value becomes a combination of its neighbours' (the resolution matrix
+:math:`P_{\text{seen}} = \sum_{s_i \ge s_{\min}}\vec{v}_i\vec{v}_i^T`), and the directions it drops include those the
+beam's transfer attenuates (:eq:`lim-transfer`), so it is also a low-pass filter. It is not a default; where it is used,
+the unfiltered estimate and :math:`P_{\text{seen}}` are reported beside it.
 
 .. math::
     :label: rf-project
@@ -644,11 +660,13 @@ cannot resolve (AGENTS.md) instead of filling it with model error.
 
 **Proof:** ``tests/theory/test_refiner.py::test_projected_estimator``
 
-The alternative, where the maintainer allows it within a merged domain, is the constraint
-:math:`(\operatorname{curl}\matr{\beta})_{\cdot z} = 0` (:doc:`limits`). It removes exactly the weak combinations of
-the first moments, and its bias is the dislocation density threading the slice that it assumes away. Neither choice
-recovers the weak combinations; each makes their error known. Separated populations are not affected: alone in their
-regions, they are seen in every reflection with all nine numbers (:doc:`limits`), with no tomography to weaken them.
+**Filter:** a constraint of no dislocations within a merged domain (:doc:`limits`, the maintainer's choice, to be
+confirmed). It fills two of the three weak combinations of the first moments, :math:`\varepsilon_{\xi\xi}` and
+:math:`\varepsilon_{\xi z} - w_k` (:eq:`lim-weak-parts`), never the third, :math:`\varepsilon_{k\xi} + w_z`. It couples
+neighbouring voxels, so it is a filter, and its bias is the dislocation content with Burgers vector along the ray that
+it assumes away. Neither the flag nor the constraint recovers the weak combinations. Separated populations are not
+affected: alone in their regions, they are seen in every reflection with all nine numbers (:doc:`limits`), with no
+tomography to weaken them.
 
 One linear solve, and its split
 -------------------------------
@@ -725,28 +743,50 @@ This is decided from the regions alone, before any fit.
 
 **Proof:** ``tests/theory/test_refiner.py::test_identify_populations``
 
-**The split, for the first moments.** Within a merged domain, the field :math:`\matr{Z}(\vec{x})` (zero outside the
-domain :math:`\Omega`, whose other populations sit in other regions) is seen by its Fourier slices. At an in-plane
+**The split, for the first moments.** :math:`\matr{Z}` maps Miller indices to the sample frame, so its columns are
+not sample directions. With a reference :math:`\matr{U}_0\matr{B}` for a merged domain, :math:`\matr{M} =
+\matr{Z}(\matr{U}_0\matr{B})^{-1}` is the domain's first moment of :math:`\matr{F}\matr{U}_k\matr{U}_0^{-1}`, a map of
+the sample frame to itself, and :math:`\matr{Z}\vec{h} = \matr{M}\vec{g}_0` with :math:`\vec{g}_0 =
+\matr{U}_0\matr{B}\vec{h}`. Within the domain, the field :math:`\matr{M}(\vec{x})` (zero outside the domain
+:math:`\Omega`, whose other populations sit in other regions) is seen by its Fourier slices. At an in-plane
 :math:`\vec{k}`, with :math:`\hat{\vec{\xi}} = \hat{\vec{z}}\times\hat{\vec{k}}`, each row :math:`i` of
-:math:`\hat{\matr{Z}}` has the in-plane columns :math:`(\hat Z_{ix}, \hat Z_{iy})`. These split as
+:math:`\hat{\matr{M}}` has the in-plane columns :math:`(\hat M_{ix}, \hat M_{iy})`. These split as
 
 .. math::
     :label: rf-split
 
     \hat{\vec{k}}\hat{\vec{k}}^T + \hat{\vec{\xi}}\hat{\vec{\xi}}^T = \matr{I}_2, \qquad
-    |\vec{k}|\,\hat{\vec{\xi}}\cdot(\hat Z_{ix}, \hat Z_{iy}) = k_x\hat Z_{iy} - k_y\hat Z_{ix}
-    = -i\,\widehat{(\operatorname{curl}\matr{Z})}_{iz}, \qquad
+    |\vec{k}|\,\hat{\vec{\xi}}\cdot(\hat M_{ix}, \hat M_{iy}) = k_x\hat M_{iy} - k_y\hat M_{ix}
+    = -i\,\widehat{(\operatorname{curl}\matr{M})}_{iz}, \qquad
     L^2(\Omega)^2 = \nabla H^1(\Omega) \oplus \{\vec{w} : \nabla\cdot\vec{w} = 0,\ \vec{w}\cdot\vec{n}|_{\partial\Omega} = 0\}.
 
 The weak part is each row's solenoidal in-plane field, and the seen part its gradient. The third column
-:math:`\matr{Z}\hat{\vec{z}}` and the mean are seen whole. On the domain, the two parts are the Helmholtz
+:math:`\matr{M}\hat{\vec{z}}` and the mean are seen whole. On the domain, the two parts are the Helmholtz
 decomposition: the seen part is :math:`\nabla\phi_i`, with :math:`\phi_i` from the Neumann problem
 :math:`\Delta\phi_i = \nabla\cdot\vec{v}_i` in :math:`\Omega`, :math:`\partial_n\phi_i = \vec{v}_i\cdot\vec{n}` on
 its boundary. Orthogonality is :math:`\nabla\cdot(\phi\vec{w}) = \nabla\phi\cdot\vec{w} + \phi\nabla\cdot\vec{w}` and
 the divergence theorem. It is three scalar Poisson problems per domain: sparse, local, and computable at any scale.
-The curl along :math:`z` is the Nye tensor's column of :eq:`lim-nye`.
 
 **Proof:** ``tests/theory/test_refiner.py::test_split_first_moments``
+
+The curl of :math:`\matr{M}`'s rows is not the dislocation density. To first order :math:`\matr{M} - V\matr{I} = V
+\matr{\beta}^* = -V\matr{\beta}^T` (per unit volume :math:`V`), and with :math:`\matr{\beta} = \varepsilon +
+[\vec{w}]_\times`,
+
+.. math::
+    :label: rf-curl-reciprocal
+
+    \epsilon_{jkl}\,\partial_k\beta^*_{il} = \alpha_{ij} - 2\,\epsilon_{jkl}\,\partial_k\varepsilon_{il},
+
+the Nye tensor less twice the curl of the strain. So the weak (solenoidal) parts hold the dislocation density and
+strain gradients together. Which entries the dislocations fix is :eq:`lim-weak-parts`: in :math:`\matr{M}`, the
+solenoidal part of row :math:`z` (:math:`\beta_{\xi z}`, :math:`\alpha_{\xi\xi}`) and the entry
+:math:`\hat{\vec{\xi}}^T\hat{\matr{M}}\hat{\vec{\xi}}` of the in-plane rows' solenoidal parts (:math:`\varepsilon_{\xi\xi}`,
+:math:`\alpha_{\xi z}`), while the solenoidal parts of rows :math:`x` and :math:`y` along :math:`\hat{\vec{k}}`
+(:math:`\hat{\vec{k}}^T\hat{\matr{M}}\hat{\vec{\xi}} = -\hat\beta_{\xi k}`) are fixed by none.
+
+**Proof:** ``tests/theory/test_refiner.py::test_curl_reciprocal`` (fields :math:`\varepsilon(\vec{x})`,
+:math:`\vec{w}(\vec{x})`, by differentiation).
 
 **The split, for the metric and the spreads.** :math:`|\vec{g}|^2` sees :math:`\vec{g}_0^T\matr{C}\vec{g}_0`
 (:eq:`rf-weak-any`). The out-of-plane parts follow the same pattern: :math:`C_{zz}` is seen whole, and the vector
@@ -770,19 +810,23 @@ refiners.
 
 **Proof:** ``tests/theory/test_refiner.py::test_split_metric``
 
-**The solve.** In each merged domain the in-plane columns of :math:`\matr{Z}` are written as :math:`\nabla\phi_i +
+**The solve.** In each merged domain the in-plane columns of :math:`\matr{M}` are written as :math:`\nabla\phi_i +
 \vec{w}_i`, with the third column, the mean, and the populations of separated light as they are. Two estimates follow,
 as the two outputs:
 
-- **(A)** :math:`\vec{w}_i` fitted too, reported with its covariance and flagged as seen only through
-  :math:`\sin\theta` (or not determined, below :math:`s_{\min}`, :eq:`rf-project`);
-- **(B)** :math:`\vec{w}_i = 0`, the curl-free constraint, whose bias is the true :math:`\vec{w}_i`: the dislocation
-  density threading the slice.
+- **(A)**, the default: :math:`\vec{w}_i` fitted too, reported with its covariance and flagged as seen only through
+  :math:`\sin\theta` (or as not determined where its bias bound exceeds the precision sought, :eq:`rf-project`);
+- **(B)**, a filter and never a default: no dislocations, i.e. :math:`\vec{w}_z = 0` and
+  :math:`\hat{\vec{\xi}}^T\hat{\matr{M}}\hat{\vec{\xi}} = 0` (:eq:`rf-curl-reciprocal`), with the solenoidal parts of rows :math:`x` and :math:`y` along
+  :math:`\hat{\vec{k}}` still fitted as in (A). Its bias is the dislocation content with Burgers vector along the ray.
+  Setting every :math:`\vec{w}_i = 0` would also remove the strain gradients of :eq:`rf-curl-reciprocal` and the shear
+  :math:`\partial_k u_\xi` of a dislocation-free field: it is not a physical constraint.
 
 Because each reflection's :math:`\vec{g}_0` holds :math:`s\,\hat{\vec{\xi}}`, the seen and weak columns overlap in the
 data at order :math:`s`. So (A) and (B) differ in their seen parts by order :math:`s` times the weak part. That
 difference is itself a diagnostic: where it exceeds the error bars, the constraint matters. The same split applies to
-the metric and the spreads, with the Hessian in place of the gradient.
+the metric and the spreads, with the Hessian in place of the gradient; there the doubly weak part is the strain's
+incompatibility (:eq:`rf-split-metric`), the same entry as :math:`\varepsilon_{\xi\xi}` above.
 
 What the split does not remove is the beam's own weak family. A seen component at frequency :math:`\vec{k}` is
 attenuated by the beam's transfer :math:`T(\vec{k})` (:eq:`lim-transfer`), so its noise and bias are amplified by
@@ -1172,10 +1216,15 @@ With the beam's profile on both sides it falls as :math:`T(\vec{k})^2/|\vec{k}|`
 :math:`|\vec{k}|` spans a factor :math:`n/2` (from the grid's size to its Nyquist), so :math:`\kappa \gtrsim n/2`. A ramp preconditioner :math:`|\vec{k}|` along dty, per reflection (as in filtered
 back-projection), leaves :math:`T(\vec{k})^2`. Then :math:`\kappa = 1/T(k_{\max})^2`: 5.9 when the beam's FWHM is the
 dty step (the Nyquist period is 2 FWHM, :math:`T = 0.41`), and 20 iterations reach :math:`\tau = 10^{-3}`. With the
-FWHM two steps wide, :math:`T = 0.028` and :math:`\kappa = 1.2 \times 10^3`. Those frequencies fall below
-:math:`s_{\min}` (:eq:`rf-smin`) and are not estimated, so :math:`\kappa` is bounded by :math:`(s_{\max}/s_{\min})^2`
-in any case. The weak combinations, estimated in place, would multiply :math:`\kappa` by :math:`1/\sin^2\theta`
-(30-530). Solving in the seen parameterisation (:eq:`rf-split-grid`) keeps them out of the iteration.
+FWHM two steps wide, :math:`T = 0.028` and :math:`\kappa = 1.2 \times 10^3`: the bound is then 4100 iterations, and
+conjugate gradients need no more. The weak combinations, estimated in place, would multiply :math:`\kappa` by
+:math:`1/\sin^2\theta` (30-530). Solving in the split parameterisation (:eq:`rf-split-grid`) with the weak block
+scaled by its gain (:eq:`rf-smin`) is a change of units, not a filter; the condition number of the scaled system is
+not derived here.
+
+**Filter:** an iteration stopped before it converges keeps the well-conditioned directions and leaves the rest near
+their starting values: a spectral filter, like :eq:`rf-project`'s. The solve runs to the tolerance :math:`\tau` on the
+normal equations' residual, never to a fixed count chosen to stop early.
 
 **Proof:** ``tests/theory/test_refiner.py::test_richardson_bound`` (the contraction; the logarithm's bound; the
 Krylov space), ``tests/theory/test_refiner.py::test_ray_normal_symbol`` (the transform; the numbers),
@@ -1183,36 +1232,44 @@ Krylov space), ``tests/theory/test_refiner.py::test_ray_normal_symbol`` (the tra
 
 The cost per iteration is set by :math:`F` and the reflections per voxel. Sub-populations per bin
 (:eq:`rf-bin-moments`) multiply :math:`F` by the bins each voxel lights. The iterations are set by the beam's
-sampling and :math:`s_{\min}`, not by the grid's size, once preconditioned.
+sampling, not by the grid's size, once preconditioned.
 
 Several slices
 --------------
 
 Everything above treats one slice. A stack of slices has frequencies along :math:`z` too. The rays are horizontal,
 so a frequency :math:`\vec{k} = \vec{k}_h + k_z\hat{\vec{z}}` is carried by :math:`\hat{\vec{\xi}} =
-\hat{\vec{z}}\times\hat{\vec{k}}_h` whatever :math:`k_z`, and the weak part is still :math:`\hat{\matr{\beta}}
-\hat{\vec{\xi}}`. With :math:`\hat{\vec{n}} = \hat{\vec{k}}\times\hat{\vec{\xi}}`,
+\hat{\vec{z}}\times\hat{\vec{k}}_h` whatever :math:`k_z`, and the weak part is still the row
+:math:`\hat{\vec{\xi}}^T\hat{\matr{\beta}}` (:eq:`lim-slice`). With :math:`\hat{\vec{n}} =
+\hat{\vec{k}}\times\hat{\vec{\xi}}`, the Nye tensor of a plane wave is :math:`\hat{\matr{\alpha}}\vec{m} =
+i\hat{\matr{\beta}}(\vec{m}\times\vec{k})` for any :math:`\vec{m}`, and
 
 .. math::
     :label: rf-3d
 
     \hat{\vec{n}}\times\vec{k} = |\vec{k}|\,\hat{\vec{\xi}}, \qquad
-    i|\vec{k}|\,(\hat{\matr{\beta}}\hat{\vec{\xi}})_i = \big(i\vec{k}\times\hat{\vec{b}}_i\big)\cdot\hat{\vec{n}}
-    = \widehat{(\operatorname{curl}\matr{\beta})}_i\cdot\hat{\vec{n}},
+    \hat{\vec{\xi}}\times\vec{k} = -|\vec{k}|\,\hat{\vec{n}}, \qquad
+    \hat\beta_{\xi\xi} = \frac{\hat\alpha_{\xi n}}{i|\vec{k}|}, \qquad
+    \hat\beta_{\xi n} = -\frac{\hat\alpha_{\xi\xi}}{i|\vec{k}|}, \qquad
+    \frac{\partial\hat{\matr{\alpha}}}{\partial\hat\beta_{\xi k}} = 0:
 
-with :math:`\hat{\vec{b}}_i` the :math:`i`-th row of :math:`\hat{\matr{\beta}}`. The weak part is the dislocation
-density with lines along :math:`\hat{\vec{n}}`, normal to :math:`\vec{k}`. It is :math:`\hat{\vec{z}}` for an
-in-plane :math:`\vec{k}` (:eq:`lim-nye`), and leans from :math:`\hat{\vec{z}}` towards :math:`\vec{k}_h` as
-:math:`\vec{k}` tilts. A frequency along :math:`z` itself (:math:`\vec{k}_h = 0`) is carried by every horizontal
-ray, whose :math:`\vec{g}_0` span all directions: it is seen whole. So a stack adds no weak directions beyond the
-slice's. In 3D the curl-free output (:eq:`rf-split`) uses the 3D curl, and the split's projector the 3D gradient.
+:eq:`lim-weak-parts` with :math:`\hat{\vec{z}}` replaced by :math:`\hat{\vec{n}}`, normal to :math:`\vec{k}`, which
+leans from :math:`\hat{\vec{z}}` towards :math:`\vec{k}_h` as :math:`\vec{k}` tilts. Two weak numbers are dislocation
+content with Burgers vector along the ray; the third, :math:`\beta_{\xi k}`, is the gradient along :math:`\vec{k}` of the
+displacement along the ray, which no dislocation density fixes. A frequency along :math:`z` itself (:math:`\vec{k}_h =
+0`) is carried by every horizontal ray, whose :math:`\vec{g}_0` span all directions: it is seen whole. So a stack adds
+no weak directions beyond the slice's.
 
 **Proof:** ``tests/theory/test_refiner.py::test_three_dimensional_weak``
 
 The guarantee
 -------------
 
-Under (A1)-(A5), with regions fixed independently of the noise of the data they are applied to:
+Under (A1)-(A5), with regions fixed independently of the noise of the data they are applied to. Boxes taken from an
+indexer fitted to the same data do not meet that condition: the selection bias of :eq:`mom-select` then enters, and
+is not bounded here. The boxes must come from data independent of those they are applied to (for example populations
+indexed on alternate frames, applied to the others), a choice for the maintainer. The indexer's error :math:`e` in
+:eq:`rf-box-margin` is a statistical bound, not a hard one: the completeness of the boxes holds with its confidence.
 
 1. **Noise** biases nothing (:eq:`rf-linear`). Error bars come from blocks that are independent exactly
    (:eq:`rf-harris`), with no noise model.
@@ -1235,12 +1292,14 @@ What it costs, against :doc:`limits`:
 - Information within a cell (the pixels' sub-cell information for spots narrower than about 0.3 px,
   :eq:`det-crlb`) is unused, since only a shape could use it.
 - Merged populations are determined only through the tomography of their ray sums. That is the Fourier slice's limit,
-  with its weak combinations (:eq:`lim-seen-weak`); the bias terms reach the map along those combinations amplified as
-  :doc:`limits` says (per-voxel errors by up to :math:`1/\sin^2\theta`).
+  with its weak combinations (:eq:`lim-seen-weak`); the bias terms reach the map along those combinations amplified by
+  up to :math:`1/\sin\theta` for the first moments and :math:`1/\sin^2\theta` for the metric's :math:`C_{\xi\xi}`
+  (:eq:`rf-amplify`).
 
 What is left out
 ----------------
 
+- **The instrument's omega shift** correlated with :math:`\vec{D}` (:eq:`rf-instrument`), at second order.
 - **Parallax at second order in** :math:`\epsilon`: :eq:`rf-parallax-exact` is exact, but its expansion is written to
   first order only.
 - **Anisotropic boxes**: the indexer gives only an isotropic spread per population (:doc:`populations`), so

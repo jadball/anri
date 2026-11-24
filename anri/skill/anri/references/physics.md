@@ -26,7 +26,7 @@ suppress the local variation being measured.
   voxel's spot. No single image says which voxel made which part of it; only consistency across rows and across
   reflections places it.
 - A rotation moves intensity along the Debye-Scherrer ring (η) and over frames (ω); strain moves it across the ring:
-  Δ2θ = 2 ε tan θ. Sub-grain misorientation gives smeared, curved arcs (bananas), usually with a single maximum.
+  Δ2θ = −2 ε tan θ for a lattice strain ε. Sub-grain misorientation gives smeared, curved arcs (bananas), usually with a single maximum.
   Separate sub-spots are the exception. Don't mode-seek on a peak's maximum.
 - A small lattice rotation δ = (δx, δy, δz) (beam along x, rotation axis z, η from vertical) moves a peak by
   Δω = −δz − δy cot η and Δη = δx − δy tan θ / sin η. An isotropic spread σ widens a peak by σ / |sin η| in ω:

@@ -94,7 +94,9 @@ rotation axis on which :math:`\vec{g}_{\text{lab}}` lies (proof: ``tests/theory/
 **Anri's choice:** the arcsine's argument is clipped to :math:`\pm(1 - 10^{-6})` and :math:`R^2` floored at
 :math:`10^{-7}`, so that the gradient stays finite at the edge of the Ewald sphere and along the rotation axis. The
 price is at that edge: where :math:`|\delta/R| > 1 - 10^{-6}` the omega returned is off the solution by up to
-:math:`\arccos(1 - 10^{-6}) = 0.081°` (proof: ``tests/theory/test_diffraction.py::test_clip_cost``). The two
+:math:`\arccos(1 - 10^{-6}) = 0.081°` (proof: ``tests/theory/test_diffraction.py::test_clip_cost``), 1.6 frames of
+0.05°. The edge is where the two branches meet, :math:`\sin\eta \to 0`, so the reflections it touches are those
+``etacut`` leaves out; a method that keeps reflections near the axis must not use the clipped omega. The two
 branches share everything but the last line: a vmap over :math:`\pm 1` gives both.
 
 **Code:** :func:`anri.fwd.peak.hkl_to_k_omega`.
@@ -236,7 +238,7 @@ Read term by term:
 - about :math:`y`, in both, magnified near :math:`\eta = 0°` and :math:`180°`, where omega and :math:`\eta` couple into a tilted streak.
 
 So orientation moves intensity *along* the ring and over omega, and strain moves it *across* the ring
-(:math:`\Delta 2\theta = 2\varepsilon\tan\theta`). An isotropic orientation spread :math:`\sigma` widens a peak by
+(:math:`\Delta 2\theta = -2\varepsilon\tan\theta` for a lattice strain :math:`\varepsilon` along :math:`\vec{g}`, :doc:`conventions`). An isotropic orientation spread :math:`\sigma` widens a peak by
 :math:`\sigma/|\sin\eta|` in omega and :math:`\sigma\sqrt{1 + \tan^2\theta/\sin^2\eta}` in :math:`\eta`: peaks near the rotation axis
 (:math:`|\sin\eta|` small) are smeared most, which is why the indexer leaves out reflections with
 :math:`|\sin\eta| \le` ``etacut``. A rotation about :math:`\vec{g}` itself moves its peak not at all: each reflection sees only
