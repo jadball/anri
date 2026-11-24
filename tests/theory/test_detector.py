@@ -188,8 +188,9 @@ def test_psf_code():
         _, a, _ = _peak_shape(*args, geom)
         _, b, _ = _peak_shape(*args, {**geom, "sig_psf": 0.7})
     d = np.array([float(y) - float(x) for x, y in zip(a, b)])
-    # one float64 addition of 0.49 to a variance below 10 px^2: an ulp of 10, 2e-15
-    np.testing.assert_allclose(d, [0.49, 0.49, 0, 0, 0, 0], rtol=0, atol=1e-14)
+    # one float64 addition of 0.49 to each variance, then the difference: an ulp of the larger, each
+    bound = 2 * EPS * np.maximum(np.abs([float(x) for x in a]), np.abs([float(y) for y in b]))
+    np.testing.assert_array_less(np.abs(d - [0.49, 0.49, 0, 0, 0, 0]), bound + 2 * EPS * 0.49)
 
 
 # ---------------------------------------------------------------------------------------------- det-sensor

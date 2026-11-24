@@ -19,7 +19,6 @@ import sympy as sp
 from anri.diffract.factors import lorentz, polarisation, polarisation_extinction
 from anri.fwd.render import _beam_fold, _dty_at, _frame_weights, make_row
 from anri.geom.beam import beam_offsets, beam_weight, chord_weight
-from anri.geom.gonio import sample_to_lab
 from anri.geom.paths import path_lengths, transmission
 from anri.maths.utils import float64, ramp_integral, ramp_integral2
 from tests.theory.common import (
@@ -767,10 +766,15 @@ def test_dty_path_code():
         fclip = jnp.array([1, 3, 4])  # sorted frames 0.11, 0.30, 0.43; mean omegas within them
         om_fr = jnp.array([0.12, 0.27, 0.40])
         fw = np.asarray(_frame_weights(pos, om_fr, fclip, row, geom))
-        lab = [sample_to_lab(pos, o, 0.0, 0.0, 1.7 - 2.3 * o, 0.0) for o in (0.12, 0.27, 0.40)]
-        want = np.asarray([beam_weight(x, o, geom) for x, o in zip(lab, (0.12, 0.27, 0.40))])
-    # the same float64 operations but for the dty: its error (above, ~1e-14) moves a weight of slope ~1 / sigma
-    np.testing.assert_allclose(fw, want, rtol=1e-13)
+    # int-beam-weight for a column in a beam along x, at the voxel's place on the dty path (frm-stack, dty =
+    # 1.7 - 2.3 omega): the chord weight at u = y_lab, its rounding, plus the dty's (above) moving it by at most
+    # h max p <= sqrt(2) a phi(0) / sigma per unit
+    for o, w in zip((0.12, 0.27, 0.40), fw):
+        O = sp.rad(sp.Float(o, 30))
+        y = sp.Float(5.0, 30) * sp.sin(O) + sp.Float(0.2, 30) * sp.cos(O) + (sp.Float(1.7, 30) - sp.Float(2.3, 30) * sp.Float(o, 30))
+        want = float(sp.N(_chord_expr(y, o, sp.Float(0.5, 30), sp.Float(0.4, 30), 0.0), 30))
+        u_err = (16 * EPS * 2 + 16 * EPS * 360 * 2.3 + 16 * EPS * 5) * np.sqrt(2) * 0.5 * float(sp.N(phi(sp.Integer(0)), 30)) / 0.4
+        np.testing.assert_allclose(w, want, rtol=0, atol=_chord_tol(float(y), o, 0.5, 0.4, 0.0) + u_err)
 
 
 # ---------------------------------------------------------------------------------------------- int-absorption

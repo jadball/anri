@@ -238,9 +238,13 @@ def test_omega_variance_code():
                 got = float(_peak_cov(ubi, jnp.zeros(3), jnp.asarray(hkl), etasign, 0.0, g, jnp.asarray(S))[2])
                 vals = {eta_s: np.radians(float(eta)), th_s: np.radians(float(tth)) / 2, om_s: np.radians(float(om)),
                         sl_s: sl, sky_s: sky, skz_s: skz, **dict(zip(S_s, S.ravel()))}  # fmt: skip
-                # the centroid is ~200 float64 operations of condition O(1) (|cot eta| < 3 here), differentiated
-                # exactly by forward mode: 1e-13 is ~500 ulps
-                np.testing.assert_allclose(got, evaluate(expr, vals), rtol=1e-13)
+                # forward mode differentiates the rounded chain: each derivative errs by N eps of itself, N the
+                # chain's length (~200 operations, N = 256, as test_peak_cov_rotation_code); the variance, a sum of
+                # squares of derivatives times spreads, by twice that of the sum of its terms' magnitudes
+                Sabs = {**vals, **dict(zip(S_s, np.abs(S).ravel()))}
+                mag = float(evaluate(_omega_variance(eta_s, th_s, om_s, S_s.applyfunc(sp.Abs), sl_s, sky_s, skz_s)
+                                     .replace(sp.cot, lambda z: sp.Abs(sp.cot(z))), Sabs))  # fmt: skip
+                np.testing.assert_allclose(got, evaluate(expr, vals), rtol=0, atol=2 * 256 * EPS * mag)
 
 
 def test_peak_cov_rotation_code():
