@@ -75,18 +75,26 @@ def test_instrument_independent():
 
 def test_weighted_mean():
     """rf-weight: photons weighted by a factor 1 + l^T d of the sub-volume's small rotation d (a Lorentz factor's
-    variation) shift the population's mean F from E[I + [d]x] = I to I + [S l]x, S = Cov(d), to second order. With
+    variation) shift the population's mean F from E[exp([d]x)] = I + (S - tr S I)/2 by a turn [S l]x, S = Cov(d), to second order. With
     the Lorentz factor 1 / (sin 2 theta |sin eta|), l = -cot(eta) d eta / d d, so |S l| ~ sigma^2 |cot eta|: 1.49e-3
     rad for sigma = 1 deg at |sin eta| = 0.2."""
     d = sp.Matrix(sp.symbols("d0:3", real=True))
     l = sp.Matrix(sp.symbols("l0:3", real=True))
     S = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"S_{min(i, j)}{max(i, j)}"))
-    expr = (1 + (l.T * d)[0]) * (sp.eye(3) + skew(d))
+    # Rodrigues' formula to second order: exp([d]x) = I + [d]x + [d]x^2 / 2 + O(d^3); third-order terms dropped
+    R2 = sp.eye(3) + skew(d) + skew(d) * skew(d) / 2
+    expr = ((1 + (l.T * d)[0]) * R2).applyfunc(lambda e: _truncate2(e, d))
     E = expr.applyfunc(lambda e: _expect2(e, d, S))
-    assert is_zero(E - (sp.eye(3) + skew(S * l)))
+    assert is_zero(E - (sp.eye(3) + (S - S.trace() * sp.eye(3)) / 2 + skew(S * l)))
     sig2 = (sp.pi / 180) ** 2
     cot = sp.sqrt(1 - sp.Rational(1, 25)) / sp.Rational(1, 5)
     assert rounds_to(sig2 * cot * 10**3, "1.49")
+
+
+def _truncate2(expr: sp.Expr, d: sp.Matrix) -> sp.Expr:
+    """The terms of a polynomial in d of degree <= 2."""
+    p = sp.Poly(sp.expand(expr), *d)
+    return sum((coef * sp.prod([v**n for v, n in zip(d, mono)]) for mono, coef in p.terms() if sum(mono) <= 2), sp.S(0))
 
 
 def _expect2(expr: sp.Expr, d: sp.Matrix, S: sp.Matrix) -> sp.Expr:
@@ -470,9 +478,9 @@ def test_identify_populations():
 
 
 def test_split_first_moments():
-    """rf-split: at an in-plane frequency k (xi = z x k), the in-plane columns of Z_hat split by k k^T + xi xi^T = I_2
-    into orthogonal idempotent parts; Z_hat xi |k| = (k_x Z_y - k_y Z_x)_hat, the Fourier transform of i times
-    (curl Z)_z per row (lim-nye): the weak part is each row's solenoidal (divergence-free) in-plane field, the seen part
+    """rf-split: at an in-plane frequency k (xi = z x k), the in-plane columns of M_hat (a sample-frame operator) split by
+    k k^T + xi xi^T = I_2 into orthogonal idempotent parts; M_hat xi |k| = (k_x M_y - k_y M_x)_hat, the Fourier
+    transform of i times (curl M)_z per row (not the Nye tensor: rf-curl-reciprocal): the weak part is each row's solenoidal (divergence-free) in-plane field, the seen part
     its gradient part, k k^T Z_hat = k (k . Z_hat) / |k|^2. On a domain Omega, div(phi w) = grad phi . w + phi div w,
     so by the divergence theorem every gradient is orthogonal to every w with div w = 0 in Omega and w . n = 0 on its
     boundary: L^2(Omega) = grad H^1 (+) those w, the seen part grad phi from the Neumann problem
@@ -1157,11 +1165,11 @@ def test_box_half_width():
 
 
 def test_three_dimensional_weak():
-    """rf-3d: in a stack of slices the rays are horizontal, so a frequency k = k_h + k_z z is carried by
-    xi = z x k_h-hat for any k_z, and the weak part is beta xi. With n = k-hat x xi (unit, normal to k and xi),
-    n x k = |k| xi, so i |k| (beta xi)_i = i (k x b_i) . n, the Nye tensor's component (curl beta)_i . n: the
-    dislocation density with lines along n, which leans from z towards k_h as k tilts. A frequency along z (k_h = 0)
-    is carried by every horizontal ray, whose g0 span all directions: fully seen."""
+    """rf-3d: in a stack of slices the rays are horizontal, so k = k_h + k_z z is carried by xi = z x k_h-hat for any
+    k_z, and the weak part is the row xi of beta (lim-slice). With n = k-hat x xi, the Nye tensor of a plane wave,
+    by differentiation, has alpha m = i beta (m x k) for any m; n x k = |k| xi and xi x k = -|k| n, so beta_xixi =
+    alpha_xin / (i|k|), beta_xin = -alpha_xixi / (i|k|), and beta_xik enters no entry of alpha. n is z for an in-plane
+    k. A frequency along z (k_h = 0) is carried by every horizontal ray, whose g0 span all directions."""
     kx, ky, kz = sp.symbols("k_x k_y k_z", real=True)
     k = sp.Matrix([kx, ky, kz])
     kh = sp.Matrix([kx, ky, 0])
@@ -1169,12 +1177,56 @@ def test_three_dimensional_weak():
     xi = z.cross(kh) / sp.sqrt(kx**2 + ky**2)
     assert is_zero(sp.simplify(xi.dot(k)))  # xi carries every k_z
     kn = sp.sqrt(kx**2 + ky**2 + kz**2)
-    n = (k / kn).cross(xi)
+    khat = k / kn
+    n = khat.cross(xi)
     assert is_zero(sp.simplify(n.dot(n) - 1)) and is_zero(sp.simplify(n.dot(k)))
-    assert is_zero(sp.simplify(n.cross(k) - kn * xi))
-    bi = sp.Matrix(sp.symbols("b0:3"))  # a row of beta_hat
-    assert is_zero(sp.simplify(kn * bi.dot(xi) - (k.cross(bi)).dot(n)))
-    assert is_zero(sp.simplify(n.subs({kz: 0}) - z))  # horizontal k: lines along z (lim-nye)
+    assert is_zero(sp.simplify(n.cross(k) - kn * xi)) and is_zero(sp.simplify(xi.cross(k) + kn * n))
+    # the curl of a plane wave, by differentiation
+    x = sp.Matrix(sp.symbols("x0:3", real=True))
+    ph = sp.exp(sp.I * k.dot(x))
+    B = sp.Matrix(3, 3, sp.symbols("b0:9"))
+
+    def curl(Bm: sp.Matrix) -> sp.Matrix:
+        return sp.Matrix(
+            3,
+            3,
+            lambda i, j: sp.simplify(
+                sum(sp.LeviCivita(j, a, b) * sp.diff(Bm[i, b] * ph, x[a]) for a in range(3) for b in range(3)) / ph
+            ),
+        )
+
+    alpha = curl(B)
+    m = sp.Matrix(sp.symbols("m0:3", real=True))
+    assert is_zero(sp.simplify(alpha * m - sp.I * B * m.cross(k)))
+    assert is_zero(sp.simplify((xi.T * B * xi)[0] - (xi.T * alpha * n)[0] / (sp.I * kn)))
+    assert is_zero(sp.simplify((xi.T * B * n)[0] + (xi.T * alpha * xi)[0] / (sp.I * kn)))
+    t = sp.Symbol("t")
+    assert is_zero(sp.simplify(curl(B + t * xi * khat.T) - alpha))
+    assert is_zero(sp.simplify(n.subs({kz: 0}) - z))  # horizontal k: n = z (lim-nye)
+
+
+def test_curl_reciprocal():
+    """rf-curl-reciprocal: for beta = eps + [w]x (fields, eps symmetric) and beta* = -beta^T, the curl of beta*'s rows,
+    eps_jkl d_k beta*_il, is the Nye tensor alpha_ij = eps_jkl d_k beta_il less twice the curl of eps, by
+    differentiation."""
+    x = sp.symbols("x0:3", real=True)
+    e = [[None] * 3 for _ in range(3)]
+    for i in range(3):
+        for j in range(i, 3):
+            e[i][j] = e[j][i] = sp.Function(f"e{i}{j}")(*x)
+    E = sp.Matrix(e)
+    w = sp.Matrix([sp.Function(f"w{i}")(*x) for i in range(3)])
+    beta = E + skew(w)
+    bstar = -beta.T
+
+    def curl(Bm: sp.Matrix) -> sp.Matrix:
+        return sp.Matrix(
+            3,
+            3,
+            lambda i, j: sum(sp.LeviCivita(j, a, b) * sp.diff(Bm[i, b], x[a]) for a in range(3) for b in range(3)),
+        )
+
+    assert is_zero(sp.expand(curl(bstar) - (curl(beta) - 2 * curl(E))))
 
 
 def test_displacement_common_term():
@@ -1238,3 +1290,59 @@ def test_parallax_exact():
     assert is_zero(skew(n).T * skew(n) - (sp.eye(3) - n * n.T))
     val = sp.Rational(100, 180000) * (sp.pi / 180) ** 3
     assert rounds_to(val * 10**9, "3.0")
+
+
+def test_regions_forced():
+    """rf-forced: a statistic over a fixed region is the integral of K_R over a population's distribution. At an edge
+    of the instrument's kernel (K_R = Phi(x / w)), one point at the mean c and two points c +- e (same mass, same mean)
+    give different light for c != 0: the light depends on the shape unless K_R is constant on the support, i.e. the
+    region holds all the light (K_R = 1 on the support), where the integral is the mass for any distribution."""
+    c, e, w = sp.Rational(1, 2), sp.Rational(3, 4), sp.Integer(1)
+
+    def Phi(x: sp.Expr) -> sp.Expr:
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    diff = Phi(c / w) - (Phi((c + e) / w) + Phi((c - e) / w)) / 2
+    assert abs(float(sp.N(diff, 30))) > 1e-3
+    # c = 0: the two agree, so the difference is a matter of the shape relative to the edge
+    assert sp.simplify(Phi(0) - (Phi(e / w) + Phi(-e / w)) / 2) == 0
+
+
+def test_cell_linearisation():
+    """rf-cell-linear: K(mu) = Phi((b - mu)/w) - Phi((a - mu)/w) has K'' = (phi'(z_b) - phi'(z_a)) / w^2 and
+    |phi'(z)| = |z| phi(z) <= phi(1), so |K''| <= 2 phi(1) / w^2 and Taylor's remainder is at most phi(1) (delta/w)^2:
+    2.4e-3 at delta = w / 10; cells of half-width w / 10 at w = 0.01 deg number 1.25e5 over 0.1 deg, 1.25e8 over 1."""
+    mu, a, b = sp.symbols("mu a b", real=True)
+    w = sp.Symbol("w", positive=True)
+    z = sp.Symbol("z", real=True)
+    phi = sp.exp(-(z**2) / 2) / sp.sqrt(2 * sp.pi)
+
+    def Phi(x: sp.Expr) -> sp.Expr:
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    K = Phi((b - mu) / w) - Phi((a - mu) / w)
+    dphi = sp.diff(phi, z)
+    K2 = (dphi.subs(z, (b - mu) / w) - dphi.subs(z, (a - mu) / w)) / w**2
+    assert sp.simplify(sp.diff(K, mu, 2) - K2) == 0
+    assert sp.simplify(dphi + z * phi) == 0
+    crit = sp.solve(sp.diff(z * phi, z), z)
+    assert set(crit) == {-1, 1}  # |z phi| is largest at |z| = 1
+    assert rounds_to(phi.subs(z, 1) * sp.Rational(1, 100), "0.0024")
+    assert rounds_to((sp.Rational(1, 10) / (2 * sp.Rational(1, 1000))) ** 3 / 10**5, "1.25")
+    assert rounds_to((sp.Integer(1) / (2 * sp.Rational(1, 1000))) ** 3 / 10**8, "1.25")
+
+
+def test_sandwich():
+    """rf-sandwich: for R0 within R^ within R1, sum over R^ minus sum over R0 is the sum over R^ \\ R0, a subset of the
+    band R1 \\ R0, so it is at most the band's sum of |r f| (the triangle inequality): checked exactly for every R^ on
+    a strip of 6 cells with a band of 4. The bound holds for every realisation, so it holds in expectation, however R^
+    depends on the counts, and the band is a fixed region whose expected sum the data measure."""
+    import itertools
+
+    vals = [sp.Rational(v) for v in ("3/2", "-2", "1/3", "5", "-7/4", "2")]
+    R0, band = {1, 2}, [0, 3, 4, 5]
+    bound = sum(abs(vals[p]) for p in band)
+    for n in range(len(band) + 1):
+        for extra in itertools.combinations(band, n):
+            Rh = R0 | set(extra)
+            assert abs(sum(vals[p] for p in Rh) - sum(vals[p] for p in R0)) <= bound

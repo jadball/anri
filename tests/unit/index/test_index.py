@@ -338,6 +338,43 @@ class TestOccupancy(unittest.TestCase):
             )
             self.assertAlmostEqual(float(jnp.sum(wt)), total, places=5)
 
+    def test_crowding(self):
+        """Near-duplicate orientations crowd the first-update candidates out of a weak second orientation; pricing at
+        the fit adds it back, the certificate then holds, and the deviance falls to near the optimum's (0, as the data
+        are the model's) (theory page, coarse to fine: ls-kkt, ls-gain)."""
+        c, B, _ = iron()
+        rings = ix.data.ring_table(*c, PARS["wavelength"], 2)
+        base = rotations(4, 3)
+        dup = np.asarray(anri.maths.rotation.rot_z(0.05), np.float32) @ base  # 0.05 deg: far below the bins
+        pred = ix.search.predictions(np.concatenate([base, dup]), B, rings, geometry(), 0.2)
+        rng = np.random.default_rng(7)
+        nv = 8
+        pos = np.column_stack([rng.uniform(-2, 2, (nv, 2)), np.zeros(nv)]).astype(np.float32)
+        scan = {"y0": 0.0, "dty0": -3.0, "ystep": 1.0, "n_rows": 7, "om0": 0.0}
+        dims = (4.0, 4.0, 90, 45)
+        n_cells = 2 * 90 * 45 * 7
+        ring_j = jnp.asarray(rings["ring_j"])
+        cand_true = np.tile(np.array([[0, 1]], np.int32), (nv, 1))  # a strong orientation 0 and a weak 1 everywhere
+        f_true = np.tile(np.array([[1.0, 0.15]], np.float32), (nv, 1))
+        d = ix.occupancy.forward(jnp.asarray(f_true), jnp.asarray(cand_true), pred, ring_j, jnp.asarray(pos), scan,
+                                 dims, n_cells, 8)  # fmt: skip
+
+        def fit(rounds: "int | None") -> tuple:
+            lines = []
+            f, cand, mu = ix.occupancy.fit_occupancy(d, pred, ring_j, pos, scan, dims, k=2, n_iter=200, tol=1e-2,
+                                                     qc=8, block_bytes=1e5, price_rounds=rounds, return_model=True,
+                                                     log=lines.append)  # fmt: skip
+            return np.asarray(f), np.asarray(cand), float(ix.occupancy.deviance(d, jnp.asarray(mu), 0.0)), lines
+
+        _, cand_raw, dev_raw, _ = fit(None)
+        self.assertTrue(all(set(cr) == {0, 4} for cr in cand_raw))  # the strong one and its duplicate
+        f_p, cand_p, dev_p, lines = fit(2)
+        checks = [m for m in lines if "certificate holds" in m or "voxels have an orientation" in m]
+        self.assertIn("certificate holds", checks[-1])
+        self.assertLess(dev_p, 1e-3 * dev_raw)
+        weak = np.array([f_v[(c_v == 1) | (c_v == 5)].sum() for f_v, c_v in zip(f_p, cand_p)])
+        np.testing.assert_allclose(weak / f_p.sum(1), 0.15 / 1.15, atol=0.01)  # the weak one, or its duplicate
+
     def test_squarem(self):
         """mlem (SQUAREM): the deviance never rises, and it fits at least as well as plain MLEM with the same updates."""
         c, B, _ = iron()
@@ -354,8 +391,19 @@ class TestOccupancy(unittest.TestCase):
         d = ix.occupancy.forward(f_true, cand, pred, ring_j, pos, scan, dims, n_cells, 8)
         f0 = jnp.ones((32, 4), jnp.float32)
         devs, msgs = [], []
-        f = ix.occupancy.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 10, 8, log=msgs.append,
-                    callback=lambda it, f_, dev: devs.append(dev))  # fmt: skip
+        f, info = ix.occupancy.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 10, 8, log=msgs.append,
+                    callback=lambda it, f_, dev: devs.append(dev), tol=0.0)  # fmt: skip
+        self.assertEqual(info["iterations"], 10)
+        self.assertEqual(info["converged"], info["remaining"] <= 0.0)
+        # a tolerance every iteration meets stops after two (twice running), and says so
+        _, info1 = ix.occupancy.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 10, 8, log=lambda m: None,
+                                      tol=float("inf"))  # fmt: skip
+        self.assertEqual(info1["iterations"], 2)  # twice running
+        self.assertTrue(info1["converged"])
+        # the estimate of the deviance still to fall decreases as the fit converges, and is never negative
+        rem = [float(m.split("~")[1].split(" ")[0]) for m in msgs]
+        self.assertTrue(all(x >= 0 for x in rem))
+        self.assertLess(rem[-1], rem[0])
         self.assertEqual(len(devs), 10)
         self.assertEqual(len(msgs), 10)  # one line per iteration
         self.assertTrue(np.all(np.diff(devs) <= 1e-6 * devs[0]))

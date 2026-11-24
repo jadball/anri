@@ -108,6 +108,9 @@ them large occupancies that explain almost nothing. The fit is restricted to a m
 
   **Code:** :func:`anri.index.mask.load_mask`, :func:`anri.index.mask.draw_mask`.
 
+**Filter:** the auto and reconstructed masks are built from filtered data (a median along omega; a Hamming-windowed
+ramp). They choose which voxels are fitted, never the values fitted there.
+
 With absorption, the mask is also the sample's shape for the paths (:ref:`theory_absorption`): a disc is the wrong
 shape unless the sample fills it.
 

@@ -304,7 +304,7 @@ a tilted detector. Anri's equations (:eq:`frm-g`, :eq:`dif-omega`, :eq:`frm-eta`
 
 The differences of about :math:`2 \times 10^{-4}` degrees in ω and θ come from the wavelength: Anri converts energy to
 wavelength with :math:`hc = 12.39842` keV Å (CODATA), FABLE with 12.398 (the value its θ implies). With FABLE's
-:math:`hc`, ω and θ agree to :math:`2 \times 10^{-6}` degrees. The :math:`10^{-5}` degrees left in η is the rounding
+:math:`hc`, ω and θ agree within one unit of the table's last printed digit. The :math:`10^{-5}` degrees left in η is the rounding
 of FABLE's :math:`\matr{U}`, printed to six digits and orthogonal only to about :math:`10^{-6}`. FABLE gives the pixel
 as whole pixels.
 

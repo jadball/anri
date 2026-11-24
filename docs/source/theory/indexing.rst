@@ -23,6 +23,8 @@ and fits every voxel independently of its neighbours' values.
 **Anri's choice:** no coupling between voxels: no smoothness, total variation or basis-function prior on orientation.
 Such priors suppress exactly the local variation Anri exists to measure, as averaging each voxel over the rays through
 it does. What the data cannot resolve is reported as a mean and a spread (:doc:`populations`), not smoothed away.
+The coarse-to-fine levels still couple voxels through the support and the start of the last level's fit; those
+couplings are written out, as filters, in :doc:`localsearch`.
 
 The linear model
 ----------------

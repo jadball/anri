@@ -5,9 +5,13 @@ import numpy as np
 import sympy as sp
 
 from tests.theory.common import (
+    agree,
+    evaluate,
     is_zero,
     rank,
+    rng,
     skew,
+    tol,
 )
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -24,42 +28,137 @@ def test_ray_component():
     assert is_zero(sp.expand_trig(g.dot(g)) - 4 * k**2 * sp.sin(th) ** 2)
 
 
+def _deformed_g(beta: sp.Matrix, ubi: sp.Matrix, h: sp.Matrix) -> sp.Matrix:
+    """g of Miller indices h for a UBI whose rows (the real-space lattice vectors a_i, frm-g) are distorted,
+    a_i -> (I + beta) a_i: the definition the limits rest on, with nothing about reciprocal space assumed."""
+    rows = [((sp.eye(3) + beta) * ubi[i, :].T).T for i in range(3)]
+    return sp.Matrix.vstack(*rows).inv() * h
+
+
+def _first_order(expr: sp.Matrix, beta: sp.Matrix) -> sp.Matrix:
+    """The part of expr linear in the entries of beta (beta -> t beta, d/dt at t = 0)."""
+    t = sp.Symbol("t")
+    return sp.diff(expr.subs({b: t * b for b in beta}, simultaneous=True), t).subs(t, 0)
+
+
+def test_reciprocal_distortion():
+    """lim-reciprocal: distorting the rows of the UBI by I + beta moves g = UBI^-1 h exactly to (I + beta)^-T g0, so
+    to first order by -beta^T g0: the strain changes sign, the rotation does not."""
+    beta = sp.Matrix(3, 3, sp.symbols("b0:9", real=True))
+    ubi = sp.Matrix(3, 3, sp.symbols("m0:9", real=True))
+    h = sp.Matrix(sp.symbols("h0:3", real=True))
+    g0 = ubi.inv() * h
+    g = _deformed_g(beta, ubi, h)
+    assert is_zero(sp.simplify(g - (sp.eye(3) + beta).inv().T * g0))
+    assert is_zero(sp.simplify(_first_order(g, beta) + beta.T * g0))
+    # beta = eps + [w]x: -beta^T = -eps + [w]x
+    e = sp.symbols("e0:6", real=True)
+    E = sp.Matrix([[e[0], e[3], e[4]], [e[3], e[1], e[5]], [e[4], e[5], e[2]]])
+    w = sp.Matrix(sp.symbols("w0:3", real=True))
+    assert is_zero(-(E + skew(w)).T - (-E + skew(w)))
+
+
+def test_reciprocal_distortion_code():
+    """lim-reciprocal against anri: inv3 of the distorted UBI applied to h equals (I + beta)^-T inv3(UBI) h."""
+    import anri.maths.utils as mu
+
+    r = rng(7)
+    ubi = 3.6 * np.linalg.qr(r.normal(size=(3, 3)))[0] + 0.1 * r.normal(size=(3, 3))
+    beta = 1e-3 * r.normal(size=(3, 3))
+    h = r.integers(-4, 5, size=(3,)).astype(float)
+    sym_beta, sym_ubi = sp.Matrix(beta), sp.Matrix(ubi)
+    expected = evaluate((sp.eye(3) + sym_beta).inv().T * sym_ubi.inv() * sp.Matrix(h), {}).ravel()
+    cond = np.linalg.cond(ubi)
+    agree(expected, lambda m: mu.inv3(m) @ h, ubi @ (np.eye(3) + beta).T, **tol(cond * np.abs(expected).max()))
+
+
 def test_fourier_slice():
-    """lim-slice: for g in span(k, z), beta g depends on beta k and beta z only."""
-    B = sp.Matrix(3, 3, sp.symbols("b0:9"))
-    a, c = sp.symbols("a c")
-    kh, zh = sp.Matrix([1, 0, 0]), sp.Matrix([0, 0, 1])
-    assert is_zero(B * (a * kh + c * zh) - (a * B * kh + c * B * zh))
+    """lim-slice: from the distorted UBI's first order, a g0 = a k + c z + s xi (k = x, xi = y, z orthonormal) moves by
+    -(a beta^T k + c beta^T z + s beta^T xi): rows k and z of beta at s = 0, row xi only through s."""
+    beta = sp.Matrix(3, 3, sp.symbols("b0:9", real=True))
+    a, c, s = sp.symbols("a c s", real=True)
+    kh, xh, zh = sp.Matrix([1, 0, 0]), sp.Matrix([0, 1, 0]), sp.Matrix([0, 0, 1])
+    ubi = sp.eye(3)  # any reference lattice: g0 = h
+    g0 = a * kh + c * zh + s * xh
+    dg = _first_order(_deformed_g(beta, ubi, g0), beta)
+    assert is_zero(dg + (a * beta.T * kh + c * beta.T * zh + s * beta.T * xh))
+    # at s = 0 the row xi of beta does not enter
+    assert all(sp.diff(dg.subs(s, 0), beta[1, j]) == sp.zeros(3, 1) for j in range(3))
 
 
 def test_seen_and_weak():
-    """lim-seen-weak: the rotation/strain content of beta k, beta z (seen) and beta xi (weak), k = x, xi = y."""
+    """lim-seen-weak: the rows of beta = eps + [w]x along k = x and z (seen) and along xi = y (weak)."""
     wx, wy, wz = sp.symbols("w_x w_y w_z")
     e = sp.symbols("e_xx e_yy e_zz e_xy e_xz e_yz")
     E = sp.Matrix([[e[0], e[3], e[4]], [e[3], e[1], e[5]], [e[4], e[5], e[2]]])
     beta = E + skew([wx, wy, wz])
-    x, y, z = sp.eye(3).columnspace()
-    assert is_zero(beta * x - sp.Matrix([e[0], e[3] + wz, e[4] - wy]))
-    assert is_zero(beta * z - sp.Matrix([e[4] + wy, e[5] - wx, e[2]]))
-    assert is_zero(beta * y - sp.Matrix([e[3] - wz, e[1], e[5] + wx]))
+    assert is_zero(beta[0, :] - sp.Matrix([[e[0], e[3] - wz, e[4] + wy]]))
+    assert is_zero(beta[2, :] - sp.Matrix([[e[4] - wy, e[5] + wx, e[2]]]))
+    assert is_zero(beta[1, :] - sp.Matrix([[e[3] + wz, e[1], e[5] - wx]]))
+    # the seen rows give eps_xz and w_y separately (sum and difference of e_xz +- w_y)
+    assert rank(sp.Matrix([[1, 1], [1, -1]])) == 2
+
+
+def _plane_wave_curl(beta_hat: sp.Matrix, k: sp.Matrix) -> sp.Matrix:
+    """alpha_ij = eps_jkl d_k beta_il of beta_hat exp(i k.x), divided by the exponential."""
+    x = sp.Matrix(sp.symbols("x0:3", real=True))
+    ph = sp.exp(sp.I * k.dot(x))
+    return sp.Matrix(
+        3,
+        3,
+        lambda i, j: sp.simplify(
+            sum(sp.LeviCivita(j, kk, ll) * sp.diff(beta_hat[i, ll] * ph, x[kk]) for kk in range(3) for ll in range(3))
+            / ph
+        ),
+    )
 
 
 def test_nye():
-    """lim-nye: i beta(k) xi = (curl beta)_{.z} for in-plane k, xi = z x k."""
+    """lim-nye, lim-weak-parts: the Nye tensor of a plane wave at an in-plane k, by differentiation. Its columns along z,
+    xi = z x k-hat and k-hat are i|k| beta xi, -i|k| beta z and 0; so beta_xixi and beta_xiz are alpha_xiz and
+    alpha_xixi over -/+ i|k|, and beta_xik enters no component of alpha."""
     kx, ky = sp.symbols("k_x k_y", real=True)
-    B = sp.Matrix(3, 3, sp.symbols("b0:9"))
-    xi = sp.Matrix([0, 0, 1]).cross(sp.Matrix([kx, ky, 0]))
-    curl_z = sp.Matrix([sp.I * (kx * B[i, 1] - ky * B[i, 0]) for i in range(3)])
-    assert is_zero(sp.I * B * xi - curl_z)
-
-
-def test_compatible_no_weak():
-    """lim-compatible: beta = grad u (beta(k) = i u k^T) has no weak part."""
-    kx, ky = sp.symbols("k_x k_y", real=True)
-    u = sp.Matrix(sp.symbols("u0:3"))
+    kn = sp.sqrt(kx**2 + ky**2)
     k = sp.Matrix([kx, ky, 0])
-    xi = sp.Matrix([0, 0, 1]).cross(k)
-    assert is_zero(sp.I * u * k.T * xi)
+    kh, zh = k / kn, sp.Matrix([0, 0, 1])
+    xh = zh.cross(kh)
+    B = sp.Matrix(3, 3, sp.symbols("b0:9"))
+    alpha = _plane_wave_curl(B, k)
+    assert is_zero(sp.simplify(alpha * zh - sp.I * kn * B * xh))
+    assert is_zero(sp.simplify(alpha * xh + sp.I * kn * B * zh))
+    assert is_zero(sp.simplify(alpha * kh))
+    b_xx, b_xz, b_xk = (xh.T * B * xh)[0], (xh.T * B * zh)[0], (xh.T * B * kh)[0]
+    assert is_zero(sp.simplify(b_xx - (xh.T * alpha * zh)[0] / (sp.I * kn)))
+    assert is_zero(sp.simplify(b_xz + (xh.T * alpha * xh)[0] / (sp.I * kn)))
+    # beta_xik: a change of B along xi k^T leaves alpha unchanged
+    t = sp.Symbol("t")
+    assert is_zero(sp.simplify(_plane_wave_curl(B + t * xh * kh.T, k) - alpha))
+    assert is_zero(sp.simplify((xh.T * (B + t * xh * kh.T) * kh)[0] - b_xk - t))
+
+
+def test_compatible_weak():
+    """lim-compatible: beta = grad u for u = u_hat exp(i k.x) (beta_ij = d_j u_i, by differentiation) has no Nye tensor,
+    and its weak row beta^T xi is i|k| u_xi k-hat, not zero. A simple shear u_xi = gamma k.x through the distorted UBI
+    moves no g in the plane of k and z, and moves g along xi by -gamma k: all of it is weak."""
+    kx, ky = sp.symbols("k_x k_y", real=True)
+    kn = sp.sqrt(kx**2 + ky**2)
+    k = sp.Matrix([kx, ky, 0])
+    kh, zh = k / kn, sp.Matrix([0, 0, 1])
+    xh = zh.cross(kh)
+    x = sp.Matrix(sp.symbols("x0:3", real=True))
+    u = sp.Matrix(sp.symbols("u0:3"))
+    ph = sp.exp(sp.I * k.dot(x))
+    B = sp.Matrix(3, 3, lambda i, j: sp.simplify(sp.diff(u[i] * ph, x[j]) / ph))
+    assert is_zero(_plane_wave_curl(B, k))
+    assert is_zero(sp.simplify(B.T * xh - sp.I * kn * u.dot(xh) * kh))
+    # a simple shear, along x = k and y = xi, through the UBI
+    gam = sp.Symbol("gamma", real=True)
+    beta = gam * sp.Matrix([0, 1, 0]) * sp.Matrix([[1, 0, 0]])  # beta_yx = d u_y / dx
+    for h, moved in ((sp.Matrix([1, 0, 0]), sp.zeros(3, 1)), (sp.Matrix([0, 0, 1]), sp.zeros(3, 1))):
+        assert is_zero(sp.simplify(_first_order(_deformed_g(beta, sp.eye(3), h), beta) - moved))
+    assert is_zero(
+        sp.simplify(_first_order(_deformed_g(beta, sp.eye(3), sp.Matrix([0, 1, 0])), beta) + gam * sp.Matrix([1, 0, 0]))
+    )
 
 
 def test_beam_transfer():

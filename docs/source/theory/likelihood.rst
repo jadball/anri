@@ -253,11 +253,67 @@ coarser neighbourhood held (:doc:`localsearch`).
 **Code:** :func:`anri.index.occupancy.inherit_candidates`, :func:`anri.index.data.coarsen_rows`,
 :func:`anri.index.data.coarsen_scan`.
 
+When to stop
+------------
+
+MLEM's update is the log-likelihood's gradient in a metric. With :math:`\ell = -D/2` (recorded, empty and saturated
+bins alike, since every ratio of :eq:`lik-censored` is :math:`1 - \tfrac{1}{2}\partial D_b/\partial\mu_b`),
+:math:`\partial\ell/\partial f_j = [A^T(\rho - 1)]_j` and the update moves :math:`f` by :math:`\Delta f =
+\matr{M}^{-1}\nabla\ell`, :math:`\matr{M} = \operatorname{diag}([A^T\mathbf{1}]_j / f_j)`. So the deviance's
+first-order decrease along one update is
+
+.. math::
+    :label: lik-converged
+
+    \delta = -\nabla D \cdot \Delta f = 2\sum_j [A^T\mathbf{1}]_j\, \frac{\Delta f_j^2}{f_j} \ge 0,
+    \qquad
+    D - D^* = \frac{\delta}{2(1 - \rho)}, \quad \frac{\delta'}{\delta} = \rho^2
+    \quad\text{(one mode)},
+    \qquad
+    D - D^* \le \frac{\sum_m \delta_m}{2(1 - \rho_{\max})}.
+
+Near the optimum the deviance is quadratic, :math:`D - D^* = \vec{e}^T\matr{H}\vec{e}`, and MLEM contracts each mode
+(an eigenvector of :math:`\matr{M}^{-1}\matr{H}`) by :math:`\rho`. Then :math:`\delta` is the deviance a mode has
+left times :math:`2(1 - \rho)`, and two consecutive updates give :math:`\rho` from the ratio of their
+:math:`\delta`. :math:`\delta` is a sum of non-negative terms: unlike the difference of two deviances (sums of
+:math:`10^6` bins in float32), it has no cancellation.
+
+**Proof:** ``tests/theory/test_likelihood.py::test_mlem_is_metric_gradient`` (the update is :math:`\matr{M}^{-1}\nabla\ell`
+for the censored deviance; :math:`\delta` is the directional derivative), ``tests/theory/test_likelihood.py::test_remaining_deviance``
+(one mode exactly; several modes bounded by the slowest), ``tests/theory/test_likelihood.py::test_remaining_deviance_code``.
+
+**Code:** :func:`anri.index.occupancy.step_decrease`, :func:`anri.index.occupancy.remaining_deviance`,
+:func:`anri.index.occupancy.squarem`.
+
+Each SQUAREM iteration makes two plain updates, :math:`f \to f_1 \to f_2`, so each gives :math:`\rho^2 =
+\delta_1/\delta_0` and the remaining deviance :math:`\hat{G} = \delta_1 / (2(1 - \rho))` at :math:`f_1`, which the
+iteration's result improves on. The fit stops once :math:`\hat{G} \le` ``tol`` and the deviance itself fell by at most
+``tol`` (or eight float32 ulps of it, where that is larger) over the iteration, on two iterations running, by
+default 1: a log-likelihood
+ratio of 1/2 to the optimum, which no test can tell from it (:eq:`lik-lr`'s threshold is 25). The cost is one more
+reduction per update, brought to the host with the deviance in one transfer.
+
+**Anri's choice:** :math:`\hat{G}` is an estimate, not a bound. With several modes the measured :math:`\rho^2` is
+the modes' mean weighted by their :math:`\delta`, below the slowest's, so the slowest mode's remainder is
+underestimated, by up to the factor :math:`(1 - \rho)/(1 - \rho_{\max})`. It is worst just after a start, when the
+fast modes dominate :math:`\delta`, and along near-null directions (near-duplicate orientations, :eq:`ls-start`),
+where :math:`\rho_{\max} \to 1`. On a half-sample phantom it swung from 6 to 251 between successive iterations while
+the deviance fell by tens to hundreds per iteration. Hence the deviance's own fall as a second condition, two
+iterations running, and, after pricing, the rigorous bound :eq:`ls-gap` beside it. SQUAREM's extrapolation changes the
+contraction from iteration to iteration, but the two plain updates that measure it are plain MLEM. The deviance
+counts in the histogram's units (monitor-normalised sums of counts: the Poisson approximation above).
+
+**Filter:** a fit that reaches its iteration cap (``n_iter``) before :math:`\hat{G} \le` ``tol`` has stopped early. Early
+stopping keeps the well-determined part of the occupancies and leaves the rest near its start: an implicit spectral
+filter, as in emission tomography, where noise grows with iterations. Each fit logs whether it converged, in how
+many iterations and :math:`\hat{G}`; the log is in the stage's provenance. The cap is a guard on cost, not a choice
+of regularisation: raise it, never lower it, until every level converges.
+
 What is left out
 ----------------
 
-- **Regularisation**: none, by design (:doc:`indexing`). MLEM's early stopping (a fixed number of iterations) is the
-  only implicit one: noise grows with iterations, as in emission tomography.
+- **Regularisation**: none by design (:doc:`indexing`); an iteration cap reached before convergence is a filter
+  (above).
 - **Uncertainties** of the occupancies: not computed.
 - **Voxels outside the mask** (:doc:`populations`) are not fitted; their intensity has to go somewhere, and a mask that
   is too small piles it onto its edge.

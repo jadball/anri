@@ -196,10 +196,12 @@ Each frame :math:`f` then keeps the residual of the true weight against the expa
 .. math::
     :label: int-frame-weight
 
-    I_f = I\; e^{\ell + \beta^2\Sigma'_{\omega\omega}/2}\sqrt{\Sigma'_{\omega\omega}/\Sigma_{\omega\omega}}\;
-    \frac{w_{\text{beam}}(\bar\omega_f, y(\bar\omega_f))}{q(\bar\omega_f)}\; P'(\text{frame } f),
+    I_f = \rho\,|F|^2 L P\; e^{\ell + \beta^2\Sigma'_{\omega\omega}/2}\sqrt{\Sigma'_{\omega\omega}/\Sigma_{\omega\omega}}\;
+    \frac{w_{\text{beam}}(\bar\omega_f, y(\bar\omega_f))}{q(\bar\omega_f)}\; T_f\; P'(\text{frame } f),
 
-with :math:`P'` the folded Gaussian's mass in the frame, before it is spread over pixels.
+with :math:`P'` the folded Gaussian's mass in the frame, before it is spread over pixels, and :math:`T_f` the transmission at the frame's omega. This
+is :eq:`int-amp` with its beam weight and transmission taken per frame: the per-peak amplitude :math:`\rho|F|^2LP`
+holds neither, so the beam's weight enters once, through the fold and the residual.
 
 **Definition:** Anri's per-frame weight. It is exact when :math:`w_{\text{beam}}/q` is constant over each frame's share of
 the peak (a weight log-quadratic along the scan's path), and right to first order in the residual's variation within a
