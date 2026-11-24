@@ -40,7 +40,9 @@ checks the absences of Fm-3m, Im-3m and Fd-3m.
 **Code:** :func:`anri.crystal.structure.reflections`, :func:`anri.crystal.lattice.allowed_hkls`.
 
 Reflections closer in :math:`d^*` than a tolerance (default :math:`10^{-4}` Å⁻¹) form one ring: rings the data cannot
-separate should be merged, not split.
+separate should be merged, not split. A ring starts at the smallest :math:`d^*` not yet in one and takes every
+reflection within the tolerance of it, so rings never chain into one another
+(``tests/theory/test_crystal.py::test_rings_code``).
 
 **Code:** :func:`anri.crystal.structure.rings`, :func:`anri.index.data.ring_table`.
 
@@ -87,8 +89,10 @@ compute it itself: Dans Diffraction [DansDiffraction]_ reads the CIF and evaluat
 in the CIF there is no Debye-Waller fall-off with :math:`s`, and Anri warns.
 
 **Definition:** the kinematic structure factor, as Dans Diffraction [DansDiffraction]_ evaluates it; Anri has no code
-of its own to check against it. **Proof:** ``tests/theory/test_crystal.py::test_structure_factor_s``
-(:math:`s = d^*/2`).
+of its own to check against it, beyond what the sum's algebra fixes whatever the form factors: for silicon, zero
+where the diamond lattice's sum vanishes, and equal at equal :math:`d^*` and equal sums.
+**Proof:** ``tests/theory/test_crystal.py::test_structure_factor_s`` (:math:`s = d^*/2`),
+``tests/theory/test_crystal.py::test_diamond_sum``, ``tests/theory/test_crystal.py::test_structure_factors_code``.
 
 **Code:** :func:`anri.crystal.structure.structure_factors`.
 
@@ -100,7 +104,8 @@ Attenuation
 A ray loses intensity as :math:`e^{-\mu L}` along a path :math:`L` in the sample. The linear attenuation coefficient
 :math:`\mu` comes from the structure's composition and density and each element's total mass attenuation (photoelectric,
 Compton and Rayleigh), from Dans Diffraction's tables, which reproduce NIST XCOM [XCOM]_ (iron at 50 keV: 1.958 cm²/g).
-Anri returns it per micrometre, the unit of sample positions.
+Anri returns it per micrometre, the unit of sample positions. It is a table, with no equation of Anri's to check:
+``tests/reference/test_tables.py::TestAttenuation`` compares it with NIST XCOM.
 
 **Code:** :func:`anri.crystal.structure.attenuation`.
 

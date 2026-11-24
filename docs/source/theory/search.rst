@@ -44,6 +44,22 @@ For cubic crystals it needs about half the orientations of a cubochoric grid for
 :math:`\pi^{2/3}` mapped onto the homochoric ball, preserving volume (section 2.1 and appendix A there), and from the
 ball to the quaternions by the homochoric vector :math:`\vec{h} = \hat{n}\,[\tfrac{3}{4}(\omega - \sin\omega)]^{1/3}`
 ([Rosca2014]_, section 3.3; [Rowenhorst2015]_, equation 13), so its points are spread evenly over orientation space.
+On the pyramid of the cube where :math:`z` is the largest coordinate and :math:`|y| \le |x|`, with :math:`(X, Y, Z) =
+(\pi/6)^{1/6}(x, y, z)`, :math:`t = \pi Y / 12X`, :math:`\beta = \pi^{5/6} / (2 \cdot 6^{1/6})` and
+:math:`k = (3\pi/4)^{1/3}\, 2^{1/4} / \beta` (EMsoft's grouping of the paper's constants):
+
+.. math::
+    :label: srch-cubochoric
+
+    T = \frac{k X}{\sqrt{\sqrt{2} - \cos t}} \left(\sqrt{2}\cos t - 1,\ \sqrt{2}\sin t\right), \qquad
+    \vec{h} = \left(T\sqrt{1 - \frac{\pi |T|^2}{24 Z^2}},\ \sqrt{\frac{6}{\pi}}\, Z - \frac{\sqrt{\pi}\,|T|^2}{\sqrt{24}\, Z}\right),
+
+the other pyramids by permuting the coordinates, and the angle from :math:`|\vec{h}|^3 = \tfrac{3}{4}(\omega - \sin\omega)`.
+
+**Cited:** [Rosca2014]_. **Proof:** ``tests/theory/test_search.py::test_cubochoric_volume`` (its Jacobian determinant is
+1, the cube's volume :math:`\pi^2` being the ball's, and a face of the cube goes onto the ball's surface),
+``tests/theory/test_search.py::test_cubochoric_code``.
+
 :math:`N = 131.97 / (s - 0.037)` points per semi-edge give a mean nearest-neighbour disorientation of about :math:`s`:
 the fit of [SinghDeGraef2016]_ (equation 9), which holds for every rotation group (their table 3). The grid is reduced
 to the fundamental zone around the identity, plus a shell half a step wide outside it (without the shell, points just
@@ -51,7 +67,11 @@ outside the zone leave gaps along its boundary, as their symmetric images are no
 than the mean spacing.
 
 **Anri's choice:** measured for every Laue group from 1.5 to 12°, it is at most :math:`1.15\,s`, and Anri uses
-:math:`1.2\,s`. The same grid and fit are in orix's ``cubochoric_sampling`` [Johnstone2020]_.
+:math:`1.2\,s`.
+
+**Measured:** ``tests/theory/test_search.py::test_grid_delta_measured`` (random orientations within :math:`1.2\,s` of a grid
+point, grid points within the zone's shell); the reduced grid holds :math:`1/|\text{group}|` of the whole grid's
+points and its shell (``tests/theory/test_search.py::test_zone_sizes``). The same grid and fit are in orix's ``cubochoric_sampling`` [Johnstone2020]_.
 
 **Code:** :func:`anri.crystal.orientation.cubochoric_quaternions`.
 

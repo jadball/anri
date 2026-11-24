@@ -67,6 +67,18 @@ def test_metric_code():
         agree(Gi, lattice.mt_to_rmt, Gv, **tol(np.linalg.cond(Gv) * np.abs(Gi).max()))
         # arccos has condition 1 / sin(angle) <= 1 / sin(81 degrees) here, in degrees up to 180
         agree(ev(sp.Matrix(back), vals), lattice.mt_to_lpars, Gv, **tol(2 * 180.0))
+        # and back: G from G* (an inverse, as above), and the volume sqrt(det G) (test_volume): det sums six
+        # triple products of entries <= |G|, the root halves its relative error
+        agree(Gv, lattice.rmt_to_mt, Gi, **tol(np.linalg.cond(Gi) * np.abs(Gv).max()))
+        V = float(evaluate(sp.sqrt(G.det()), vals))
+        agree(V, lattice.metric_to_volume, Gv, **tol(6 * np.abs(Gv).max() ** 3 / V))
+
+
+def test_volume():
+    """The cell's volume is sqrt(det G): with the real vectors the rows of A, G = A A^T, so det G = (det A)^2 and the
+    volume |det A| is its root."""
+    A = sp.Matrix(3, 3, sp.symbols("A0:9", real=True))
+    assert is_zero((A * A.T).det() - A.det() ** 2)
 
 
 def test_B_matrix():
@@ -109,6 +121,14 @@ def test_B_code():
         t["atol"] *= np.abs(Bv).max()
         agree(Bv, lattice.lpars_to_B, np.array(lp), **t)
         agree(Bv, B_matrix, lp, **t)
+        # from both parameter sets, the reciprocal ones exact (read off G^-1)
+        G = metric(a, b, c, sp.cos(sp.rad(al)), sp.cos(sp.rad(be)), sp.cos(sp.rad(ga)))
+        Gs = G.inv()
+        rl = [sp.sqrt(Gs[i, i]) for i in range(3)]
+        rl += [sp.deg(sp.acos(Gs[j, k] / (rl[j] * rl[k]))) for j, k in ((1, 2), (0, 2), (0, 1))]
+        agree(Bv, lattice.lpars_rlpars_to_B, np.array(lp), ev(sp.Matrix(rl), {}), **t)
+        # B^T B is G* (test_B_matrix): products of entries <= |B|
+        agree(evaluate(Gs, {}), lattice.B_to_rmt, Bv, **tol(3 * np.abs(Bv).max() ** 2))
 
 
 def test_ubi():

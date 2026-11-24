@@ -46,10 +46,12 @@ through the metric tensors :math:`\matr{G} = [\vec{a}_i \cdot \vec{a}_j]` and :m
 :math:`\vec{a}_i` as the rows of a matrix :math:`\matr{A}`, the :math:`\vec{a}^*_j` are the rows of :math:`\matr{A}^{-T}`.
 
 **Definition:** the reciprocal basis, and :math:`d^*`. **Proof:** ``tests/theory/test_frames.py::test_reciprocal_metric``
-(:math:`\matr{G}^* = \matr{G}^{-1}`), ``tests/theory/test_frames.py::test_metric_code``.
+(:math:`\matr{G}^* = \matr{G}^{-1}`), ``tests/theory/test_frames.py::test_metric_code``. The cell's volume is
+:math:`V = \sqrt{\det\matr{G}}` (``tests/theory/test_frames.py::test_volume``).
 
 **Code:** :func:`anri.crystal.lattice.lpars_to_mt`, :func:`anri.crystal.lattice.mt_to_rmt`,
-:func:`anri.crystal.lattice.mt_to_lpars`.
+:func:`anri.crystal.lattice.rmt_to_mt`, :func:`anri.crystal.lattice.mt_to_lpars`,
+:func:`anri.crystal.lattice.metric_to_volume`.
 
 Crystal Cartesian frame
 -----------------------
@@ -79,7 +81,7 @@ equals :math:`1/c`.)
 \matr{G}^*` for any lattice, and FABLE's last element is :math:`1/c`), ``tests/theory/test_frames.py::test_B_code``.
 
 **Code:** :func:`anri.crystal.lattice.lpars_rlpars_to_B`, :func:`anri.crystal.lattice.lpars_to_B`,
-:func:`anri.crystal.structure.B_matrix`.
+:func:`anri.crystal.structure.B_matrix`, :func:`anri.crystal.lattice.B_to_rmt`.
 
 .. figure:: figures/frames_crystal.svg
     :width: 75%

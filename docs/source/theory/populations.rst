@@ -23,7 +23,12 @@ the voxel's whole occupancy, so every candidate must be grouped: the fit's later
 and grouping only the 16 most occupied (as before) under-reported the main population (median 0.87 instead of 0.94 on
 a Ni superalloy).
 
-**Code:** :func:`anri.index.populations.group`, :func:`anri.crystal.orientation.closest_equivalent`.
+A member's symmetric equivalent closest to the seed is the :math:`\matr{U}\matr{S}` of largest
+:math:`\operatorname{tr}(\matr{U}_{\text{seed}}^T\matr{U}\matr{S}) = 1 + 2\cos\theta`; the disorientation is the least
+such angle, and an orientation's fundamental-zone equivalent its own least (``tests/theory/test_populations.py::test_closest_equivalent_code``).
+
+**Code:** :func:`anri.index.populations.group`, :func:`anri.crystal.orientation.closest_equivalent`,
+:func:`anri.crystal.orientation.disorientation`, :func:`anri.crystal.orientation.to_fundamental_zone`.
 
 Each population gets
 

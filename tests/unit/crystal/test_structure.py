@@ -49,41 +49,25 @@ class TestSpaceGroup(unittest.TestCase):
 
 
 class TestReflections(unittest.TestCase):
-    def test_bcc_absences_and_order(self):
+    def test_integer_hkl_sorted_by_ds(self):
+        """Integer hkl, sorted by d* (values: tests/theory/test_crystal.py::test_reflections_code, test_allowed_code)."""
         a, wl = 2.8665, 0.3
         r = anri.crystal.structure.reflections([a, a, a, 90, 90, 90], 229, wl, 1.0)
         self.assertEqual(r["hkl"].dtype.kind, "i")
-        self.assertTrue(np.all(r["hkl"].sum(1) % 2 == 0))  # I-centring: h + k + l even
-        self.assertTrue(np.all(np.diff(r["ds"]) >= -1e-12))
-        np.testing.assert_allclose(r["ds"], np.linalg.norm(r["hkl"], axis=1) / a)
-        np.testing.assert_allclose(r["tth"], np.degrees(2 * np.arcsin(r["ds"] * wl / 2)))
-        self.assertLessEqual(r["ds"].max(), 1.0)
-        # every allowed reflection up to dsmax is there: count them directly
-        n = 3
-        g = np.stack(np.meshgrid(*(np.arange(-n, n + 1),) * 3, indexing="ij"), -1).reshape(-1, 3)
-        g = g[np.any(g != 0, 1) & (g.sum(1) % 2 == 0) & (np.linalg.norm(g, axis=1) / a <= 1.0)]
-        self.assertEqual(len(r["hkl"]), len(g))
+        self.assertTrue(np.all(np.diff(r["ds"]) >= -1e-9))  # equal d* to rounding: sorted as rings accepts
 
-    def test_rings_do_not_chain(self):
-        ring, ring_ds = anri.crystal.structure.rings([1.0, 1.00005, 1.0001, 1.00015, 1.0002], tol=1e-4)
-        np.testing.assert_array_equal(ring, [0, 0, 0, 1, 1])  # a ring is within tol of its first member
-        np.testing.assert_allclose(ring_ds, [1.0, 1.00015])
+    def test_rings_need_sorted_ds(self):
+        """rings refuses unsorted d* (its rule: tests/theory/test_crystal.py::test_rings_code)."""
         with self.assertRaises(ValueError):
             anri.crystal.structure.rings([1.0, 0.5])
 
 
 class TestStructureFactors(unittest.TestCase):
-    def test_special_positions_and_warning(self):
+    def test_warns_without_thermal_factors(self):
+        """A CIF without thermal factors warns (values: tests/theory/test_crystal.py::test_structure_factors_code)."""
         xtl = read_cif("Si.cif")
-        lp, sg, wl = anri.crystal.structure.lattice_parameters(xtl), anri.crystal.structure.space_group(xtl), 0.3
-        r = anri.crystal.structure.reflections(lp, sg, wl, 1.0)
-        with self.assertWarns(UserWarning):  # this CIF has no thermal factors
-            F2 = anri.crystal.structure.structure_factors(xtl, r["hkl"], wl)
-        # {222} of diamond is allowed by the space group but zero from the atom positions
-        zero = F2 < 1e-6 * F2.max()
-        self.assertTrue(zero.any())
-        self.assertTrue(all(sorted(np.abs(h)) == [2, 2, 2] or np.all(np.abs(h) % 2 == 0) for h in r["hkl"][zero]))
-        self.assertTrue(np.all(F2[np.all(np.abs(r["hkl"]) == 1, 1)] > 0))  # {111} is strong
+        with self.assertWarns(UserWarning):
+            anri.crystal.structure.structure_factors(xtl, np.array([[1, 1, 1]]), 0.3)
 
     def test_no_warning_with_thermal_factors(self):
         from Dans_Diffraction.classes_crystal import Crystal as DansCrystal

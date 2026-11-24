@@ -119,3 +119,125 @@ def test_tolerance_code():
     args = (etas, ring_j, ring_tth, ring_hw, delta, frame)
     agree(np.array([want_e]), lambda *z: match_tolerances(*z)[0], *args, rtol=rtol, atol=0)
     agree(np.array([want_o]), lambda *z: match_tolerances(*z)[1], *args, rtol=rtol, atol=0)
+
+
+# ---------------------------------------------------------------------------------------------- the cubochoric grid
+
+
+def _ball_pyramid(x: sp.Expr, y: sp.Expr, z: sp.Expr) -> sp.Matrix:
+    """srch-cubochoric on the pyramid where z is the largest coordinate and |y| <= |x|: the scaling, the square to
+    curved square map and the inverse Lambert projection."""
+    sc = (sp.pi / 6) ** sp.Rational(1, 6)
+    X, Y, Zs = sc * x, sc * y, sc * z
+    beta = sp.pi ** sp.Rational(5, 6) / (2 * 6 ** sp.Rational(1, 6))
+    prek = (3 * sp.pi / 4) ** sp.Rational(1, 3) * 2 ** sp.Rational(1, 4) / beta
+    t = sp.pi / 12 * Y / X
+    q = prek * X / sp.sqrt(sp.sqrt(2) - sp.cos(t))
+    T1, T2 = (sp.sqrt(2) * sp.cos(t) - 1) * q, sp.sqrt(2) * sp.sin(t) * q
+    cc = T1**2 + T2**2
+    root = sp.sqrt(1 - sp.pi * cc / (24 * Zs**2))
+    return sp.Matrix([T1 * root, T2 * root, sp.sqrt(6 / sp.pi) * Zs - sp.sqrt(sp.pi) * cc / sp.sqrt(24) / Zs])
+
+
+def _ball(p: tuple) -> sp.Matrix:
+    """srch-cubochoric at a point of the cube: the pyramid of its largest coordinate (that one taken as z, the others
+    in cyclic order), the larger of the other two as x."""
+    i = max(range(3), key=lambda k: abs(p[k]))
+    if all(v == 0 for v in p):
+        return sp.zeros(3, 1)
+    order = [(i + 1) % 3, (i + 2) % 3, i]
+    x, y, z = (p[k] for k in order)
+    if x == 0 and y == 0:
+        h = sp.Matrix([0, 0, sp.sqrt(6 / sp.pi) * (sp.pi / 6) ** sp.Rational(1, 6) * z])
+    elif abs(y) <= abs(x):
+        h = _ball_pyramid(x, y, z)
+    else:
+        h = _ball_pyramid(y, x, z)
+        h = sp.Matrix([h[1], h[0], h[2]])
+    out = [0, 0, 0]
+    for k, v in zip(order, h):
+        out[k] = v
+    return sp.Matrix(out)
+
+
+def test_cubochoric_volume():
+    """srch-cubochoric: on each pyramid the map from the cube of edge pi^(2/3) has Jacobian determinant 1, the cube's
+    volume pi^2 being the ball's, 4/3 pi (3 pi / 4); and a face of the cube goes onto the ball's surface. So the grid's
+    points are spread evenly in volume, as [Rosca2014]_ constructs it."""
+    x, y, z = sp.symbols("x y z", positive=True)
+    h = _ball_pyramid(x, y, z)
+    u = sp.symbols("u", positive=True)
+    det = h.jacobian([x, y, z]).det()
+    assert sp.simplify(det.subs(y, 12 * x * u / sp.pi) - 1) == 0
+    face = h.subs(z, sp.pi ** sp.Rational(2, 3) / 2)
+    assert sp.simplify((face.dot(face) - (3 * sp.pi / 4) ** sp.Rational(2, 3)).subs(y, 12 * x * u / sp.pi)) == 0
+
+
+def test_cubochoric_code():
+    """cubochoric_quaternions against srch-cubochoric and the homochoric angle, |h|^3 = 3/4 (w - sin w), at every point
+    of a 4 x 4 x 4 grid (every pyramid, both halves of each, the edges and the identity)."""
+    from anri.crystal.orientation import cubochoric_quaternions
+
+    N = 2
+    a = sp.pi ** sp.Rational(2, 3) / 2
+    g = [k * a / N for k in range(-N + 1, N + 1)]
+    pts = [(gx, gy, gz) for gx in g for gy in g for gz in g]  # the code's order (meshgrid, ij)
+    got = cubochoric_quaternions(N)
+    w_ = sp.symbols("w", positive=True)
+    for p, q in zip(pts, got):
+        h = _ball(p)
+        n = sp.sqrt(h.dot(h))
+        if n == 0:
+            want = np.array([1.0, 0, 0, 0])
+            w = 0.0
+        else:
+            w = sp.nsolve(sp.Rational(3, 4) * (w_ - sp.sin(w_)) - n**3, w_, 2.0, prec=40)
+            want = np.array([float(sp.N(sp.cos(w / 2), 30))] + [float(sp.N(sp.sin(w / 2) * c / n, 30)) for c in h])
+        # the map: ~30 operations on coordinates <= 2 (16 ulps x 2 covers them); the angle by 60 bisections
+        # (pi 2^-60) of w - sin w, whose rounding, eps w, moves w by eps w / (3/4 (1 - cos w)) ~ 2.7 eps / w; the
+        # quaternion moves by half that
+        wf = float(w)
+        dw = np.pi * 2.0**-60 + (2.7 * EPS / wf if wf > 0 else 0.0)
+        np.testing.assert_allclose(q, want, rtol=0, atol=2 * 16 * EPS * 2 + dw / 2)
+
+
+def _ops(name: str) -> np.ndarray:
+    from anri.crystal.orientation import laue_rotations
+    from anri.crystal.structure import B_matrix, symmetry_matrices
+
+    lp, sg = {"m-3m": ([3.6] * 3 + [90] * 3, 225), "6/mmm": ([2.95, 2.95, 4.68, 90, 90, 120], 194),
+              "-3": ([5.0, 5.0, 14.0, 90, 90, 120], 148), "2/m": ([4.0, 5.0, 6.0, 90, 100, 90], 14),
+              "mmm": ([4.0, 5.0, 6.0, 90, 90, 90], 62), "-1": ([4.0, 5.0, 6.0, 80, 100, 95], 2)}[name]  # fmt: skip
+    return laue_rotations(symmetry_matrices(sg), B_matrix(lp))
+
+
+def test_grid_delta_measured():
+    """**Measured** (search.rst, Anri's choice): every orientation is within delta of a grid point, and every grid point
+    is in the zone or its half-step shell. Random orientations stand for "every": this is a measurement, not a proof."""
+    from anri.crystal.orientation import disorientation, orientation_grid
+    from anri.maths.rotation import random_rotations
+
+    test = random_rotations(300, np.random.default_rng(5))
+    for name, step in (("m-3m", 6.0), ("6/mmm", 8.0), ("-3", 10.0), ("2/m", 12.0)):
+        S = _ops(name)
+        U, delta = orientation_grid(step, S)
+        U = U.astype(float)
+        angle = np.degrees(np.arccos(np.clip((np.trace(U, axis1=1, axis2=2) - 1) / 2, -1, 1)))
+        least = disorientation(np.repeat(np.eye(3)[None], len(U), 0), U, S)
+        assert (angle - least).max() <= 0.5 * step * (1 + 1e-6)  # in the zone, or its shell
+        nearest = np.array([disorientation(np.repeat(t[None], len(U), 0), U, S).min() for t in test])
+        assert nearest.max() <= delta
+
+
+def test_zone_sizes():
+    """A fundamental zone holds 1 / |group| of all rotations: the reduced cubochoric grid holds that share of the whole
+    grid's points, plus its half-step shell (which adds at most the shell's share, under 30% at 6 deg)."""
+    from anri.crystal.orientation import cubochoric_quaternions, orientation_grid
+
+    n_all = len(cubochoric_quaternions(int(np.round(131.97049 / (6.0 - 0.03732)))))
+    for name in ("6/mmm", "mmm", "-1"):
+        S = _ops(name)
+        U, _ = orientation_grid(6.0, S)
+        ratio = len(U) * len(S) / n_all
+        assert 1.0 <= ratio < 1.3
+

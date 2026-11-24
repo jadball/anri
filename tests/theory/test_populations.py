@@ -109,6 +109,55 @@ def test_rotation_angle_code():
     agree(want, rotation_angle, R, **tol(1.0))
 
 
+def _cubic_ops() -> list:
+    """The 24 rotations of the cube: signed permutation matrices of determinant 1, exactly."""
+    import itertools
+
+    out = []
+    for perm in itertools.permutations(range(3)):
+        for signs in itertools.product((1, -1), repeat=3):
+            M = sp.zeros(3, 3)
+            for i, (j, sg) in enumerate(zip(perm, signs)):
+                M[i, j] = sg
+            if M.det() == 1:
+                out.append(M)
+    return out
+
+
+def test_closest_equivalent_code():
+    """closest_equivalent, disorientation and to_fundamental_zone against their definitions, with exact rotations and
+    the cube's 24 rotations: the equivalent U S with the largest trace(U_ref^T U S) (the smallest angle,
+    test_rotation_angle_of_cayley: trace = 1 + 2 cos), its angle, the least angle over S, and U's own least."""
+    from anri.crystal.orientation import closest_equivalent, disorientation, to_fundamental_zone
+
+    ops = _cubic_ops()
+    opsv = np.array([evaluate(S, {}) for S in ops])
+    g = rng(16)
+    R = [cayley(sp.Matrix([sp.Rational(int(x), 7) for x in g.integers(-9, 9, 3)])) for _ in range(3)]
+    Uref = cayley(sp.Matrix([sp.Rational(1, 9), sp.Rational(-1, 5), sp.Rational(2, 11)]))
+    def angle(M: sp.Matrix) -> sp.Expr:  # atan2(|axial|, (trace - 1) / 2), test_rotation_angle_of_cayley
+        ax = sp.Matrix([M[2, 1] - M[1, 2], M[0, 2] - M[2, 0], M[1, 0] - M[0, 1]]) / 2
+        return sp.atan2(sp.sqrt(ax.dot(ax)), (M.trace() - 1) / 2)
+
+    want_U, want_a, want_dis, want_fz = [], [], [], []
+    for U in R:
+        tr = [(Uref.T * U * S).trace() for S in ops]
+        best = U * ops[max(range(24), key=lambda k: tr[k])]
+        want_U.append(evaluate(best, {}))
+        want_a.append(float(sp.N(angle(Uref.T * best), 30)))
+        want_dis.append(float(sp.N(sp.deg(min((angle(Uref.T * U * S) for S in ops), key=lambda e: sp.N(e))), 30)))
+        fz = U * ops[max(range(24), key=lambda k: (U * ops[k]).trace())]
+        want_fz.append(evaluate(fz, {}))
+    Uv = np.array([evaluate(U, {}) for U in R])
+    Urv = evaluate(Uref, {})
+    # products of rotations (entries <= 1) and atan2 of a unit pair: a few ulps (as test_rotation_angle_code); the
+    # disorientation in degrees, up to 63
+    agree(np.array(want_U), lambda *z: closest_equivalent(*z)[0], np.broadcast_to(Urv, Uv.shape), Uv, opsv, **tol(3.0))
+    agree(np.array(want_a), lambda *z: closest_equivalent(*z)[1], np.broadcast_to(Urv, Uv.shape), Uv, opsv, **tol(3.0))
+    agree(np.array(want_dis), disorientation, np.broadcast_to(Urv, Uv.shape), Uv, opsv, **tol(3.0 * 180 / np.pi))
+    agree(np.array(want_fz), to_fundamental_zone, Uv, opsv, **tol(3.0))
+
+
 def test_isotropic_rms_angle():
     """A rotation vector with independent components of standard deviation sigma has E|delta|^2 = 3 sigma^2: the
     rms angle is sqrt(3) sigma, so sig_rot = spread / sqrt(3)."""
