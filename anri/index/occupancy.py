@@ -537,6 +537,34 @@ def backward(
 
 
 @jax.jit
+def step_decrease(f: jax.Array, f_new: jax.Array, norm: jax.Array) -> jax.Array:
+    """First-order decrease of the deviance along one MLEM update ``f -> f_new``: ``2 sum norm (f_new - f)^2 / f``.
+
+    ``norm`` is the update's ``A^T 1``. The update is ``M^-1`` times the log-likelihood's gradient in the metric
+    ``M = diag(norm / f)``, so this is the deviance's directional derivative along it, with the sign changed
+    (theory page, likelihood: lik-converged): a sum of non-negative terms, with none of the cancellation of a
+    difference of two deviances. Occupancies at 0 stay at 0 and add nothing.
+    """
+    df = f_new - f
+    return 2.0 * jnp.sum(jnp.where(f > 0, norm * df * df / jnp.where(f > 0, f, 1.0), 0.0))
+
+
+def remaining_deviance(delta0: float, delta1: float) -> float:
+    """Estimate how much further the deviance falls, from two consecutive MLEM updates' :func:`step_decrease`.
+
+    Near the optimum a mode contracted by rho per update has ``delta1 / delta0 = rho^2`` and has
+    ``delta1 / (2 (1 - rho))`` of deviance left after the second update (theory page, likelihood: lik-converged).
+    Infinite while the decrease does not fall (rho >= 1). An estimate, not a bound: with several modes, rho is a
+    weighted mean of theirs, and the slowest is underestimated.
+    """
+    if delta1 <= 0.0:
+        return 0.0
+    if delta0 <= 0.0 or delta1 >= delta0:
+        return float("inf")
+    return delta1 / (2.0 * (1.0 - (delta1 / delta0) ** 0.5))
+
+
+@jax.jit
 def _squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array, step_max: float) -> tuple[jax.Array, jax.Array]:
     """SQUAREM's extrapolation from f and two MLEM steps f1, f2 (r = f1 - f and v = f2 - 2 f1 + f fused, not stored)."""
     nr = jnp.sqrt(jnp.sum((f1 - f) ** 2))
@@ -548,9 +576,9 @@ def _squarem_point(f: jax.Array, f1: jax.Array, f2: jax.Array, step_max: float) 
 
 def squarem(
     step: Callable, f: jax.Array, n_iter: int, log: Callable = print, label: str = "MLEM",
-    callback: Callable | None = None,
-) -> jax.Array:  # fmt: skip
-    """Iterate an MLEM update ``step``, accelerated by SQUAREM, logging the deviance.
+    callback: Callable | None = None, tol: float = 1.0,
+) -> tuple[jax.Array, dict]:  # fmt: skip
+    """Iterate an MLEM update ``step``, accelerated by SQUAREM, until it converges or ``n_iter`` iterations.
 
     Each iteration is a SQUAREM step (Varadhan and Roland, 2008) [1]_: two MLEM updates f1, f2
     from f; the point ``f - 2 a r + a^2 v`` with ``r = f1 - f``, ``v = f2 - 2 f1 + f`` and ``a = -norm(r) / norm(v)``
@@ -563,26 +591,37 @@ def squarem(
     iteration costs 3 MLEM updates and goes about as far as 10 or more. It holds at most four copies of f at once. Used
     by the voxel fit (:func:`mlem`) and the global orientation fit (:func:`anri.index.orientations.fit`).
 
+    Convergence: the two plain MLEM updates of each iteration give the deviance still to fall,
+    :func:`remaining_deviance` of their :func:`step_decrease`. The fit stops once that is at most ``tol``, a deviance
+    (twice a log-likelihood ratio) too small for the data to tell from the optimum. Stopping at ``n_iter`` first is a
+    filter (theory page, likelihood), reported as not converged.
+
     Parameters
     ----------
     step
-        One MLEM update: ``step(f) -> (f_new, deviance of f)``
+        One MLEM update: ``step(f) -> (f_new, deviance of f, step_decrease(f, f_new, A^T 1))``, both floats on the host
     f
         Starting occupancies (any shape)
     n_iter
-        SQUAREM iterations (3 MLEM updates each)
+        At most this many SQUAREM iterations (3 MLEM updates each)
     log
-        Progress messages, one per iteration: its SQUAREM step length, whether the step was taken, and the deviance
+        Progress messages, one per iteration: its SQUAREM step length, whether the step was taken, the deviance, and
+        the estimated deviance still to fall
     label
         Name of the fit in the messages
     callback
         Called as ``callback(iteration, f, deviance)`` after each iteration (1, 2, ...), with the deviance before its
         last MLEM update, e.g. to record the fit's progress
+    tol
+        Stop once the estimated deviance still to fall is at most this; 0: run all ``n_iter`` (unless exactly converged)
 
     Returns
     -------
-    jax.Array
+    f: jax.Array
         The occupancies
+    info: dict
+        "iterations" run, "remaining" (the estimated deviance still to fall after the last; inf if none ran or the
+        decrease did not fall), "converged" (remaining <= tol)
 
     References
     ----------
@@ -591,12 +630,14 @@ def squarem(
        https://doi.org/10.1111/j.1467-9469.2007.00585.x
     """
     step_max = float("inf")  # no cap until a step is refused
+    remaining, it = float("inf"), 0
     for it in range(1, n_iter + 1):
-        f1, _ = step(f)
-        f2, dev1 = step(f1)
+        f1, _, delta0 = step(f)
+        f2, dev1, delta1 = step(f1)
+        remaining = remaining_deviance(delta0, delta1)  # at f1: f ends no worse than f2 or fn, each below f1
         fx, a = _squarem_point(f, f1, f2, step_max)
         del f1  # at most 4 copies of the occupancies at once
-        fn, devx = step(fx)
+        fn, devx, _ = step(fx)
         del fx
         taken = devx <= dev1
         f, dev = (fn, devx) if taken else (f2, dev1)  # never worse than plain MLEM
@@ -605,19 +646,32 @@ def squarem(
             callback(it, f, dev)
         # every iteration: the deviances are on the host already, and a is a scalar computed before devx
         length = float(-a)
-        log(f"  {label} {it} (SQUAREM step {length:.1f}{'' if taken else ', not taken'}): deviance {dev:.6g}")
+        log(f"  {label} {it} (SQUAREM step {length:.1f}{'' if taken else ', not taken'}): deviance {dev:.6g}, "
+            f"~{remaining:.3g} to go")  # fmt: skip
+        if remaining <= tol:
+            break
         if not taken:
             step_max = max(1.0, length / 4)
         elif length >= step_max * (1 - 1e-6):
             step_max *= 4
-    return f
+    return f, {"iterations": it, "remaining": remaining, "converged": remaining <= tol}
+
+
+def convergence_message(label: str, info: dict, tol: float) -> str:
+    """One line on how a :func:`squarem` fit ended, for the log (and so the stage's provenance)."""
+    if info["converged"]:
+        return f"{label}: converged in {info['iterations']} iterations (~{info['remaining']:.3g} of deviance to go <= {tol:g})"
+    return (
+        f"{label}: NOT converged after {info['iterations']} iterations (~{info['remaining']:.3g} of deviance to go > "
+        f"{tol:g}): stopped early, a filter; raise the iterations"
+    )
 
 
 def mlem(
     d: jax.Array, cand: jax.Array, pred: tuple, ring_j: jax.Array, pos: jax.Array, scan: dict, dims: tuple,
     f0: jax.Array, n_iter: int, vb: int, log: Callable = print, censor: float = 0.0, callback: Callable | None = None,
-    saturated: jax.Array | None = None,
-) -> jax.Array:  # fmt: skip
+    saturated: jax.Array | None = None, tol: float = 1.0,
+) -> tuple[jax.Array, dict]:  # fmt: skip
     """Fit occupancies by MLEM (``f <- f A^T(d / A f) / A^T 1``), accelerated by SQUAREM (:func:`squarem`).
 
     MLEM is the EM algorithm of emission tomography (Shepp and Vardi, 1982 [1]_; Lange and Carson, 1984 [2]_).
@@ -635,7 +689,7 @@ def mlem(
     f0
         [Nv, K] starting occupancies
     n_iter
-        SQUAREM iterations (3 MLEM updates each)
+        At most this many SQUAREM iterations (3 MLEM updates each)
     log
         Progress messages
     censor
@@ -644,11 +698,15 @@ def mlem(
         See :func:`squarem`
     saturated
         Indices of the bins holding a saturated pixel, censored from above (:func:`censored_ratio`)
+    tol
+        Convergence: the estimated deviance still to fall (:func:`squarem`)
 
     Returns
     -------
-    jax.Array
+    f: jax.Array
         [Nv, K] occupancies
+    info: dict
+        How the fit ended (:func:`squarem`)
 
     References
     ----------
@@ -660,12 +718,13 @@ def mlem(
     n_cells = d.shape[0]
     norm = jnp.maximum(backward(jnp.ones(n_cells, d.dtype), cand, pred, ring_j, pos, scan, dims, vb), 1e-30)
 
-    def step(f: jax.Array) -> tuple:  # one MLEM update, and the deviance of the occupancies it started from
+    def step(f: jax.Array) -> tuple:  # one MLEM update; the deviance it started from, and its decrease (one transfer)
         Af = forward(f, cand, pred, ring_j, pos, scan, dims, n_cells, vb)
         f_new = f * backward(censored_ratio(d, Af, censor, saturated), cand, pred, ring_j, pos, scan, dims, vb) / norm
-        return f_new, float(deviance(d, Af, censor, saturated))
+        dev, dec = np.asarray(jnp.stack([deviance(d, Af, censor, saturated), step_decrease(f, f_new, norm)]))
+        return f_new, float(dev), float(dec)
 
-    return squarem(step, f0, n_iter, log, callback=callback)
+    return squarem(step, f0, n_iter, log, callback=callback, tol=tol)
 
 
 @partial(jax.jit, static_argnames=("k2",))
@@ -783,8 +842,9 @@ def fit_occupancy(
     absorb: tuple | None = None,
     saturated: ArrayLike | None = None,
     given: tuple | None = None,
+    tol: float = 1.0,
 ) -> tuple:
-    """Fit sparse occupancies: candidates per voxel, then MLEM.
+    """Fit sparse occupancies: candidates per voxel, then MLEM until it converges.
 
     Parameters
     ----------
@@ -802,7 +862,7 @@ def fit_occupancy(
     k
         Candidates per voxel (at most the number of orientations; fewer orientations, fewer candidates)
     n_iter
-        MLEM iterations (SQUAREM, :func:`mlem`)
+        At most this many MLEM iterations (SQUAREM, :func:`mlem`)
     block_bytes
         Memory for one block of voxels' system entries
     qc
@@ -823,6 +883,8 @@ def fit_occupancy(
     given
         ``(f0, cand)``, each [Nv, k]: each voxel's own candidates (-1 for an empty slot) and starting occupancies,
         instead of picking them (k is then not used), e.g. from :func:`inherit_candidates`
+    tol
+        Convergence: the estimated deviance still to fall (:func:`squarem`); how the fit ended is logged
     log
         Progress messages
 
@@ -872,9 +934,10 @@ def fit_occupancy(
         f0, cand = candidates(H, pred, ring_j, pos_p, scan, dims, k, vb_all, qc=qc, log=log)
     log(f"candidates: {time.perf_counter() - t0:.1f} s")
     t0 = time.perf_counter()
-    f = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor, callback=callback,
-             saturated=sat)  # fmt: skip
-    log(f"MLEM {n_iter} iterations: {time.perf_counter() - t0:.1f} s")
+    f, info = mlem(H, cand, pred, ring_j, pos_p, scan, dims, f0, n_iter, vb, log=log, censor=censor,
+                   callback=callback, saturated=sat, tol=tol)  # fmt: skip
+    log(convergence_message("MLEM", info, tol))
+    log(f"MLEM {info['iterations']} iterations: {time.perf_counter() - t0:.1f} s")
     if return_model:
         mu = forward(f, cand, pred, ring_j, pos_p, scan, dims, H.shape[0], vb)
         return np.asarray(f)[:nv], np.asarray(cand)[:nv], np.asarray(mu)

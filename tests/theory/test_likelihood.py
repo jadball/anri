@@ -13,6 +13,7 @@ from tests.theory.common import (
     evaluate,
     is_zero,
     rng,
+    tol,
 )
 
 
@@ -334,3 +335,69 @@ def test_likelihood_ratio_code():
     with float64():
         agree(np.array(want), code, jnp.asarray(d_v), jnp.asarray(mu_v), jnp.asarray(occ[:, None]),
               jnp.asarray(U[:, None]), *args, rtol=rtol, atol=0)  # fmt: skip
+
+
+def test_mlem_is_metric_gradient():
+    """lik-converged: for any bin terms D_b(mu_b) whose ratio is rho_b = 1 - D_b'/2 (lik-censored), the MLEM update
+    f * A^T rho / A^T 1 - f is M^-1 grad(l), l = -D/2, M = diag(A^T 1 / f); and -grad(D) . df =
+    2 sum (A^T 1) df^2 / f. Symbolic, 3 bins x 2 unknowns, bin terms with free coefficients."""
+    A = sp.Matrix(3, 2, sp.symbols("a0:6", positive=True))
+    f = sp.Matrix(sp.symbols("f0:2", positive=True))
+    mu = A * f
+    x = sp.Symbol("x", positive=True)
+    c = sp.symbols("c0:9", real=True)  # generic bin terms (any coefficients): a recorded, an empty, a saturated bin
+    Db = [c[3 * b] * x + c[3 * b + 1] * x**2 + c[3 * b + 2] * sp.log(x) for b in range(3)]
+    D = sum(Db[b].subs(x, mu[b]) for b in range(3))
+    rho = sp.Matrix([1 - sp.diff(Db[b], x).subs(x, mu[b]) / 2 for b in range(3)])  # each bin's EM ratio
+    norm = A.T * sp.ones(3, 1)
+    f_new = sp.Matrix([f[j] * (A.T * rho)[j] / norm[j] for j in range(2)])
+    df = f_new - f
+    grad_l = sp.Matrix([-sp.diff(D, f[j]) / 2 for j in range(2)])
+    M = sp.diag(*[norm[j] / f[j] for j in range(2)])
+    assert is_zero(sp.simplify(df - M.inv() * grad_l))
+    grad_D = sp.Matrix([sp.diff(D, f[j]) for j in range(2)])
+    delta = 2 * sum(norm[j] * df[j] ** 2 / f[j] for j in range(2))
+    assert is_zero(sp.simplify(-(grad_D.T * df)[0] - delta))
+
+
+def test_remaining_deviance():
+    """lik-converged: near the optimum D - D* = e^T H e and MLEM is e -> (I - M^-1 H) e. On a mode with
+    M^-1 H v = (1 - rho) v the step is -(1 - rho) e, delta = 2 (1 - rho)^2 e^T M e, D - D* = (1 - rho) e^T M e =
+    delta / (2 (1 - rho)), and the next delta is rho^2 times this one. M-orthogonal modes add, and each
+    delta_m / (2 (1 - rho_m)) <= delta_m / (2 (1 - rho_max))."""
+    rho, m, e = sp.symbols("rho m e", positive=True)
+    H = (1 - rho) * m  # one mode: M^-1 H = 1 - rho
+    step = -(H / m) * e
+    delta = 2 * m * step**2
+    gap = e * H * e
+    assert is_zero(sp.simplify(gap - delta / (2 * (1 - rho))))
+    e2 = e + step
+    assert is_zero(sp.simplify(2 * m * ((H / m) * e2) ** 2 - rho**2 * delta))
+    # two M-orthogonal modes: the gaps add, and the slowest mode bounds them
+    r1, r2, d1, d2 = sp.symbols("r1 r2 d1 d2", positive=True)
+    gap2 = d1 / (2 * (1 - r1)) + d2 / (2 * (1 - r2))
+    bound = (d1 + d2) / (2 * (1 - r2))  # r2 the slowest: r1 <= r2 < 1
+    t = sp.Symbol("t", nonnegative=True)  # r1 = r2 - t
+    # bound - gaps = d1 t / (2 (1 - r2) (1 - r2 + t)) >= 0 for t >= 0, r2 < 1
+    assert is_zero(sp.simplify((bound - gap2).subs(r1, r2 - t) - d1 * t / (2 * (1 - r2) * (1 - r2 + t))))
+
+
+def test_remaining_deviance_code():
+    """remaining_deviance and step_decrease against lik-converged."""
+    import jax.numpy as jnp
+
+    from anri.index.occupancy import remaining_deviance, step_decrease
+
+    r = rng(11)
+    for rho in (0.1, 0.5, 0.9, 0.99):
+        d0 = float(r.uniform(1, 100))
+        d1 = rho**2 * d0
+        want = d1 / (2 * (1 - rho))
+        np.testing.assert_allclose(remaining_deviance(d0, d1), want, rtol=1e-12)
+    assert remaining_deviance(1.0, 1.0) == float("inf") and remaining_deviance(1.0, 0.0) == 0.0
+    f = r.uniform(0.1, 2, 20)
+    f[3] = 0.0  # an occupancy at 0 stays there and adds nothing
+    fn = f * r.uniform(0.5, 1.5, 20)
+    norm = r.uniform(1, 5, 20)
+    want = 2 * np.sum(np.where(f > 0, norm * (fn - f) ** 2 / np.where(f > 0, f, 1.0), 0.0))
+    agree(np.array(want), lambda *a: step_decrease(*(jnp.asarray(x) for x in a)), f, fn, norm, **tol(want, 64))

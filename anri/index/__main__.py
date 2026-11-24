@@ -145,10 +145,11 @@ def _fit_options(p: argparse.ArgumentParser) -> None:
         dest="n_iter",
         type=int,
         default=10,
-        help="MLEM iterations at each level, SQUAREM-accelerated (3 MLEM updates each; default 10: thin features such as twins "
-        "converge long after the deviance flattens, while fewer keep the populations' means a little closer to the truth "
-        "between grid points)",
+        help="at most this many MLEM iterations at each level, SQUAREM-accelerated (3 MLEM updates each; default 10). A "
+        "level that reaches it before --tol is logged as not converged: stopping early is a filter",
     )
+    p.add_argument("--tol", type=float, default=1.0, help="stop each level's MLEM once the estimated deviance still to "
+                   "fall is at most this (default 1: a likelihood ratio the data cannot tell from the optimum)")  # fmt: skip
     p.add_argument("--cand", type=int, default=256, help="candidate orientations per voxel (default 256)")
     p.add_argument("--refine-to", type=float, default=0.3, help="refine the filter's orientations on the row-summed "
                    "data until their worst-case error is at most this (deg), before any voxel is fitted (default 0.3, "
@@ -323,7 +324,7 @@ def main() -> None:
         source = ix.stages.stage_filter(source, out, prune=args.prune, min_comp=args.min_comp, min_lr=args.min_lr,
                                  keep=args.keep, censor=args.censor, command=command, log=log)  # fmt: skip
     if cmd in ("fit", "run"):
-        source = ix.stages.stage_fit(source, out, y0=args.y0, drift=args.drift, cand=args.cand, n_iter=args.n_iter,
+        source = ix.stages.stage_fit(source, out, y0=args.y0, drift=args.drift, cand=args.cand, n_iter=args.n_iter, tol=args.tol,
                               refine_to=args.refine_to, levels=args.levels, min_share=args.min_share,
                               per_voxel=args.per_voxel, beam=args.beam, mask=args.mask, pad=args.pad, absorption=not args.no_absorption, mu=args.mu, block_gb=args.block_gb, censor=args.censor,
                               command=command, log=log)  # fmt: skip

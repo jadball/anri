@@ -812,7 +812,7 @@ def stage_filter(
 # --------------------------------------------------------------------------------------------------------------- 4. fit
 def stage_fit(
     filter_file: str, out: str | None = None, *, y0: float | str | None = None, drift: str | None = None,
-    cand: int = 256, n_iter: int = 10,
+    cand: int = 256, n_iter: int = 10, tol: float = 1.0,
     refine_to: float = 0.3, levels: int = 1, min_share: float = 0.01, per_voxel: int = 16, beam: float = 0.0,
     mask: str | None = "disc", pad: float = 0.0, absorption: bool = True, mu: float | None = None,
     block_gb: float = 1.0, censor: float | None = None, save_model: bool = False, command: str | None = None,
@@ -849,7 +849,11 @@ def stage_fit(
     cand
         Candidate orientations per voxel
     n_iter
-        MLEM iterations at each level, SQUAREM-accelerated (3 MLEM updates each)
+        At most this many MLEM iterations at each level, SQUAREM-accelerated (3 MLEM updates each). A level that
+        reaches it before converging is logged as not converged: stopping early is a filter (theory page, likelihood)
+    tol
+        Each level's MLEM stops once the estimated deviance still to fall is at most this
+        (:func:`anri.index.occupancy.squarem`)
     refine_to
         Worst-case orientation error (deg) to refine the filter's orientations to before any voxel is fitted; 0: not
         refined
@@ -904,7 +908,7 @@ def stage_fit(
         msg = f"levels must be at least 0, not {levels}"
         raise ValueError(msg)
     log, lines = recorder(log)
-    options = {"y0": y0, "drift": drift, "cand": cand, "n_iter": n_iter, "refine_to": refine_to, "levels": levels,
+    options = {"y0": y0, "drift": drift, "cand": cand, "n_iter": n_iter, "tol": tol, "refine_to": refine_to, "levels": levels,
                "min_share": min_share, "per_voxel": per_voxel, "beam": beam, "mask": mask, "pad": pad,
                "absorption": absorption, "mu": mu, "block_gb": block_gb, "censor": censor,
                "save_model": save_model}  # fmt: skip
@@ -959,7 +963,7 @@ def stage_fit(
         dims_k = s["dims"] if len(s["dims"]) < 5 else (*s["dims"][:4], beam_rows(scan_k))  # rows of this level's step
         f_m, cand_m, model = fit_occupancy(H_k, pred, ring_j, pos_k, scan_k, dims_k, cand, n_iter, block, log=log,
                                            return_model=True, censor=censor, callback=callback if last else None,
-                                           absorb=s["absorb"], saturated=sat, given=given)  # fmt: skip
+                                           absorb=s["absorb"], saturated=sat, given=given, tol=tol)  # fmt: skip
         log(f"level {k}: {time.perf_counter() - t0:.0f} s")
         prev = (pos_k, f_m, cand_m)
     assert f_m is not None and cand_m is not None and model is not None  # at least one level

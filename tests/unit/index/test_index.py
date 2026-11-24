@@ -354,8 +354,19 @@ class TestOccupancy(unittest.TestCase):
         d = ix.occupancy.forward(f_true, cand, pred, ring_j, pos, scan, dims, n_cells, 8)
         f0 = jnp.ones((32, 4), jnp.float32)
         devs, msgs = [], []
-        f = ix.occupancy.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 10, 8, log=msgs.append,
-                    callback=lambda it, f_, dev: devs.append(dev))  # fmt: skip
+        f, info = ix.occupancy.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 10, 8, log=msgs.append,
+                    callback=lambda it, f_, dev: devs.append(dev), tol=0.0)  # fmt: skip
+        self.assertEqual(info["iterations"], 10)
+        self.assertEqual(info["converged"], info["remaining"] <= 0.0)
+        # a tolerance the first iteration meets stops there, and says so
+        _, info1 = ix.occupancy.mlem(d, cand, pred, ring_j, pos, scan, dims, f0, 10, 8, log=lambda m: None,
+                                      tol=float("inf"))  # fmt: skip
+        self.assertEqual(info1["iterations"], 1)
+        self.assertTrue(info1["converged"])
+        # the estimate of the deviance still to fall decreases as the fit converges, and is never negative
+        rem = [float(m.split("~")[1].split(" ")[0]) for m in msgs]
+        self.assertTrue(all(x >= 0 for x in rem))
+        self.assertLess(rem[-1], rem[0])
         self.assertEqual(len(devs), 10)
         self.assertEqual(len(msgs), 10)  # one line per iteration
         self.assertTrue(np.all(np.diff(devs) <= 1e-6 * devs[0]))

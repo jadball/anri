@@ -18,7 +18,16 @@ import numpy as np
 from jax.typing import ArrayLike
 
 from .data import coarsen_coverage, eta_omega_corners
-from .occupancy import add_cells, censored_below, censored_ratio, deviance, squarem, take_cells
+from .occupancy import (
+    add_cells,
+    censored_below,
+    censored_ratio,
+    convergence_message,
+    deviance,
+    squarem,
+    step_decrease,
+    take_cells,
+)
 from .search import predict
 
 
@@ -128,6 +137,7 @@ def fit(
     log: Callable = print,
     censor: float = 0.0,
     return_model: bool = False,
+    tol: float = 1.0,
 ) -> tuple:
     """Fit one occupancy per orientation to a row-summed histogram by MLEM, and score each orientation.
 
@@ -158,7 +168,7 @@ def fit(
     etacut
         Reflections with ``|sin eta|`` at or below this are not used
     n_iter
-        SQUAREM iterations (3 MLEM updates each)
+        At most this many SQUAREM iterations (3 MLEM updates each)
     qc
         Orientations per chunk
     log
@@ -168,6 +178,9 @@ def fit(
         (:func:`anri.index.occupancy.censored_ratio`); 0: plain Poisson
     return_model
         Also return the fitted histogram, e.g. for its deviance (:func:`anri.index.occupancy.deviance`)
+    tol
+        Convergence: the estimated deviance still to fall (:func:`anri.index.occupancy.squarem`); how the fit ended
+        is logged
 
     Returns
     -------
@@ -201,11 +214,14 @@ def fit(
             jnp.asarray(rings["ring_j"]), geom, etacut, _coverage(rings, bins[2]))  # fmt: skip
     norm = jnp.maximum(_backward(jnp.ones_like(d), Up, *args, bins), 1e-30)
 
-    def step(g: jax.Array) -> tuple:  # one MLEM update, and the deviance of the occupancies it started from
+    def step(g: jax.Array) -> tuple:  # one MLEM update; the deviance it started from, and its decrease (one transfer)
         mu = _forward(g, Up, *args, bins, d.shape[0])
-        return g * _backward(censored_ratio(d, mu, censor), Up, *args, bins) / norm, float(deviance(d, mu, censor))
+        g_new = g * _backward(censored_ratio(d, mu, censor), Up, *args, bins) / norm
+        dev, dec = np.asarray(jnp.stack([deviance(d, mu, censor), step_decrease(g, g_new, norm)]))
+        return g_new, float(dev), float(dec)
 
-    g = squarem(step, live, n_iter, log, label="orientation MLEM")
+    g, info = squarem(step, live, n_iter, log, label="orientation MLEM", tol=tol)
+    log(convergence_message("orientation MLEM", info, tol))
     mu = _forward(g, Up, *args, bins, d.shape[0])
     lr = _likelihood_ratio(d, mu, g, Up, *args, bins, censor)
     if return_model:
