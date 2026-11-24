@@ -19,9 +19,14 @@ wave-vector is a reciprocal-lattice vector (the Laue condition):
     \vec{Q} = \vec{k}_{\text{out}} - \vec{k}_{\text{in}} = \vec{g},
     \qquad |\vec{k}_{\text{out}}| = |\vec{k}_{\text{in}}| = \frac{1}{\lambda}.
 
-**Definition:** elastic, kinematic scattering.
+**Definition:** elastic, kinematic scattering. Checked against the code, with the wave-vectors of length
+:math:`1/\lambda`, by ``tests/theory/test_diffraction.py::test_q_code``; :math:`\vec{Q}` has the :math:`\eta` of
+:math:`\vec{k}_{\text{out}}` about any beam (``tests/theory/test_diffraction.py::test_eta_of_q``,
+``tests/theory/test_diffraction.py::test_q_tth_eta_code``).
 
-**Code:** :func:`anri.diffract.scatter.k_to_q_lab`, :func:`anri.diffract.scatter.q_lab_to_k_out`.
+**Code:** :func:`anri.diffract.scatter.k_to_q_lab`, :func:`anri.diffract.scatter.q_lab_to_k_out`,
+:func:`anri.diffract.scatter.scale_norm_k`, :func:`anri.diffract.scatter.peak_lab_to_k_out`,
+:func:`anri.diffract.scatter.q_lab_to_tth_eta`.
 
 Squaring :math:`\vec{k}_{\text{out}} = \vec{g} + \vec{k}_{\text{in}}` and using the equal lengths gives the Ewald
 condition

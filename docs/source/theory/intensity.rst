@@ -69,7 +69,8 @@ the polarisation plane's normal :math:`\vec{n} = \hat{e}_h` with probability :ma
 :math:`P = \tfrac{1}{2}(1 + \cos^2 2\theta) - \tfrac{1}{2}\mathcal{J}' \cos 2\rho \sin^2 2\theta` [Kahn1982]_ (eqs.
 13-15, after Azaroff), with :math:`\mathcal{J}' = p` and :math:`\rho = \eta + 90°` measured from the horizontal.
 
-**Code:** :func:`anri.diffract.factors.polarisation`, :func:`anri.diffract.factors.lorentz_polarisation`.
+**Code:** :func:`anri.diffract.factors.polarisation`, :func:`anri.diffract.factors.lorentz_polarisation`
+(``tests/theory/test_intensity.py::test_lorentz_polarisation_code``).
 
 .. _theory_beam_profile:
 
@@ -434,11 +435,25 @@ and each factor has the form of their equation 37,
 
     y_p = \left(1 + 2x + \frac{A x^2}{1 + B x}\right)^{-1/2}, \qquad y = y_p\, y_s,
 
-**Cited:** [BeckerCoppens1974]_ (equations 37, 38, 43, 43a).
+**Cited:** [BeckerCoppens1974]_ (equations 37, 38, 43, 43a). **Proof:** ``tests/theory/test_intensity.py::test_extinction_limits``
+(:math:`y = 1` at :math:`x = 0`, :math:`y` falls with :math:`x`, and :math:`y^2 x \to B/(A + kB)`, :math:`k` the factor on :math:`x`: a perfect crystal's intensity grows as
+:math:`|F|`).
 
 with :math:`A, B` functions of :math:`\cos 2\theta` fitted to their numerical solutions of the Darwin transfer
 equations (equation 38 for :math:`y_p`; 43 and 43a for :math:`y_s`, in :math:`X`, with :math:`2.12 X` for :math:`2X`
-for a Gaussian distribution). The two field components are extinguished separately (their equations 45 and 46). If a
+for a Gaussian distribution). With :math:`c = \cos 2\theta`, the coefficients as Anri uses them (the factor on :math:`x` first):
+
+.. math::
+    :label: int-ext-ab
+
+    y_p:\ 2,\ 0.20 + 0.45c,\ 0.22 - 0.12(0.5 - c)^2; \quad
+    y_s^{\text{G}}:\ 2.12,\ 0.58 + 0.48c + 0.24c^2,\ 0.02 - 0.025c; \quad
+    y_s^{\text{L}}:\ 2,\ 0.025 + 0.285c,\ \begin{cases} 0.15 - 0.2(0.75 - c)^2 & c > 0 \\ -0.45c & c \le 0 \end{cases}.
+
+**Cited:** [BeckerCoppens1974]_ (equations 38, 43, 43a); ``tests/reference/test_tables.py::TestExtinction`` checks that
+they reproduce the paper's tables. **Proof:** ``tests/theory/test_intensity.py::test_extinction_code``.
+
+The two field components are extinguished separately (their equations 45 and 46). If a
 fraction :math:`w` of the incident intensity has its field normal to the scattering plane, so that
 :math:`P = w + (1 - w)\cos^2 2\theta`, the polarisation factor becomes
 
@@ -458,7 +473,12 @@ with :math:`\hat{n}` the scattering plane's normal.
 With absorption, the mean path through the crystal :math:`3R/2` becomes the absorption-weighted mean path
 :math:`\bar{T}_\mu` (their equations 52 and 53b), which is computed for a sphere by quadrature; :math:`x` is unchanged.
 Becker and Coppens find this first-order correction good for :math:`\mu R` up to about 1 at small Bragg angles (their
-equation 54).
+equation 54). The quadrature's mean path is divided by the same quadrature's unweighted mean, not :math:`3R/2` itself,
+so the ratio is exactly 1 without absorption; checked with :eq:`int-ext-q` and :eq:`int-ext-x` by
+``tests/theory/test_intensity.py::test_extinction_parameters_code``.
+
+**Measured:** for :math:`\mu R \le 1` the 12-point rule's ratio is within :math:`7 \times 10^{-4}` of a 64-point rule's
+(the paths' square roots at the sphere's surface limit it).
 
 **Code:** :func:`anri.diffract.factors.extinction_parameters`, :func:`anri.diffract.factors.extinction`,
 :func:`anri.diffract.factors.polarisation_extinction`; per phase in the renderer through the entries' "extinction"

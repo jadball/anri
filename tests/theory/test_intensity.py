@@ -194,6 +194,98 @@ def test_ramp_integrals_code():
         np.testing.assert_allclose(g2, e2, rtol=16 * EPS * (abs(t[2]) + abs(t[3])) / abs(e2))
 
 
+def _ext_coeffs(c: sp.Expr) -> dict:
+    """int-ext-ab: the A, B (and the factor on x) of each extinction factor, at c = cos 2 theta."""
+    b_l = sp.Piecewise((sp.Rational(15, 100) - sp.Rational(2, 10) * (sp.Rational(3, 4) - c) ** 2, c > 0),
+                       (-sp.Rational(45, 100) * c, True))  # fmt: skip
+    return {
+        "primary": (2, sp.Rational(20, 100) + sp.Rational(45, 100) * c,
+                    sp.Rational(22, 100) - sp.Rational(12, 100) * (sp.Rational(1, 2) - c) ** 2),
+        "gaussian": (sp.Rational(212, 100), sp.Rational(58, 100) + sp.Rational(48, 100) * c + sp.Rational(24, 100) * c**2,
+                     sp.Rational(2, 100) - sp.Rational(25, 1000) * c),
+        "lorentzian": (2, sp.Rational(25, 1000) + sp.Rational(285, 1000) * c, b_l),
+    }  # fmt: skip
+
+
+def _y(x: sp.Expr, k: sp.Expr, A: sp.Expr, B: sp.Expr) -> sp.Expr:
+    """int-ext-y."""
+    return (1 + k * x + A * x**2 / (1 + B * x)) ** sp.Rational(-1, 2)
+
+
+def test_extinction_limits():
+    """int-ext-y: y = 1 without extinction; y falls with x wherever A >= 0 and 1 + B x > 0; and y^2 x -> B / A, so
+    y |F|^2 grows as |F| in a perfect crystal (x is proportional to |F|^2)."""
+    x, k, A, B = sp.symbols("x k A B", positive=True)
+    y = _y(x, k, A, B)
+    assert y.subs(x, 0) == 1
+    inner = 1 + k * x + A * x**2 / (1 + B * x)
+    assert is_zero(sp.diff(inner, x) - (k + A * x * (2 + B * x) / (1 + B * x) ** 2))  # > 0: y = inner^(-1/2) falls
+    assert sp.simplify(sp.limit(y**2 * x, x, sp.oo) - B / (A + k * B)) == 0
+
+
+def test_extinction_code():
+    """extinction against int-ext-y with int-ext-ab, primary times Gaussian and times Lorentzian secondary, either side
+    of the Lorentzian's c = 0."""
+    from anri.diffract.factors import extinction
+
+    for x, X, tth in ((0.7, 2.5, 0.3), (12.0, 0.4, 1.2), (3.0, 25.0, 2.0)):
+        c = sp.cos(sp.Float(tth, 30))
+        co = _ext_coeffs(c)
+        for gauss in (True, False):
+            parts = [_y(sp.Float(x, 30), *co["primary"]), _y(sp.Float(X, 30), *co["gaussian" if gauss else "lorentzian"])]
+            want = float(sp.N(parts[0] * parts[1], 30))
+            # each factor: ~16 operations on positive terms (c's own rounding moves A, B by an ulp), its square root
+            # halving the relative error of the sum; the product adds one more
+            with float64():
+                got = float(extinction(x, X, tth, gauss))
+            np.testing.assert_allclose(got, want, rtol=3 * 16 * EPS, atol=0)
+
+
+def test_extinction_parameters_code():
+    """extinction_parameters against int-ext-q and int-ext-x (K = 1, radii in micrometres = 1e4 angstrom), Gaussian and
+    Lorentzian mosaics; without absorption the mean-path ratio is 1 exactly (the same quadrature's two means)."""
+    from anri.diffract.factors import _sphere_path_ratio, extinction_parameters
+
+    r_e = sp.Float("2.8179403262e-5", 30)  # CODATA 2018, angstrom
+    F2, V, lam, r, R, g = 4600.0, 160.2, 0.19, 0.5, 20.0, 300.0
+    tth = np.array([0.1, 0.6, 1.4])
+    for gauss in (True, False):
+        want_x, want_X = [], []
+        for t in tth:
+            s2 = sp.sin(sp.Float(t, 30))
+            Q = (r_e * sp.sqrt(sp.Float(F2, 30)) / sp.Float(V, 30)) ** 2 * sp.Float(lam, 30) ** 3 / s2
+            a = 3 * sp.Float(r * 1e4, 30) * s2 / (2 * sp.Float(lam, 30))
+            alpha = a / sp.sqrt(1 + a**2 / (2 * sp.Float(g, 30) ** 2)) if gauss else a / (1 + 2 * a / (3 * sp.Float(g, 30)))
+            want_x.append(float(sp.N(sp.Rational(2, 3) * Q * a * 3 * sp.Float(r * 1e4, 30) / 2, 30)))
+            want_X.append(float(sp.N(sp.Rational(2, 3) * Q * alpha * 3 * sp.Float(R * 1e4, 30) / 2, 30)))
+        with float64():
+            x, X = extinction_parameters(np.full(3, F2), V, lam, tth, r, R, g, gauss)
+            one = np.array([float(_sphere_path_ratio(0.0, t)) for t in tth])
+        # products and quotients of ~15 rounded factors: 16 ulps relative; the ratio's two quadratures sum 1728
+        # positive terms each (16 ulps of the sum relative, each), and their quotient is 1 up to those
+        np.testing.assert_allclose(np.asarray(x), want_x, rtol=16 * EPS, atol=0)
+        np.testing.assert_allclose(np.asarray(X), want_X, rtol=16 * EPS + 2 * 1728 * EPS, atol=0)
+        np.testing.assert_allclose(one, 1.0, rtol=2 * 1728 * EPS, atol=0)
+
+
+def test_lorentz_polarisation_code():
+    """lorentz_polarisation: int-lor about the omega axis tilted by wedge and chi (frm-stack's W C z), times int-pol."""
+    from anri.diffract.factors import lorentz_polarisation
+
+    k = sp.Matrix(sp.symbols("k0:3", real=True))
+    w, ch, p = 2.0, -1.5, 0.9
+    n = ry(sp.rad(sp.Float(w, 30))) * rx(sp.rad(sp.Float(ch, 30))) * sp.Matrix([0, 0, 1])
+    L = sp.sqrt(k.dot(k)) / sp.Abs(n.dot(sp.Matrix([1, 0, 0]).cross(k)))
+    n2 = k.dot(k)
+    P = (1 + p) / 2 * (1 - k[1] ** 2 / n2) + (1 - p) / 2 * (1 - k[2] ** 2 / n2)
+    for v in _random_k_out(rng(24), 4):
+        want = float(evaluate(L * P, dict(zip(k, v))))
+        # as test_lorentz_code and test_polarisation_code (|sin eta| > 0.2), and the axis's two rotations: 64 + 64 ulps
+        with float64():
+            got = float(lorentz_polarisation(jnp.array([1.0, 0, 0]), jnp.asarray(v), w, ch, p))
+        np.testing.assert_allclose(got, want, rtol=128 * EPS, atol=0)
+
+
 # ---------------------------------------------------------------------------------------------- int-chord
 
 

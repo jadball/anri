@@ -10,6 +10,7 @@ from anri.geom import gonio
 from anri.maths.rotation import rmat_from_axis_angle
 from anri.maths.utils import float64
 from tests.theory.common import (
+    EPS,
     agree,
     beam_frame,
     ev,
@@ -26,6 +27,55 @@ from tests.theory.common import (
 
 X = sp.Matrix([1, 0, 0])
 Z = sp.Matrix([0, 0, 1])
+
+
+def test_q_code():
+    """dif-laue: k_to_q_lab is k_out - k_in and q_lab_to_k_out its inverse; scale_norm_k and peak_lab_to_k_out give
+    wave-vectors of length 1 / lambda, along k and along the ray from origin to peak."""
+    r = rng(22)
+    lam = 0.29
+    for _ in range(3):
+        k_in, k_out, peak, origin = (r.normal(size=3) for _ in range(4))
+        kin = sp.Matrix([sp.Float(x, 30) for x in k_in])
+        kout = sp.Matrix([sp.Float(x, 30) for x in k_out])
+        ray = sp.Matrix([sp.Float(a, 30) - sp.Float(b, 30) for a, b in zip(peak, origin)])
+        L = sp.Float(lam, 30)
+        q = ev(kout - kin, {})
+        # one subtraction or addition per component: an ulp of the larger term
+        agree(q, scatter.k_to_q_lab, k_in, k_out, **tol(np.abs([k_in, k_out]).max(), 1))
+        agree(ev(kout, {}), scatter.q_lab_to_k_out, ev(kout - kin, {}), k_in, **tol(np.abs([k_in, k_out]).max() * 2, 2))
+        # a norm (sum of squares and a root) and two quotients: a few ulps of the result, 1 / lambda
+        agree(ev(kin / sp.sqrt(kin.dot(kin)) / L, {}), scatter.scale_norm_k, k_in, lam, **tol(1 / lam))
+        agree(ev(ray / sp.sqrt(ray.dot(ray)) / L, {}), scatter.peak_lab_to_k_out, peak, origin, lam,
+              **tol(1 / lam * (1 + np.abs([peak, origin]).max() / np.linalg.norm(peak - origin))))  # fmt: skip
+
+
+def test_eta_of_q():
+    """frm-eta for Q: Q = k_out - k_in has the angle eta of k_out about any beam, as k_in is along k and e_h, e_v are
+    normal to it; and |Q| = 2 sin(theta) / lambda (dif-bragg) gives 2 theta = 2 asin(|Q| lambda / 2)."""
+    psi, tilt, lam = sp.symbols("psi tilt lambda", positive=True)
+    k, e_h, e_v = beam_frame(psi, tilt)
+    o = vec("o")
+    q = o - k / lam
+    assert is_zero(q.dot(e_h) - o.dot(e_h)) and is_zero(q.dot(e_v) - o.dot(e_v))
+
+
+def test_q_tth_eta_code():
+    """q_lab_to_tth_eta against 2 asin(|Q| lambda / 2) and atan2(-Q . e_h, Q . e_v) (test_eta_of_q), tilted beam."""
+    psi, tilt = 0.2, -0.1
+    k, e_h, e_v = beam_frame(sp.Float(psi, 30), sp.Float(tilt, 30))
+    lam = sp.Float(0.3, 30)
+    r = rng(23)
+    for _ in range(3):
+        tth, eta = sp.rad(sp.Float(r.uniform(2, 40), 30)), sp.rad(sp.Float(r.uniform(-170, 170), 30))
+        kout = (sp.cos(tth) * k - sp.sin(tth) * sp.sin(eta) * e_h + sp.sin(tth) * sp.cos(eta) * e_v) / lam  # dif-kout
+        q = kout - k / lam
+        want = np.array([float(sp.N(sp.deg(2 * sp.asin(sp.sqrt(q.dot(q)) * lam / 2)), 30)),
+                         float(sp.N(sp.deg(sp.atan2(-q.dot(e_h), q.dot(e_v))), 30))])  # fmt: skip
+        # arcsin has condition tan(theta) in its argument; atan2 of components of size |Q|; degrees up to 180
+        th = float(sp.N(tth, 30)) / 2
+        t = tol(180.0 * (1 + 1 / np.cos(th)) / abs(np.sin(2 * th)) * np.sin(th))
+        agree(want, lambda *z: np.array(scatter.q_lab_to_tth_eta(*z)), ev(q, {}), 0.3, 2.5 * ev(k, {}), **t)
 
 
 def test_ewald():
@@ -140,6 +190,16 @@ def test_omega_code():
             wv = float(evaluate(w.subs(sub), vals))
             expected = np.degrees(np.arctan2(np.sin(wv), np.cos(wv)))
             agree(expected, lambda *a: scatter.omega_solns(*a)[0], gv, etasign, kv, **t)
+            # the core's arcsine and phase, and the branch selected from them
+            core = [float(evaluate(sp.asin(de / sp.sqrt(al**2 + be**2)).subs(sub), vals)),
+                    float(evaluate(sp.atan2(al, be).subs(sub), vals))]  # fmt: skip
+            agree(np.array(core), lambda *a: np.array(scatter.omega_solns_core(*a)[:2]), gv, kv,
+                  **tol(np.radians(t["atol"] / (16 * EPS)) * 1.0))  # fmt: skip
+            agree(expected, scatter.omega_from_core, *core, etasign, **tol(360.0))
+        assert bool(scatter.omega_solns_core(gv, kv)[2])
+    # beyond the Ewald sphere (|delta / R| > 1): no solution
+    with float64():
+        assert not bool(scatter.omega_solns_core(np.array([0.0, 0.0, 3.0]), np.array([1 / 0.3, 0.0, 0.0]))[2])
 
 
 def test_branch_code():
