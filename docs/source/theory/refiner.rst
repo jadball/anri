@@ -668,6 +668,86 @@ constraint would fill two of the three and couple neighbouring voxels. Separated
 in their regions, they are seen in every reflection with all nine numbers (:doc:`limits`), with no tomography to
 weaken them.
 
+Are regions needed?
+-------------------
+
+The regions (boxes and their unions) are the refiner's most delicate part: they come from a model, they must hold
+all of their populations' light, and a region chosen from the data is biased (:eq:`mom-select`). This section asks
+whether a shape-free refiner can do without them, and what their data-dependence actually costs.
+
+**Why regions.** Any statistic summed over a fixed set :math:`R` of cells has the expectation :math:`\sum_k a_{bk}\int
+K_R(\matr{F})\,d\mu_k(\matr{F})` (:eq:`rf-hist`), with :math:`K_R(\matr{F})` the probability that a photon of a
+sub-volume :math:`\matr{F}` lands in :math:`R`. The unknowns of a moment refiner are a few moments of each population
+(:eq:`rf-moments`), not its whole distribution. :math:`\int K_R\,d\mu` is a function of those moments for every
+:math:`\mu` only if :math:`K_R` is constant on the population's support: only if :math:`R` holds all of its light.
+Otherwise two distributions with the same mass and mean put different light in :math:`R`. For an edge of the
+instrument's kernel (width :math:`w`) at distance :math:`c` from a population's mean, one point at the mean and two
+points :math:`\pm e` either side of it differ by
+
+.. math::
+    :label: rf-forced
+
+    \Phi\!\left(\frac{c}{w}\right) - \tfrac{1}{2}\left[\Phi\!\left(\frac{c + e}{w}\right) + \Phi\!\left(\frac{c - e}{w}\right)\right]
+    \ne 0 \quad (c \ne 0,\ e > 0),
+
+while a region holding every photon of both gives each exactly its mass. So a refiner whose unknowns are moments, with
+no model of the sample's spread, needs regions complete for their populations. Fixed bins do not escape this: a bin
+defined on the detector cuts a population's light by its shape, and a bin defined in orientation space (a cell of
+:math:`\matr{F}`, so that it means the same sub-population in every reflection) has, in each reflection, the image
+of the cell widened by the instrument as its complete region: a box.
+
+**Proof:** ``tests/theory/test_refiner.py::test_regions_forced`` (the difference at the page's example; a complete
+region's sum is the mass for any distribution).
+
+**The alternative, and its cost.** Without complete regions, the unknowns must be the distributions themselves,
+resolved finely enough that :math:`K_R` is linear across each cell of :math:`\matr{F}`: each voxel's mass and first
+moment per cell, with the instrument's kernel known. For a cell of half-width :math:`\delta` and a kernel of width
+:math:`w`, the mass of a pixel or frame :math:`K(\mu) = \Phi((b - \mu)/w) - \Phi((a - \mu)/w)` has
+:math:`|K''| \le 2\varphi(1)/w^2` (since :math:`|z\varphi(z)| \le \varphi(1)`), so linearising it across the cell errs
+by
+
+.. math::
+    :label: rf-cell-linear
+
+    |K(\mu + \delta) - K(\mu) - K'(\mu)\,\delta| \le \varphi(1)\left(\frac{\delta}{w}\right)^2 = 0.242\left(\frac{\delta}{w}\right)^2,
+    \qquad
+    n_{\text{cells}} = \left(\frac{\Delta}{2\delta}\right)^3,
+
+of the cell's light, in every cell of the data it reaches; :math:`n_{\text{cells}}` cells cover a population of
+rotation range :math:`\Delta`. At ID11's instrument width (:math:`w \approx 0.01°`), :math:`\delta = w/10` keeps the
+error at :math:`2.4 \times 10^{-3}`, and needs :math:`1.25 \times 10^5` cells for a population spread over 0.1° and
+:math:`1.25 \times 10^8` over 1°, each with ten unknowns, in every voxel. The moments need sixteen. For a deformed
+sample the regions are therefore not a convenience: without them, the problem is the indexer's tomography
+(:doc:`indexing`) at a thousand times its orientation resolution. For a nearly perfect crystal, whose spread is the
+instrument's, the cells are few and the alternative is affordable.
+
+**Proof:** ``tests/theory/test_refiner.py::test_cell_linearisation`` (the bound on :math:`|z\varphi(z)|`; Taylor's
+remainder; the numbers).
+
+**What a data-chosen region costs.** The regions come from the indexer, fitted to the same data, so they are random.
+That alone does not bias the statistic beyond a measurable amount. If the chosen region :math:`\hat{R}` lies between
+two fixed regions, :math:`R_0 \subseteq \hat{R} \subseteq R_1`, then for any features :math:`f_p`,
+
+.. math::
+    :label: rf-sandwich
+
+    \Big|\sum_{p \in \hat{R}} r_p f_p - \sum_{p \in R_0} r_p f_p\Big| \le \sum_{p \in R_1 \setminus R_0} r_p |f_p|,
+    \qquad
+    \Big|\operatorname{E}\Big[\sum_{p \in \hat{R}} r_p f_p\Big] - \sum_{p \in R_0}\operatorname{E}[r_p] f_p\Big|
+    \le \sum_{p \in R_1 \setminus R_0}\operatorname{E}[r_p]\,|f_p| :
+
+the sum over :math:`R_0` is a fixed region's, unbiased (:eq:`mom-expect`), and everything the choice can change lies
+in the band :math:`R_1 \setminus R_0`, whose light is the expectation of a fixed region's sum and so is measured
+without bias by the data there. With the indexer's orientation within :math:`e` of the truth (:eq:`rf-box-margin`),
+:math:`R_0` and :math:`R_1` are the boxes for the extreme placements within :math:`e`, both fixed by the truth: the
+band is a shell of width about :math:`2e` in the box margins, far from the spots' centres, and its light is the
+selection bias's bound. Where the indexer's error exceeds :math:`e` (a probability its confidence gives), the bound
+does not hold, and the report says so. Splitting the data (boxes from some frames, statistics from the others) is not
+needed: it would halve the counts to remove a bias the band already bounds.
+
+**Proof:** ``tests/theory/test_refiner.py::test_sandwich`` (every region between :math:`R_0` and :math:`R_1` on a
+strip, exactly; the triangle inequality).
+
 One linear solve, and its split
 -------------------------------
 
@@ -1071,9 +1151,11 @@ widths wide (:eq:`rf-bin-edge`), and take within each bin the counts and moments
     + O\!\left(\frac{\sigma^2}{d^2}\right)\sup|f|,
 
 the moments of the part of the population whose light falls in the bin, up to the light within reach of the bin's
-edges. A voxel's orientation distribution is thus represented by sub-populations, one per bin it lights, each with
-its own moments. The bins give the profile along the arc; the moments give each bin's mean and spread below the
-bin's width.
+edges. These bins are per reflection: the part of a population whose light falls in a bin of one reflection is not
+the part that falls in a bin of another, so per-reflection bins are not common unknowns of a tomography. Common
+sub-populations are cells of :math:`\matr{F}`, the same in every reflection, and each cell's light in a reflection lies in its
+image widened by the instrument: a box (:eq:`rf-forced`). The bins give the profile along the arc; the moments give
+each cell's mean and spread below the cell's width.
 
 **Definition:** the combined statistic; its linearity is :eq:`rf-hist`'s and its edge term :eq:`rf-bin-edge`'s.
 
@@ -1260,11 +1342,10 @@ no weak directions beyond the slice's.
 The guarantee
 -------------
 
-Under (A1)-(A5), with regions fixed independently of the noise of the data they are applied to. Boxes taken from an
-indexer fitted to the same data do not meet that condition: the selection bias of :eq:`mom-select` then enters, and
-is not bounded here. The boxes must come from data independent of those they are applied to (for example populations
-indexed on alternate frames, applied to the others), a choice for the maintainer. The indexer's error :math:`e` in
-:eq:`rf-box-margin` is a statistical bound, not a hard one: the completeness of the boxes holds with its confidence.
+Under (A1)-(A5). Boxes taken from an indexer fitted to the same data are random; their selection bias is at most the
+light in the band between the boxes of the indexer's extreme placements (:eq:`rf-sandwich`), measured from the data
+and added to the bias bound. The indexer's error :math:`e` in :eq:`rf-box-margin` is a statistical bound, not a hard
+one: the completeness of the boxes, and the band's bound, hold with its confidence.
 
 1. **Noise** biases nothing (:eq:`rf-linear`). Error bars come from blocks that are independent exactly
    (:eq:`rf-harris`), with no noise model.

@@ -1290,3 +1290,59 @@ def test_parallax_exact():
     assert is_zero(skew(n).T * skew(n) - (sp.eye(3) - n * n.T))
     val = sp.Rational(100, 180000) * (sp.pi / 180) ** 3
     assert rounds_to(val * 10**9, "3.0")
+
+
+def test_regions_forced():
+    """rf-forced: a statistic over a fixed region is the integral of K_R over a population's distribution. At an edge
+    of the instrument's kernel (K_R = Phi(x / w)), one point at the mean c and two points c +- e (same mass, same mean)
+    give different light for c != 0: the light depends on the shape unless K_R is constant on the support, i.e. the
+    region holds all the light (K_R = 1 on the support), where the integral is the mass for any distribution."""
+    c, e, w = sp.Rational(1, 2), sp.Rational(3, 4), sp.Integer(1)
+
+    def Phi(x: sp.Expr) -> sp.Expr:
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    diff = Phi(c / w) - (Phi((c + e) / w) + Phi((c - e) / w)) / 2
+    assert abs(float(sp.N(diff, 30))) > 1e-3
+    # c = 0: the two agree, so the difference is a matter of the shape relative to the edge
+    assert sp.simplify(Phi(0) - (Phi(e / w) + Phi(-e / w)) / 2) == 0
+
+
+def test_cell_linearisation():
+    """rf-cell-linear: K(mu) = Phi((b - mu)/w) - Phi((a - mu)/w) has K'' = (phi'(z_b) - phi'(z_a)) / w^2 and
+    |phi'(z)| = |z| phi(z) <= phi(1), so |K''| <= 2 phi(1) / w^2 and Taylor's remainder is at most phi(1) (delta/w)^2:
+    2.4e-3 at delta = w / 10; cells of half-width w / 10 at w = 0.01 deg number 1.25e5 over 0.1 deg, 1.25e8 over 1."""
+    mu, a, b = sp.symbols("mu a b", real=True)
+    w = sp.Symbol("w", positive=True)
+    z = sp.Symbol("z", real=True)
+    phi = sp.exp(-(z**2) / 2) / sp.sqrt(2 * sp.pi)
+
+    def Phi(x: sp.Expr) -> sp.Expr:
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    K = Phi((b - mu) / w) - Phi((a - mu) / w)
+    dphi = sp.diff(phi, z)
+    K2 = (dphi.subs(z, (b - mu) / w) - dphi.subs(z, (a - mu) / w)) / w**2
+    assert sp.simplify(sp.diff(K, mu, 2) - K2) == 0
+    assert sp.simplify(dphi + z * phi) == 0
+    crit = sp.solve(sp.diff(z * phi, z), z)
+    assert set(crit) == {-1, 1}  # |z phi| is largest at |z| = 1
+    assert rounds_to(phi.subs(z, 1) * sp.Rational(1, 100), "0.0024")
+    assert rounds_to((sp.Rational(1, 10) / (2 * sp.Rational(1, 1000))) ** 3 / 10**5, "1.25")
+    assert rounds_to((sp.Integer(1) / (2 * sp.Rational(1, 1000))) ** 3 / 10**8, "1.25")
+
+
+def test_sandwich():
+    """rf-sandwich: for R0 within R^ within R1, sum over R^ minus sum over R0 is the sum over R^ \\ R0, a subset of the
+    band R1 \\ R0, so it is at most the band's sum of |r f| (the triangle inequality): checked exactly for every R^ on
+    a strip of 6 cells with a band of 4. The bound holds for every realisation, so it holds in expectation, however R^
+    depends on the counts, and the band is a fixed region whose expected sum the data measure."""
+    import itertools
+
+    vals = [sp.Rational(v) for v in ("3/2", "-2", "1/3", "5", "-7/4", "2")]
+    R0, band = {1, 2}, [0, 3, 4, 5]
+    bound = sum(abs(vals[p]) for p in band)
+    for n in range(len(band) + 1):
+        for extra in itertools.combinations(band, n):
+            Rh = R0 | set(extra)
+            assert abs(sum(vals[p] for p in Rh) - sum(vals[p] for p in R0)) <= bound
