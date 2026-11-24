@@ -308,7 +308,7 @@ wavelength with :math:`hc = 12.39842` keV Å (CODATA), FABLE with 12.398 (the va
 of FABLE's :math:`\matr{U}`, printed to six digits and orthogonal only to about :math:`10^{-6}`. FABLE gives the pixel
 as whole pixels.
 
-``tests/unit/geom/test_fable_case.py`` runs this case, with FABLE's :math:`hc`, through
+``tests/reference/test_tables.py::TestFableCase`` runs this case, with FABLE's :math:`hc`, through
 :func:`anri.fwd.peak.get_centroid` in CI.
 
 What is left out

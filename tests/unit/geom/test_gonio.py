@@ -119,41 +119,6 @@ class TestSampleToLab(unittest.TestCase):
         desired = jnp.array([1.0, 0.0, 0.0])
         np.testing.assert_allclose(result, desired, atol=1e-15)
 
-    def test_id11(self):
-        # test some more complicated vectors.
-        import time
-
-        from jax import random
-
-        key = random.key(time.time_ns())
-        npks = 1000
-
-        vec_sample = random.uniform(key, shape=(npks, 3), minval=-1000.0, maxval=1000.0)
-        # omega = random.uniform(key, shape=(npks,), minval=-180.0, maxval=180.0)
-        # wedge = random.uniform(key, shape=(npks,), minval=-180.0, maxval=180.0)
-        # chi = random.uniform(key, shape=(npks,), minval=-180.0, maxval=180.0)
-        key = random.key(time.time_ns())
-        omega_arr = random.uniform(key, shape=(npks,), minval=-180.0, maxval=180.0)
-        # omega = random.uniform(key, shape=(1,), minval=-180.0, maxval=180.0)[0]
-        key = random.key(time.time_ns())
-        wedge = random.uniform(key, shape=(1,), minval=-180.0, maxval=180.0)[0]
-        key = random.key(time.time_ns())
-        chi = random.uniform(key, shape=(1,), minval=-180.0, maxval=180.0)[0]
-        wedge_arr = jnp.repeat(wedge, npks)
-        chi_arr = jnp.repeat(chi, npks)
-
-        dty = jnp.repeat(0.0, npks)
-        y0 = jnp.repeat(0.0, npks)
-
-        from ImageD11.transform import compute_grain_origins
-
-        sample_to_lab_vec = jax.vmap(anri.geom.gonio.sample_to_lab)
-        result = sample_to_lab_vec(vec_sample, omega_arr, wedge_arr, chi_arr, dty, y0)
-        desired = compute_grain_origins(
-            omega=omega_arr, wedge=-wedge, chi=chi, t_x=vec_sample[:, 0], t_y=vec_sample[:, 1], t_z=vec_sample[:, 2]
-        ).T
-        np.testing.assert_allclose(result, desired)
-
     def test_round_trip(self):
         # test some more complicated vectors.
         import time
@@ -218,24 +183,6 @@ class TestFindDtyForBeamXY(unittest.TestCase):
 
         # fmt: off
         dty_desired = jnp.array([0.0])
-        # fmt: on
-        dty_result = anri.geom.gonio.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
-        self.assertAlmostEqual(dty_desired, dty_result)
-
-    def test_imaged11(self):
-        wedge = 0.0
-        chi = 0.0
-        omega = 12.4
-        y0 = 15.6
-
-        # fmt: off
-        v_sample = jnp.array([0.2, 0.3, -0.4])
-        k_in_lab = jnp.array([1.0, 0.0, 0.0])
-        # fmt: on
-
-        # fmt: off
-        from ImageD11.sinograms.geometry import dty_values_grain_in_beam
-        dty_desired = dty_values_grain_in_beam(v_sample[0], v_sample[1], y0, omega)
         # fmt: on
         dty_result = anri.geom.gonio.find_dty_for_beam_xy(v_sample, k_in_lab, omega, wedge, chi, y0)
         self.assertAlmostEqual(dty_desired, dty_result)

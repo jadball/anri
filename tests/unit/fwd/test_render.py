@@ -7,7 +7,7 @@ import numpy as np
 import anri.crystal
 import anri.geom
 import anri.maths.rotation
-from anri.diffract.factors import lorentz, polarisation
+from anri.diffract.factors import polarisation
 from anri.fwd.render import (
     _VAR_FLOOR,
     _centroid,
@@ -38,23 +38,6 @@ jax.config.update("jax_enable_x64", True)
 # Peaks per render call. render_row pads a call to at least 1024 peaks per device so that real scans compile few
 # shapes; these tests render a few hundred peaks per row, so a small batch renders them without that padding.
 BATCH = 256
-
-
-class TestIntensityFactors(unittest.TestCase):
-    def test_id11(self):
-        from ImageD11.refinegrains import lf, polarization
-
-        rng = np.random.default_rng(0)
-        tth, eta = rng.uniform(2, 30, 100), rng.uniform(-180, 180, 100)
-        t, e = np.radians(tth), np.radians(eta)
-        # ImageD11 eta = atan2(-y, z)
-        k_out = np.stack([np.cos(t), -np.sin(t) * np.sin(e), np.sin(t) * np.cos(e)], 1)
-        k_in, axis = jnp.array([1.0, 0, 0]), jnp.array([0, 0, 1.0])
-        L = jax.vmap(lorentz, in_axes=(None, 0, None))(k_in, k_out, axis)
-        np.testing.assert_allclose(L * lf(tth, eta), 1.0, rtol=1e-10)
-        for f in [1.0, 0.9, 0.0]:
-            P = jax.vmap(polarisation, in_axes=(None, 0, None))(k_in, k_out, f)
-            np.testing.assert_allclose(P, polarization(tth, eta, factor=f), atol=1e-12)
 
 
 def _single_peak_setup():
@@ -847,7 +830,6 @@ class TestGrainMap(unittest.TestCase):
                        self.geom, self.row, self.det_shape, splat=True)  # fmt: skip
         with self.assertRaises(ValueError):  # a grain map only
             render_row(self.voxels, self.hkls, F2, self.geom, self.row, self.det_shape, splat=True)
-
 
     def test_to_device(self):
         """Entries put on the device once, sorted by grain, render the same pixels as the host arrays."""

@@ -9,7 +9,6 @@ import numpy as np
 import anri.io
 from anri.io.imaged11 import (
     beam_from_pars,
-    detector_from_pars,
     entries_from_tensormap,
     geom_from_pars,
     gonio_from_pars,
@@ -58,46 +57,6 @@ class TestWriteScan(unittest.TestCase):
 
 
 class TestSegment(unittest.TestCase):
-    def test_as_imaged11(self):
-        """segment records the pixels ImageD11's lima_segmenter records (select, then clean), frame by frame: Poisson
-        frames with spots of every size, faint and bright, touching the detector's edges, for cut 0, 1, 2 and groups
-        of at least 1, 2, 3, 4 pixels."""
-        import ImageD11.sinograms.lima_segmenter as lima
-
-        from anri.io.imaged11 import segment
-
-        rng = np.random.default_rng(0)
-        ns, nf, n_frames = 24, 31, 40
-        ii, jj = np.mgrid[:ns, :nf]
-        lam = np.zeros((n_frames, ns, nf))
-        for k in range(n_frames):
-            for _ in range(6):
-                ci, cj, w, a = rng.uniform(-2, ns + 2), rng.uniform(-2, nf + 2), rng.uniform(0.3, 3), rng.uniform(0.5, 30)
-                lam[k] += a * np.exp(-((ii - ci) ** 2 + (jj - cj) ** 2) / (2 * w**2))
-        img = rng.poisson(lam)
-        frame, pixel = np.nonzero(img.reshape(n_frames, -1))  # every cell with counts, sorted by (frame, pixel)
-        counts = img.reshape(n_frames, -1)[frame, pixel]
-        saved = lima.OPTIONS
-        try:
-            for cut in (0, 1, 2):
-                for m in (1, 2, 3, 4):
-                    opts = lima.SegmenterOptions(cut=cut, pixels_in_spot=m)
-                    opts.setup()
-                    opts.mask = np.ones((ns, nf), np.uint8)
-                    lima.OPTIONS = opts
-                    tosparse = lima.frmtosparse(opts.mask, np.uint32)
-                    want = []
-                    for k in range(n_frames):
-                        spf = lima.clean(*tosparse(img[k].astype(np.uint32), cut))
-                        if spf is not None:
-                            want += [(k, int(r) * nf + int(c)) for r, c in zip(spf.row, spf.col)]
-                    keep = segment(frame, pixel, counts, (ns, nf), cut, m)
-                    got = list(zip(frame[keep].tolist(), pixel[keep].tolist()))
-                    self.assertEqual(got, want, (cut, m))
-                    self.assertGreater(len(want), 50)
-        finally:
-            lima.OPTIONS = saved
-
     def test_recorded_moments_by_drawing(self):
         """recorded_moments' mean and variance are those of counts drawn and recorded by segment: a faint compact spot
         (the group rule's regime) on a 9 x 9 frame, 20000 frames, c = 1, m = 2, 3: each cell's mean and variance within 5 standard errors."""
@@ -194,29 +153,6 @@ class TestSpatial(unittest.TestCase):
             self.assertIsNone(read_spatial({"e2dxfile": "", "e2dyfile": "", "detectorh5": "", "splinefile": ""}))
             with self.assertRaises(ValueError):
                 read_spatial({"splinefile": "x.spline"})
-
-    def test_detector_h5_as_imaged11(self):
-        """dx, dy from a pyFAI detector file, as ImageD11's get_e2dx_from_h5."""
-        from ImageD11.blobcorrector import get_e2dx_from_h5
-
-        from anri.io.imaged11 import read_spatial
-
-        rng = np.random.default_rng(0)
-        n_s, n_f, ps = 6, 5, 75e-6
-        s, f = np.mgrid[0:n_s, 0:n_f]
-        corners = np.zeros((n_s, n_f, 4, 3))
-        for c, (a, b) in enumerate(((0, 0), (0, 1), (1, 1), (1, 0))):
-            corners[:, :, c, 1] = (s + a) * ps + rng.normal(0, 0.1 * ps, (n_s, n_f))
-            corners[:, :, c, 2] = (f + b) * ps + rng.normal(0, 0.1 * ps, (n_s, n_f))
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "det.h5")
-            with h5py.File(path, "w") as h:
-                h["entry_0000/pyFAI/Eiger2_CdTe_4M/pixel_size"] = np.array([ps, ps])
-                h["entry_0000/pyFAI/Eiger2_CdTe_4M/pixel_corners"] = corners
-            dx, dy = read_spatial({"detectorh5": path, "detector": "eiger"})
-            ex, ey = get_e2dx_from_h5(path, detector="eiger")
-        np.testing.assert_allclose(dx, ex, atol=1e-5)
-        np.testing.assert_allclose(dy, ey, atol=1e-5)
 
 
 class TestEntriesFromTensorMap(unittest.TestCase):
@@ -384,74 +320,6 @@ class TestGeomFromPars(unittest.TestCase):
         self.assertEqual(gonio_from_pars({"wedge": 2.5, "chi": 1.0}, 0.3), {"wedge": -2.5, "chi": 1.0, "y0": 0.3})
         with self.assertRaises(ValueError):
             gonio_from_pars({"omegasign": -1.0}, 0.0)
-
-    def test_detector_from_pars(self):
-        """Pixel to lab matches ImageD11, and ray-tracing the lab point back from the origin gives the same pixel."""
-        import jax.numpy as jnp
-        from ImageD11 import transform
-
-        import anri.geom
-
-        pars = {
-            "y_center": 1049.9, "y_size": 75.0, "tilt_y": -2e-3,
-            "z_center": 1116.5, "z_size": 75.0, "tilt_z": 3e-3, "tilt_x": 1e-3,
-            "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1,
-        }  # fmt: skip
-        det = detector_from_pars(pars)
-        for sc, fc in ((1500.3, 700.8), (12.0, 2000.5)):
-            xyz = anri.geom.detector.det_to_lab(
-                sc, fc, det["det_trans"], det["beam_cen_shift"], det["x_distance_shift"]
-            )
-            np.testing.assert_allclose(
-                xyz, transform.compute_xyz_lab(np.array([[sc], [fc]]), **pars).ravel(), atol=1e-6
-            )
-            back = anri.geom.detector.raytrace_to_det(
-                xyz / jnp.linalg.norm(xyz), jnp.zeros(3), det["s_step_lab"], det["f_step_lab"], det["det_origin_lab"]
-            )
-            np.testing.assert_allclose(back, (sc, fc), atol=1e-8)
-
-    def test_wedge_chi_against_imaged11(self):
-        """A peak computed by anri from geom_from_pars maps back to its hkl through ImageD11's own geometry."""
-        import jax.numpy as jnp
-        from ImageD11 import transform
-
-        import anri.crystal
-        import anri.geom
-        from anri.fwd.scan import get_centroid_scan
-
-        pars = {
-            "y_center": 1049.9, "y_size": 75.0, "tilt_y": -2e-3,
-            "z_center": 1116.5, "z_size": 75.0, "tilt_z": 3e-3, "tilt_x": 1e-3,
-            "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1,
-            "wavelength": 0.2883, "wedge": 2.5, "chi": -1.5,
-        }  # fmt: skip
-        geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0)
-        self.assertEqual(geom["wedge"], -2.5)
-        U = np.asarray(
-            anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0) @ anri.maths.rotation.rot_y(10.0)
-        )
-        B = np.asarray(anri.crystal.lattice.lpars_to_B(np.array([2.8694, 2.8694, 2.8694, 90.0, 90.0, 90.0])))
-        ubi = np.linalg.inv(U @ B)
-        checked = 0
-        for hkl in ([1.0, 1.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 1.0], [-1.0, 2.0, 1.0], [3.0, 1.0, 0.0]):
-            for etasign in (1.0, -1.0):
-                c, valid = get_centroid_scan(
-                    jnp.asarray(ubi), jnp.zeros(3), jnp.asarray(hkl), etasign, geom["wavelength"], geom["k_in_lab"],
-                    0.0, 0.0, geom["wedge"], geom["chi"], geom["y0"],
-                    geom["s_step_lab"], geom["f_step_lab"], geom["det_origin_lab"],
-                )  # fmt: skip
-                if not valid or not (0 < c[0] < 2162 and 0 < c[1] < 2068):
-                    continue
-                xyz = transform.compute_xyz_lab(np.array([[c[0]], [c[1]]]), **pars)
-                tth, eta = transform.compute_tth_eta_from_xyz(
-                    xyz, np.array([c[2]]), wedge=pars["wedge"], chi=pars["chi"]
-                )
-                g = transform.compute_g_vectors(
-                    tth, eta, np.array([c[2]]), pars["wavelength"], pars["wedge"], pars["chi"]
-                )
-                np.testing.assert_allclose((ubi @ g).ravel(), hkl, atol=1e-6)
-                checked += 1
-        self.assertGreater(checked, 3)
 
 
 class TestPrefetch(unittest.TestCase):

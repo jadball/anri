@@ -19,22 +19,6 @@ class TestLParsToMT(unittest.TestCase):
         result = anri.crystal.lattice.lpars_to_mt(lpars)
         np.testing.assert_allclose(result, expected, atol=1e-15)
 
-    def test_id11(self):
-        a = 2.5
-        b = 2.8
-        c = 11.3
-        alpha = 85.2
-        beta = 95.8
-        gamma = 101.6
-        lpars = jnp.array([a, b, c, alpha, beta, gamma])
-
-        from ImageD11.unitcell import unitcell
-
-        uc = unitcell(lpars, 1)
-        expected = uc.g
-        result = anri.crystal.lattice.lpars_to_mt(lpars)
-        np.testing.assert_allclose(result, expected, atol=1e-15)
-
 
 # class TestRMTToRLPars(unittest.TestCase):
 #     def test_cubic(self):
@@ -79,107 +63,6 @@ class TestBuildBMat(unittest.TestCase):
         expected = jnp.array([[1 / 3.0, 0, 0], [0, 1 / 3.0, 0], [0, 0, 1 / 3.0]])
         result = anri.crystal.lattice.lpars_rlpars_to_B(lpars, rlpars)
         np.testing.assert_allclose(result, expected, atol=1e-15)
-
-    def test_id11(self):
-        a = 2.5
-        b = 2.8
-        c = 11.3
-        alpha = 85.2
-        beta = 95.8
-        gamma = 101.6
-        lpars = jnp.array([a, b, c, alpha, beta, gamma])
-        mt = anri.crystal.lattice.lpars_to_mt(lpars)
-        rmt = anri.crystal.lattice.mt_to_rmt(mt)
-        rlpars = anri.crystal.lattice.mt_to_lpars(rmt)
-
-        from ImageD11.unitcell import unitcell
-
-        uc = unitcell(lpars, 1)
-        expected = uc.B
-        result = anri.crystal.lattice.lpars_rlpars_to_B(lpars, rlpars)
-        np.testing.assert_allclose(result, expected, atol=1e-15)
-
-    def test_dd(self):
-        a = 2.5
-        b = 2.8
-        c = 11.3
-        alpha = 85.2
-        beta = 95.8
-        gamma = 101.6
-        lpars = jnp.array([a, b, c, alpha, beta, gamma])
-        mt = anri.crystal.lattice.lpars_to_mt(lpars)
-        rmt = anri.crystal.lattice.mt_to_rmt(mt)
-        rlpars = anri.crystal.lattice.mt_to_lpars(rmt)
-
-        from Dans_Diffraction.classes_crystal import Cell
-
-        result = anri.crystal.lattice.lpars_rlpars_to_B(lpars, rlpars)
-        expected = Cell(a, b, c, alpha, beta, gamma).Bmatrix()
-        np.testing.assert_allclose(result, expected, atol=1e-15)
-
-    def test_busing_levy(self):
-        """Generate many random lattice parameters using Dan's logic and check Busing-Levy"""
-        ntests = 1_000
-
-        from Dans_Diffraction.functions_lattice import random_lattice
-        from ImageD11.unitcell import unitcell
-
-        lpars_list = [random_lattice(symmetry="triclinic") for _ in range(ntests)]
-        lpars_batch = jnp.array(lpars_list)
-
-        self.assertTupleEqual(lpars_batch.shape, (ntests, 6))
-        self.assertTrue(~jnp.any(jnp.isnan(lpars_batch)))
-
-        lpars_to_B_vec = jax.vmap(anri.crystal.lattice.lpars_to_B)
-        results = lpars_to_B_vec(lpars_batch)
-
-        for i in range(ntests):
-            uc = unitcell(lpars_batch[i], "P")
-            expected = uc.B
-
-            self.assertFalse(jnp.any(jnp.isnan(results[i])), f"NaN found at index {i} with input {lpars_batch[i]}")
-
-            np.testing.assert_allclose(results[i], expected, atol=1e-16)
-
-
-class TestEverything(unittest.TestCase):
-    def test_id11(self):
-        # Test against the full ImageD11 unit cell class
-        a = 3.4
-        b = 2.6
-        c = 9.5
-        alpha = 83.2
-        beta = 95.8
-        gamma = 105.4
-        lpars = jnp.array([a, b, c, alpha, beta, gamma])
-        from ImageD11.unitcell import unitcell
-
-        uc = unitcell(lpars, 1)
-
-        mt = anri.crystal.lattice.lpars_to_mt(lpars)
-        np.testing.assert_allclose(mt, uc.g, atol=1e-15)
-
-        rmt = anri.crystal.lattice.mt_to_rmt(mt)
-        np.testing.assert_allclose(rmt, uc.gi, atol=1e-15)
-
-        B = anri.crystal.lattice.lpars_to_B(lpars)
-        np.testing.assert_allclose(B, uc.B)
-
-
-class TestMetricTensors(unittest.TestCase):
-    def test_id11(self):
-        from ImageD11.unitcell import unitcell as unitcell_id11
-
-        import anri.geom
-
-        lpars = [4.9, 5.1, 5.4, 88.0, 92.0, 119.0]
-        uc = unitcell_id11(lpars, "P")
-        B = anri.crystal.lattice.lpars_to_B(jnp.array(lpars))
-        np.testing.assert_allclose(anri.crystal.lattice.B_to_rmt(B), uc.gi, rtol=1e-10)
-        np.testing.assert_allclose(anri.crystal.lattice.rmt_to_mt(jnp.asarray(uc.gi)), uc.g, rtol=1e-10)
-        # the metric tensor does not depend on the orientation
-        U = anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0)
-        np.testing.assert_allclose(anri.crystal.lattice.UBI_to_mt(jnp.linalg.inv(U @ B)), uc.g, rtol=1e-10)
 
 
 class TestUBToUBI(unittest.TestCase):

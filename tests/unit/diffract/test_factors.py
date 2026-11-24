@@ -15,18 +15,6 @@ TABLES = {
 
 
 class TestExtinction(unittest.TestCase):
-    def test_tables(self):
-        """The analytic fits reproduce the numerical tables they were fitted to, within 5% at these angles."""
-        for kind, rows in TABLES.items():
-            for x, ref in rows.items():
-                for s, r in zip((0.05, 0.5), ref):
-                    tth = 2 * np.arcsin(s)
-                    if kind == "primary":
-                        y = float(factors.extinction(x, 0.0, tth, True))
-                    else:
-                        y = float(factors.extinction(0.0, x, tth, kind == "gaussian"))
-                    self.assertAlmostEqual(y / r, 1.0, delta=0.05, msg=f"{kind} x {x} sin(theta) {s}")
-
     def test_perfect_crystal_limit(self):
         """For large x, y ~ c / sqrt(x): the intensity grows as |F|, not |F|^2 (Becker and Coppens, section II.2)."""
         y1, y2 = (float(factors.extinction(x, 0.0, 0.3, True)) for x in (1e3, 4e3))
