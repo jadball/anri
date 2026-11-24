@@ -7,9 +7,13 @@ import sympy as sp
 from tests.theory.common import (
     EPS,
     agree,
+    cayley,
     evaluate,
     is_zero,
     rng,
+    skew,
+    tol,
+    vec,
 )
 
 
@@ -46,6 +50,63 @@ def test_mean_rotation_code():
     # an SVD of a well-conditioned 3 x 3 sum (singular values rho, rho, W of similar size): backward stable, a few
     # tens of ulps in the entries, which are <= 1
     agree(want, mean_rotation, U, wv, rtol=0, atol=64 * EPS)
+
+
+def test_mean_of_symmetric_pairs():
+    """pop-mean for any rotation R and rotations V_j (Cayley, about any axes, by less than 90 degrees): the pairs
+    R V_j and R V_j^T, weighted w_j each, sum to R P with P = sum w_j (V_j + V_j^T). V + V^T = 2 c I + 2 (1 - c) n n^T
+    (c the cosine of V's angle, n its axis), whose eigenvalues 2c, 2c and 2 are positive: P is symmetric positive
+    definite, so R is the sum's polar factor, its closest rotation."""
+    k = vec("k")
+    V = cayley(k)
+    kk = k.dot(k)
+    c = (1 - kk) / (1 + kk)  # cos(2 atan |k|)
+    n = k / sp.sqrt(kk)
+    assert is_zero(V + V.T - 2 * c * sp.eye(3) - 2 * (1 - c) * n * n.T)
+    assert is_zero((V + V.T) * n - 2 * n)  # eigenvalue 2 along the axis; 2c across it (the identity above)
+
+
+def test_mean_rotation_general_code():
+    """anri's mean_rotation of symmetric pairs about three axes is R (test_mean_of_symmetric_pairs)."""
+    from anri.maths.rotation import mean_rotation
+
+    g = rng(13)
+    R = cayley(sp.Matrix([sp.Rational(int(x), 10) for x in g.integers(-9, 9, 3)]))
+    Vs = [cayley(sp.Matrix([sp.Rational(int(x), 20) for x in g.integers(-9, 9, 3)])) for _ in range(3)]
+    w = [sp.Rational(int(x), 10) for x in g.integers(2, 10, 3)]
+    U = np.array([evaluate(R * M, {}) for V in Vs for M in (V, V.T)])
+    wv = np.repeat(np.array(w, float), 2)
+    P = evaluate(sum((wi * (V + V.T) for wi, V in zip(w, Vs)), sp.zeros(3, 3)), {})
+    sv = np.linalg.eigvalsh(P)
+    # the sum rounds by a few ulps of |M|_F = |P|_F, the SVD is backward stable, and the polar factor moves by at most
+    # 2 / (sigma_2 + sigma_3) times the change in the sum (Higham, Functions of Matrices, theorem 8.9)
+    t = tol(2 * np.linalg.norm(P) / (sv[0] + sv[1]))
+    agree(evaluate(R, {}), mean_rotation, U, wv, **t)
+
+
+def test_rotation_angle_of_cayley():
+    """The rotation cayley(k) turns by theta = 2 atan |k| about k: its trace is 1 + 2 cos(theta) and its axial part
+    (R - R^T) / 2 is sin(theta) [k / |k|]x, which rotation_angle reads with atan2."""
+    k = vec("k")
+    R = cayley(k)
+    kk = k.dot(k)
+    cos_t, sin_t = (1 - kk) / (1 + kk), 2 * sp.sqrt(kk) / (1 + kk)
+    assert is_zero(R.trace() - 1 - 2 * cos_t)
+    assert is_zero((R - R.T) / 2 - sin_t * skew(k / sp.sqrt(kk)))
+
+
+def test_rotation_angle_code():
+    """rotation_angle against 2 atan |k|, from 1e-8 rad to near 180 degrees."""
+    from anri.maths.rotation import rotation_angle
+
+    d = rng(14).normal(size=3)
+    d /= np.linalg.norm(d)
+    ks = [sp.Matrix([sp.nsimplify(x) for x in d]) * sp.Rational(s) for s in ("1/200000000", "1/100", "1/2", "40")]
+    R = np.array([evaluate(cayley(k), {}) for k in ks])
+    want = np.array([float(sp.N(2 * sp.atan(sp.sqrt(k.dot(k))), 30)) for k in ks])
+    # R's entries round once (<= 1); atan2 of (|axial|, (trace - 1) / 2), a unit pair, moves by at most the change in
+    # either: a few ulps, absolute
+    agree(want, rotation_angle, R, **tol(1.0))
 
 
 def test_isotropic_rms_angle():

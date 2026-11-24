@@ -95,6 +95,17 @@ agree, and the profile integrates to 1).
 **Anri's choice:** this family covers the ID11 beams (Gaussian focused beams, slit-defined flat tops) with two numbers
 per direction; the beam's width is measured per experiment.
 
+A Gaussian beam is often given by its full width at half maximum:
+
+.. math::
+    :label: int-fwhm
+
+    \sigma = \frac{\text{FWHM}}{2\sqrt{2\ln 2}}.
+
+**Proof:** ``tests/theory/test_intensity.py::test_fwhm``, ``tests/theory/test_intensity.py::test_fwhm_code``.
+
+**Code:** :func:`anri.maths.utils.fwhm_to_sigma`, :func:`anri.maths.utils.sigma_to_fwhm`.
+
 How much of a voxel the beam lights is :math:`p` integrated over the voxel. It needs the first and second
 antiderivatives of the Gaussian cumulative distribution, both vanishing at :math:`-\infty`:
 

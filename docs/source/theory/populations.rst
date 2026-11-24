@@ -42,11 +42,18 @@ Each population gets
   **Cited:** [Moakher2002]_. **Proof** for rotations about one axis, where the sum is :math:`\matr{R}_z(\phi)
   \operatorname{diag}(\rho, \rho, \sum w_i)` with :math:`\rho\cos\phi = \sum w_i\cos a_i`, :math:`\rho\sin\phi = \sum
   w_i \sin a_i`, so the mean is :math:`\matr{R}_z(\phi)`: ``tests/theory/test_populations.py::test_mean_of_coaxial_rotations``,
-  ``tests/theory/test_populations.py::test_mean_rotation_code``.
+  ``tests/theory/test_populations.py::test_mean_rotation_code``. **Proof** for any rotation: pairs
+  :math:`\matr{R}\matr{V}_j` and :math:`\matr{R}\matr{V}_j^T` (each :math:`\matr{V}_j` by less than 90°) sum to
+  :math:`\matr{R}\matr{P}` with :math:`\matr{P}` symmetric positive definite, so the mean is :math:`\matr{R}`:
+  ``tests/theory/test_populations.py::test_mean_of_symmetric_pairs``,
+  ``tests/theory/test_populations.py::test_mean_rotation_general_code``.
 
   **Code:** :func:`anri.maths.rotation.mean_rotation`;
 
-- its **spread**: the occupancy-weighted rms misorientation of the members from that mean.
+- its **spread**: the occupancy-weighted rms misorientation of the members from that mean. A rotation's angle is read
+  from its trace and its axial part together, :math:`\theta = \operatorname{atan2}(|\vec{a}|, (\operatorname{tr}\matr{R} - 1)/2)`
+  with :math:`[\vec{a}]_\times = (\matr{R} - \matr{R}^T)/2`, accurate at every angle (``tests/theory/test_populations.py::test_rotation_angle_of_cayley``,
+  ``tests/theory/test_populations.py::test_rotation_angle_code``).
 
   **Code:** :func:`anri.maths.rotation.rotation_angle`.
 

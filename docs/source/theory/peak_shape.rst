@@ -57,12 +57,16 @@ The inputs, independent of each other:
       \matr{R} = \exp([\vec{\delta}]_\times) = \matr{I} + [\vec{\delta}]_\times + O(\delta^2),
 
   **Proof:** ``tests/theory/test_peak_shape.py::test_rotation_first_order`` (Rodrigues' formula differentiated at 0;
-  :math:`\matr{R}^{-1} = \matr{R}^T`; and :func:`anri.maths.rotation.skew`).
+  :math:`\matr{R}^{-1} = \matr{R}^T`), ``tests/theory/test_peak_shape.py::test_skew_code``;
+  ``tests/theory/test_peak_shape.py::test_axis_angle`` (for a unit axis, Rodrigues' formula is the exponential: it is
+  the identity at 0 and solves :math:`\matr{R}' = [\hat{n}]_\times\matr{R}`),
+  ``tests/theory/test_peak_shape.py::test_axis_angle_code``.
 
   which is exact to first order, all that :eq:`ps-propagate` uses. Its contribution is :math:`\matr{J}_\delta \matr{S} \matr{J}_\delta^T`,
   linear in :math:`\matr{S}`: an anisotropic spread (a dominant rotation axis) gives each reflection its own streak.
 
-**Code:** :func:`anri.maths.rotation.skew`, :func:`anri.fwd.render.render_peaks` (an entry's "sig_rot", [N] or [N, 3, 3]).
+**Code:** :func:`anri.maths.rotation.skew`, :func:`anri.maths.rotation.rmat_from_axis_angle`,
+:func:`anri.fwd.render.render_peaks` (an entry's "sig_rot", [N] or [N, 3, 3]).
 
 For a horizontal beam and an untilted axis (wedge = chi = 0), differentiating the Ewald condition
 :math:`2\vec{k}_{\text{in}} \cdot \vec{g} + |\vec{g}|^2 = 0` (:eq:`dif-ewald`) gives each input's omega shift, and so the

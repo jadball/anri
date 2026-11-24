@@ -16,13 +16,16 @@ import sympy as sp
 
 from anri.fwd.peak import make_propagator
 from anri.fwd.render import _peak_cov, _window_cells, make_row
-from anri.maths.rotation import skew
+from anri.maths.rotation import rmat_from_axis_angle, skew
 from anri.maths.utils import bin_fractions, float64, truncated_moments
 from tests.theory.common import (
     EPS,
+    agree,
     evaluate,
     is_zero,
     rng,
+    tol,
+    vec,
 )
 
 
@@ -96,10 +99,46 @@ def test_rotation_first_order():
     R = sp.eye(3) + sp.sin(t * n) / n * K + (1 - sp.cos(t * n)) / n**2 * K * K
     assert is_zero(sp.diff(R, t).subs(t, 0) - K)
     assert is_zero(R.T * R - sp.eye(3))  # orthogonal, so R^-1 = R^T
-    v = r = rng(2).normal(size=3)
+
+
+def test_skew_code():
+    """skew(v) is [v]x: its entries are v's, negated or not, so exactly."""
+    v = rng(2).normal(size=3)
     with float64():
         got = np.asarray(skew(jnp.asarray(v)))
-    np.testing.assert_array_equal(got, evaluate(skew_sp(sp.Matrix(r)), {}))  # exact: only negations
+    np.testing.assert_array_equal(got, evaluate(skew_sp(sp.Matrix(v)), {}))
+
+
+def _rodrigues(n: sp.MatrixBase, t: sp.Expr) -> sp.Matrix:
+    """ps-rotation's exp(t [n]x) for a unit axis n, as Rodrigues' formula."""
+    K = skew_sp(n)
+    return sp.eye(3) + sp.sin(t) * K + (1 - sp.cos(t)) * K * K
+
+
+def test_axis_angle():
+    """ps-rotation: for a unit axis n, R(t) = I + sin t [n]x + (1 - cos t) [n]x^2 is exp(t [n]x): R(0) = I and
+    R' = [n]x R (as [n]x^3 = -[n]x), the equation exp(t [n]x) alone solves. rmat_from_axis_angle's form,
+    cos t I + sin t [n]x + (1 - cos t) n n^T, is the same matrix ([n]x^2 = n n^T - I)."""
+    t = sp.symbols("t", real=True)
+    a = vec("a")
+    n = a / sp.sqrt(a.dot(a))
+    K, R = skew_sp(n), _rodrigues(n, t)
+    assert is_zero(R.subs(t, 0) - sp.eye(3))
+    assert is_zero(sp.diff(R, t) - K * R)
+    assert is_zero(sp.cos(t) * sp.eye(3) + sp.sin(t) * K + (1 - sp.cos(t)) * n * n.T - R)
+
+
+def test_axis_angle_code():
+    """rmat_from_axis_angle against exp(t [n]x) (test_axis_angle), unnormalised axes, one call for a batch."""
+    r = rng(12)
+    axes = r.normal(size=(4, 3)) * [[1.0], [0.3], [5.0], [2.0]]
+    deg = np.array([-170.0, -12.5, 33.3, 179.0])
+    want = []
+    for ax, d in zip(axes, deg):
+        a = sp.Matrix([sp.Float(x, 30) for x in ax])
+        want.append(evaluate(_rodrigues(a / sp.sqrt(a.dot(a)), sp.rad(sp.Float(d, 30))), {}))
+    # entries <= 1; the angle in radians (<= pi) and the axis's normalisation each round once
+    agree(np.array(want), rmat_from_axis_angle, axes, deg, **tol(np.pi))
 
 
 # ---------------------------------------------------------------------------------------------- ps-omega

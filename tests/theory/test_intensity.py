@@ -24,6 +24,7 @@ from anri.geom.paths import path_lengths, transmission
 from anri.maths.utils import float64, ramp_integral, ramp_integral2
 from tests.theory.common import (
     EPS,
+    agree,
     evaluate,
     is_zero,
     rng,
@@ -152,6 +153,25 @@ def test_profile():
     cdf = (R1(u + w / 2, s) - R1(u - w / 2, s)) / w
     assert is_zero(sp.diff(cdf, u) - p)
     assert sp.limit(cdf, u, sp.oo) == 1 and sp.limit(cdf, u, -sp.oo) == 0
+
+
+def test_fwhm():
+    """:eq:`int-fwhm`: a Gaussian of sigma = FWHM / (2 sqrt(2 ln 2)) is at half its maximum at FWHM / 2."""
+    f = sp.symbols("f", positive=True)
+    s = f / (2 * sp.sqrt(2 * sp.log(2)))
+    assert sp.simplify(phi(f / 2 / s) / phi(0) - sp.Rational(1, 2)) == 0
+
+
+def test_fwhm_code():
+    """fwhm_to_sigma and sigma_to_fwhm against :eq:`int-fwhm`."""
+    from anri.maths.utils import fwhm_to_sigma, sigma_to_fwhm
+
+    f = np.array([0.25, 1.0, 3.7])
+    c = 2 * sp.sqrt(2 * sp.log(2))
+    s = np.array([float(sp.N(sp.Float(x, 30) / c, 30)) for x in f])
+    # one product or quotient by a rounded constant: two ulps of the result
+    agree(s, fwhm_to_sigma, f, rtol=4 * EPS, atol=0)
+    agree(np.array([float(sp.N(sp.Float(x, 30) * c, 30)) for x in s]), sigma_to_fwhm, s, rtol=4 * EPS, atol=0)
 
 
 def test_ramp_integrals_code():
