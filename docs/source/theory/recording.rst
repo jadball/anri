@@ -211,10 +211,54 @@ A group of :math:`k` pixels holding :math:`p`, with its boundary, reaches :math:
 
 **Proof:** ``tests/theory/test_recording.py::test_group_probabilities`` (the identity
 :math:`P(|G_p| \ge m \mid p \text{ kept}) = 1 - \sum_{k<m} P_k`; the factor :math:`e_p` is the independence of
-:math:`n_p`).
+:math:`n_p`); ``tests/theory/test_recording.py::test_recorded_moments_code`` (the code, with :eq:`rec-trunc` and
+:eq:`rec-p12`, against the animal sums at 30 digits, :math:`c = 0, 1, 2`, :math:`m = 1, 2, 3`).
+
+**Code:** :func:`anri.io.imaged11.recorded_moments` (:math:`m \le 3`, differentiable in the light), on the 5 × 5
+cells :func:`anri.io.imaged11.neighbourhoods` gathers.
 
 Exact for any :math:`m` once :math:`P_1 \dots P_{m-1}` are summed (:eq:`rec-animal`); :eq:`rec-p12` makes it closed
 for :math:`m \le 3`.
+
+**Compact spots.** A spot whose light is mostly in one or two pixels forms a group of fewer than :math:`m` pixels
+unless its neighbours are bright enough to be kept, so the group rule removes it however bright that pixel is. The
+expected share of a Gaussian spot's light recorded at :math:`c = 1`, without the group rule (:math:`m = 1`) and with
+ImageD11's (:math:`m = 3`), for a spot centred on a pixel or on a pixel's corner, and with the measured point spread's
+wing (28 % of the light widened by 1.3 px, AGENTS.md), :math:`\sum_p \operatorname{E}[r_p] / \sum_p \lambda_p`
+for a spot of :math:`N` photons, as :math:`m = 1` / :math:`m = 3`:
+
+.. list-table::
+    :header-rows: 1
+
+    * - spot (sd, where)
+      - :math:`N = 10`
+      - :math:`N = 30`
+      - :math:`N = 100`
+    * - 0.25 px, on a centre
+      - 0.928 / 0.003
+      - 0.953 / 0.102
+      - 0.988 / 0.860
+    * - 0.25 px, on a corner
+      - 0.918 / 0.734
+      - 0.999 / 0.999
+      - 1.000 / 1.000
+    * - 0.5 px, on a centre
+      - 0.766 / 0.375
+      - 0.930 / 0.926
+      - 0.987 / 0.987
+    * - 0.25 px with the wing, on a centre
+      - 0.733 / 0.022
+      - 0.806 / 0.383
+      - 0.904 / 0.897
+
+**Proof:** ``tests/theory/test_recording.py::test_compact_spot_numbers`` (:eq:`rec-expected` by
+:func:`anri.io.imaged11.recorded_moments`, on 15 × 15 cells).
+
+So the group rule matters only for spots of fewer than about 100 photons, but there it depends on where the spot
+falls within its pixel: a sharp spot of 30 photons keeps 10 % of its light centred on a pixel and all of it on a
+corner. A method that ignores the rule loses faint compact spots by their sub-pixel position, a bias in whatever is
+fitted to them, not only a loss of counts; and the indexer's censoring level per bin (:doc:`likelihood`) cannot
+stand for it, since an empty bin may hide a removed group of any brightness.
 
 **Neighbours are correlated.** The group rule couples recorded values: two pixels whose windows
 (:eq:`rec-reach`) overlap are not independent. For an isolated pair with :math:`m = 2`, and for the ends of a row of
@@ -340,5 +384,6 @@ What is left out
   not modelled; nor is a photon counted twice (above).
 - **The cap and background subtraction** of the segmentation (above).
 - :math:`Z_m(U)` of :eq:`rec-likelihood` is not computed by anything in anri.
-- Code: :eq:`rec-trunc` to :eq:`rec-joint` are not yet in anri (sandbox: ``anri/sandbox/refine/cutexact.py``,
-  which agrees with them for :math:`m \le 3`).
+- Code: :eq:`rec-expected` is :func:`anri.io.imaged11.recorded_moments` for :math:`m \le 3`; the covariances
+  :eq:`rec-cov-pair` and :eq:`rec-joint` are not yet in anri (sandbox: ``anri/sandbox/refine/cutexact.py``, which
+  agrees with them for :math:`m \le 3`).

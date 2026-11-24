@@ -20,6 +20,12 @@ follows them, and new maths is written here, with its proof, before the code tha
 - Each chapter ends with **What is left out**: the approximations made, so that you know when a result can't be
   trusted.
 
+**A note on citations.** Much of the text of these pages was written with the help of a large language model. Such a
+model has learnt from a great deal of published work, but not where each idea came from, so a result here that is
+already in the literature may at first appear without its citation. We search for the work each result rests on, with
+effort, and cite it as we find it (:doc:`references`). If you recognise a result whose source is missing, please tell
+us: we are glad to credit those whose work this builds on.
+
 The forward model (:mod:`anri.fwd` and the layers below it), the detector and what it records, the measurements a
 refiner is built on and the limits of what the data determine, the indexer (:mod:`anri.index`) and the calibration
 of the geometry (:mod:`anri.calib`). Where the maths is ahead of the code (the threshold's model, region moments), the
@@ -45,20 +51,25 @@ Measurement and limits
    sums for any spot shape, what a region's choice and a window's edge do to them.
 10. :doc:`limits`: what the data determine: the Fourier slice, the dislocations it misses, the beam, separation,
     localisation, second moments, model error, and what a method must keep to reach the limits.
+11. :doc:`robustness`: what a fitted statistic is robust to: weights and shape errors, symmetry, the pixels'
+    aliasing, a spread's second-order mean, light beyond a region, and the cost of splitting merged light by shape.
+    The lemmas the refiner uses.
+12. :doc:`refiner`: a refiner that needs no spot shape: deformation moments as a linear tomography, with the
+    noise, the cut, the group rule and the pixels each bounded, and what no estimator can do. The method.
 
 Indexer
 =======
 
-11. :doc:`indexing`: the data as a linear tomography of orientation occupancies, and the histogram it is fitted to.
-12. :doc:`search`: which orientations to try: grids over the fundamental zone, and completeness.
-13. :doc:`likelihood`: fitting occupancies: Poisson likelihood, MLEM, SQUAREM, censoring and the likelihood ratio.
-14. :doc:`localsearch`: refining the orientations off the search grid, and fitting the voxels coarse to fine.
-15. :doc:`populations`: from occupancies to orientation populations per voxel, and the sample mask.
+13. :doc:`indexing`: the data as a linear tomography of orientation occupancies, and the histogram it is fitted to.
+14. :doc:`search`: which orientations to try: grids over the fundamental zone, and completeness.
+15. :doc:`likelihood`: fitting occupancies: Poisson likelihood, MLEM, SQUAREM, censoring and the likelihood ratio.
+16. :doc:`localsearch`: refining the orientations off the search grid, and fitting the voxels coarse to fine.
+17. :doc:`populations`: from occupancies to orientation populations per voxel, and the sample mask.
 
 Calibration
 ===========
 
-16. :doc:`calibration`: the detector and beam geometry from powder rings, then from the indexed scan's peaks.
+18. :doc:`calibration`: the detector and beam geometry from powder rings, then from the indexed scan's peaks.
 
 :doc:`references` lists every work cited.
 
@@ -76,6 +87,8 @@ Calibration
     recording
     moments
     limits
+    robustness
+    refiner
     indexing
     search
     likelihood

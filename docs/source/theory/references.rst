@@ -5,6 +5,10 @@ References
 
 The works the theory pages cite, by label.
 
+Some citations may still be missing: these pages were written with the help of a large language model, and we add
+the sources of its results as we find them (see the note on citations in :doc:`index`). If you know of a paper that
+should be cited, please tell us.
+
 .. [BeckerCoppens1974] Becker, P.J., Coppens, P., 1974. Extinction within the limit of validity of the Darwin transfer
    equations. I. General formalisms for primary and secondary extinction and their application to spherical crystals.
    Acta Crystallographica Section A 30, 129–147. https://doi.org/10.1107/S0567739474000337
@@ -36,6 +40,10 @@ The works the theory pages cite, by label.
 .. [Hayashi2015] Hayashi, Y., Hirose, Y., Seno, Y., 2015. Polycrystal orientation mapping using scanning
    three-dimensional X-ray diffraction microscopy. Journal of Applied Crystallography 48, 1094–1101.
    https://doi.org/10.1107/S1600576715009899
+
+.. [Henningsson2023] Henningsson, N.A., Hall, S.A., 2023. An efficient system matrix factorization method for scanning
+   diffraction based strain tensor tomography. Acta Crystallographica Section A 79, 542–549.
+   https://doi.org/10.1107/S2053273323008136
 
 .. [ImageD11] Wright, J.P., Ball, J.A.D., Jacob, J.-B., El Hachi, Y., Merkel, S., Fang, H., Henningsson, N.A., 2024.
    FABLE-3DXRD/ImageD11. https://github.com/FABLE-3DXRD/ImageD11

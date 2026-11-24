@@ -80,10 +80,10 @@ Start from these when they fit.
 5. **Check that its peaks are bananas.** Render a few rows (`anri.simulate.diagnostics.model_row` on a prepare
    file, summed with `anri.simulate.diagnostics.frames_image`; or `anri.simulate.diagnostics.row_image` on the
    rendered dataset, drawn by `plot_row_image`) and look at peaks near and away from η = 0 and 180°. With orientation
-   spread along the rays they must be smeared arcs with a single maximum, widest in ω near η = 0 and 180° (σ / |sin
-   η|). A ladder of separate sub-peaks means each voxel's orientation is uniform on a grid too coarse for its
-   gradient: make `step` finer, or add `cell_sig_deg`. Separate sharp spots are right only where a few cells or
-   grains fill the ray.
+   spread along the rays they must be continuous arcs, widest in ω near η = 0 and 180° (σ / |sin η|). A ladder of
+   separate sub-peaks spaced by the voxel grid's orientation steps means each voxel's orientation is uniform on a grid
+   too coarse for its gradient: make `step` finer, or add `cell_sig_deg`. Separate maxima from real structure (twins,
+   cells misoriented beyond the instrument's resolution, a few cells or grains filling the ray) are right.
 6. **Make it as hard as the data.** Render with the data's optics and counts (prepare's `--optics` and
    `--density`, render's `--cut`), and with absorption (`--cif` or `--mu`), so that the faint ends of the bananas
    are lost to the cut as in real data.

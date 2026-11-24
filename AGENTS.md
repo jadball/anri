@@ -57,7 +57,7 @@ Consequences for methods:
 - **Don't assume separated sub-spots, and don't mode-seek** on a peak's maximum: with one maximum, the answer is wherever the arc's intensity sits, voxel by voxel.
 - **Measure misfit in rotation space,** not in Cartesian g or detector pixels over large arcs: arcs are curved. For one voxel and reflection, a pixel is consistent with a line of rotations (all those taking h to that pixel's direction).
 - **Spreads are anisotropic:** use a full 3 × 3 covariance in rotation, not one width.
-- **Phantoms must render real bananas:** check that a test phantom's peaks are single-maximum arcs before using it to judge a method. Path averaging (each voxel taking its rays' average) is the failure to test for: shifts shrunk towards the grain mean.
+- **Phantoms must render real bananas:** where a phantom's orientation varies continuously along the rays, check that its peaks are continuous arcs, not a ladder of sub-peaks spaced by the voxel grid's orientation steps, before using it to judge a method. Separate maxima from real structure (twins, cells misoriented beyond the instrument's resolution) are expected and fine. Path averaging (each voxel taking its rays' average) is the failure to test for: shifts shrunk towards the grain mean.
 
 ### The instrument: ESRF ID11 focusing optics
 

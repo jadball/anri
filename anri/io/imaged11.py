@@ -1002,6 +1002,99 @@ def segment(
     return keep
 
 
+def neighbourhoods(frame: np.ndarray, pixel: np.ndarray, values: np.ndarray, det_shape: tuple[int, int],
+                   reach: int = 2) -> np.ndarray:  # fmt: skip
+    """Return each sparse cell's value and those of the cells around it in its frame, as [n, 2 reach + 1, 2 reach + 1].
+
+    Cells not given, and positions off the detector, are 0. ``[:, reach, reach]`` is the cell itself.
+
+    Parameters
+    ----------
+    frame, pixel, values
+        [n] sparse cells: frame index, pixel = slow * n_fast + fast, and a value; each (frame, pixel) once
+    det_shape
+        (n_slow, n_fast)
+    reach
+        Chebyshev distance gathered (2: the 5 x 5 window on which a cell's recorded value depends for
+        ``pixels_in_spot`` <= 3, rec-reach)
+    """
+    ns, nf = det_shape
+    key = np.asarray(frame, np.int64) * (ns * nf) + np.asarray(pixel, np.int64)
+    order = np.argsort(key, kind="stable")
+    ks, vs = key[order], np.asarray(values)[order]
+    r, c = np.divmod(np.asarray(pixel, np.int64), nf)
+    n, w = key.size, 2 * reach + 1
+    out = np.zeros((n, w, w), dtype=vs.dtype if n else np.float64)
+    for i, ds in enumerate(range(-reach, reach + 1)):
+        for j, df in enumerate(range(-reach, reach + 1)):
+            on = (r + ds >= 0) & (r + ds < ns) & (c + df >= 0) & (c + df < nf)
+            k = key + ds * nf + df
+            at = np.minimum(np.searchsorted(ks, k), max(n - 1, 0))
+            hit = on & (ks[at] == k) if n else on
+            out[:, i, j] = np.where(hit, vs[at], 0)
+    return out
+
+
+def _p_at_least(j: int, lam: jnp.ndarray) -> jnp.ndarray:
+    """P(n >= j) for n ~ Poisson(lam), integer j (1 for j <= 0)."""
+    from jax.scipy.special import gammainc
+
+    return jnp.ones_like(lam) if j <= 0 else gammainc(float(j), lam)
+
+
+_N8 = [(a, b) for a in (-1, 0, 1) for b in (-1, 0, 1) if (a, b) != (0, 0)]
+# rec-p12's index sets on the 5 x 5 window about p = (2, 2): for each neighbour q, N(p) u N(q) less p and q
+_PAIR_RING = [
+    (q, sorted(({(2 + a, 2 + b) for a, b in _N8} | {(2 + q[0] + a, 2 + q[1] + b) for a, b in _N8})
+               - {(2, 2), (2 + q[0], 2 + q[1])}))
+    for q in _N8
+]  # fmt: skip
+
+
+def recorded_moments(light: ArrayLike, cut: float = 1, pixels_in_spot: int = PIXELS_IN_SPOT) -> tuple:
+    """Return the mean and variance of a cell's recorded value, given the expected light around it (rec-expected).
+
+    The segmentation's cut and group rule (:func:`segment`) on independent Poisson counts: the cell is kept with
+    P(n > cut), recorded if its group of kept pixels has at least ``pixels_in_spot``, and then gives its whole count.
+    Exact for ``pixels_in_spot`` <= 3 (rec-trunc, rec-p12); differentiable in the light. See the theory page "What the
+    detector records".
+
+    Parameters
+    ----------
+    light
+        [..., 5, 5] expected photons of the cell (at [..., 2, 2]) and of the cells around it in its frame, 0 off the
+        detector (:func:`neighbourhoods` gathers them from sparse cells); raw counts, before any monitor
+        normalisation
+    cut
+        Counts strictly above this are kept (integer counts: n > cut means n >= floor(cut) + 1)
+    pixels_in_spot
+        The fewest kept pixels of a recorded group; at most 3
+
+    Returns
+    -------
+    tuple
+        (mean, variance) of the recorded value r_p, [...] each
+    """
+    if pixels_in_spot > 3:
+        raise ValueError("recorded_moments is exact for pixels_in_spot <= 3 (rec-p12); larger groups need rec-animal")
+    lam = jnp.asarray(light)
+    k = int(np.floor(cut)) + 1  # kept: n >= k
+    a = _p_at_least(k, lam)  # [..., 5, 5]
+    lp = lam[..., 2, 2]
+    e = lp * _p_at_least(k - 1, lp)
+    e2 = lp**2 * _p_at_least(k - 2, lp) + e
+    w = jnp.ones_like(lp)
+    if pixels_in_spot >= 2:
+        na = 1 - a
+        p1 = jnp.prod(jnp.stack([na[..., 2 + i, 2 + j] for i, j in _N8], -1), -1)
+        w = w - p1
+        if pixels_in_spot == 3:
+            p2 = sum(a[..., 2 + q[0], 2 + q[1]] * jnp.prod(jnp.stack([na[..., i, j] for i, j in ring], -1), -1)
+                     for q, ring in _PAIR_RING)  # fmt: skip
+            w = w - p2
+    return e * w, e2 * w - (e * w) ** 2
+
+
 def write_scan(
     hout: h5py.File,
     scan: str,

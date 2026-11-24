@@ -102,9 +102,11 @@ so that a peak with no broadening at all still renders.
 
 **Code:** :func:`anri.fwd.render.render_peaks`.
 
-**Anri's choice:** first order is right for spreads up to a few degrees; beyond that a peak is a curved arc
-(:ref:`theory_rotation_motion`) and a Gaussian is the wrong shape. AGENTS.md asks for exact rotations at large spreads;
-the renderer does not do that yet.
+**Anri's choice:** first order is right for the shape of spreads up to a few degrees; beyond that a peak is a curved
+arc (:ref:`theory_rotation_motion`) and a Gaussian is the wrong shape. AGENTS.md asks for exact rotations at large
+spreads; the renderer does not do that yet. For a peak's *mean* first order is not enough at the precision a strain
+refiner needs: a straight spot of spread :math:`\sigma_\eta` along a curved ring reads as a strain of about
+:math:`-\sigma_\eta^2/2`, :math:`1.5 \times 10^{-4}` at 1° (:eq:`ref-ring`, :eq:`ref-spread-mean`).
 
 Frames
 ------
@@ -359,8 +361,12 @@ refiner, ``origins`` (:func:`anri.fwd.render.window_origins`) fixes them over an
 What is left out
 ----------------
 
-- **Non-Gaussian peaks.** Each source of spread is Gaussian and linearised. Real sub-grain structure gives curved,
-  banana-shaped peaks (several map entries per voxel, each with its own spread, approximate them as a mixture).
+- **Non-Gaussian spots of one entry.** Each map entry's spot is a Gaussian, every source of spread linearised. The
+  banana-shaped peak seen on the detector is not one entry's spot: it is the sum, in each frame, of the spots of every
+  voxel the beam lights along its ray, over the omega range the frame integrates (as the sample turns, the voxels on
+  the ray change). Their slightly different orientations put their spots at different places along the arc. The
+  renderer forms that sum exactly; what it leaves out is only each entry's own shape, which is wrong for an entry
+  whose own spread is large enough to curve (:ref:`theory_rotation_motion`, :eq:`ref-ring`).
 - **Exact rotations** for spreads beyond a few degrees (:eq:`ps-rotation` is first order).
 - **Strain spread** within an entry (it would widen peaks in :math:`2\theta` as :math:`2\varepsilon\tan\theta`).
 - **Dead time** between frames: the frames tile the scan (:eq:`ps-edges`).

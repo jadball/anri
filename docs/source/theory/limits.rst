@@ -302,9 +302,11 @@ the bias a wrong spot shape gives it, projected as in :eq:`lim-common`. From the
   every voxel along a ray through the light the voxels share.
 - Second moments with free spreads add to the means only through their noise correlation (above), not yet sized.
 
-Between these lie statistics over parts of a blob. Which statistic reaches the limits with a bias below the noise
-is not yet derived: it needs the information kept and the shape bias of statistics over regions of a given size, as
-a function of the populations' separation and own widths. Until that is on this page, no method follows from it.
+Between these lie statistics over parts of a blob. :doc:`robustness` derives their shape bias: a separated
+population's location is protected by symmetry (:eq:`ref-symmetric`) up to the pixels' aliasing (:eq:`ref-alias`),
+while splitting merged light by its shape is bias-dominated above a few hundred to a few thousand photons for
+plausible shape errors (:eq:`ref-split`). So the statistics a robust refiner keeps are moments over regions complete
+for their contributors: separated light alone in its region, merged light as a ray sum.
 
 What is left out
 ----------------
@@ -312,7 +314,11 @@ What is left out
 - **Unresolved structure.** A general orientation distribution per voxel is underdetermined: by counting, it needs
   about (voxels across the grain) × (spread / own width) reflections, thousands for a deformed grain against the
   100-500 measured. The population representation (few compact components per voxel) is therefore necessary.
-- **The full Schur complement** of the weak combinations over a ring set (their precision through :math:`\sin\theta`
-  together with the seen ones) is not derived yet.
-- **Several slices.** Only one slice is treated: frequencies along :math:`z` and the other Nye components are not.
-- **Large rotations.** Everything here is linearised; a population's own arc is curved at spreads of degrees.
+- **The full Schur complement** of the weak combinations over a ring set is not written out. Their gain relative to
+  the seen ones is the reflections' rms :math:`\sin\theta` (:eq:`rf-smin`), and a fitted nuisance can only lower it
+  (:eq:`rf-amplify`).
+- **Several slices** are treated in :eq:`rf-3d`: a stack adds no weak directions beyond the slice's; the weak part
+  at a tilted frequency is the Nye component along :math:`\hat{\vec{k}}\times\hat{\vec{\xi}}`.
+- **Large rotations.** Everything here is linearised; a population's own arc is curved at spreads of degrees. The
+  refiner's moments are exact at any spread (:eq:`rf-moments`), and its box margins to all orders
+  (:eq:`rf-box-margin-exact`).

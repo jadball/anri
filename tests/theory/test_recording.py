@@ -10,12 +10,17 @@ import sympy as sp
 
 from tests.theory.common import (
     N8,
+    agree,
     animals,
     boundary,
+    evaluate,
+    float64,
     is_zero,
     p_at_least,
     p_group,
+    rng,
     rounds_to,
+    tol,
 )
 
 
@@ -299,3 +304,72 @@ def test_recorded_covariance_any_pair():
                 small = len(_component(kept, p)) < m and len(_component(kept, q)) < m
                 J = sum(kp <= kept and not (out & kept) for kp, out in terms)
                 assert J == int(small), (p, q, m, bits)
+
+
+def test_recorded_moments_code():
+    """anri.io.imaged11.recorded_moments is rec-expected with rec-trunc's moments and w = 1 - sum_{k<m} P_k from the
+    animal sums (rec-animal, p_group): random light on a 3 x 4 detector (every cell's 5 x 5 window gathered by
+    neighbourhoods, off-detector cells never kept), c = 0, 1, 2, m = 1, 2, 3, against the expressions evaluated at 30
+    digits. Every value is a product and sum of at most ~20 numbers of size <= 1 times the light (<= 6 photons, its
+    square for the variance)."""
+    from anri.io.imaged11 import neighbourhoods, recorded_moments
+
+    ns, nf = 3, 4
+    lam = rng(3).uniform(0.05, 6.0, (ns, nf))
+    frame, pixel = np.zeros(ns * nf, int), np.arange(ns * nf)
+    nb = neighbourhoods(frame, pixel, lam.ravel(), (ns, nf))
+    assert nb.shape == (ns * nf, 5, 5)
+    np.testing.assert_array_equal(nb[:, 2, 2], lam.ravel())
+    x = sp.Symbol("x", positive=True)
+    for c in (0, 1, 2):
+        a = {(i, j): p_at_least(c + 1, x).subs(x, sp.Float(lam[i, j], 30)) for i in range(ns) for j in range(nf)}
+        for m in (1, 2, 3):
+            mean, var = [], []
+            for i in range(ns):
+                for j in range(nf):
+                    L = sp.Float(lam[i, j], 30)
+                    e = L * sp.sympify(p_at_least(c, x)).subs(x, L)
+                    e2 = L**2 * sp.sympify(p_at_least(c - 1, x)).subs(x, L) + e
+                    w = 1 - sum(p_group((i, j), k, a) for k in range(1, m))
+                    mean.append(e * w)
+                    var.append(e2 * w - (e * w) ** 2)
+            agree(evaluate(sp.Matrix(mean), {}).ravel(), lambda v, c=c, m=m: recorded_moments(v, c, m)[0], nb,
+                  **tol(6.0, 64))  # fmt: skip
+            agree(evaluate(sp.Matrix(var), {}).ravel(), lambda v, c=c, m=m: recorded_moments(v, c, m)[1], nb,
+                  **tol(36.0, 64))  # fmt: skip
+
+
+def _spot_share(n_photons: float, sd: float, offset: float, m: int, wing: float = 0.0) -> float:
+    """Expected share of a Gaussian spot's light recorded (c = 1), the spot of sd `sd` px at `offset` px from a pixel
+    centre in both directions, with a share `wing` of it widened by a 1.3 px Gaussian: recorded_moments on 15 x 15."""
+    from scipy.stats import norm
+
+    from anri.io.imaged11 import neighbourhoods, recorded_moments
+
+    n = 15
+    e = np.arange(n + 1) - n / 2
+
+    def masses(s):
+        return norm.cdf((e[1:] - offset) / s) - norm.cdf((e[:-1] - offset) / s)
+
+    ws = np.hypot(sd, 1.3)
+    img = n_photons * ((1 - wing) * np.outer(masses(sd), masses(sd)) + wing * np.outer(masses(ws), masses(ws)))
+    nb = neighbourhoods(np.zeros(n * n, int), np.arange(n * n), img.ravel(), (n, n))
+    with float64():
+        mean = np.asarray(recorded_moments(nb, 1, m)[0])
+    return float(mean.sum() / img.sum())
+
+
+def test_compact_spot_numbers():
+    """recording.rst's table of compact spots: the expected share of a compact spot's light recorded at c = 1, without the group rule
+    (m = 1) and with ImageD11's (m = 3), from recorded_moments (proved by test_recorded_moments_code)."""
+    table = {
+        (0.25, 0.0, 0.0): ("0.928 / 0.003", "0.953 / 0.102", "0.988 / 0.860"),
+        (0.25, 0.5, 0.0): ("0.918 / 0.734", "0.999 / 0.999", "1.000 / 1.000"),
+        (0.5, 0.0, 0.0): ("0.766 / 0.375", "0.930 / 0.926", "0.987 / 0.987"),
+        (0.25, 0.0, 0.28): ("0.733 / 0.022", "0.806 / 0.383", "0.904 / 0.897"),
+    }
+    for (sd, off, wing), row in table.items():
+        for n_ph, quoted in zip((10, 30, 100), row):
+            got = [_spot_share(n_ph, sd, off, m, wing) for m in (1, 3)]
+            assert quoted == " / ".join(f"{g:.3f}" for g in got), (sd, off, wing, n_ph, got)
