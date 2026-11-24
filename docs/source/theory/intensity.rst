@@ -132,8 +132,68 @@ and averaged over the flat top :math:`P_2`), ``tests/theory/test_intensity.py::t
 
 **Code:** :func:`anri.geom.beam.chord_weight`.
 
-Near :math:`\omega = 0°, 90°, \ldots` the four-term difference cancels as :math:`A - B \to 0`, and the code switches to the
-rectangle's form when :math:`A - B < 10^{-6} a` (float64; :math:`3 \times 10^{-3} a` in float32), balancing the two errors.
+The profile is even, and so are the trapezoid and the cube's height, so
+
+.. math::
+    :label: int-even
+
+    P_1(x) + P_1(-x) = 1, \qquad P_2(x) - P_2(-x) = x, \qquad W(-u, \omega) = W(u, \omega).
+
+**Proof:** ``tests/theory/test_intensity.py::test_profile_even``.
+
+**Anri's rule:** :math:`P_1` and :math:`P_2` are evaluated at :math:`-|x|`, :math:`W` at :math:`-|u|` and a cube's share at
+:math:`-|\Delta z|`, each through a select whose two branches are both exact, so that every derivative is right at 0
+(:math:`-|x|` itself has a second derivative of 0 there). Far out, :math:`P_1 \to 1` and :math:`P_2` grows like
+:math:`x`, and :eq:`int-chord`'s four terms cancel to the tail's light: evaluated directly at :math:`u = 8\sigma`, they
+lost every digit in float32 and two in float64.
+
+The four-term difference also cancels near :math:`\omega = 0°, 90°, \ldots`, where :math:`A - B \to 0`. Since
+:math:`\partial_t P_2(u \pm t) = \pm P_1(u \pm t)`, :eq:`int-chord` is the mean over :math:`t \in [B, A]` of the
+profile's mass over :math:`[u - t, u + t]`, and an :math:`n`-point Gauss-Legendre mean (nodes :math:`x_i`, weights
+:math:`w_i` on :math:`[-1, 1]`, midpoint :math:`m = (A + B)/2`, :math:`L = A - B`) is close to it. With
+:math:`E(m, L) = \int_{-1}^1 f(m + Lx/2)\, d\mu(x)` its error (:math:`\mu` the uniform mean minus the rule),
+:math:`M_k = \max|f^{(k)}|` and :math:`K_n = (n!)^4 / ((2n+1)((2n)!)^3)`:
+
+.. math::
+    :label: int-chord-mean
+
+    W = \frac{h}{A - B}\int_B^A f(t)\, dt, \quad f(t) = P_1(u + t) - P_1(u - t); \qquad
+    \Big|\partial_m^i \partial_L^j E\Big| \le K_n \sum_{k=0}^{j} \binom{2n}{k} \frac{j!}{(j-k)!}\, 2^{k-j}\,
+    L^{2n-k} M_{2n+i+j-k}, \quad M_k \le \frac{2 \max|\varphi^{(k-1)}|}{\sigma^k},
+
+the error itself at :math:`i = j = 0`, :math:`K_n L^{2n} M_{2n}`. A Gauss rule integrates the Hermite interpolant of a
+function at its nodes exactly, and the function minus it is its :math:`2n`-th derivative over :math:`(2n)!` times
+:math:`\prod (x - x_i)^2`, of one sign, whose mean is that of the monic Legendre polynomial squared;
+:math:`\partial_m^i \partial_L^j E` is the same functional applied to :math:`(x/2)^j f^{(i+j)}(m + Lx/2)`, whose
+:math:`2n`-th derivative Leibniz's rule gives; and a flat top is an average of Gaussians, so its derivatives are
+bounded by the Gaussian's. For :math:`n = 6` the error is at most :math:`4.37 \times 10^{-13}\,(L/\sigma)^{12}` of
+:math:`h`.
+
+**Proof:** ``tests/theory/test_intensity.py::test_chord_mean`` (the integral; the rule's error constant from the monic
+Legendre polynomial; Leibniz's rule for the derivatives; :math:`\max|\varphi^{(k)}|` at a root of
+:math:`\mathrm{He}_{k+1}`), ``tests/theory/test_intensity.py::test_chord_weight_near_box_code``.
+
+**Anri's rule:** below :math:`L = 2.5\sigma` (float32) or :math:`0.5\sigma` (float64) the weight is the 6-point mean;
+above, the four-term form, whose rounding of :math:`P_2` (tens of operations, values up to :math:`A + \sigma`) is
+amplified by :math:`1/L`, and by a further :math:`1/L` for each omega derivative. The switch balances the second
+derivatives (the beam fold, :eq:`int-fold`, takes two): at it the mean's error and its first two :math:`L`-derivatives
+are at most :math:`2.6 \times 10^{-8}`, :math:`1.7 \times 10^{-7}/\sigma` and :math:`1.1 \times 10^{-6}/\sigma^2` of
+:math:`h` in float32, :math:`1.1 \times 10^{-16}`, :math:`2.8 \times 10^{-15}/\sigma` and
+:math:`6.6 \times 10^{-14}/\sigma^2` in float64, at or below the four-term form's rounding there. The rectangle's form
+:math:`h\,[P_1(u + A) - P_1(u - A)]` is :math:`f(m + L/2)`: wrong at first order in :math:`L`, and its omega
+derivative at zeroth order (:math:`\partial_\omega A \approx \pm a/2` near :math:`90°`, where
+:math:`\partial_\omega W \to 0`).
+
+**Measured:** against :eq:`int-chord` at 40 digits, for :math:`a = 0.7`, :math:`\sigma = 0.45`, Gaussian and flat-top
+(:math:`w = 1.5`) profiles, :math:`u` up to :math:`8\sigma` and :math:`\omega` from :math:`10^{-7}` to 30° off 90°. Within
+:math:`4\sigma`: relative errors of :math:`W` below :math:`6 \times 10^{-15}` (float64) and :math:`7 \times 10^{-7}`
+(float32), its first and second omega derivatives within :math:`2 \times 10^{-12}` and :math:`3 \times 10^{-12}`
+(float64), :math:`5 \times 10^{-4}` and :math:`4 \times 10^{-4}` (float32) of their largest value. At
+:math:`6`-:math:`8\sigma`, where the ramp integrals themselves cancel at large :math:`-x`: :math:`2 \times 10^{-11}` and
+:math:`3 \times 10^{-5}` for :math:`W`, up to :math:`6 \times 10^{-9}` and :math:`7 \times 10^{-5}` for the derivatives.
+The previous rectangle switch (at :math:`A - B < 10^{-6} a`, :math:`3 \times 10^{-3} a` in float32) had errors of
+:math:`6 \times 10^{-7}` (float64) and :math:`2 \times 10^{-3}` (float32) in :math:`W` near the beam, and omega
+derivatives wrong by :math:`10^2` times their scale.
 
 Vertically, a column voxel (2D map) takes the whole profile, which integrates to 1. A cube (3D map) of side :math:`a`,
 its centre :math:`\Delta z` above the beam's centre line, takes its height's share. A beam tilted by :math:`\alpha` out of
