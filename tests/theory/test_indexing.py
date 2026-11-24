@@ -43,3 +43,33 @@ def test_bilinear_code():
         return np.array([[np.asarray(c[2]), np.asarray(c[3])] for c in eta_omega_corners(*z)])
 
     agree(np.array(want, float), weights, eta, om, om0, b_e, b_o, n_e, n_o, rtol=0, atol=tol)
+
+
+def test_grid_covers_the_scan():
+    """idx-grid: the axis is s = floor(n/2) - (y0 - y_first) / step rows from the middle of the n scanned rows, so the
+    first row is floor(n/2) - s steps from it and the last n - 1 - floor(n/2) + s. A grid of N >= n + 2|s| + 1 voxels
+    centred on the axis reaches (N - 1) / 2 >= floor(n/2) + |s| steps either way: past both, for even and odd n."""
+    m = sp.symbols("m", integer=True, nonnegative=True)
+    s, A = sp.symbols("s A", real=True)  # A = |s| >= s, -s
+    for n in (2 * m, 2 * m + 1):
+        half = (n + 2 * A + 1 - 1) / 2
+        first, last = m - s, n - 1 - m + s  # floor(n / 2) = m for both
+        assert is_zero(sp.expand(half - first - (A + s + (n - 2 * m) / 2)))  # >= 0 as A >= -s
+        assert is_zero(sp.expand(half - last - (A - s + 1 - (n - 2 * m) / 2)))  # >= 0 as A >= s
+
+
+def test_grid_code():
+    """recon_positions and voxel_grid are idx-grid, exactly (integers, and multiples of the step)."""
+    from anri.geom.scan import recon_positions
+    from anri.index.mask import voxel_grid
+
+    for n_rows, dty0, ystep, y0, pad in ((11, -5.0, 1.0, 0.0, 0.0), (10, -3.0, 0.5, 0.3, 0.0), (11, -5.0, 1.0, 2.2, 1.5)):
+        shift = sp.floor(sp.Rational(n_rows, 2)) - (sp.nsimplify(y0) - sp.nsimplify(dty0)) / sp.nsimplify(ystep)
+        p = int(sp.ceiling(2 * abs(shift))) + 1
+        p += (n_rows + p + 1) % 2
+        want = n_rows + p + 2 * int(sp.ceiling(sp.nsimplify(pad) / sp.nsimplify(ystep)))
+        assert voxel_grid({"n_rows": n_rows, "dty0": dty0, "ystep": ystep}, y0, pad) == want
+    n, step = 5, 0.75
+    want = np.array([[(i - n // 2) * step, (n // 2 - j) * step, 0.0] for i in range(n) for j in range(n)])
+    agree(want, recon_positions, n, step, rtol=0, atol=0)  # small integers times step: exact
+

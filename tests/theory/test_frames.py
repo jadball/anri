@@ -258,6 +258,9 @@ def test_detector_code():
         agree(lab, detector.det_to_lab, vals[s], vals[f], *tr, **t)
         # back in pixels: the inverse of R P O S has condition p_z / p_y and scales lab lengths by 1 / p_y
         agree(np.array([vals[s], vals[f]]), detector.lab_to_det, *lab, *tr, **tol(np.abs(lab).max() / 74.0 * 75 / 74))
+        tilts = (vals[tx], vals[ty], vals[tz])
+        R = evaluate(rx(tx) * ry(ty) * rz(tz), vals)
+        agree(R, detector.detector_rotation_matrix, *tilts, **tol(1.0))  # three rotations of entries <= 1
         steps = [ev(page.diff(x), vals) for x in (s, f)] + [ev(page.subs({s: 0, f: 0}), vals)]
         for i in range(3):
             agree(steps[i], lambda *a, i=i: detector.detector_basis_vectors_lab(*a)[i], *tr, **t)

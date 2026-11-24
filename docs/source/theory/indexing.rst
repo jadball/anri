@@ -136,7 +136,18 @@ The voxels are an :math:`N \times N` grid of the dty step, centred on the rotati
 the scanned range, as ImageD11 pads its reconstructions. The histogram stage fixes it, so a :math:`y_0` chosen later
 moves no voxel. It can be widened on every side (``grid_pad``) for a sample reaching past the scanned range, whose outer
 part would otherwise pile its intensity onto the grid's edge. With ``gridstep`` :math:`G`, the dty rows are summed in
-groups of :math:`G` and the voxels are :math:`G` dty steps wide.
+groups of :math:`G` and the voxels are :math:`G` dty steps wide. With :math:`n` rows of step :math:`\Delta` from
+:math:`y_{\text{first}}`, the axis :math:`s` rows from their middle, and a pad of :math:`g`, voxel :math:`(i, j)` is at
+
+.. math::
+    :label: idx-grid
+
+    x = (i - \lfloor N/2 \rfloor)\Delta, \quad y = (\lfloor N/2 \rfloor - j)\Delta, \qquad
+    N = n + p + 2\lceil g/\Delta \rceil, \quad p = \lceil 2|s| \rceil + 1\ (+1 \text{ if } n + p \text{ is even}),
+    \quad s = \lfloor n/2 \rfloor - \frac{y_0 - y_{\text{first}}}{\Delta}.
+
+**Definition:** ImageD11's reconstruction order and padding. **Proof:** ``tests/theory/test_indexing.py::test_grid_covers_the_scan``
+(the grid reaches past both ends of the scan), ``tests/theory/test_indexing.py::test_grid_code``.
 
 **Code:** :func:`anri.geom.scan.recon_positions`, :func:`anri.index.mask.voxel_grid`.
 

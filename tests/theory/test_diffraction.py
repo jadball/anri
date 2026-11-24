@@ -250,6 +250,30 @@ def test_column_code():
         agree(ev(lab, vals), gonio.origin_lab, vs, kin, *args, False, **t)
 
 
+def test_dty_and_origin_code():
+    """dty_and_origin_lab: dif-dty's dty, and dif-column's origin at that dty (frm-stack with wedge and chi), for a
+    tilted beam."""
+    v = vec("v")
+    om, w, ch, y0, psi, a = sp.symbols("omega w chi y0 psi a", real=True)
+    k = sp.Matrix([sp.cos(a) * sp.cos(psi), sp.cos(a) * sp.sin(psi), sp.sin(a)])
+    lab0 = ry(sp.rad(w)) * rx(sp.rad(ch)) * rz(sp.rad(om)) * v
+    dty = y0 + k[1] / k[0] * lab0[0] - lab0[1]
+    lab = lab0 + sp.Matrix([0, dty - y0, 0])
+    col = lab + Z * (lab[0] * sp.cos(psi) + lab[1] * sp.sin(psi)) * sp.tan(a)
+    r = rng(21)
+    for _ in range(3):
+        vals = dict(zip(v, r.normal(size=3) * 50))
+        vals.update({om: r.uniform(-180, 180), w: r.normal(), ch: r.normal(), y0: r.normal(), psi: r.normal() * 0.1,
+                     a: r.normal() * 0.05})  # fmt: skip
+        kin = 2.0 * ev(k, vals)
+        vs = np.array([vals[x] for x in v])
+        t = tol(np.abs(vs).max() * 3 + abs(vals[y0]) + 1.0)  # as test_dty_code and test_column_code
+        agree(float(evaluate(dty, vals)), lambda *z: gonio.dty_and_origin_lab(*z)[0], vs, kin, vals[om], vals[w],
+              vals[ch], vals[y0], **t)  # fmt: skip
+        agree(ev(col, vals), lambda *z: gonio.dty_and_origin_lab(*z)[1], vs, kin, vals[om], vals[w], vals[ch],
+              vals[y0], **t)  # fmt: skip
+
+
 def test_raytrace():
     """dif-raytrace: Cramer's rule for o + t k = d0 + s_c S + f_c F. The solution is unchanged by scaling k."""
     o, k, d0, S, F = vec("o"), vec("k"), vec("d"), vec("S"), vec("F")

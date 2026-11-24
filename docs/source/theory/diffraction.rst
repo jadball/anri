@@ -164,7 +164,8 @@ horizontal line is :math:`y = (k_y/k_x)\,x` through the lab origin, and dty move
 For a beam along :math:`x` and no tilts that is :math:`\text{dty} = y_0 - (x_s \sin\omega + y_s \cos\omega)`: each voxel
 traces a sinusoid in (omega, dty), the sinogram.
 
-**Proof:** ``tests/theory/test_diffraction.py::test_dty``, ``tests/theory/test_diffraction.py::test_dty_code``.
+**Proof:** ``tests/theory/test_diffraction.py::test_dty``, ``tests/theory/test_diffraction.py::test_dty_code``,
+``tests/theory/test_diffraction.py::test_dty_and_origin_code`` (with :eq:`dif-column`'s origin at that dty).
 
 **Code:** :func:`anri.geom.gonio.find_dty_for_beam_xy`, :func:`anri.geom.gonio.dty_and_origin_lab`,
 :func:`anri.fwd.scan.get_centroid_scan`.
