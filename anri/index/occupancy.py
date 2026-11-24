@@ -1020,8 +1020,9 @@ def fit_occupancy(
     censor
         Empty bins censored above this many counts per bin in the MLEM (:func:`censored_ratio`); 0: plain MLEM
     callback
-        Passed to the final :func:`mlem`: ``callback(iteration, f, deviance)`` after each iteration, f over the fitted
-        voxels padded to whole blocks (the first ``len(pos)`` are the voxels)
+        Passed to the fit's :func:`mlem` (not to the refits after pricing, whose iterations would restart at 1):
+        ``callback(iteration, f, deviance)`` after each iteration, f over the fitted voxels padded to whole blocks (the
+        first ``len(pos)`` are the voxels)
     absorb
         ``(sample_map, step)``: model absorption along the incoming and diffracted paths through the sample, a [n, n]
         map of the fraction of each voxel it fills (reconstruction order, voxels of ``step``), with ``scan["mu"]``
@@ -1114,8 +1115,9 @@ def fit_occupancy(
         if stats["added"] == 0 or last_pass:
             break
         t0 = time.perf_counter()
+        # no callback: it records the first fit's iterations, and these would restart at 1
         f, info = mlem(H, cand_n, pred, ring_j, pos_p, scan, dims, f_n, n_iter, vb, log=log, censor=censor,
-                       callback=callback, saturated=sat, tol=tol)  # fmt: skip
+                       saturated=sat, tol=tol)  # fmt: skip
         cand = cand_n
         log(convergence_message(f"MLEM after pricing {rnd + 1}", info, tol) + f": {time.perf_counter() - t0:.1f} s")
     if cand.shape[1] > k_fit:  # each voxel's occupied slots first; keep as many columns as the fullest voxel needs
