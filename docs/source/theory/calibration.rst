@@ -21,7 +21,7 @@ origin (:eq:`dif-raytrace` inverted, :eq:`frm-eta`), as ImageD11 computes it: th
 :func:`anri.calib.rings.pixel_tth_eta`.
 
 A phase's rings are its reflections' :math:`d^*` (:doc:`crystal`), those within ``merge`` of each other taken as one,
-at :math:`2\theta_r = 2\arcsin(\lambda d^*_r / 2)` (:eq:`dif-bragg`).
+at :math:`2\theta_r = 2\arcsin(\lambda d^*_r / 2)` (:eq:`dif-bragg`) (``tests/theory/test_calibration.py::test_ring_ds_code``).
 
 **Code:** :func:`anri.calib.rings.ring_ds`.
 
@@ -233,7 +233,8 @@ symmetric. Its strain from the reference lattice :math:`\matr{B}` (scaled by :ma
 in the sample frame: :math:`\matr{K}^T\matr{K} = (\matr{I} + \matr{E})^2` for any rotation, and :math:`\matr{I} +
 \matr{E}` is its positive square root.
 
-**Proof:** ``tests/theory/test_calibration.py::test_strain_from_ubi``, ``tests/theory/test_calibration.py::test_strain_code``.
+**Proof:** ``tests/theory/test_calibration.py::test_strain_from_ubi``, ``tests/theory/test_calibration.py::test_strain_code``,
+``tests/theory/test_calibration.py::test_split_strain``, ``tests/theory/test_calibration.py::test_split_strain_code``.
 
 On a strain-free calibrant a right geometry leaves only noise, as ImageD11's silicon notebook
 estimates its precision. A deviatoric strain shared by every orientation (its peak-weighted mean) points to the tilts or

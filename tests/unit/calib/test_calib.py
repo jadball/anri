@@ -64,29 +64,16 @@ class TestCalibrate(unittest.TestCase):
             fit.calibrate(peaks, ubi[None], np.zeros((1, 1), np.int32), np.ones((1, 1)), 10.0, true,
                           ("wavelength", "lattice"))  # fmt: skip
 
-    def test_lattice_strain(self):
-        """lattice_strain recovers the strain and orientation a UBI was made from."""
-        B = np.asarray(lpars_to_B(np.array([4.0, 5.0, 6.0, 90.0, 95.0, 90.0])))
-        U = random_rotations(2, np.random.default_rng(0))
-        E = np.array([[[1e-3, 2e-4, 0.0], [2e-4, -5e-4, 1e-4], [0.0, 1e-4, 3e-4]], np.zeros((3, 3))])
-        ubi = np.linalg.inv(U @ B) @ (np.eye(3) + E)
-        E_fit, U_fit = fit.lattice_strain(ubi, B)
-        np.testing.assert_allclose(E_fit, E, atol=1e-12)
-        np.testing.assert_allclose(U_fit, U, atol=1e-12)
-
 
 class TestDiagnostics(unittest.TestCase):
-    def test_split_strain(self):
-        """The parts add back to the strain; unfitted orientations are left out of the peak-weighted means."""
-        rng = np.random.default_rng(0)
-        E = rng.normal(size=(3, 3, 3)) * 1e-4
-        E = (E + E.transpose(0, 2, 1)) / 2
+    def test_split_strain_unfitted(self):
+        """Orientations not fitted (NaN) are left out of the means; none fitted gives NaN (values:
+        tests/theory/test_calibration.py::test_split_strain_code)."""
+        E = np.zeros((3, 3, 3))
         E[2] = np.nan
         s = fit.split_strain(E, np.array([10, 30, 50]))
-        np.testing.assert_allclose(s["deviatoric"][:2] + s["hydrostatic"][:2, None, None] * np.eye(3), E[:2])
-        np.testing.assert_allclose(np.trace(s["deviatoric"][:2], axis1=1, axis2=2), 0, atol=1e-18)
         self.assertEqual(s["fitted"].tolist(), [True, True, False])
-        self.assertAlmostEqual(s["mean_hydrostatic"], (10 * s["hydrostatic"][0] + 30 * s["hydrostatic"][1]) / 40)
+        self.assertEqual(s["mean_hydrostatic"], 0.0)
         self.assertTrue(np.isnan(fit.split_strain(E[2:], np.array([5]))["mean_hydrostatic"]))
 
     def test_occupancy_kept(self):

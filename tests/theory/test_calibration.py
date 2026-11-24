@@ -10,6 +10,7 @@ from tests.theory.common import (
     evaluate,
     is_zero,
     rng,
+    tol,
 )
 
 
@@ -152,21 +153,75 @@ def test_strain_from_ubi():
 
 
 def test_strain_code():
-    """anri's lattice_strain recovers E and U from UBI = B^-1 U^T (I + E)."""
+    """anri's lattice_strain recovers E and U from UBI = B^-1 U^T (I + E), for a cubic and a monoclinic B, strained and
+    not."""
     from anri.calib.fit import lattice_strain
+    from tests.theory.common import metric, page_B
 
     g = rng(9)
     r = sp.Matrix([sp.Rational(int(x), 100) for x in g.integers(-30, 30, 3)])
     U = _rod(r)
     E = sp.Matrix(3, 3, lambda i, j: sp.Rational(int(g.integers(-9, 9)), 10**4))
     E = (E + E.T) / 2
-    ubi = 4 * U.T * (sp.eye(3) + E)  # B = I / 4: a cubic lattice of 4 A, exact
-    B = np.eye(3) / 4
-    ubi_f = np.array(evaluate(ubi, {}), float)[None]
-    # ubi rounded once (relative 1 ulp), K^T K and its eigh (backward stable, ~10 ulps of |K|^2 = 1) and the square
-    # root: entries of E within ~16 ulps of 1, absolutely
-    agree(np.array(evaluate(E, {}), float)[None], lambda *z: lattice_strain(*z)[0], ubi_f, B, rtol=0, atol=16 * EPS)
-    agree(np.array(evaluate(U, {}), float)[None], lambda *z: lattice_strain(*z)[1], ubi_f, B, rtol=0, atol=16 * EPS)
+    a, b, c, be = sp.Integer(4), sp.Integer(5), sp.Integer(6), sp.rad(95)
+    Bm = sp.N(page_B(metric(a, b, c, 0, sp.cos(be), 0), 0), 40)
+    for B in (sp.eye(3) / 4, Bm):  # cubic of 4 A (exact), and monoclinic
+        Bv = np.array(evaluate(B, {}), float)
+        for Ev in (E, sp.zeros(3, 3)):
+            ubi = B.inv() * U.T * (sp.eye(3) + Ev)
+            ubi_f = np.array(evaluate(ubi, {}), float)[None]
+            # ubi and B round once (relative 1 ulp each, of cond(B) in K = B ubi), K^T K and its eigh (backward
+            # stable, ~10 ulps of |K|^2 = 1) and the square root: entries of E within 16 ulps of cond(B), absolutely
+            t = {"rtol": 0, "atol": 16 * EPS * np.linalg.cond(Bv)}
+            agree(np.array(evaluate(Ev, {}), float)[None], lambda *z: lattice_strain(*z)[0], ubi_f, Bv, **t)
+            agree(np.array(evaluate(U, {}), float)[None], lambda *z: lattice_strain(*z)[1], ubi_f, Bv, **t)
+
+
+def test_split_strain():
+    """cal-strain's split: E_dev is traceless and E_h I + E_dev = E, for any E."""
+    E = sp.Matrix(3, 3, sp.symbols("e0:9", real=True))
+    h = E.trace() / 3
+    assert is_zero((E - h * sp.eye(3)).trace())
+
+
+def test_split_strain_code():
+    """split_strain against cal-strain's split, and the peak-weighted means over the fitted orientations."""
+    from anri.calib.fit import split_strain
+
+    g = rng(25)
+    Es = []
+    for _ in range(2):
+        E = sp.Matrix(3, 3, lambda i, j: sp.Rational(int(g.integers(-99, 99)), 10**5))
+        Es.append((E + E.T) / 2)
+    n = [10, 30]
+    hyd = [E.trace() / 3 for E in Es]
+    dev = [E - h * sp.eye(3) for E, h in zip(Es, hyd)]
+    Ev = np.array([evaluate(E, {}) for E in Es])
+    got = split_strain(Ev, np.array(n))
+    # a trace, a third and a subtraction on entries <= 1e-3: a few ulps of them
+    t = tol(1e-3)
+    np.testing.assert_allclose(got["hydrostatic"], [float(h) for h in hyd], rtol=0, atol=t["atol"])
+    np.testing.assert_allclose(got["deviatoric"], [evaluate(d, {}) for d in dev], rtol=0, atol=t["atol"])
+    mean_h = sum(ni * h for ni, h in zip(n, hyd)) / sum(n)
+    mean_d = sum((ni * d for ni, d in zip(n, dev)), sp.zeros(3, 3)) / sum(n)
+    np.testing.assert_allclose(got["mean_hydrostatic"], float(mean_h), rtol=0, atol=t["atol"])
+    np.testing.assert_allclose(got["mean_deviatoric"], evaluate(mean_d, {}), rtol=0, atol=t["atol"])
+
+
+def test_ring_ds_code():
+    """ring_ds: bcc iron's rings up to 2 theta max are the distinct d* = |h| / a, h + k + l even, with
+    2 asin(lambda d* / 2) <= 2 theta max (dif-bragg); exactly the ones the rule keeps."""
+    from anri.calib.rings import ring_ds
+
+    a, lam, tmax = sp.Rational(28665, 10000), sp.Rational(3, 10), 20
+    dsmax = 2 * sp.sin(sp.rad(tmax) / 2) / lam
+    n2 = sorted({h * h + k * k + l * l for h in range(-9, 10) for k in range(-9, 10) for l in range(-9, 10)
+                 if (h + k + l) % 2 == 0 and 0 < h * h + k * k + l * l and sp.sqrt(h * h + k * k + l * l) / a <= dsmax})  # fmt: skip
+    want = np.array([float(sp.N(sp.sqrt(m) / a, 30)) for m in n2])
+    got = ring_ds(np.array([float(a)] * 3 + [90.0] * 3), 229, float(lam), float(tmax))
+    # rings 1e-4 apart are merged; bcc's are further apart. d* = sqrt(h^T G* h): a few ulps of it (test_reflections_code)
+    assert len(got) == len(want)
+    np.testing.assert_allclose(got, want, **tol(float(want.max())))
 
 
 def test_mad_factor():
