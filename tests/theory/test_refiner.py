@@ -1484,3 +1484,59 @@ def test_beam_numbers():
     for r, smax in ((50, "0.068"), (200, "0.034"), (500, "0.021")):
         s = sp.sqrt(sp.Rational(1, 10**4) * sig / (sp.exp(-sp.Rational(1, 2)) * r))
         assert rounds_to(s / deg, smax)
+
+
+def test_beam_misplace():
+    """rf-beam-misplace: the weight at the photon's own omega, P(dty_b - dty_v(w + d)), is the profile at the mean
+    omega with the voxel moved by m(d) = -zeta sin d - eta (cos d - 1) (rf-beam-motion). The rows' sum of a Gaussian
+    profile, sum_n exp(-(n - y)^2 / 2 sigma^2), is by Poisson summation sqrt(2 pi) sigma (1 + 2 sum_k
+    exp(-2 pi^2 sigma^2 k^2) cos 2 pi k y): its first harmonic's relative amplitude is 2 T(1) of lim-transfer, 0.057 at
+    sigma = 1 / (2 sqrt(2 ln 2)) steps (FWHM one step)."""
+    x, y, y0, w, d, b = sp.symbols("x y y0 omega delta dty_b", real=True)
+    dty = y0 - (x * sp.sin(w) + y * sp.cos(w))
+    lab = rz(w) * sp.Matrix([x, y, 0])
+    m = -lab[0] * sp.sin(d) - lab[1] * (sp.cos(d) - 1)
+    assert is_zero(sp.expand_trig((b - dty.subs(w, w + d)) - (b - dty - m)))
+    sg = sp.Symbol("sigma", positive=True)
+    t = sp.Symbol("t", real=True)
+    k = sp.Symbol("k", integer=True, positive=True)
+    # Fourier coefficient of the Gaussian at frequency k (per step): its transform at 2 pi k
+    ft = sp.integrate(sp.exp(-(t**2) / (2 * sg**2)) * sp.exp(-2 * sp.pi * sp.I * k * t), (t, -sp.oo, sp.oo))
+    assert is_zero(sp.simplify(ft - sp.sqrt(2 * sp.pi) * sg * sp.exp(-2 * sp.pi**2 * sg**2 * k**2)))
+    s1 = 1 / (2 * sp.sqrt(2 * sp.log(2)))
+    T1 = sp.exp(-(sp.pi**2) / (4 * sp.log(2)))  # lim-transfer at Lambda = 1
+    assert is_zero(sp.simplify(sp.exp(-2 * sp.pi**2 * s1**2) - T1))
+    assert rounds_to(2 * T1, "0.057")
+
+
+def test_beam_edge():
+    """rf-beam-edge: kappa = R s / sigma_b with R = N/2 steps and sigma_b = c / (2 sqrt(2 ln 2)) steps is
+    N sqrt(2 ln 2) s / c = 1.18 N s / c; 3532 s at N = 3000, c = 1."""
+    N, c, s = sp.symbols("N c s", positive=True)
+    kap = (N / 2) * s / (c / (2 * sp.sqrt(2 * sp.log(2))))
+    assert is_zero(kap - N * sp.sqrt(2 * sp.log(2)) * s / c)
+    assert rounds_to(sp.sqrt(2 * sp.log(2)), "1.18")
+    assert rounds_to(3000 * sp.sqrt(2 * sp.log(2)), "3532")
+
+
+def test_beam_voxel():
+    """rf-beam-voxel: r s <= step is kappa = r s / sigma_b <= step / sigma_b = 2 sqrt(2 ln 2) / c (2.35 at c = 1),
+    and at r = rho N / 2 steps it is s <= 2 / (N rho); the numbers on a 3000-step map, and the +-6.5 rho steps of a
+    voxel split equally between parts 0.5 deg apart in omega (s = 0.25 deg)."""
+    r, s, sg, c, N, rho = sp.symbols("r s sigma_b c N rho", positive=True)
+    assert is_zero((r * s / sg) / (1 / sg) - r * s)  # kappa <= 1/sigma_b (step = 1) is r s <= 1
+    assert is_zero(1 / (c / (2 * sp.sqrt(2 * sp.log(2)))) - 2 * sp.sqrt(2 * sp.log(2)) / c)
+    assert rounds_to(2 * sp.sqrt(2 * sp.log(2)), "2.35")
+    assert is_zero(sp.solve(sp.Eq(rho * N / 2 * s, 1), s)[0] - 2 / (N * rho))
+    deg = sp.pi / 180
+    for rh, want in (
+        (1, "0.038"),
+        (sp.Rational(1, 2), "0.076"),
+        (sp.Rational(1, 4), "0.15"),
+        (sp.Rational(1, 10), "0.38"),
+    ):
+        assert rounds_to(2 / (3000 * rh) / deg, want)
+    # two equal parts at +-0.25 deg: sd 0.25 deg; move r s in steps at r = rho N / 2
+    a = sp.Rational(1, 4) * deg
+    assert is_zero(sp.sqrt((a**2 + a**2) / 2) - a)
+    assert rounds_to(1500 * a, "6.5")

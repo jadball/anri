@@ -265,7 +265,7 @@ rad at :math:`s = 0.01°`, :math:`0.03°` and :math:`0.1°` (:math:`\kappa` = 0.
 
 The moment refiner is therefore sound where every population's omega extent, times its voxel's distance from the axis,
 is well below the beam: undeformed and annealed grains (instrument-limited, :math:`s \lesssim 0.01°`), or small
-samples. Where it is not, the rows do not see one common unknown per population: they see different parts of its omega
+samples. For maps wanted accurate to a voxel, the condition is weaker (:eq:`rf-beam-voxel`). Where it is not, the rows do not see one common unknown per population: they see different parts of its omega
 profile, and the bound grows as :math:`\kappa s`. The light is still exactly linear in each population's
 distribution (A3), and the expectation of any region's sum is
 
@@ -280,6 +280,73 @@ omega offset matters, the weight is averaged with :math:`K_R` over it. This is t
 unknowns are occupancies of orientations, each with its own projection angle.
 
 **Definition:** the expectation of a region's sum, by (A1)-(A4); :eq:`rf-hist` is its special case.
+
+**What** :math:`\kappa` **is not.** It is not a window around a starting point. The solve is linear in the moments
+wherever it starts, and the indexer's orientation only places the boxes, whose margins hold for rotations of any size
+(:eq:`rf-box-margin-exact`): a start further off needs a larger box, not a smaller :math:`\kappa`. :math:`\kappa`
+measures what is treated as one unknown: the omega extent of one population's own light. Two populations of one
+voxel each have their own mean omega and weight, and orientation changing from voxel to voxel, boundaries included,
+enters :math:`\matr{G}` exactly. Only the spread within a population enters :math:`\kappa`.
+
+Misplacement, and maps accurate to a voxel
+------------------------------------------
+
+The moment model's error has a plain form. Weighting a photon by the beam at its population's mean omega, instead of
+at its own, is the same as moving its light across the ray, at the mean angle, by the voxel's move
+(:eq:`rf-beam-motion`):
+
+.. math::
+    :label: rf-beam-misplace
+
+    w_{bk}(\bar\omega + \delta) = P\big(\text{dty}_b - \text{dty}_v(\bar\omega) - m(\delta)\big), \qquad
+    m(\delta) = -\zeta\sin\delta - \eta(\cos\delta - 1), \qquad |m| \le r|\delta| .
+
+So the moment refiner is an exact tomography of each reflection's light, with every photon moved across the ray by
+:math:`m(\delta)`: by about :math:`\zeta\delta`, with an rms of :math:`|\zeta| s_{kh} \le r\, s_{kh}` over the
+population. This holds for a profile that does not turn with omega (a point or round voxel); a square voxel's
+footprint also turns by :math:`\delta`, which moves its light by at most its half-diagonal times :math:`|\delta|`, far
+less. Summed over the rows, the moved light is kept, up to the rows' ripple :math:`\sum_b P(\text{dty}_b - y)`, whose
+relative amplitude is :math:`2T` at the dty step (:eq:`lim-transfer`): 0.057 when the beam's FWHM is the step.
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_misplace`` (the weight as a moved profile; the ripple by
+Poisson summation, and its number).
+
+At the edge of a map :math:`N` steps across, scanned with the beam's FWHM :math:`c` steps wide, the sample's radius is
+:math:`N/2` steps and :math:`\sigma_b = c/(2\sqrt{2\ln 2})` steps, so
+
+.. math::
+    :label: rf-beam-edge
+
+    \kappa_{\text{edge}} = \frac{N\sqrt{2\ln 2}}{c}\, s = 1.18\,\frac{N s}{c}:
+
+3532 :math:`s` (radians) for a 3000-step map at :math:`c = 1`, whatever the sample's size, because the beam is chosen
+in proportion to it. At a fraction :math:`\rho` of the radius, :math:`\kappa = \rho\,\kappa_{\text{edge}}`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_edge``
+
+A map meant as an image, accurate to a voxel, needs the light moved by less than a step. With the rms move
+:math:`r s` against one step:
+
+.. math::
+    :label: rf-beam-voxel
+
+    r\, s_{kh} \le \text{step}
+    \iff \kappa_{kh} \le \frac{\text{step}}{\sigma_b} = \frac{2\sqrt{2\ln 2}}{c}
+    \iff s_{kh} \le \frac{2}{N\rho}:
+
+:math:`\kappa \le 2.35` at :math:`c = 1` and :math:`r_f = 0`, against :math:`\kappa \ll 1` for a bias of
+:math:`10^{-4}` rad (:eq:`rf-beam-first`). On a 3000-step map, :math:`s \le` 0.038°, 0.076°, 0.15° and 0.38° at the
+edge, :math:`R/2`, :math:`R/4` and :math:`R/10`. A voxel split equally between two parts whose omega offsets differ by
+0.5° has :math:`s = 0.25°`, and its light is spread over :math:`\pm 6.5\rho` steps across the ray.
+
+**Definition:** the condition for a map accurate to a voxel, as an rms move of one step; the equivalences and numbers
+are ``tests/theory/test_refiner.py::test_beam_voxel``.
+
+Two things this does not say. The move is a different component of the spread in each reflection, along a different
+direction, so the reflections do not agree on where the light went. That disagreement is a misfit that varies from
+voxel to voxel, and it reaches the weak combinations amplified by up to :math:`1/\sin\theta` (:eq:`rf-amplify`). And
+that the solved map then looks blurred by about the move is argued, not derived: the move is exact, its effect through
+the solve is not written out.
 
 The instrument
 --------------
