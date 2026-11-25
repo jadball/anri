@@ -175,8 +175,24 @@ def test_beam_transfer():
 
 
 def test_merged_information():
-    """lim-mu: the two integrals behind mu(k): the merged segment and the coherent window of directions."""
+    """lim-mu, derived. A ray of D voxels has a first moment of variance D N W^2 and mean N A Re(e^{i phi} S); its
+    information on A is (N Re(e^{i phi} S))^2 / (D N W^2), whose average over phi is N |S|^2 / (2 D W^2). A view
+    holds 1/D rays per voxel against a lone voxel's N / (2 W^2) (cos^2 averaged), so a view gives |S|^2 / D^2 of a lone
+    one, and with S = 2 sin(kappa D / 2) / kappa that is sinc^2(kappa D / 2). Views at density M / 2 pi about each of
+    the two perpendiculars sum to (2 M / 2 pi) times the window integral 2 pi / (K D); over M lone views, at
+    K = 2 pi / L, mu = L / (pi D) (times T^2, the beam's on the signal)."""
     t, kap, D, b, K = sp.symbols("t kappa D beta K", positive=True)
+    N, W, A, ph, Sr, Si = sp.symbols("N W A phi S_r S_i", positive=True)
+    mean = N * A * (sp.cos(ph) * Sr - sp.sin(ph) * Si)  # N A Re(e^{i phi} S)
+    info = sp.diff(mean, A) ** 2 / (D * N * W**2)
+    avg = sp.integrate(info, (ph, 0, 2 * sp.pi)) / (2 * sp.pi)
+    assert is_zero(sp.simplify(avg - N * (Sr**2 + Si**2) / (2 * D * W**2)))
+    lone = sp.integrate(N * sp.cos(ph) ** 2 / W**2, (ph, 0, 2 * sp.pi)) / (2 * sp.pi)
+    assert is_zero(sp.simplify(lone - N / (2 * W**2)))
+    frac = sp.simplify((avg / D) / lone)  # 1/D rays per voxel
+    assert is_zero(sp.simplify(frac - (Sr**2 + Si**2) / D**2))
+    S = 2 * sp.sin(kap * D / 2) / kap
+    assert is_zero(sp.simplify(S**2 / D**2 - (sp.sin(kap * D / 2) / (kap * D / 2)) ** 2))
     seg = sp.integrate(sp.exp(sp.I * kap * t), (t, -D / 2, D / 2))
     assert is_zero(sp.simplify((seg - 2 * sp.sin(kap * D / 2) / kap).rewrite(sp.exp)))
     win = sp.integrate((sp.sin(K * D * b / 2) / (K * D * b / 2)) ** 2, (b, -sp.oo, sp.oo))
