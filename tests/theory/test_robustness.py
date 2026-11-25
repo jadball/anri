@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import sympy as sp
 
-from tests.theory.common import animals, boundary, is_zero, rounds_to, skew
+from tests.theory.common import EPS, animals, boundary, is_zero, rounds_to, skew
 
 
 def _rational(rows: int, cols: int, seed: int) -> sp.Matrix:
@@ -157,10 +157,13 @@ def test_alias_numbers():
     rad = sp.Rational(667, 10000) * 75 / 180000  # 0.0667 of a 75 um pixel at 180 mm, in 2 theta
     assert rounds_to(rad * 10**5, "2.8") and rounds_to(rad / (2 * sp.Rational(8, 100)) * 10**4, "1.7")
     assert rounds_to(sp.exp(-2 * sp.pi**2 * sp.Rational(1, 4)), "0.0072")  # a spot of sd 0.5 cell
-    mu = np.linspace(0, 1, 40001)  # the largest over the phase (k > 7 adds < 1e-40)
-    dd = [float(x) for x in d]
-    a = sum((-1) ** k * dd[k - 1] * np.sin(2 * np.pi * k * mu) / (np.pi * k) for k in range(1, 8))
-    assert rounds_to(sp.Float(np.abs(a).max(), 15), "0.0667") and 0.2 < mu[np.argmax(np.abs(a))] % 0.5 < 0.3
+    # the largest over the phase (k > 7 adds < 1e-40): a root of the bias's derivative, to 30 digits, from the best
+    # of a coarse table of the phase; the bias is odd about 0 and 1/2, so the extremes are within [0, 1/2]
+    m = sp.Symbol("m", real=True)
+    a = sum((-1) ** k * d[k - 1] * sp.sin(2 * sp.pi * k * m) / (sp.pi * k) for k in range(1, 8))
+    start = max((sp.Rational(i, 200) for i in range(101)), key=lambda x: abs(sp.N(a.subs(m, x), 15)))
+    m0 = sp.nsolve(sp.diff(a, m), m, start, prec=30)
+    assert rounds_to(abs(a.subs(m, m0)), "0.0667") and 0.2 < m0 % sp.Rational(1, 2) < 0.3
 
 
 def _rodrigues2(dvec: sp.Matrix, t: sp.Symbol) -> sp.Matrix:
@@ -287,18 +290,31 @@ def _split(f: float, ratio: float, d: float) -> tuple:
 
 
 def test_log_pair_derivs():
-    """_log_pair_derivs is the gradient and Hessian of the pair's log density (sympy, at a few points)."""
-    x, a, s = sp.symbols("x a s", real=True)
-    gauss = lambda u: sp.exp(-(u**2) / (2 * s**2)) / (s * sp.sqrt(2 * sp.pi))
-    ll = sp.log((gauss(x - a / 2) + gauss(x + a / 2)) / 2)
+    """_log_pair_derivs' log-sum-exp form is the gradient and Hessian of the pair's log density: with l_pm the two
+    log terms and r_pm their softmax weights, grad log = sum r grad l and Hess log = sum r Hess l + sum r grad l
+    grad l^T - grad grad^T, identically; and the code's numbers are that form's (16 ulps of its terms)."""
+    x, a, s_ = sp.symbols("x a s", real=True)
+    u = [x - a / 2, x + a / 2]
+    lterms = [-(v**2) / (2 * s_**2) - sp.log(s_) for v in u]
+    ll = sp.log((sp.exp(lterms[0]) + sp.exp(lterms[1])) / (2 * sp.sqrt(2 * sp.pi)))
+    tot = sp.exp(lterms[0]) + sp.exp(lterms[1])
+    r = [sp.exp(t) / tot for t in lterms]
+    ps = (a, s_)
+    grad = [sum(ri * sp.diff(t, p) for ri, t in zip(r, lterms)) for p in ps]
+    for i, p in enumerate(ps):
+        assert is_zero(sp.diff(ll, p) - grad[i])
+        for j, q in enumerate(ps):
+            hess = sum(ri * (sp.diff(t, p, q) + sp.diff(t, p) * sp.diff(t, q)) for ri, t in zip(r, lterms))
+            assert is_zero(sp.diff(ll, p, q) - (hess - grad[i] * grad[j]))
     pts = np.array([-3.1, -0.4, 0.0, 0.7, 2.9])
     g, H = _log_pair_derivs(pts, 1.7, 0.8)
     for n, xv in enumerate(pts):
-        at = {x: sp.Float(xv, 30), a: sp.Float(1.7, 30), s: sp.Float(0.8, 30)}
-        for i, p in enumerate((a, s)):
-            assert abs(float(sp.diff(ll, p).subs(at)) - g[i, n]) < 1e-12
-            for j, q in enumerate((a, s)):
-                assert abs(float(sp.diff(ll, p, q).subs(at)) - H[i, j, n]) < 1e-11
+        at = {x: sp.Float(xv, 30), a: sp.Float(1.7, 30), s_: sp.Float(0.8, 30)}
+        scale = 1 + sum(float(sp.N(abs(sp.diff(t, p)).subs(at), 30)) ** 2 for t in lterms for p in ps)
+        for i, p in enumerate(ps):
+            assert abs(float(sp.diff(ll, p).subs(at)) - g[i, n]) <= 16 * EPS * scale
+            for j, q in enumerate(ps):
+                assert abs(float(sp.diff(ll, p, q).subs(at)) - H[i, j, n]) <= 16 * EPS * scale
 
 
 def test_split_bias():
@@ -317,8 +333,21 @@ def test_split_bias():
             b = a - d
             assert rounds_to(sp.Float(b, 15), bias) and rounds_to(sp.Float(sd, 15), noise)
             assert float(f"{(sd / b) ** 2:.2g}") == float(n_eq)  # to two significant digits
+    # Gaussian spots: the model holds, so the truth is the root (a correct model's expected score is the derivative
+    # of its normalisation, zero: test_score_mean_zero), which Newton reaches to its stopping step (1e-13); the noise
+    # is 2 to the digits quoted (two spots of N / 2 photons, sd 1 each: 2 / sqrt(N))
     a, s, sd = _split(0.0, 1.0, 6.0)
-    assert abs(a - 6) < 1e-9 and abs(s - 1) < 1e-9 and abs(sd - 2) < 2e-3
+    assert abs(a - 6) <= 1e-12 and abs(s - 1) <= 1e-12 and rounds_to(sp.Float(sd, 15), "2.00")
+
+
+def test_score_mean_zero():
+    """For any family of densities p(x; t) the expected score is zero: int p d log p / dt = d/dt int p = 0. For the
+    pair of Gaussians, symbolically in both parameters."""
+    x, a, s_ = sp.symbols("x a s", positive=True)
+    gauss = lambda v: sp.exp(-(v**2) / (2 * s_**2)) / (s_ * sp.sqrt(2 * sp.pi))
+    p = (gauss(x - a / 2) + gauss(x + a / 2)) / 2
+    for t in (a, s_):
+        assert sp.simplify(sp.integrate(sp.diff(p, t), (x, -sp.oo, sp.oo))) == 0
 
 
 def test_tangent_spot_on_a_ring():

@@ -44,6 +44,22 @@ For cubic crystals it needs about half the orientations of a cubochoric grid for
 :math:`\pi^{2/3}` mapped onto the homochoric ball, preserving volume (section 2.1 and appendix A there), and from the
 ball to the quaternions by the homochoric vector :math:`\vec{h} = \hat{n}\,[\tfrac{3}{4}(\omega - \sin\omega)]^{1/3}`
 ([Rosca2014]_, section 3.3; [Rowenhorst2015]_, equation 13), so its points are spread evenly over orientation space.
+On the pyramid of the cube where :math:`z` is the largest coordinate and :math:`|y| \le |x|`, with :math:`(X, Y, Z) =
+(\pi/6)^{1/6}(x, y, z)`, :math:`t = \pi Y / 12X`, :math:`\beta = \pi^{5/6} / (2 \cdot 6^{1/6})` and
+:math:`k = (3\pi/4)^{1/3}\, 2^{1/4} / \beta` (EMsoft's grouping of the paper's constants):
+
+.. math::
+    :label: srch-cubochoric
+
+    T = \frac{k X}{\sqrt{\sqrt{2} - \cos t}} \left(\sqrt{2}\cos t - 1,\ \sqrt{2}\sin t\right), \qquad
+    \vec{h} = \left(T\sqrt{1 - \frac{\pi |T|^2}{24 Z^2}},\ \sqrt{\frac{6}{\pi}}\, Z - \frac{\sqrt{\pi}\,|T|^2}{\sqrt{24}\, Z}\right),
+
+the other pyramids by permuting the coordinates, and the angle from :math:`|\vec{h}|^3 = \tfrac{3}{4}(\omega - \sin\omega)`.
+
+**Cited:** [Rosca2014]_. **Proof:** ``tests/theory/test_search.py::test_cubochoric_volume`` (its Jacobian determinant is
+1, the cube's volume :math:`\pi^2` being the ball's, and a face of the cube goes onto the ball's surface),
+``tests/theory/test_search.py::test_cubochoric_code``.
+
 :math:`N = 131.97 / (s - 0.037)` points per semi-edge give a mean nearest-neighbour disorientation of about :math:`s`:
 the fit of [SinghDeGraef2016]_ (equation 9), which holds for every rotation group (their table 3). The grid is reduced
 to the fundamental zone around the identity, plus a shell half a step wide outside it (without the shell, points just
@@ -51,7 +67,11 @@ outside the zone leave gaps along its boundary, as their symmetric images are no
 than the mean spacing.
 
 **Anri's choice:** measured for every Laue group from 1.5 to 12°, it is at most :math:`1.15\,s`, and Anri uses
-:math:`1.2\,s`. The same grid and fit are in orix's ``cubochoric_sampling`` [Johnstone2020]_.
+:math:`1.2\,s`.
+
+**Measured:** ``tests/theory/test_search.py::test_grid_delta_measured`` (random orientations within :math:`1.2\,s` of a grid
+point, grid points within the zone's shell); the reduced grid holds :math:`1/|\text{group}|` of the whole grid's
+points and its shell (``tests/theory/test_search.py::test_zone_sizes``). The same grid and fit are in orix's ``cubochoric_sampling`` [Johnstone2020]_.
 
 **Code:** :func:`anri.crystal.orientation.cubochoric_quaternions`.
 
@@ -60,8 +80,12 @@ Completeness
 
 An orientation's completeness is the fraction of its predicted reflections that land on intensity [Lauridsen2001]_
 [Schmidt2014]_. Anri measures it against a lit map: the row-summed (ring, :math:`\eta`, omega) histogram, thresholded at
-``lit`` times its median non-empty bin. A prediction counts if any lit bin lies within its own tolerance box; a
-summed-area table makes each box a constant-time lookup.
+``lit`` times its median non-empty bin. A prediction counts if any lit bin lies within its own tolerance box
+(:math:`\pm\lceil t_\eta / b_\eta\rceil` bins in :math:`\eta`, periodic, :math:`\pm\lceil t_\omega / b_\omega\rceil` in omega, clipped to the
+scan); a summed-area table makes each box a constant-time lookup, by
+:math:`T[i_1, j_1] - T[i_0, j_1] - T[i_1, j_0] + T[i_0, j_0]` (``tests/theory/test_search.py::test_summed_area``,
+``tests/theory/test_search.py::test_lit_table_code``, ``tests/theory/test_search.py::test_lit_map_code``,
+``tests/theory/test_search.py::test_completeness_code``).
 
 **Code:** :func:`anri.index.search.completeness`, :func:`anri.index.data.lit_table`, :func:`anri.index.search.lit_map`.
 
@@ -96,7 +120,7 @@ peak lights a broad region of the lit map.
 The bounds are first order in :math:`\Delta`.
 
 **Measured:** against the exact Ewald solution (random orientations, :math:`|\sin\eta| > 0.3`), the largest spot
-movement reached 0.999 of the bound and never exceeded it.
+movement reached 0.999 of the bound and never exceeded it (``tests/theory/test_search.py::test_tolerance_measured``).
 
 **Code:** :func:`anri.index.search.match_tolerances`, :func:`anri.index.search.predict`.
 
@@ -107,7 +131,9 @@ A coarser grid has larger tolerances, so a wrong orientation is more likely to l
 orientations are wrong, so the median completeness over a random sample of the grid is its *chance completeness*. Anri
 takes the coarsest step (3, 2.5, 2, 1.5, 1°) whose chance completeness is at most ``max_chance`` (0.5).
 
-**Code:** :func:`anri.index.search.choose_grid`, :func:`anri.index.search.grid_chance`.
+**Code:** :func:`anri.index.search.choose_grid`, :func:`anri.index.search.grid_chance`. With a sample as large as the grid, ``grid_chance``
+is exactly the median of :func:`anri.index.search.completeness_of` over the whole grid
+(``tests/theory/test_search.py::test_grid_chance_code``).
 
 **Anri's choice:** the threshold is set by the data's own background of chance matches, not by a fixed completeness,
 since a crowded lit map (many grains, broad peaks) raises every orientation's completeness.

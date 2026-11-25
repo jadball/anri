@@ -7,9 +7,13 @@ import sympy as sp
 from tests.theory.common import (
     EPS,
     agree,
+    cayley,
     evaluate,
     is_zero,
     rng,
+    skew,
+    tol,
+    vec,
 )
 
 
@@ -48,6 +52,112 @@ def test_mean_rotation_code():
     agree(want, mean_rotation, U, wv, rtol=0, atol=64 * EPS)
 
 
+def test_mean_of_symmetric_pairs():
+    """pop-mean for any rotation R and rotations V_j (Cayley, about any axes, by less than 90 degrees): the pairs
+    R V_j and R V_j^T, weighted w_j each, sum to R P with P = sum w_j (V_j + V_j^T). V + V^T = 2 c I + 2 (1 - c) n n^T
+    (c the cosine of V's angle, n its axis), whose eigenvalues 2c, 2c and 2 are positive: P is symmetric positive
+    definite, so R is the sum's polar factor, its closest rotation."""
+    k = vec("k")
+    V = cayley(k)
+    kk = k.dot(k)
+    c = (1 - kk) / (1 + kk)  # cos(2 atan |k|)
+    n = k / sp.sqrt(kk)
+    assert is_zero(V + V.T - 2 * c * sp.eye(3) - 2 * (1 - c) * n * n.T)
+    assert is_zero((V + V.T) * n - 2 * n)  # eigenvalue 2 along the axis; 2c across it (the identity above)
+
+
+def test_mean_rotation_general_code():
+    """anri's mean_rotation of symmetric pairs about three axes is R (test_mean_of_symmetric_pairs)."""
+    from anri.maths.rotation import mean_rotation
+
+    g = rng(13)
+    R = cayley(sp.Matrix([sp.Rational(int(x), 10) for x in g.integers(-9, 9, 3)]))
+    Vs = [cayley(sp.Matrix([sp.Rational(int(x), 20) for x in g.integers(-9, 9, 3)])) for _ in range(3)]
+    w = [sp.Rational(int(x), 10) for x in g.integers(2, 10, 3)]
+    U = np.array([evaluate(R * M, {}) for V in Vs for M in (V, V.T)])
+    wv = np.repeat(np.array(w, float), 2)
+    P = evaluate(sum((wi * (V + V.T) for wi, V in zip(w, Vs)), sp.zeros(3, 3)), {})
+    sv = np.linalg.eigvalsh(P)
+    # the sum rounds by a few ulps of |M|_F = |P|_F, the SVD is backward stable, and the polar factor moves by at most
+    # 2 / (sigma_2 + sigma_3) times the change in the sum (Higham, Functions of Matrices, theorem 8.9)
+    t = tol(2 * np.linalg.norm(P) / (sv[0] + sv[1]))
+    agree(evaluate(R, {}), mean_rotation, U, wv, **t)
+
+
+def test_rotation_angle_of_cayley():
+    """The rotation cayley(k) turns by theta = 2 atan |k| about k: its trace is 1 + 2 cos(theta) and its axial part
+    (R - R^T) / 2 is sin(theta) [k / |k|]x, which rotation_angle reads with atan2."""
+    k = vec("k")
+    R = cayley(k)
+    kk = k.dot(k)
+    cos_t, sin_t = (1 - kk) / (1 + kk), 2 * sp.sqrt(kk) / (1 + kk)
+    assert is_zero(R.trace() - 1 - 2 * cos_t)
+    assert is_zero((R - R.T) / 2 - sin_t * skew(k / sp.sqrt(kk)))
+
+
+def test_rotation_angle_code():
+    """rotation_angle against 2 atan |k|, from 1e-8 rad to near 180 degrees."""
+    from anri.maths.rotation import rotation_angle
+
+    d = rng(14).normal(size=3)
+    d /= np.linalg.norm(d)
+    ks = [sp.Matrix([sp.nsimplify(x) for x in d]) * sp.Rational(s) for s in ("1/200000000", "1/100", "1/2", "40")]
+    R = np.array([evaluate(cayley(k), {}) for k in ks])
+    want = np.array([float(sp.N(2 * sp.atan(sp.sqrt(k.dot(k))), 30)) for k in ks])
+    # R's entries round once (<= 1); atan2 of (|axial|, (trace - 1) / 2), a unit pair, moves by at most the change in
+    # either: a few ulps, absolute
+    agree(want, rotation_angle, R, **tol(1.0))
+
+
+def _cubic_ops() -> list:
+    """The 24 rotations of the cube: signed permutation matrices of determinant 1, exactly."""
+    import itertools
+
+    out = []
+    for perm in itertools.permutations(range(3)):
+        for signs in itertools.product((1, -1), repeat=3):
+            M = sp.zeros(3, 3)
+            for i, (j, sg) in enumerate(zip(perm, signs)):
+                M[i, j] = sg
+            if M.det() == 1:
+                out.append(M)
+    return out
+
+
+def test_closest_equivalent_code():
+    """closest_equivalent, disorientation and to_fundamental_zone against their definitions, with exact rotations and
+    the cube's 24 rotations: the equivalent U S with the largest trace(U_ref^T U S) (the smallest angle,
+    test_rotation_angle_of_cayley: trace = 1 + 2 cos), its angle, the least angle over S, and U's own least."""
+    from anri.crystal.orientation import closest_equivalent, disorientation, to_fundamental_zone
+
+    ops = _cubic_ops()
+    opsv = np.array([evaluate(S, {}) for S in ops])
+    g = rng(16)
+    R = [cayley(sp.Matrix([sp.Rational(int(x), 7) for x in g.integers(-9, 9, 3)])) for _ in range(3)]
+    Uref = cayley(sp.Matrix([sp.Rational(1, 9), sp.Rational(-1, 5), sp.Rational(2, 11)]))
+    def angle(M: sp.Matrix) -> sp.Expr:  # atan2(|axial|, (trace - 1) / 2), test_rotation_angle_of_cayley
+        ax = sp.Matrix([M[2, 1] - M[1, 2], M[0, 2] - M[2, 0], M[1, 0] - M[0, 1]]) / 2
+        return sp.atan2(sp.sqrt(ax.dot(ax)), (M.trace() - 1) / 2)
+
+    want_U, want_a, want_dis, want_fz = [], [], [], []
+    for U in R:
+        tr = [(Uref.T * U * S).trace() for S in ops]
+        best = U * ops[max(range(24), key=lambda k: tr[k])]
+        want_U.append(evaluate(best, {}))
+        want_a.append(float(sp.N(angle(Uref.T * best), 30)))
+        want_dis.append(float(sp.N(sp.deg(min((angle(Uref.T * U * S) for S in ops), key=lambda e: sp.N(e))), 30)))
+        fz = U * ops[max(range(24), key=lambda k: (U * ops[k]).trace())]
+        want_fz.append(evaluate(fz, {}))
+    Uv = np.array([evaluate(U, {}) for U in R])
+    Urv = evaluate(Uref, {})
+    # products of rotations (entries <= 1) and atan2 of a unit pair: a few ulps (as test_rotation_angle_code); the
+    # disorientation in degrees, up to 63
+    agree(np.array(want_U), lambda *z: closest_equivalent(*z)[0], np.broadcast_to(Urv, Uv.shape), Uv, opsv, **tol(3.0))
+    agree(np.array(want_a), lambda *z: closest_equivalent(*z)[1], np.broadcast_to(Urv, Uv.shape), Uv, opsv, **tol(3.0))
+    agree(np.array(want_dis), disorientation, np.broadcast_to(Urv, Uv.shape), Uv, opsv, **tol(3.0 * 180 / np.pi))
+    agree(np.array(want_fz), to_fundamental_zone, Uv, opsv, **tol(3.0))
+
+
 def test_isotropic_rms_angle():
     """A rotation vector with independent components of standard deviation sigma has E|delta|^2 = 3 sigma^2: the
     rms angle is sqrt(3) sigma, so sig_rot = spread / sqrt(3)."""
@@ -81,3 +191,54 @@ def test_disc_half_turn():
     -a <= -r cos u <= b, whenever cos u <= 0: at least half a turn, and for every direction one of u, u + pi."""
     u = sp.symbols("u", real=True)
     assert is_zero(sp.cos(u + sp.pi) + sp.cos(u))
+
+
+def test_disc_mask_code():
+    """disc_mask: the voxels within r of the axis, r the distance from y0 to the nearer end of the scanned dty range,
+    or to the farther end over a full turn with y0 inside the range (test_disc_half_turn), plus the pad; exactly, on
+    recon_positions' grid."""
+    from anri.geom.scan import recon_positions
+    from anri.index.data import B_O
+    from anri.index.mask import disc_mask
+
+    for dty0, n_rows, y0, n_o, pad in ((-5.0, 11, 0.0, 0, 0.0), (-8.0, 11, 0.0, round(360 / B_O), 0.0),
+                                       (-8.0, 11, 0.0, round(180 / B_O), 0.0), (-5.0, 11, 2.0, 0, 1.5),
+                                       (-8.0, 11, 3.0, round(360 / B_O), 0.0)):  # fmt: skip
+        scan = {"dty0": dty0, "ystep": 1.0, "n_rows": n_rows, "n_o": n_o}
+        lo, hi = dty0 - 0.5, dty0 - 0.5 + n_rows
+        near, far = min(y0 - lo, hi - y0), max(y0 - lo, hi - y0)
+        r = (far if n_o * B_O >= 360 and near >= 0 else near) + pad
+        nr = 21
+        pos = np.asarray(recon_positions(nr, 1.0))
+        want = (np.hypot(pos[:, 0], pos[:, 1]) <= r).reshape(nr, nr)
+        np.testing.assert_array_equal(disc_mask(scan, y0, nr, pad=pad), want)
+
+
+def test_ramp_filter():
+    """The Hamming-windowed ramp, |f| (0.54 + 0.46 cos 2 pi f), is the ramp |f| at low frequency and 0.08 |f| at
+    Nyquist (f = 1/2): the window's value 0.54 - 0.46."""
+    f = sp.symbols("f", real=True)
+    H = sp.Abs(f) * (sp.Rational(54, 100) + sp.Rational(46, 100) * sp.cos(2 * sp.pi * f))
+    assert H.subs(f, 0) == 0 and sp.limit(H / sp.Abs(f), f, 0) == 1
+    assert H.subs(f, sp.Rational(1, 2)) == sp.Rational(8, 100) / 2
+
+
+def test_ramp_filter_code():
+    """ramp_filter: each projection zero-padded to nf = 2^ceil(log2 2n), multiplied in the discrete Fourier domain by
+    the Hamming-windowed ramp at frequencies k / nf (folded), and cut back to n; against the DFT written out as sums."""
+    from anri.index.mask import ramp_filter
+
+    x = rng(37).normal(size=(2, 11))
+    n = x.shape[1]
+    nf = 2 ** int(np.ceil(np.log2(2 * n)))
+    fr = np.array([k / nf if k < nf / 2 else (k - nf) / nf for k in range(nf)])
+    H = np.abs(fr) * (0.54 + 0.46 * np.cos(2 * np.pi * fr))
+    jj, kk = np.meshgrid(np.arange(nf), np.arange(nf), indexing="ij")
+    W = np.exp(-2j * np.pi * jj * kk / nf)
+    xp = np.zeros((2, nf))
+    xp[:, :n] = x
+    want = np.real((xp @ W) * H @ np.conj(W) / nf)[:, :n]
+    # two transforms of nf terms each: nf ulps of sum |x| (the filter is at most 1/2), for the FFT and for the sums
+    t = 2 * nf * EPS * np.abs(x).sum(1).max()
+    np.testing.assert_allclose(ramp_filter(x), want, rtol=0, atol=t)
+

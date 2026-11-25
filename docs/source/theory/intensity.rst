@@ -69,7 +69,8 @@ the polarisation plane's normal :math:`\vec{n} = \hat{e}_h` with probability :ma
 :math:`P = \tfrac{1}{2}(1 + \cos^2 2\theta) - \tfrac{1}{2}\mathcal{J}' \cos 2\rho \sin^2 2\theta` [Kahn1982]_ (eqs.
 13-15, after Azaroff), with :math:`\mathcal{J}' = p` and :math:`\rho = \eta + 90°` measured from the horizontal.
 
-**Code:** :func:`anri.diffract.factors.polarisation`, :func:`anri.diffract.factors.lorentz_polarisation`.
+**Code:** :func:`anri.diffract.factors.polarisation`, :func:`anri.diffract.factors.lorentz_polarisation`
+(``tests/theory/test_intensity.py::test_lorentz_polarisation_code``).
 
 .. _theory_beam_profile:
 
@@ -94,6 +95,24 @@ agree, and the profile integrates to 1).
 
 **Anri's choice:** this family covers the ID11 beams (Gaussian focused beams, slit-defined flat tops) with two numbers
 per direction; the beam's width is measured per experiment.
+
+**Anri's choice:** a flat top narrower than :math:`0.01\sigma` is taken as the Gaussian, where the difference quotient
+of :math:`P_2` would lose digits. The flat top is the Gaussian averaged over its centres, :math:`p_w = p_0 +
+(w^2/24)\,p_0'' + O(w^4)`, and :math:`\int|\varphi''| = 4\varphi(1)`, so the weight changes by at most
+:math:`(w^2/24)\, 4\varphi(1)\, h/\sigma^2` to leading order: :math:`4.0 \times 10^{-6}\, h` at the switch.
+**Proof:** ``tests/theory/test_intensity.py::test_flat_top_small_width``,
+``tests/theory/test_intensity.py::test_flat_top_switch_code``.
+
+A Gaussian beam is often given by its full width at half maximum:
+
+.. math::
+    :label: int-fwhm
+
+    \sigma = \frac{\text{FWHM}}{2\sqrt{2\ln 2}}.
+
+**Proof:** ``tests/theory/test_intensity.py::test_fwhm``, ``tests/theory/test_intensity.py::test_fwhm_code``.
+
+**Code:** :func:`anri.maths.utils.fwhm_to_sigma`, :func:`anri.maths.utils.sigma_to_fwhm`.
 
 How much of a voxel the beam lights is :math:`p` integrated over the voxel. It needs the first and second
 antiderivatives of the Gaussian cumulative distribution, both vanishing at :math:`-\infty`:
@@ -210,8 +229,11 @@ with :math:`\psi` the beam's azimuth and :math:`P_{1,v}` the vertical profile's 
 :math:`\sigma` divided by :math:`\cos\alpha`.
 
 **Definition:** the beam's weight of a voxel. For a tilted beam through a cube it treats the horizontal and vertical
-directions separately, which is exact only for :math:`\alpha = 0`. Checked against the code, for a horizontal beam, by
-``tests/theory/test_intensity.py::test_beam_weight_code``.
+directions separately, which is exact only for :math:`\alpha = 0`. Checked against the code, for horizontal and tilted
+beams, Gaussian and flat-top, by ``tests/theory/test_intensity.py::test_beam_weight_code``. The offsets: :math:`u =
+\vec{p}\cdot\hat{e}_h`, and :math:`\Delta z` above the centre line, which has risen :math:`\tan\alpha` per unit of
+horizontal distance along the beam (``tests/theory/test_intensity.py::test_beam_offsets``,
+``tests/theory/test_intensity.py::test_beam_offsets_code``).
 
 **Code:** :func:`anri.geom.beam.beam_weight`, :func:`anri.geom.beam.beam_offsets`.
 
@@ -341,6 +363,11 @@ direction's angle :math:`\phi` in the slice plane: :math:`D(v, \phi)`, computed 
 the map along each direction and summing it backwards. A ray leaving the plane at an elevation :math:`\epsilon` travels
 :math:`D/\cos\epsilon`. One table serves the incoming beam (looking back towards the source) and every diffracted ray.
 
+The backward sum is the trapezoid rule, exact for the map's linear interpolant whenever the ray's samples fall on the
+map's nodes (``tests/theory/test_intensity.py::test_edge_trapezoid``,
+``tests/theory/test_intensity.py::test_edge_distances_code``); the two directions are frm-stack inverted
+(``tests/theory/test_intensity.py::test_ray_directions_code``).
+
 **Code:** :func:`anri.geom.paths.edge_distances`, :func:`anri.geom.paths.path_lengths`,
 :func:`anri.geom.paths.ray_directions`.
 
@@ -355,7 +382,11 @@ sample's edge in every in-plane direction, and each frame of a peak's window is 
 :math:`\exp(-(\tau_{\text{in}} + \tau_{\text{out}}))` at that frame's omega. Its sample is either the map itself, every
 voxel holding entries full of material with its phases' :math:`\mu` weighted by their densities (so a multiphase map
 absorbs phase by phase, and a 3D map gets one slice per layer), or a given map of :math:`\mu`, e.g. from an absorption
-tomography, which also holds what the map does not (pores, unindexed phases).
+tomography, which also holds what the map does not (pores, unindexed phases). A voxel's coefficient is
+:math:`\sum w_i \mu_i / \sum w_i` over its entries, 0 without any
+(``tests/theory/test_intensity.py::test_attenuation_map_code``).
+
+``tests/theory/test_intensity.py::test_add_absorption_code`` checks the optical depths of a two-phase, two-layer map.
 
 **Code:** :func:`anri.fwd.render.add_absorption`, :func:`anri.geom.paths.attenuation_map`,
 :func:`anri.fwd.render.render_row`.
@@ -406,11 +437,25 @@ and each factor has the form of their equation 37,
 
     y_p = \left(1 + 2x + \frac{A x^2}{1 + B x}\right)^{-1/2}, \qquad y = y_p\, y_s,
 
-**Cited:** [BeckerCoppens1974]_ (equations 37, 38, 43, 43a).
+**Cited:** [BeckerCoppens1974]_ (equations 37, 38, 43, 43a). **Proof:** ``tests/theory/test_intensity.py::test_extinction_limits``
+(:math:`y = 1` at :math:`x = 0`, :math:`y` falls with :math:`x`, and :math:`y^2 x \to B/(A + kB)`, :math:`k` the factor on :math:`x`: a perfect crystal's intensity grows as
+:math:`|F|`).
 
 with :math:`A, B` functions of :math:`\cos 2\theta` fitted to their numerical solutions of the Darwin transfer
 equations (equation 38 for :math:`y_p`; 43 and 43a for :math:`y_s`, in :math:`X`, with :math:`2.12 X` for :math:`2X`
-for a Gaussian distribution). The two field components are extinguished separately (their equations 45 and 46). If a
+for a Gaussian distribution). With :math:`c = \cos 2\theta`, the coefficients as Anri uses them (the factor on :math:`x` first):
+
+.. math::
+    :label: int-ext-ab
+
+    y_p:\ 2,\ 0.20 + 0.45c,\ 0.22 - 0.12(0.5 - c)^2; \quad
+    y_s^{\text{G}}:\ 2.12,\ 0.58 + 0.48c + 0.24c^2,\ 0.02 - 0.025c; \quad
+    y_s^{\text{L}}:\ 2,\ 0.025 + 0.285c,\ \begin{cases} 0.15 - 0.2(0.75 - c)^2 & c > 0 \\ -0.45c & c \le 0 \end{cases}.
+
+**Cited:** [BeckerCoppens1974]_ (equations 38, 43, 43a); ``tests/reference/test_tables.py::TestExtinction`` checks that
+they reproduce the paper's tables. **Proof:** ``tests/theory/test_intensity.py::test_extinction_code``.
+
+The two field components are extinguished separately (their equations 45 and 46). If a
 fraction :math:`w` of the incident intensity has its field normal to the scattering plane, so that
 :math:`P = w + (1 - w)\cos^2 2\theta`, the polarisation factor becomes
 
@@ -430,7 +475,12 @@ with :math:`\hat{n}` the scattering plane's normal.
 With absorption, the mean path through the crystal :math:`3R/2` becomes the absorption-weighted mean path
 :math:`\bar{T}_\mu` (their equations 52 and 53b), which is computed for a sphere by quadrature; :math:`x` is unchanged.
 Becker and Coppens find this first-order correction good for :math:`\mu R` up to about 1 at small Bragg angles (their
-equation 54).
+equation 54). The quadrature's mean path is divided by the same quadrature's unweighted mean, not :math:`3R/2` itself,
+so the ratio is exactly 1 without absorption; checked with :eq:`int-ext-q` and :eq:`int-ext-x` by
+``tests/theory/test_intensity.py::test_extinction_parameters_code``.
+
+**Measured:** for :math:`\mu R \le 1` the 12-point rule's ratio is within :math:`7 \times 10^{-4}` of a 64-point rule's
+(the paths' square roots at the sphere's surface limit it).
 
 **Code:** :func:`anri.diffract.factors.extinction_parameters`, :func:`anri.diffract.factors.extinction`,
 :func:`anri.diffract.factors.polarisation_extinction`; per phase in the renderer through the entries' "extinction"

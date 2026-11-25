@@ -227,3 +227,21 @@ def test_gap_bound():
     primal = sum(dd[b] * sp.log(mh[b]) - mh[b] for b in range(3))
     want = sum(dd) * sp.log(s) + sum(mh) - sum(dd)
     assert sp.simplify(sp.expand_log(dual - primal - want, force=True)) == 0
+
+
+def test_coarse_positions_code():
+    """coarse_positions: the points of recon_positions' grid of the coarse step within 0.75 of a step of any fine
+    voxel, wide enough to hold them all; by brute force over every pair."""
+    from anri.geom.scan import recon_positions
+    from anri.index.occupancy import coarse_positions
+
+    fine = np.asarray(recon_positions(9, 1.0))
+    fine = fine[np.hypot(fine[:, 0], fine[:, 1]) <= 3.2]
+    step = 3.0
+    n = 2 * int(np.ceil(np.abs(fine[:, :2]).max() / step)) + 3
+    grid = np.asarray(recon_positions(n, step))
+    near = [p for p in grid if np.min(np.hypot(*(fine[:, :2] - p[:2]).T)) <= 0.75 * step]
+    got = coarse_positions(fine, step)
+    key = lambda a: sorted(map(tuple, np.round(np.asarray(a)[:, :2] / step).astype(int).tolist()))
+    assert key(got) == key(near)
+

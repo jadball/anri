@@ -11,6 +11,13 @@ follows them, and new maths is written here, with its proof, before the code tha
 - Every numbered equation has a status: **Proof** (a test in ``tests/theory`` that proves it with sympy, or checks
   that the function computing it agrees with the proved expression), **Definition**, **Cited** or **Measured**.
   ``tests/theory/test_pages.py`` fails if one has none, or names a proof that does not exist.
+- Each computation is tested once, at its level: the maths is right (the sympy proofs in ``tests/theory``); the code
+  matches the maths (the ``_code`` checks in ``tests/theory``, the function against the proved expression, at a
+  tolerance derived from rounding: ulps times the condition, never a fixed number); the code works as software
+  (``tests/unit``: compiling, shapes and dtypes, batching, stages, files, errors). Checks are algebraic wherever they
+  can be: a number is checked only where no identity can be, and then against an expression evaluated exactly.
+  ``tests/reference`` holds a fourth kind: that Anri agrees on the basics with older software (ImageD11,
+  Dans_Diffraction) and with published tables and worked examples, at the accuracy of those sources.
 - Paragraphs starting **Anri's rule** are requirements: code that breaks one is a bug.
 - Every displayed equation Anri computes is followed by a **Code** line naming the function that computes it. A test
   (``tests/unit/test_theory_docs.py``) imports every name these pages give, so a renamed function fails CI instead of

@@ -23,7 +23,12 @@ the voxel's whole occupancy, so every candidate must be grouped: the fit's later
 and grouping only the 16 most occupied (as before) under-reported the main population (median 0.87 instead of 0.94 on
 a Ni superalloy).
 
-**Code:** :func:`anri.index.populations.group`, :func:`anri.crystal.orientation.closest_equivalent`.
+A member's symmetric equivalent closest to the seed is the :math:`\matr{U}\matr{S}` of largest
+:math:`\operatorname{tr}(\matr{U}_{\text{seed}}^T\matr{U}\matr{S}) = 1 + 2\cos\theta`; the disorientation is the least
+such angle, and an orientation's fundamental-zone equivalent its own least (``tests/theory/test_populations.py::test_closest_equivalent_code``).
+
+**Code:** :func:`anri.index.populations.group`, :func:`anri.crystal.orientation.closest_equivalent`,
+:func:`anri.crystal.orientation.disorientation`, :func:`anri.crystal.orientation.to_fundamental_zone`.
 
 Each population gets
 
@@ -42,11 +47,18 @@ Each population gets
   **Cited:** [Moakher2002]_. **Proof** for rotations about one axis, where the sum is :math:`\matr{R}_z(\phi)
   \operatorname{diag}(\rho, \rho, \sum w_i)` with :math:`\rho\cos\phi = \sum w_i\cos a_i`, :math:`\rho\sin\phi = \sum
   w_i \sin a_i`, so the mean is :math:`\matr{R}_z(\phi)`: ``tests/theory/test_populations.py::test_mean_of_coaxial_rotations``,
-  ``tests/theory/test_populations.py::test_mean_rotation_code``.
+  ``tests/theory/test_populations.py::test_mean_rotation_code``. **Proof** for any rotation: pairs
+  :math:`\matr{R}\matr{V}_j` and :math:`\matr{R}\matr{V}_j^T` (each :math:`\matr{V}_j` by less than 90°) sum to
+  :math:`\matr{R}\matr{P}` with :math:`\matr{P}` symmetric positive definite, so the mean is :math:`\matr{R}`:
+  ``tests/theory/test_populations.py::test_mean_of_symmetric_pairs``,
+  ``tests/theory/test_populations.py::test_mean_rotation_general_code``.
 
   **Code:** :func:`anri.maths.rotation.mean_rotation`;
 
-- its **spread**: the occupancy-weighted rms misorientation of the members from that mean.
+- its **spread**: the occupancy-weighted rms misorientation of the members from that mean. A rotation's angle is read
+  from its trace and its axial part together, :math:`\theta = \operatorname{atan2}(|\vec{a}|, (\operatorname{tr}\matr{R} - 1)/2)`
+  with :math:`[\vec{a}]_\times = (\matr{R} - \matr{R}^T)/2`, accurate at every angle (``tests/theory/test_populations.py::test_rotation_angle_of_cayley``,
+  ``tests/theory/test_populations.py::test_rotation_angle_code``).
 
   **Code:** :func:`anri.maths.rotation.rotation_angle`.
 
@@ -89,6 +101,8 @@ them large occupancies that explain almost nothing. The fit is restricted to a m
   :math:`\tfrac{2}{\pi}\arcsin(r_{\text{disc}}/r)` of the rotation
   (``tests/theory/test_populations.py::test_disc_fraction``).
 
+  ``tests/theory/test_populations.py::test_disc_mask_code`` checks the radius rule.
+
   **Code:** :func:`anri.index.mask.disc_mask`.
 
 - **auto**: the sample's support in the projections. Each omega's projection (the histogram summed over rings and
@@ -99,7 +113,10 @@ them large occupancies that explain almost nothing. The fit is restricted to a m
   **Code:** :func:`anri.index.mask.support_mask`, :func:`anri.index.mask.support`.
 
 - a **thresholded reconstruction**, as ImageD11's: filtered back-projection of log intensities with a Hamming-windowed
-  ramp filter [KakSlaney1988]_, thresholded by Otsu's method [Otsu1979]_, then the convex hull.
+  ramp filter [KakSlaney1988]_, :math:`|f|(0.54 + 0.46\cos 2\pi f)` on each projection zero-padded to a power of 2 at
+  least twice its length (``tests/theory/test_populations.py::test_ramp_filter``,
+  ``tests/theory/test_populations.py::test_ramp_filter_code``), thresholded by Otsu's method [Otsu1979]_, then the
+  convex hull.
 
   **Code:** :func:`anri.index.mask.reconstruct`, :func:`anri.index.mask.ramp_filter`, :func:`anri.index.mask.otsu`,
   :func:`anri.index.mask.threshold_mask`.

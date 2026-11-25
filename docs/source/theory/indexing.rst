@@ -58,15 +58,19 @@ at the scale of the orientation grid: bins of 1° in :math:`\eta` and 1° in ome
 "lit" histogram (0.5° × 0.25°) for the search. Each pixel's :math:`(2\theta, \eta)` is computed from the lab origin (no
 parallax), and the pixel goes to the nearest ring if within that ring's tolerance.
 
-**Definition:** the histogram the indexer fits, in place of the pixels.
+**Definition:** the histogram the indexer fits, in place of the pixels. Its bins: :math:`\eta` bin
+:math:`\lfloor(\eta + 180°)/b_\eta\rfloor \bmod n_\eta`, omega bin :math:`\lfloor(\omega - \omega_0)/b_\omega\rfloor` on the scan
+(``tests/theory/test_indexing.py::test_pixel_angles_code``, ``tests/theory/test_indexing.py::test_histogram_code``).
 
 **Code:** :func:`anri.index.data.pixel_angles`, :func:`anri.index.data.histogram`,
 :func:`anri.index.data.histogram_pixels`.
 
 **Ring tolerances** are measured from the data, not assumed: each ring's :math:`2\theta` profile is taken within half
-the gap to its neighbours, its background (the median of the window's outer fifth) removed, and the tolerance is the
-distance from the ring's position to its centroid plus the half-width that holds 95 % of its net intensity. This sums
-everything that widens a ring: parallax (sample size over distance), strain, and detector distortion.
+the gap to its neighbours (for the end rings at most ``max_hw``), its background (the median of the
+window's outer fifth) removed, and the tolerance is the distance from the ring's position to its centroid plus the
+half-width that holds 95 % of its net intensity, plus half a profile bin (a bin's intensity may sit anywhere within it).
+This sums everything that widens a ring: parallax (sample size over distance), strain, and detector distortion. The
+rule is checked exactly, in rationals (``tests/theory/test_indexing.py::test_ring_widths_code``).
 
 **Code:** :func:`anri.index.data.ring_profile`, :func:`anri.index.data.ring_widths`.
 
@@ -95,6 +99,11 @@ diffracted paths (:eq:`int-absorption`). The prediction's weight is shared:
   or, given the beam's width, by the beam profile integrated over the voxel's chord in each row
   (:eq:`int-profile`, the same function the renderer uses), each row weighted by its exposure.
 
+With a beam profile a row :math:`k` takes :math:`(\Delta y / v^2)\, W((k - f_k)\Delta y, \omega - \psi)` (:eq:`int-chord`),
+:math:`f_k` the voxel's fractional row from :eq:`dif-dty`, over the :math:`2\lceil(3\sigma + w/2 + v/\sqrt{2})/\Delta y\rceil + 1`
+rows it can reach (``tests/theory/test_indexing.py::test_system_code``,
+``tests/theory/test_indexing.py::test_rows_and_blocks_code``, ``tests/theory/test_indexing.py::test_predictions_code``).
+
 **Code:** :func:`anri.index.occupancy.system`, :func:`anri.index.occupancy.beam_rows`,
 :func:`anri.index.search.predictions`.
 
@@ -118,13 +127,16 @@ which sum to 1 and whose weighted bin centre is :math:`a`: the prediction keeps 
 
 **Fly and helical scans.** When dty moves during the rotation, the frames of one omega bin were taken up to half a step
 away from their row's nominal dty. The real dty per (row, omega bin) is measured from the frames' own motor readings and
-used in place of the nominal one; bins with more or fewer frames than usual get their exposure.
+used in place of the nominal one: the mean over the bin's frames of their dty less the row's. Bins with more or fewer
+frames than usual get their exposure, frames over the median bin's
+(``tests/theory/test_indexing.py::test_dty_offsets_code``).
 
 **Code:** :func:`anri.index.data.dty_offsets`.
 
 The model is never stored. Each pass over the data recomputes :math:`A`'s entries for a block of voxels and accumulates
 :math:`A f` (a segment sum) or :math:`A^T r` (a gather), so memory is set by the block size, not by voxels ×
-orientations.
+orientations: blocks of the largest power of 2 of voxels whose entries, 32 bytes per corner, fit the budget
+(``tests/theory/test_indexing.py::test_forward_backward_code``, ``tests/theory/test_indexing.py::test_rows_and_blocks_code``).
 
 **Code:** :func:`anri.index.occupancy.forward`, :func:`anri.index.occupancy.backward`,
 :func:`anri.index.occupancy.block_voxels`.
@@ -136,7 +148,18 @@ The voxels are an :math:`N \times N` grid of the dty step, centred on the rotati
 the scanned range, as ImageD11 pads its reconstructions. The histogram stage fixes it, so a :math:`y_0` chosen later
 moves no voxel. It can be widened on every side (``grid_pad``) for a sample reaching past the scanned range, whose outer
 part would otherwise pile its intensity onto the grid's edge. With ``gridstep`` :math:`G`, the dty rows are summed in
-groups of :math:`G` and the voxels are :math:`G` dty steps wide.
+groups of :math:`G` and the voxels are :math:`G` dty steps wide. With :math:`n` rows of step :math:`\Delta` from
+:math:`y_{\text{first}}`, the axis :math:`s` rows from their middle, and a pad of :math:`g`, voxel :math:`(i, j)` is at
+
+.. math::
+    :label: idx-grid
+
+    x = (i - \lfloor N/2 \rfloor)\Delta, \quad y = (\lfloor N/2 \rfloor - j)\Delta, \qquad
+    N = n + p + 2\lceil g/\Delta \rceil, \quad p = \lceil 2|s| \rceil + 1\ (+1 \text{ if } n + p \text{ is even}),
+    \quad s = \lfloor n/2 \rfloor - \frac{y_0 - y_{\text{first}}}{\Delta}.
+
+**Definition:** ImageD11's reconstruction order and padding. **Proof:** ``tests/theory/test_indexing.py::test_grid_covers_the_scan``
+(the grid reaches past both ends of the scan), ``tests/theory/test_indexing.py::test_grid_code``.
 
 **Code:** :func:`anri.geom.scan.recon_positions`, :func:`anri.index.mask.voxel_grid`.
 

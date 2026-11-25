@@ -6,6 +6,7 @@ import sympy as sp
 
 from anri.crystal import lattice, orientation, structure
 from tests.theory.common import (
+    EPS,
     agree,
     evaluate,
     is_zero,
@@ -143,3 +144,54 @@ def test_structure_factor_s():
     lam, ds = sp.symbols("lambda d_s", positive=True)
     sin_theta = lam * ds / 2
     assert is_zero(sin_theta / lam - ds / 2)
+
+
+def test_rings_code():
+    """rings: a ring starts at the smallest d* not yet in a ring and takes every d* within tol of it, so rings never
+    chain (five d* 5e-5 apart are two rings at tol 1e-4), and each ring's d* is its first member's; exactly."""
+    ds = [sp.Rational(1), sp.Rational(100005, 100000), sp.Rational(10001, 10000), sp.Rational(100015, 100000),
+          sp.Rational(10002, 10000), sp.Rational(11, 10)]  # fmt: skip
+    tol_ = sp.Rational(1, 10**4)
+    want, firsts = [], []
+    for d in ds:
+        if not firsts or d - firsts[-1] > tol_:
+            firsts.append(d)
+        want.append(len(firsts) - 1)
+    ring, ring_ds = structure.rings(np.array([float(d) for d in ds]), tol=1e-4)
+    np.testing.assert_array_equal(ring, want)
+    np.testing.assert_array_equal(ring_ds, [float(d) for d in firsts])
+
+
+def test_diamond_sum():
+    """cry-F for diamond (Fd-3m, 8 atoms at fcc + (1/4, 1/4, 1/4)): F = f e^(-B s^2) G with |G|^2 = 64 for h, k, l all
+    even with h + k + l = 4n, 32 all odd, and 0 otherwise."""
+    h = sp.symbols("h k l", integer=True)
+    fcc = [(0, 0, 0), (0, sp.Rational(1, 2), sp.Rational(1, 2)), (sp.Rational(1, 2), 0, sp.Rational(1, 2)),
+           (sp.Rational(1, 2), sp.Rational(1, 2), 0)]  # fmt: skip
+    pos = fcc + [tuple(c + sp.Rational(1, 4) for c in p) for p in fcc]
+    G = sum(sp.exp(2 * sp.pi * sp.I * sum(a * b for a, b in zip(h, p))) for p in pos)
+    for hkl, want in (((2, 2, 0), 64), ((4, 0, 0), 64), ((1, 1, 1), 32), ((3, 1, 1), 32), ((2, 0, 0), 0),
+                      ((2, 2, 2), 0), ((1, 1, 0), 0), ((4, 4, 2), 0)):  # fmt: skip
+        g = G.subs(dict(zip(h, hkl)))
+        assert sp.simplify(g * sp.conjugate(g)) == want, hkl
+
+
+def test_structure_factors_code():
+    """structure_factors (Dans Diffraction's evaluation of cry-F) for silicon: zero where test_diamond_sum's G is,
+    and equal at reflections of equal d* and equal |G| (333 and 511), whatever the form factor."""
+    import os
+    import warnings
+
+    import Dans_Diffraction
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        xtl = Dans_Diffraction.Crystal(os.path.join(os.path.dirname(__file__), "..", "data", "cif", "Si.cif"))
+        hkl = np.array([[1, 1, 1], [2, 2, 0], [2, 0, 0], [2, 2, 2], [1, 1, 0], [4, 4, 2], [3, 3, 3], [5, 1, 1]])
+        F2 = structure.structure_factors(xtl, hkl, 0.3)
+    # a sum of 8 terms of size f in float64 errs by at most 8 x 16 eps f, and f^2 <= F2(allowed, all odd) / 32
+    zero = (8 * 16 * EPS) ** 2 * F2[0] / 32
+    np.testing.assert_array_less(F2[2:6], zero)
+    # the same s, so the same f, B and dispersion: 16 ulps of each sum, twice in |F|^2
+    np.testing.assert_allclose(F2[6], F2[7], rtol=2 * 2 * 8 * 16 * EPS, atol=0)
+

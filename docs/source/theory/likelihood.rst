@@ -111,7 +111,7 @@ same relation as a recorded bin's, so the update and the deviance are one object
 the function MLEM climbs. :math:`c = 0` gives a recorded zero (ratio 0, :math:`D_b = 2\mu_b`): plain Poisson MLEM, the
 default.
 
-**Proof:** ``tests/theory/test_likelihood.py::test_censored_em``
+**Proof:** ``tests/theory/test_likelihood.py::test_censored_em``, ``tests/theory/test_likelihood.py::test_censored_ratio_code``
 
 **Code:** :func:`anri.index.occupancy.censored_ratio`, :func:`anri.index.occupancy.deviance`.
 
@@ -217,6 +217,12 @@ orientation's system entries (:eq:`idx-bilinear`'s corners of each prediction) p
 bin give one term with :math:`a_{qb}` their sum (the check uses bins coarse enough that they do), and keeps
 :math:`\mu_b - g_q a_{qb}` above :math:`10^{-6}\mu_b`, the drop in each term being the clipped model's.
 
+**Anri's choice:** where :math:`q` alone explains a bin holding data (:math:`\mu_b = g_q a_{qb}`, :math:`d_b > 0`), :math:`\Lambda_q`
+is infinite: no other orientation can explain those counts. The floor keeps it finite, for ranking and plots, at
+:math:`2(d_b \log 10^6 - \mu_b)` for that bin, and :math:`2(\log 10^6 - 1) = 25.6`: one count that only :math:`q`
+explains (:math:`\mu_b = d_b = 1`) keeps it at the default ``min_lr = 25``, as an infinite ratio would; more counts keep
+it by more. **Proof:** ``tests/theory/test_likelihood.py::test_likelihood_ratio_floor``.
+
 **Code:** :func:`anri.index.orientations.fit`, :func:`anri.index.orientations.select_by_likelihood`.
 
 Two caveats on reading 25 as 5σ. An occupancy cannot be negative, so the null sits on the boundary and its
@@ -249,6 +255,11 @@ are lit, each bin down-weighted by how many (voxel, orientation) pairs could exp
 **Coarse to fine**: the fit stage runs this fit level by level, the first on voxels sized to the orientations' error
 and with every orientation as a candidate, the later ones on finer voxels and orientations, each voxel over what its
 coarser neighbourhood held (:doc:`localsearch`).
+
+A coarse row is the sum of :math:`g` rows: its dty their mean, its voxels :math:`g` times wider, the beam's flat top
+:math:`(g - 1)` steps wider, its exposure the group's mean and its offset the group's exposure-weighted mean real dty
+less its own (``tests/theory/test_likelihood.py::test_coarsen_rows_code``,
+``tests/theory/test_likelihood.py::test_coarsen_scan_code``).
 
 **Code:** :func:`anri.index.occupancy.inherit_candidates`, :func:`anri.index.data.coarsen_rows`,
 :func:`anri.index.data.coarsen_scan`.

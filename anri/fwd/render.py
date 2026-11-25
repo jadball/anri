@@ -1683,7 +1683,7 @@ def render_row(
     psf_mix = geom.get("psf_mix")
     if psf_mix is not None:
         psf_mix = [(float(f), float(sd)) for f, sd in psf_mix]
-        if abs(sum(f for f, _ in psf_mix) - 1.0) > 1e-6:
+        if abs(sum(f for f, _ in psf_mix) - 1.0) > len(psf_mix) * np.finfo(float).eps:  # 1, to the sum's rounding
             msg = f'geom "psf_mix" fractions must sum to 1, not {sum(f for f, _ in psf_mix)}'
             raise ValueError(msg)
         geom = {k: v for k, v in geom.items() if k != "psf_mix"}

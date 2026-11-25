@@ -18,16 +18,22 @@ import sympy as sp
 
 from anri.diffract.factors import lorentz, polarisation, polarisation_extinction
 from anri.fwd.render import _beam_fold, _dty_at, _frame_weights, make_row
-from anri.geom.beam import beam_weight, chord_weight
-from anri.geom.gonio import sample_to_lab
+from anri.geom.beam import beam_offsets, beam_weight, chord_weight
 from anri.geom.paths import path_lengths, transmission
 from anri.maths.utils import float64, ramp_integral, ramp_integral2
 from tests.theory.common import (
     EPS,
+    agree,
+    beam_frame,
+    ev,
     evaluate,
     is_zero,
     rng,
     rounds_to,
+    rx,
+    ry,
+    rz,
+    tol,
 )
 
 
@@ -105,6 +111,19 @@ def test_polarisation_code():
             got = float(polarisation(jnp.array([1.0, 0, 0]), jnp.asarray(v), f))
         # ~15 operations, each term in [0, 1] and their sum >= cos^2 2theta > 0.5: 64 ulps
         np.testing.assert_allclose(got, float(evaluate(expr, {**dict(zip(k, v)), p: f})), rtol=64 * EPS)
+    # a tilted beam: int-pol in its own frame (frames.rst), the same 64 ulps plus the frame's rounding (16 more)
+    psi, tilt = 0.3, -0.15
+    kh, e_h, e_v = beam_frame(sp.Float(psi, 30), sp.Float(tilt, 30))
+    kin = 2.0 * np.array([float(x) for x in ev(kh, {})])
+    for v, f in zip(_random_k_out(rng(27), 4), (0.0, 0.9, 1.0, 0.5)):
+        o = sp.Matrix([sp.Float(x, 30) for x in v])
+        R = (rz(sp.Float(psi, 30)) * ry(-sp.Float(tilt, 30)))  # takes x to the beam, y to e_h, z to e_v
+        o = R * o
+        u = o / sp.sqrt(o.dot(o))
+        want = float(sp.N((1 + f) / 2 * (1 - u.dot(e_h) ** 2) + (1 - f) / 2 * (1 - u.dot(e_v) ** 2), 30))
+        with float64():
+            got = float(polarisation(jnp.asarray(kin), jnp.asarray(ev(o, {})), f))
+        np.testing.assert_allclose(got, want, rtol=80 * EPS)
 
 
 def test_extinction_polarisation():
@@ -154,6 +173,25 @@ def test_profile():
     assert sp.limit(cdf, u, sp.oo) == 1 and sp.limit(cdf, u, -sp.oo) == 0
 
 
+def test_fwhm():
+    """:eq:`int-fwhm`: a Gaussian of sigma = FWHM / (2 sqrt(2 ln 2)) is at half its maximum at FWHM / 2."""
+    f = sp.symbols("f", positive=True)
+    s = f / (2 * sp.sqrt(2 * sp.log(2)))
+    assert sp.simplify(phi(f / 2 / s) / phi(0) - sp.Rational(1, 2)) == 0
+
+
+def test_fwhm_code():
+    """fwhm_to_sigma and sigma_to_fwhm against :eq:`int-fwhm`."""
+    from anri.maths.utils import fwhm_to_sigma, sigma_to_fwhm
+
+    f = np.array([0.25, 1.0, 3.7])
+    c = 2 * sp.sqrt(2 * sp.log(2))
+    s = np.array([float(sp.N(sp.Float(x, 30) / c, 30)) for x in f])
+    # one product or quotient by a rounded constant: two ulps of the result
+    agree(s, fwhm_to_sigma, f, rtol=4 * EPS, atol=0)
+    agree(np.array([float(sp.N(sp.Float(x, 30) * c, 30)) for x in s]), sigma_to_fwhm, s, rtol=4 * EPS, atol=0)
+
+
 def test_ramp_integrals_code():
     """ramp_integral and ramp_integral2 against :eq:`int-ramp`."""
     x, s = sp.symbols("x sigma", real=True)
@@ -167,6 +205,98 @@ def test_ramp_integrals_code():
                                                  x * s / 2 * phi(x / s))]  # fmt: skip
         np.testing.assert_allclose(g1, e1, rtol=16 * EPS * (abs(t[0]) + abs(t[1])) / abs(e1))
         np.testing.assert_allclose(g2, e2, rtol=16 * EPS * (abs(t[2]) + abs(t[3])) / abs(e2))
+
+
+def _ext_coeffs(c: sp.Expr) -> dict:
+    """int-ext-ab: the A, B (and the factor on x) of each extinction factor, at c = cos 2 theta."""
+    b_l = sp.Piecewise((sp.Rational(15, 100) - sp.Rational(2, 10) * (sp.Rational(3, 4) - c) ** 2, c > 0),
+                       (-sp.Rational(45, 100) * c, True))  # fmt: skip
+    return {
+        "primary": (2, sp.Rational(20, 100) + sp.Rational(45, 100) * c,
+                    sp.Rational(22, 100) - sp.Rational(12, 100) * (sp.Rational(1, 2) - c) ** 2),
+        "gaussian": (sp.Rational(212, 100), sp.Rational(58, 100) + sp.Rational(48, 100) * c + sp.Rational(24, 100) * c**2,
+                     sp.Rational(2, 100) - sp.Rational(25, 1000) * c),
+        "lorentzian": (2, sp.Rational(25, 1000) + sp.Rational(285, 1000) * c, b_l),
+    }  # fmt: skip
+
+
+def _y(x: sp.Expr, k: sp.Expr, A: sp.Expr, B: sp.Expr) -> sp.Expr:
+    """int-ext-y."""
+    return (1 + k * x + A * x**2 / (1 + B * x)) ** sp.Rational(-1, 2)
+
+
+def test_extinction_limits():
+    """int-ext-y: y = 1 without extinction; y falls with x wherever A >= 0 and 1 + B x > 0; and y^2 x -> B / A, so
+    y |F|^2 grows as |F| in a perfect crystal (x is proportional to |F|^2)."""
+    x, k, A, B = sp.symbols("x k A B", positive=True)
+    y = _y(x, k, A, B)
+    assert y.subs(x, 0) == 1
+    inner = 1 + k * x + A * x**2 / (1 + B * x)
+    assert is_zero(sp.diff(inner, x) - (k + A * x * (2 + B * x) / (1 + B * x) ** 2))  # > 0: y = inner^(-1/2) falls
+    assert sp.simplify(sp.limit(y**2 * x, x, sp.oo) - B / (A + k * B)) == 0
+
+
+def test_extinction_code():
+    """extinction against int-ext-y with int-ext-ab, primary times Gaussian and times Lorentzian secondary, either side
+    of the Lorentzian's c = 0."""
+    from anri.diffract.factors import extinction
+
+    for x, X, tth in ((0.7, 2.5, 0.3), (12.0, 0.4, 1.2), (3.0, 25.0, 2.0)):
+        c = sp.cos(sp.Float(tth, 30))
+        co = _ext_coeffs(c)
+        for gauss in (True, False):
+            parts = [_y(sp.Float(x, 30), *co["primary"]), _y(sp.Float(X, 30), *co["gaussian" if gauss else "lorentzian"])]
+            want = float(sp.N(parts[0] * parts[1], 30))
+            # each factor: ~16 operations on positive terms (c's own rounding moves A, B by an ulp), its square root
+            # halving the relative error of the sum; the product adds one more
+            with float64():
+                got = float(extinction(x, X, tth, gauss))
+            np.testing.assert_allclose(got, want, rtol=3 * 16 * EPS, atol=0)
+
+
+def test_extinction_parameters_code():
+    """extinction_parameters against int-ext-q and int-ext-x (K = 1, radii in micrometres = 1e4 angstrom), Gaussian and
+    Lorentzian mosaics; without absorption the mean-path ratio is 1 exactly (the same quadrature's two means)."""
+    from anri.diffract.factors import _sphere_path_ratio, extinction_parameters
+
+    r_e = sp.Float("2.8179403262e-5", 30)  # CODATA 2018, angstrom
+    F2, V, lam, r, R, g = 4600.0, 160.2, 0.19, 0.5, 20.0, 300.0
+    tth = np.array([0.1, 0.6, 1.4])
+    for gauss in (True, False):
+        want_x, want_X = [], []
+        for t in tth:
+            s2 = sp.sin(sp.Float(t, 30))
+            Q = (r_e * sp.sqrt(sp.Float(F2, 30)) / sp.Float(V, 30)) ** 2 * sp.Float(lam, 30) ** 3 / s2
+            a = 3 * sp.Float(r * 1e4, 30) * s2 / (2 * sp.Float(lam, 30))
+            alpha = a / sp.sqrt(1 + a**2 / (2 * sp.Float(g, 30) ** 2)) if gauss else a / (1 + 2 * a / (3 * sp.Float(g, 30)))
+            want_x.append(float(sp.N(sp.Rational(2, 3) * Q * a * 3 * sp.Float(r * 1e4, 30) / 2, 30)))
+            want_X.append(float(sp.N(sp.Rational(2, 3) * Q * alpha * 3 * sp.Float(R * 1e4, 30) / 2, 30)))
+        with float64():
+            x, X = extinction_parameters(np.full(3, F2), V, lam, tth, r, R, g, gauss)
+            one = np.array([float(_sphere_path_ratio(0.0, t)) for t in tth])
+        # products and quotients of ~15 rounded factors: 16 ulps relative; the ratio's two quadratures sum 1728
+        # positive terms each (16 ulps of the sum relative, each), and their quotient is 1 up to those
+        np.testing.assert_allclose(np.asarray(x), want_x, rtol=16 * EPS, atol=0)
+        np.testing.assert_allclose(np.asarray(X), want_X, rtol=16 * EPS + 2 * 1728 * EPS, atol=0)
+        np.testing.assert_allclose(one, 1.0, rtol=2 * 1728 * EPS, atol=0)
+
+
+def test_lorentz_polarisation_code():
+    """lorentz_polarisation: int-lor about the omega axis tilted by wedge and chi (frm-stack's W C z), times int-pol."""
+    from anri.diffract.factors import lorentz_polarisation
+
+    k = sp.Matrix(sp.symbols("k0:3", real=True))
+    w, ch, p = 2.0, -1.5, 0.9
+    n = ry(sp.rad(sp.Float(w, 30))) * rx(sp.rad(sp.Float(ch, 30))) * sp.Matrix([0, 0, 1])
+    L = sp.sqrt(k.dot(k)) / sp.Abs(n.dot(sp.Matrix([1, 0, 0]).cross(k)))
+    n2 = k.dot(k)
+    P = (1 + p) / 2 * (1 - k[1] ** 2 / n2) + (1 - p) / 2 * (1 - k[2] ** 2 / n2)
+    for v in _random_k_out(rng(24), 4):
+        want = float(evaluate(L * P, dict(zip(k, v))))
+        # as test_lorentz_code and test_polarisation_code (|sin eta| > 0.2), and the axis's two rotations: 64 + 64 ulps
+        with float64():
+            got = float(lorentz_polarisation(jnp.array([1.0, 0, 0]), jnp.asarray(v), w, ch, p))
+        np.testing.assert_allclose(got, want, rtol=128 * EPS, atol=0)
 
 
 # ---------------------------------------------------------------------------------------------- int-chord
@@ -321,6 +451,29 @@ def _chord_expr(u: sp.Expr, om_deg: float, a: float, s: sp.Expr, w: float) -> sp
     return h / (A - B) * (S2(u + A) - S2(u + B) - S2(u - B) + S2(u - A))
 
 
+def _chord_tol(u: float, om_deg: float, a: float, s: float, w: float) -> float:
+    """The rounding of chord_weight in float64 at one point, from its own terms: the code evaluates :eq:`int-chord` at
+    -|u| (:eq:`int-even`). Four-term form: each P2 is a sum of products of ~16 operations, rounding by 16 eps times the
+    sum of its terms' magnitudes, and the difference is scaled by h / (A - B). Below A - B = 0.5 sigma it is the
+    6-point mean (:eq:`int-chord-mean`), whose error is at most 4.37e-13 (L / sigma)^12 h, and its rounding that of
+    h times masses <= 1."""
+    c, sn = abs(np.cos(np.radians(om_deg))), abs(np.sin(np.radians(om_deg)))
+    A, B = a * (c + sn) / 2, a * abs(c - sn) / 2
+    h = a**2 / (A + B)
+    if A - B < 0.5 * s:
+        return h * (4.37e-13 * ((A - B) / s) ** 12 + 2 * 16 * EPS)
+    x, sv = sp.symbols("x"), sp.Float(s, 30)
+    if w == 0:
+        parts = [x * Phi(x / sv), sv * phi(x / sv)]  # R1
+    else:
+        y = sp.symbols("y")
+        r2 = [(y**2 + sv**2) / 2 * Phi(y / sv), y * sv / 2 * phi(y / sv)]
+        parts = [t.subs(y, x + sp.Float(w, 30) / 2) / w for t in r2] + [t.subs(y, x - sp.Float(w, 30) / 2) / w for t in r2]
+    v = -abs(u)
+    mag = sum(abs(float(sp.N(t.subs(x, sp.Float(v + d, 30)), 30))) for d in (A, B, -B, -A) for t in parts)
+    return 16 * EPS * h / (A - B) * mag
+
+
 def test_chord_weight_code():
     """chord_weight against :eq:`int-chord`, Gaussian and flat-top profiles, and a square lined up with the beam."""
     for u, om, a, s, w in [(0.3, 20.0, 1.0, 0.5, 0.0), (-1.1, 63.0, 1.0, 0.7, 0.0), (0.2, 117.0, 2.0, 0.4, 1.5),
@@ -328,9 +481,37 @@ def test_chord_weight_code():
         expected = float(sp.N(_chord_expr(sp.Float(u, 30), om, sp.Float(a, 30), sp.Float(s, 30), w), 30))
         with float64():
             got = float(chord_weight(u, om, a, s, w))
-        # the four-term difference cancels: condition ~ 4 h max|S2| / ((A - B) |W|), each S2 a few tens of
-        # operations; with A - B >= a / 4 and |W| >= 0.1 here, the bound is below 1e-12
-        np.testing.assert_allclose(got, expected, rtol=1e-12)
+        np.testing.assert_allclose(got, expected, rtol=0, atol=_chord_tol(u, om, a, s, w))
+
+
+def test_flat_top_small_width():
+    """Anri's choice in :eq:`int-profile`: below w = 0.01 sigma the flat top is taken as the Gaussian. The flat top is
+    the mean of the Gaussian over centres in [-w/2, w/2], so p_w = p_0 + (w^2 / 24) p_0'' + O(w^4); and
+    int |phi''| = 4 phi(1) (phi'' = (x^2 - 1) phi changes sign at +-1). So |W_w - W_0| <= (w^2 / 24) h 4 phi(1) /
+    sigma^2 to leading order: 4.0e-6 h at the switch."""
+    u, c, x = sp.symbols("u c x", real=True)
+    s, w = sp.symbols("sigma w", positive=True)
+    g = phi((u - c) / s) / s
+    taylor = sum(sp.diff(g, c, k).subs(c, 0) * c**k / sp.factorial(k) for k in range(5))  # g to O(c^5)
+    mean = sp.expand(sp.integrate(taylor, (c, -w / 2, w / 2)) / w)  # the odd terms vanish
+    left = sp.simplify(mean - g.subs(c, 0) - w**2 / 24 * sp.diff(g.subs(c, 0), u, 2))
+    assert is_zero(left - w**4 / 1920 * sp.diff(g.subs(c, 0), u, 4))  # the next term, O(w^4)
+    d2 = sp.diff(phi(x), x, 2)
+    assert is_zero(d2 - (x**2 - 1) * phi(x))
+    total = 2 * (sp.integrate(-d2, (x, 0, 1)) + sp.integrate(d2, (x, 1, sp.oo)))
+    assert is_zero(total - 4 * phi(sp.Integer(1)))
+    assert rounds_to(sp.Rational(1, 10**4) / 24 * 4 * phi(sp.Integer(1)) * 10**6, "4.0")
+
+
+def test_flat_top_switch_code():
+    """chord_weight at widths either side of the 0.01 sigma switch: just below it is the Gaussian's :eq:`int-chord`
+    (test_flat_top_small_width bounds the difference), just above the flat top's."""
+    u, om, a, s = 0.3, 30.0, 1.0, 0.4
+    for w, page_w in ((0.0099 * s, 0.0), (0.0101 * s, 0.0101 * s)):
+        expected = float(sp.N(_chord_expr(sp.Float(u, 30), om, sp.Float(a, 30), sp.Float(s, 30), page_w), 30))
+        with float64():
+            got = float(chord_weight(u, om, a, s, w))
+        np.testing.assert_allclose(got, expected, rtol=0, atol=_chord_tol(u, om, a, s, page_w))
 
 
 def _chord_sym(u: sp.Expr, om: sp.Symbol, a: sp.Expr, s: sp.Expr, w: float) -> sp.Expr:
@@ -405,21 +586,69 @@ def test_chord_weight_near_box_code():
     assert cond_r * cond_4 < 1e3  # at +u the four terms would grow like u and cancel to the tail: no digits left
 
 
+def test_beam_offsets():
+    """beam_offsets: for a beam at azimuth psi and tilt alpha, k = (cos a cos psi, cos a sin psi, sin a), a point p is
+    across = p . e_h from the beam's vertical plane, its horizontal distance along the beam is p . (cos psi, sin psi, 0),
+    the centre line has risen tan(alpha) times that, and p less its offsets across and up is on the centre line."""
+    psi, al = sp.symbols("psi alpha", real=True)
+    k, e_h, _ = beam_frame(psi, al)
+    p = sp.Matrix(sp.symbols("p_x p_y p_z", real=True))
+    along = p[0] * sp.cos(psi) + p[1] * sp.sin(psi)
+    rise = along * sp.tan(al)
+    height = p[2] - rise
+    on_line = p - p.dot(e_h) * e_h - height * sp.Matrix([0, 0, 1])
+    assert is_zero(on_line - along / sp.cos(al) * k)
+
+
+def _offsets(p: tuple, psi: float, al: float) -> tuple:
+    """test_beam_offsets' across, height, rise and cos(alpha), exactly."""
+    P = sp.Matrix([sp.Float(x, 30) for x in p])
+    ps, a = sp.Float(psi, 30), sp.Float(al, 30)
+    _, e_h, _ = beam_frame(ps, a)
+    along = P[0] * sp.cos(ps) + P[1] * sp.sin(ps)
+    return P.dot(e_h), P[2] - along * sp.tan(a), along * sp.tan(a), sp.cos(a)
+
+
+def test_beam_offsets_code():
+    """beam_offsets against test_beam_offsets, for an unnormalised k."""
+    for p, psi, al in [((5.0, -2.0, 3.0), 0.0, 0.0), ((5.0, -2.0, 3.0), 0.3, 0.1), ((-40.0, 12.0, -7.0), -0.6, -0.2)]:
+        k = 2.5 * np.array([np.cos(al) * np.cos(psi), np.cos(al) * np.sin(psi), np.sin(al)])
+        want = np.array([float(sp.N(x, 30)) for x in _offsets(p, psi, al)])
+        # products of |p| with unit vectors, and a quotient by cos(alpha) ~ 1: a few ulps of |p| (16 covers them)
+        agree(want, lambda *z: np.array(beam_offsets(*z)), np.array(p), k, **tol(np.abs(p).max()))
+
+
 def test_beam_weight_code():
-    """beam_weight for a horizontal beam along x: the chord weight at u = y_lab, times, for a cube, the vertical
-    profile's mass over its height."""
+    """beam_weight against :eq:`int-beam-weight`: a horizontal beam along x and at an azimuth, Gaussian and flat-top;
+    a tilted beam through a column (1 / cos alpha) and through a cube (the vertical profile measured vertically)."""
     # NumPy, not jnp: a JAX array made outside float64() would be float32
-    geom = {"k_in_lab": np.array([1.0, 0.0, 0.0]), "voxel_size": 1.0, "sig_beam": 0.6, "width_beam": 0.0,
-            "sig_beam_v": 0.8, "width_beam_v": 1.0}  # fmt: skip
-    for pos, om, cube in [((3.0, 0.4, 0.2), 25.0, False), ((-2.0, -0.3, 0.7), 140.0, True)]:
-        y, z = sp.Float(pos[1], 30), sp.Float(pos[2], 30)
-        W = _chord_expr(y, om, sp.Integer(1), sp.Float(0.6, 30), 0.0)
-        half, sv = sp.Rational(1, 2), sp.Float(0.8, 30)
-        cdf = [R1(z + half + sgn * half, sv) - R1(z + half * sgn - half, sv) for sgn in (1, -1)]  # width 1: no / w
+    cases = [  # pos, omega, cube, psi, alpha, sig, width
+        ((3.0, 0.4, 0.2), 25.0, False, 0.0, 0.0, 0.6, 0.0),
+        ((-2.0, -0.3, 0.7), 140.0, True, 0.0, 0.0, 0.6, 0.0),
+        ((1.0, 0.3, 0.0), 30.0, False, 20.0, 0.0, 0.4, 0.0),
+        ((0.5, -0.5, 0.0), 0.0, False, 10.0, 0.0, 0.4, 1.5),
+        ((2.0, 0.2, 0.5), 30.0, False, 0.0, 25.0, 0.4, 0.0),
+        ((1.0, -0.4, 0.3), 50.0, True, 15.0, 10.0, 0.4, 0.0),
+    ]
+    for pos, om, cube, psi, al, sig, width in cases:
+        pr, ar = np.radians(psi), np.radians(al)
+        k = np.array([np.cos(ar) * np.cos(pr), np.cos(ar) * np.sin(pr), np.sin(ar)])
+        geom = {"k_in_lab": k, "voxel_size": 1.0, "sig_beam": sig, "width_beam": width, "sig_beam_v": 0.8,
+                "width_beam_v": 1.0, "voxel_3d": cube}  # fmt: skip
+        across, dz, _, cos_a = _offsets(pos, pr, ar)
+        W = _chord_expr(across, om - psi, sp.Integer(1), sp.Float(sig, 30), width) / cos_a
+        sv, wv = sp.Float(0.8, 30) / cos_a, 1 / cos_a
+        cdf = [(R1(dz + sgn / 2 + wv / 2, sv) - R1(dz + sgn / 2 - wv / 2, sv)) / wv for sgn in (1, -1)]
         V = cdf[0] - cdf[1] if cube else 1
+        want = float(sp.N(W * V, 30))
         with float64():
-            got = float(beam_weight(jnp.asarray(pos), om, {**geom, "voxel_3d": cube}))
-        np.testing.assert_allclose(got, float(sp.N(W * V, 30)), rtol=1e-12)  # as test_chord_weight_code
+            got = float(beam_weight(jnp.asarray(pos), om, geom))
+        # the chord weight's rounding, plus that of its argument u (16 ulps of |p|), moving W by at most
+        # max|dW/du| = h max p <= sqrt(2) a phi(0) / sigma per unit; over cos(alpha); a cube's share and the products
+        # add 16 ulps of the result's terms
+        u_err = 16 * EPS * np.abs(pos).max() * np.sqrt(2) * float(sp.N(phi(sp.Integer(0)), 30)) / sig
+        t = (_chord_tol(float(across), om - psi, 1.0, sig, width) + u_err) / float(cos_a)
+        np.testing.assert_allclose(got, want, rtol=0, atol=t + 2 * 16 * EPS * abs(float(sp.N(W, 30))))
 
 
 # ---------------------------------------------------------------------------------------------- int-fold
@@ -537,10 +766,15 @@ def test_dty_path_code():
         fclip = jnp.array([1, 3, 4])  # sorted frames 0.11, 0.30, 0.43; mean omegas within them
         om_fr = jnp.array([0.12, 0.27, 0.40])
         fw = np.asarray(_frame_weights(pos, om_fr, fclip, row, geom))
-        lab = [sample_to_lab(pos, o, 0.0, 0.0, 1.7 - 2.3 * o, 0.0) for o in (0.12, 0.27, 0.40)]
-        want = np.asarray([beam_weight(x, o, geom) for x, o in zip(lab, (0.12, 0.27, 0.40))])
-    # the same float64 operations but for the dty: its error (above, ~1e-14) moves a weight of slope ~1 / sigma
-    np.testing.assert_allclose(fw, want, rtol=1e-13)
+    # int-beam-weight for a column in a beam along x, at the voxel's place on the dty path (frm-stack, dty =
+    # 1.7 - 2.3 omega): the chord weight at u = y_lab, its rounding, plus the dty's (above) moving it by at most
+    # h max p <= sqrt(2) a phi(0) / sigma per unit
+    for o, w in zip((0.12, 0.27, 0.40), fw):
+        O = sp.rad(sp.Float(o, 30))
+        y = sp.Float(5.0, 30) * sp.sin(O) + sp.Float(0.2, 30) * sp.cos(O) + (sp.Float(1.7, 30) - sp.Float(2.3, 30) * sp.Float(o, 30))
+        want = float(sp.N(_chord_expr(y, o, sp.Float(0.5, 30), sp.Float(0.4, 30), 0.0), 30))
+        u_err = (16 * EPS * 2 + 16 * EPS * 360 * 2.3 + 16 * EPS * 5) * np.sqrt(2) * 0.5 * float(sp.N(phi(sp.Integer(0)), 30)) / 0.4
+        np.testing.assert_allclose(w, want, rtol=0, atol=_chord_tol(float(y), o, 0.5, 0.4, 0.0) + u_err)
 
 
 # ---------------------------------------------------------------------------------------------- int-absorption
@@ -561,6 +795,123 @@ def test_path_code():
     np.testing.assert_allclose(L_in, float(e_in), rtol=16 * EPS)
     np.testing.assert_allclose(L_out, float(e_out), rtol=16 * EPS)
     np.testing.assert_allclose(T, float(sp.N(sp.exp(-sp.Float(0.01, 30) * (e_in + e_out)), 30)), rtol=64 * EPS)
+
+
+def test_edge_trapezoid():
+    """edge_distances sums the map along each direction as sum_{i >= 0} m_i - m_0 / 2 (unit steps): the integral from 0
+    to the edge of the map's linear interpolant along the ray, exactly, whenever the ray's samples are the map's
+    nodes (a direction along an axis from a voxel's centre)."""
+    m = sp.symbols("m0:4", real=True)
+    t = sp.symbols("t", real=True)
+    pieces = [m[i] + (m[i + 1] - m[i]) * (t - i) if i + 1 < 4 else m[i] * (1 - (t - i)) for i in range(4)]
+    exact = sum(sp.integrate(f, (t, i, i + 1)) for i, f in enumerate(pieces))
+    assert is_zero(exact - (sum(m) - m[0] / 2))
+
+
+def test_edge_distances_code():
+    """edge_distances against test_edge_trapezoid's integral, along +x, +y, -x, -y from voxel centres, and from outside
+    the map looking away (zero)."""
+    from fractions import Fraction
+
+    from anri.geom.paths import edge_distances
+
+    n, step = 7, 2.0
+    g = rng(15)
+    m = g.integers(0, 9, (n, n)) / 8  # multiples of 1/8: exact in float32
+    c0 = n // 2
+
+    def node(x: int, y: int) -> Fraction:  # recon order: ri = x + n // 2, rj = n // 2 - y
+        i, j = x + c0, c0 - y
+        return Fraction(int(m[i, j] * 8), 8) if 0 <= i < n and 0 <= j < n else Fraction(0)
+
+    pts = [(0, 0), (2, -1), (-3, 3), (5, 0)]  # the last outside the map, along +x
+    want = []
+    for x, y in pts:
+        row = []
+        for dx, dy in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+            ms = [node(x + dx * i, y + dy * i) for i in range(2 * n)]
+            row.append(float((sum(ms) - ms[0] / 2) * Fraction(step)))
+        want.append(row)
+    got = np.asarray(edge_distances(jnp.asarray(m, jnp.float32), step, jnp.asarray(pts, jnp.float32) * step, n_phi=4))
+    # float32: the cumulative sum of K = 2h + 1 samples rounds by K eps32 times their sum; and cos, sin of the
+    # directions in float32 are off by eps32, moving each sample by eps32 (|t| + |s|) <= 2 h eps32 voxels, which
+    # changes it by at most max|m difference| = 1 per voxel
+    h = int(np.ceil(n * 0.7072)) + 2
+    K, e32 = 2 * h + 1, float(np.finfo(np.float32).eps)
+    bound = K * e32 * step * (np.abs(m).sum() + K * 2 * h)
+    np.testing.assert_allclose(got, want, rtol=0, atol=bound)
+    assert np.all(got[3, 0] == 0)  # outside, looking away: nothing
+
+
+def test_ray_directions_code():
+    """ray_directions against frm-stack inverted (test_frames.py::test_stack_inverse): R^T C^T W^T of -k and of k_out,
+    normalised."""
+    from anri.geom.paths import ray_directions
+
+    k_in = np.array([2.0, 0.3, -0.1])
+    k_out = np.array([[1.0, -0.4, 0.5], [0.6, 0.7, -0.2]])
+    om, wedge, chi = np.array([33.0, -140.0]), 1.5, -2.0
+    want_in, want_out = [], []
+    for o, ko in zip(om, k_out):
+        M = rz(sp.rad(sp.Float(o, 30))).T * rx(sp.rad(sp.Float(chi, 30))).T * ry(sp.rad(sp.Float(wedge, 30))).T
+        for v, out in ((-k_in, want_in), (ko, want_out)):
+            V = sp.Matrix([sp.Float(x, 30) for x in v])
+            out.append(evaluate(M * V / sp.sqrt(V.dot(V)), {}).reshape(3))
+    d_in, d_out = ray_directions(k_in, k_out, om, wedge, chi)
+    # float32 by design: unit vectors through three rotations and a normalisation, 16 ulps of 1 in float32
+    e32 = float(np.finfo(np.float32).eps)
+    np.testing.assert_allclose(np.asarray(d_in), want_in, rtol=0, atol=16 * e32)
+    np.testing.assert_allclose(np.asarray(d_out), want_out, rtol=0, atol=16 * e32)
+
+
+def test_attenuation_map_code():
+    """attenuation_map: each voxel holds its entries' mu weighted by their weights, sum w mu / sum w, exactly; voxels
+    without entries hold 0."""
+    from fractions import Fraction
+
+    from anri.geom.paths import attenuation_map
+
+    step = 2.0
+    pos = np.array([[4.0, 2.0, 0], [4.2, 1.9, 0], [3.8, 2.3, 0], [-6.0, 0.0, 0]])
+    mu = np.array([0.001, 0.003, 0.0025, 0.005])
+    w = np.array([3.0, 1.0, 0.5, 2.0])
+    got = attenuation_map(pos, mu, w, step)
+    n = got.shape[0]
+    want = np.zeros((n, n))
+    groups = {}
+    for p, a, b in zip(pos, mu, w):
+        key = (round(p[0] / step) + n // 2, round(-p[1] / step) + n // 2)  # recon_to_sample, inverted
+        groups.setdefault(key, []).append((Fraction(a), Fraction(b)))
+    for key, ab in groups.items():
+        want[key] = float(sum(a * b for a, b in ab) / sum(b for _, b in ab))
+    # float64 sums of a few terms, then one rounding to float32: half an ulp of float32, relative
+    np.testing.assert_allclose(got, want, rtol=float(np.finfo(np.float32).eps), atol=0)
+
+
+def test_add_absorption_code():
+    """add_absorption from the map's own entries: each entry's optical depth along +x is the trapezoid of mu over the
+    voxels it crosses (test_edge_trapezoid), mu being each voxel's phase's (attenuation_map), layer by layer; two
+    phases side by side, two layers. Exactly (multiples of 1/8 in float32)."""
+    from anri.fwd.render import add_absorption
+    from anri.geom.scan import recon_positions
+
+    step = 2.0
+    grid = np.asarray(recon_positions(5, step))
+    grid = grid[(np.abs(grid[:, 0]) <= 2) & (np.abs(grid[:, 1]) <= 2)]  # 3 x 3 voxels
+    left = grid[:, 0] < 0
+    mu = [0.25, 0.5]  # phase 1 on the left column, phase 2 elsewhere
+    layers = [grid, grid[:4] + [0, 0, step]]  # the second layer holds four voxels
+    ents = []
+    for m in (left, ~left):
+        pos = np.concatenate([L[m[: len(L)]] for L in layers])
+        ents.append(({"ubi": np.zeros((len(pos), 3, 3)), "pos": pos, "density": np.ones(len(pos))}, None, None))
+    out = add_absorption(ents, step, mu=mu, n_phi=4)
+    for (e, _, _), (o, _, _) in zip(ents, out):
+        for p, d in zip(e["pos"], o["optical_depth"]):
+            layer = [q for L in layers for q in L if q[2] == p[2]]
+            row = sorted((q for q in layer if q[1] == p[1] and q[0] >= p[0]), key=lambda q: q[0])
+            m_ = [mu[0] if q[0] < 0 else mu[1] for q in row]
+            assert d[0] == (sum(m_) - m_[0] / 2) * step, (p, d[0])
 
 
 if __name__ == "__main__":

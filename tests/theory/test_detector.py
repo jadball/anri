@@ -20,6 +20,7 @@ from tests.theory.common import (
     EPS,
     evaluate,
     is_zero,
+    vec,
 )
 
 
@@ -188,8 +189,9 @@ def test_psf_code():
         _, a, _ = _peak_shape(*args, geom)
         _, b, _ = _peak_shape(*args, {**geom, "sig_psf": 0.7})
     d = np.array([float(y) - float(x) for x, y in zip(a, b)])
-    # one float64 addition of 0.49 to a variance below 10 px^2: an ulp of 10, 2e-15
-    np.testing.assert_allclose(d, [0.49, 0.49, 0, 0, 0, 0], rtol=0, atol=1e-14)
+    # one float64 addition of 0.49 to each variance, then the difference: an ulp of the larger, each
+    bound = 2 * EPS * np.maximum(np.abs([float(x) for x in a]), np.abs([float(y) for y in b]))
+    np.testing.assert_array_less(np.abs(d - [0.49, 0.49, 0, 0, 0, 0]), bound + 2 * EPS * 0.49)
 
 
 # ---------------------------------------------------------------------------------------------- det-sensor
@@ -407,3 +409,80 @@ def test_splat_bspline():
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_spot_terms():
+    """det-spot-terms. (1) Bragg, lambda = 2 d sin(theta): d 2theta / d lambda = 2 tan(theta) / lambda. (2) A ray
+    o + t k meets the plane n . (P - d0) = 0 at P; moving o by e d (k fixed) moves P by e (d - k (n . d) / (n . k));
+    turning a unit k by e dk (o = 0) moves it by e |P| (dk - k (n . dk) / (n . k)). (3) With g = k_out - x (unit
+    vectors, Ewald), the beam turned by a x x and the crystal by d_omega about z keep |x + g| = 1 to first order, and
+    so the diffracted ray's length."""
+    lam, d = sp.symbols("lambda d", positive=True)
+    th = sp.asin(lam / (2 * d))
+    assert is_zero(sp.diff(2 * th, lam) * lam - 2 * sp.tan(th))
+    e = sp.Symbol("e", real=True)
+    o, k, n, d0, dd = vec("o"), vec("k"), vec("n"), vec("d"), vec("q")
+    moved = sp.diff((o + e * dd) + n.dot(d0 - o - e * dd) / n.dot(k) * k, e).subs(e, 0)
+    assert is_zero(moved - (dd - k * n.dot(dd) / n.dot(k)))
+    ku = k / sp.sqrt(k.dot(k))
+    Pk = n.dot(d0) / n.dot(ku) * ku  # o = 0, a unit direction
+    dk = vec("dk")
+    turned = sp.diff((n.dot(d0) / n.dot(ku + e * dk)) * (ku + e * dk), e).subs(e, 0)
+    assert is_zero(turned - n.dot(d0) / n.dot(ku) * (dk - ku * n.dot(dk) / n.dot(ku)))
+    assert is_zero(Pk.dot(Pk) - (n.dot(d0) / n.dot(ku)) ** 2)  # |P| = t for a unit ray (t > 0: the detector ahead)
+    X, Z = sp.Matrix([1, 0, 0]), sp.Matrix([0, 0, 1])
+    g, a = vec("g"), vec("a")
+    dk_in = a.cross(X)
+    zg = Z.cross(g)
+    d_om = -g.dot(dk_in) / zg.dot(X)
+    dg = d_om * zg
+    ewald = sp.expand((X + e * dk_in + g + e * dg).dot(X + e * dk_in + g + e * dg) - (X + e * dk_in).dot(X + e * dk_in))
+    for root in sp.solve(2 * g[0] + g.dot(g), g[0]):  # on the Ewald sphere at e = 0: 2 x . g + |g|^2 = 0
+        assert is_zero(sp.diff(ewald, e).subs(e, 0).subs({g[0]: root}))
+
+
+def test_spot_terms_code():
+    """spot_terms against det-spot-terms, with the pixel's 2theta (frm-eta, from the origin, beam along x) and its
+    exact gradient, for a tilted detector: the radial direction, the known variance and the box."""
+    from anri.calib.detector import spot_terms
+    from anri.io.imaged11 import detector_from_pars
+    from anri.maths.utils import fwhm_to_sigma
+
+    pars = {"y_center": 1049.9, "y_size": 75.0, "tilt_y": -2e-3, "z_center": 1116.5, "z_size": 75.0, "tilt_z": 3e-3,
+            "tilt_x": 1e-3, "distance": 150e3, "o11": -1, "o12": 0, "o21": 0, "o22": -1, "wavelength": 0.284}  # fmt: skip
+    rows, cols = np.array([700, 1600, 1116]), np.array([1050, 900, 1700])
+    bw, vox, thick, conv = 1e-3, 1.5, 100.0, (1e-4, 2e-4)
+    with float64():
+        det = {k: np.asarray(v, float) for k, v in detector_from_pars(pars).items()}
+    got = spot_terms(rows, cols, pars, None, None, bw, vox, thick, conv)
+    S, F, d0 = (sp.Matrix([sp.Float(x, 30) for x in det[k]]) for k in ("s_step_lab", "f_step_lab", "det_origin_lab"))
+    A = sp.Matrix.hstack(S, F)
+    Ap = (A.T * A).inv() * A.T
+    n = S.cross(F)
+    X, Y, Z = sp.Matrix([1, 0, 0]), sp.Matrix([0, 1, 0]), sp.Matrix([0, 0, 1])
+    s_, f_ = sp.symbols("s f", real=True)
+    sl = fwhm_to_sigma(sp.Float(bw, 30))
+    for i, (r, c) in enumerate(zip(rows, cols)):
+        P = d0 + s_ * S + f_ * F
+        tth = sp.acos(P[0] / sp.sqrt(P.dot(P)))
+        at = {s_: sp.Integer(int(r)), f_: sp.Integer(int(c))}
+        grad = sp.Matrix([sp.diff(tth, v).subs(at) for v in (s_, f_)])
+        u = grad / sp.sqrt(grad.dot(grad))
+        Pv = P.subs(at)
+        k = Pv / sp.sqrt(Pv.dot(Pv))
+        m = lambda d, k=k: Ap * (d - k * n.dot(d) / n.dot(k))
+        th = tth.subs(at) / 2
+        var = (2 * sp.tan(th) * sl / sp.sqrt(grad.dot(grad))) ** 2 + (vox * u.dot(m(Y))) ** 2 / 12
+        g = k - X
+        for a, sig in zip((Z, Y), conv):
+            dk = a.cross(X) - g.dot(a.cross(X)) / Z.cross(g).dot(X) * Z.cross(g)
+            var += (sig * sp.sqrt(Pv.dot(Pv)) * u.dot(m(dk))) ** 2
+        box = thick * abs(u.dot(m(X)))
+        want_u = np.array([float(sp.N(x, 30)) for x in u])
+        # ~100 operations from the pixel to each term, each of condition at most ~2 (the detector is near normal to
+        # the rays, n . k ~ 1; A^T A ~ pixel^2 I): 256 ulps of each value; the radial direction, a unit vector, to
+        # 256 ulps of 1
+        np.testing.assert_allclose(got["u"][i], want_u, rtol=0, atol=256 * EPS)
+        np.testing.assert_allclose(got["var_known"][i], float(sp.N(var, 30)), rtol=256 * EPS)
+        np.testing.assert_allclose(got["box"][i], float(sp.N(box, 30)), rtol=256 * EPS)
+

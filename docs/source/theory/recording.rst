@@ -143,7 +143,7 @@ in labels of at least ``pixels_in_spot`` (for ``pixels_in_spot`` :math:`\le 1` i
 **Code:** :func:`anri.io.imaged11.segment`.
 
 **Proof:** ``tests/theory/test_recording.py::test_segment_is_the_group_rule`` (every kept pattern of a 4 × 4
-detector, :math:`m = 1 \dots 5`); ``tests/unit/io/test_imaged11.py::TestSegment`` checks it against ImageD11's own
+detector, :math:`m = 1 \dots 5`); ``tests/reference/test_imaged11.py::TestSegment`` checks it against ImageD11's own
 ``lima_segmenter`` on Poisson frames.
 
 For a Poisson count (sums over :math:`k > c` done in closed form):

@@ -25,8 +25,8 @@ Gaussian about its nominal value, and pushed through the centroid to first order
     \matr{J} = \frac{\partial \vec{c}}{\partial (\lambda, k_y, k_z, \vec{\delta})}.
 
 **Cited:** [GUM2008]_. **Proof:** ``tests/theory/test_peak_shape.py::test_propagate_diagonal`` (the sum of columns),
-``tests/theory/test_peak_shape.py::test_propagate_code`` (the propagator against :math:`\matr{J}\matr{\Sigma}\matr{J}^T`,
-diagonal and full).
+``tests/theory/test_peak_shape.py::test_propagate_code`` (the propagator and ``propagate_cov`` against
+:math:`\matr{J}\matr{\Sigma}\matr{J}^T`, diagonal and full), ``tests/theory/test_peak_shape.py::test_cov_in_code``.
 
 With a diagonal :math:`\matr{\Sigma}_{\text{in}}` the sum needs one Jacobian column at a time, and JAX's forward-mode
 differentiation computes each as one Jacobian-vector product of the centroid function [JAX2018]_: no derivative is
@@ -57,12 +57,39 @@ The inputs, independent of each other:
       \matr{R} = \exp([\vec{\delta}]_\times) = \matr{I} + [\vec{\delta}]_\times + O(\delta^2),
 
   **Proof:** ``tests/theory/test_peak_shape.py::test_rotation_first_order`` (Rodrigues' formula differentiated at 0;
-  :math:`\matr{R}^{-1} = \matr{R}^T`; and :func:`anri.maths.rotation.skew`).
+  :math:`\matr{R}^{-1} = \matr{R}^T`), ``tests/theory/test_peak_shape.py::test_skew_code``;
+  ``tests/theory/test_peak_shape.py::test_axis_angle`` (for a unit axis, Rodrigues' formula is the exponential: it is
+  the identity at 0 and solves :math:`\matr{R}' = [\hat{n}]_\times\matr{R}`),
+  ``tests/theory/test_peak_shape.py::test_axis_angle_code``.
 
   which is exact to first order, all that :eq:`ps-propagate` uses. Its contribution is :math:`\matr{J}_\delta \matr{S} \matr{J}_\delta^T`,
   linear in :math:`\matr{S}`: an anisotropic spread (a dominant rotation axis) gives each reflection its own streak.
 
-**Code:** :func:`anri.maths.rotation.skew`, :func:`anri.fwd.render.render_peaks` (an entry's "sig_rot", [N] or [N, 3, 3]).
+``tests/theory/test_peak_shape.py::test_peak_cov_rotation_code`` checks the renderer's term against
+:math:`\matr{J}_\delta \matr{S} \matr{J}_\delta^T` with :math:`\matr{J}_\delta` the centroid chain's exact
+derivative, every element of the (:math:`s_c, f_c, \omega`) covariance, for a full and an isotropic spread.
+
+**Code:** :func:`anri.maths.rotation.skew`, :func:`anri.maths.rotation.rmat_from_axis_angle`,
+:func:`anri.fwd.render.render_peaks` (an entry's "sig_rot", [N] or [N, 3, 3]).
+
+To this covariance the renderer adds the detector's point spread in slow and fast (:doc:`detector`), an optional
+extra spread in omega, and a floor:
+
+.. math::
+    :label: ps-floor
+
+    \Sigma_{ss} \mathrel{+}= \sigma_{\text{psf}}^2 + 10^{-4}, \qquad \Sigma_{ff} \mathrel{+}= \sigma_{\text{psf}}^2 + 10^{-4},
+    \qquad \Sigma_{\omega\omega} \mathrel{+}= \sigma_\omega^2 + 10^{-8}
+    \qquad (\text{pixels}^2, \text{pixels}^2, \text{degrees}^2).
+
+**Definition:** ``sig_omega`` (:math:`\sigma_\omega`, degrees) is a spread of every peak in omega the model does not
+derive, e.g. to smooth a refinement; it is 0 unless given. **Proof:** ``tests/theory/test_peak_shape.py::test_peak_shape_code``.
+
+**Anri's choice:** the floor keeps a peak with no broadening at all (a point source, no spreads) a proper Gaussian: it
+is 0.01 pixel and :math:`10^{-4}°` as a standard deviation, far below any measured spot (cores of 0.2-0.3 pixel, frames
+of 0.05°).
+
+**Code:** :func:`anri.fwd.render.render_peaks`.
 
 For a horizontal beam and an untilted axis (wedge = chi = 0), differentiating the Ewald condition
 :math:`2\vec{k}_{\text{in}} \cdot \vec{g} + |\vec{g}|^2 = 0` (:eq:`dif-ewald`) gives each input's omega shift, and so the
@@ -162,7 +189,11 @@ The moments come from the truncated normal: for :math:`x \sim N(\mu, \sigma^2)` 
     \operatorname{Var}[x] = \sigma^2 \left[1 + \frac{a\varphi(a) - b\varphi(b)}{Z}
     - \left(\frac{\varphi(a) - \varphi(b)}{Z}\right)^2\right].
 
-**Cited:** [JohnsonKotz1994]_. **Proof:** ``tests/theory/test_peak_shape.py::test_truncated_moments`` (the integrals of
+**Cited:** [JohnsonKotz1994]_. Where a cell's mass is below :math:`10^{-12}` its mean falls back to :math:`\mu` clipped into the cell and its variance to
+0, which keeps gradients finite; that changes the cell's contribution to any moment by at most its mass times its
+width, :math:`10^{-12}` of the peak's light per unit width, five orders below float32's resolution of the light.
+
+**Proof:** ``tests/theory/test_peak_shape.py::test_truncated_moments`` (the integrals of
 :math:`z\varphi` and :math:`z^2\varphi`), ``tests/theory/test_peak_shape.py::test_upper_tail_mass``
 (:math:`\Phi(-a) - \Phi(-b) = \Phi(b) - \Phi(a)`), ``tests/theory/test_peak_shape.py::test_truncated_moments_code``
 (both tails, bins narrow and wide, each to a tolerance derived from its cancellation).
@@ -251,7 +282,10 @@ Windows
 Each peak is evaluated over a fixed window of cells around its centroid, (frames, rows, columns), each odd. Each frame's
 row and column window is centred on the peak's mean position *in that frame* (:eq:`ps-condition`), so a peak that moves
 across the detector with omega stays inside its window. Peaks broad in omega can be given more frames (``max_frames``).
-Fixed window sizes keep array shapes fixed, so the renderer compiles once per size.
+Fixed window sizes keep array shapes fixed, so the renderer compiles once per size. The first frame is the one holding
+:math:`\mu_\omega` less half the window; each frame's first row is :math:`\operatorname{round}(\mu_{s \mid F})` and first
+column :math:`\operatorname{round}(\mu_f + \Sigma_{f\omega}/\Sigma_{\omega\omega}\,(m_\omega - \mu_\omega))`, less half the window
+(``tests/theory/test_peak_shape.py::test_window_origin_code``).
 
 **Code:** :func:`anri.fwd.render.render_peaks`, :func:`anri.fwd.render.window_origins`,
 :func:`anri.fwd.render.render_row`.

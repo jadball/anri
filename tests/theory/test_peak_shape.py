@@ -14,15 +14,18 @@ import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
-from anri.fwd.peak import make_propagator
+from anri.fwd.peak import get_cov_in, make_propagator, propagate_cov
 from anri.fwd.render import _peak_cov, _window_cells, make_row
-from anri.maths.rotation import skew
+from anri.maths.rotation import rmat_from_axis_angle, skew
 from anri.maths.utils import bin_fractions, float64, truncated_moments
 from tests.theory.common import (
     EPS,
+    agree,
     evaluate,
     is_zero,
     rng,
+    tol,
+    vec,
 )
 
 
@@ -81,7 +84,25 @@ def test_propagate_code():
         fn = make_propagator(_f_jax, argnums=(0,), diagonal=diagonal)
         with float64():
             got = np.asarray(fn(jnp.asarray(x0), jnp.asarray(S)))
-        np.testing.assert_allclose(got, expected, rtol=1e-14, atol=1e-14 * np.abs(expected).max())
+            # propagate_cov takes jax.jacfwd's parts, as the box and scan propagators do
+            parts = jax.jacfwd(_f_jax, argnums=(0,))(jnp.asarray(x0))
+            got_parts = np.asarray(propagate_cov(parts, jnp.asarray(S)))
+        # each J entry is ~5 operations of its inputs (rounded once each), J S J^T sums 9 products of 3: 16 ulps of
+        # the sum of the terms' magnitudes
+        Jv = evaluate(J, vals)
+        t = 16 * EPS * (np.abs(Jv) @ np.abs(S) @ np.abs(Jv).T)
+        np.testing.assert_array_less(np.abs(got - expected), t)
+        np.testing.assert_array_less(np.abs(got_parts - evaluate(J * sp.Matrix(S) * J.T, vals)), t)
+
+
+def test_cov_in_code():
+    """get_cov_in is diag(sigma_x^2, sigma_y^2, sigma_z^2, sigma_lambda^2, sigma_ky^2, sigma_kz^2): squares, one
+    rounding each."""
+    o, sl, sky, skz = np.array([1.0, 2.0, 0.5]), 3e-4, 1e-4, 2e-4
+    want = np.diag([float(sp.Float(x, 30) ** 2) for x in (*o, sl, sky, skz)])
+    with float64():
+        got = np.asarray(get_cov_in(jnp.asarray(o), sl, sky, skz))
+    np.testing.assert_allclose(got, want, rtol=EPS, atol=0)
 
 
 # ---------------------------------------------------------------------------------------------- ps-rotation
@@ -96,10 +117,46 @@ def test_rotation_first_order():
     R = sp.eye(3) + sp.sin(t * n) / n * K + (1 - sp.cos(t * n)) / n**2 * K * K
     assert is_zero(sp.diff(R, t).subs(t, 0) - K)
     assert is_zero(R.T * R - sp.eye(3))  # orthogonal, so R^-1 = R^T
-    v = r = rng(2).normal(size=3)
+
+
+def test_skew_code():
+    """skew(v) is [v]x: its entries are v's, negated or not, so exactly."""
+    v = rng(2).normal(size=3)
     with float64():
         got = np.asarray(skew(jnp.asarray(v)))
-    np.testing.assert_array_equal(got, evaluate(skew_sp(sp.Matrix(r)), {}))  # exact: only negations
+    np.testing.assert_array_equal(got, evaluate(skew_sp(sp.Matrix(v)), {}))
+
+
+def _rodrigues(n: sp.MatrixBase, t: sp.Expr) -> sp.Matrix:
+    """ps-rotation's exp(t [n]x) for a unit axis n, as Rodrigues' formula."""
+    K = skew_sp(n)
+    return sp.eye(3) + sp.sin(t) * K + (1 - sp.cos(t)) * K * K
+
+
+def test_axis_angle():
+    """ps-rotation: for a unit axis n, R(t) = I + sin t [n]x + (1 - cos t) [n]x^2 is exp(t [n]x): R(0) = I and
+    R' = [n]x R (as [n]x^3 = -[n]x), the equation exp(t [n]x) alone solves. rmat_from_axis_angle's form,
+    cos t I + sin t [n]x + (1 - cos t) n n^T, is the same matrix ([n]x^2 = n n^T - I)."""
+    t = sp.symbols("t", real=True)
+    a = vec("a")
+    n = a / sp.sqrt(a.dot(a))
+    K, R = skew_sp(n), _rodrigues(n, t)
+    assert is_zero(R.subs(t, 0) - sp.eye(3))
+    assert is_zero(sp.diff(R, t) - K * R)
+    assert is_zero(sp.cos(t) * sp.eye(3) + sp.sin(t) * K + (1 - sp.cos(t)) * n * n.T - R)
+
+
+def test_axis_angle_code():
+    """rmat_from_axis_angle against exp(t [n]x) (test_axis_angle), unnormalised axes, one call for a batch."""
+    r = rng(12)
+    axes = r.normal(size=(4, 3)) * [[1.0], [0.3], [5.0], [2.0]]
+    deg = np.array([-170.0, -12.5, 33.3, 179.0])
+    want = []
+    for ax, d in zip(axes, deg):
+        a = sp.Matrix([sp.Float(x, 30) for x in ax])
+        want.append(evaluate(_rodrigues(a / sp.sqrt(a.dot(a)), sp.rad(sp.Float(d, 30))), {}))
+    # entries <= 1; the angle in radians (<= pi) and the axis's normalisation each round once
+    agree(np.array(want), rmat_from_axis_angle, axes, deg, **tol(np.pi))
 
 
 # ---------------------------------------------------------------------------------------------- ps-omega
@@ -181,9 +238,61 @@ def test_omega_variance_code():
                 got = float(_peak_cov(ubi, jnp.zeros(3), jnp.asarray(hkl), etasign, 0.0, g, jnp.asarray(S))[2])
                 vals = {eta_s: np.radians(float(eta)), th_s: np.radians(float(tth)) / 2, om_s: np.radians(float(om)),
                         sl_s: sl, sky_s: sky, skz_s: skz, **dict(zip(S_s, S.ravel()))}  # fmt: skip
-                # the centroid is ~200 float64 operations of condition O(1) (|cot eta| < 3 here), differentiated
-                # exactly by forward mode: 1e-13 is ~500 ulps
-                np.testing.assert_allclose(got, evaluate(expr, vals), rtol=1e-13)
+                # forward mode differentiates the rounded chain: each derivative errs by N eps of itself, N the
+                # chain's length (~200 operations, N = 256, as test_peak_cov_rotation_code); the variance, a sum of
+                # squares of derivatives times spreads, by twice that of the sum of its terms' magnitudes
+                Sabs = {**vals, **dict(zip(S_s, np.abs(S).ravel()))}
+                mag = float(evaluate(_omega_variance(eta_s, th_s, om_s, S_s.applyfunc(sp.Abs), sl_s, sky_s, skz_s)
+                                     .replace(sp.cot, lambda z: sp.Abs(sp.cot(z))), Sabs))  # fmt: skip
+                np.testing.assert_allclose(got, evaluate(expr, vals), rtol=0, atol=2 * 256 * EPS * mag)
+
+
+def test_peak_cov_rotation_code():
+    """_peak_cov's orientation-spread term is J S J^T (ps-propagate) with J the centroid's exact derivative in a
+    sample-frame rotation (ps-rotation, test_diffraction.py::centroid_rotation_jacobian): (s_c, f_c, omega), every
+    element, for a [3, 3] covariance and an isotropic sd; tilted beam, goniometer and detector, off the axis."""
+    from tests.theory.test_diffraction import _centroid_case, centroid_rotation_jacobian
+
+    c = _centroid_case()
+    S_det, F_det, d0 = c["det"]
+    geom = {"wavelength": c["lam"], "k_in_lab": c["k"], "wedge": c["wedge"], "chi": c["chi"], "y0": c["y0"],
+            "s_step_lab": S_det, "f_step_lab": F_det, "det_origin_lab": d0, "voxel_3d": False,
+            "sig_wavelength": 0.0, "sig_ky": 0.0, "sig_kz": 0.0}  # fmt: skip
+    A = rng(26).normal(size=(3, 3)) * 1e-3
+    S = A @ A.T
+    for hkl, es in (((1, 1, 0), 1.0), ((2, 1, 1), -1.0)):
+        J = centroid_rotation_jacobian(c["ubi"], c["pos"], hkl, es, c["lam"], c["k"], c["wedge"], c["chi"], 1.3,
+                                       c["y0"], c["det"], True)  # fmt: skip
+        for sig in (S, 1.5e-3):
+            Sm = S if np.ndim(sig) == 2 else sig**2 * np.eye(3)
+            C = J @ Sm @ J.T
+            want = np.array([C[0, 0], C[1, 1], C[2, 2], C[0, 1], C[0, 2], C[1, 2]])  # _COV_ELEMS
+            with float64():
+                got = np.asarray(_peak_cov(jnp.asarray(c["ubi"]), jnp.asarray(c["pos"]), jnp.asarray(hkl, float), es,
+                                           1.3, {k: jnp.asarray(v) for k, v in geom.items()}, jnp.asarray(sig)))  # fmt: skip
+            # forward mode differentiates the rounded chain: each derivative errs by N eps of |J|, N the chain's
+            # length (~200 operations from inv3 to raytrace_to_det: N = 256), and J S J^T by twice that
+            Ja = np.abs(J)
+            t = 2 * 256 * EPS * (Ja @ np.abs(Sm) @ Ja.T)
+            bound = np.array([t[0, 0], t[1, 1], t[2, 2], t[0, 1], t[0, 2], t[1, 2]])
+            np.testing.assert_array_less(np.abs(got - want), bound)
+
+
+def test_peak_shape_code():
+    """_peak_shape's shape is _peak_cov's covariance plus ps-floor: the point spread in slow and fast, sig_omega in
+    omega, and the floors; the covariances unchanged."""
+    from anri.fwd.render import _peak_shape
+
+    with float64():
+        geom = {**_geom(), "sig_wavelength": 0.3 * 1e-3, "sig_ky": 2e-4, "sig_kz": 3e-4, "sig_psf": 0.7,
+                "sig_omega": 0.05}  # fmt: skip
+        ubi = jnp.asarray(np.linalg.qr(rng(38).normal(size=(3, 3)))[0] * 3.0)
+        args = (ubi, jnp.zeros(3), jnp.array([1.0, 1.0, 0.0]), 1.0)
+        cov = np.asarray(_peak_cov(*args, 0.0, geom))
+        _, shape, _ = _peak_shape(*args, None, {"dty_mid": 0.0}, geom)
+    want = cov + np.array([0.49 + 1e-4, 0.49 + 1e-4, 0.0025 + 1e-8, 0, 0, 0])
+    # one or two float64 additions to each variance: an ulp or two of the sum
+    np.testing.assert_allclose([float(x) for x in shape], want, rtol=2 * EPS, atol=0)
 
 
 # ---------------------------------------------------------------------------------------------- ps-truncated
@@ -535,6 +644,31 @@ def test_make_row_edges():
     expected = [2 * om[0] - mids[0], *mids, 2 * om[-1] - mids[-1]]
     # the code computes the same sums and halvings in float64 from the binary inputs: a few ulps of |omega| <= 1
     np.testing.assert_allclose(np.asarray(row["omega_edges"]), [float(x) for x in expected], rtol=0, atol=4 * EPS)
+
+
+def test_window_origin_code():
+    """The window's origin (peak_shape.rst, Windows): its first frame the one holding mu_omega less half the window,
+    each frame's first row round(mu_{s|F}) (ps-condition, with ps-truncated's mean omega in the frame) and first column
+    round(mu_f + S_fo / S_oo (m_omega - mu_omega)), less half the window. Exact integers."""
+    omega = np.arange(-0.2, 0.2001, 0.05)
+    shape = (0.8, 0.5, 0.0016, 0.2, 0.012, -0.008)  # (ss, ff, oo, sf, so, fo)
+    window = (3, 5, 5)
+    for mu in (np.array([20.3, 30.6, 0.013]), np.array([20.7, 30.2, -0.11])):
+        with float64():
+            r = make_row(omega, np.zeros_like(omega))
+            out = _window_cells(jnp.asarray(mu), tuple(jnp.asarray(x) for x in shape), None, r, window, (64, 64))
+        jo, i0, j0 = (np.asarray(x) for x in out[7])
+        edges = [sp.nsimplify(x) for x in np.asarray(r["omega_edges"])]
+        k = sum(1 for e in edges if e <= sp.Float(mu[2], 30)) - 1
+        assert int(jo) == k - window[0] // 2
+        _, _, oo, _, so, fo = (sp.Float(x, 30) for x in shape)
+        ms, mf, mo = (sp.Float(x, 30) for x in mu)
+        for n, f in enumerate(range(int(jo), int(jo) + window[0])):
+            _, m, _ = truncated(edges[f], edges[f + 1], mo, sp.sqrt(oo))
+            s_mu = ms + so / oo * (m - mo)
+            f_mu = mf + fo / oo * (m - mo)
+            assert int(i0[n]) == int(sp.floor(s_mu + sp.Rational(1, 2))) - window[1] // 2, (n, s_mu)
+            assert int(j0[n]) == int(sp.floor(f_mu + sp.Rational(1, 2))) - window[2] // 2, (n, f_mu)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """Proofs for docs/source/theory/calibration.rst: what the rings and the scan's peaks can determine (tilt_x, distance
 against wavelength, wavelength against lattice), the Schur-complement step, and the strain left."""
 
+import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
@@ -10,6 +11,7 @@ from tests.theory.common import (
     evaluate,
     is_zero,
     rng,
+    tol,
 )
 
 
@@ -111,8 +113,8 @@ def test_schur_step():
 
 
 def test_schur_code():
-    """anri's _solve is cal-schur, with Levenberg-Marquardt's mu diag(H) on both blocks and 1e-12 tr(H_oo) added to
-    each orientation's diagonal."""
+    """anri's _solve is cal-schur, with Levenberg-Marquardt's mu diag(H) on both blocks and 16 eps tr(H_oo) (plus the
+    smallest normal number) added to each orientation's diagonal."""
     from anri.calib.fit import _solve
 
     g = rng(8)
@@ -124,7 +126,8 @@ def test_schur_code():
         hxx, hxo, hoo = (sp.Matrix(x) for x in (H[:2, :2], H[:2, 2:], np.diag(np.diag(H)[2:])))
         m = sp.Rational(mu)
         hxx = hxx + m * sp.diag(*hxx.diagonal())
-        hoo = hoo * (1 + m) + sp.Rational(1, 10**12) * hoo + sp.Float(1e-30, 30) * sp.eye(2)
+        ridge = 16 * sp.Float(EPS, 30) * hoo + sp.Float(float(np.finfo(float).tiny), 30) * sp.eye(2)  # hoo diagonal
+        hoo = hoo * (1 + m) + ridge
         dx, da = _schur(hxx, hxo, hoo, sp.Matrix(bv[:2]), sp.Matrix(bv[2:]))
         Hc = (H[:2, :2], bv[:2], np.stack([H[:2, 2:3], H[:2, 3:4]]), np.diag(H)[2:, None, None], bv[2:, None])
         # a 2 x 2 solve after eliminating 1 x 1 blocks: a few roundings times the condition of H (computed here)
@@ -152,21 +155,75 @@ def test_strain_from_ubi():
 
 
 def test_strain_code():
-    """anri's lattice_strain recovers E and U from UBI = B^-1 U^T (I + E)."""
+    """anri's lattice_strain recovers E and U from UBI = B^-1 U^T (I + E), for a cubic and a monoclinic B, strained and
+    not."""
     from anri.calib.fit import lattice_strain
+    from tests.theory.common import metric, page_B
 
     g = rng(9)
     r = sp.Matrix([sp.Rational(int(x), 100) for x in g.integers(-30, 30, 3)])
     U = _rod(r)
     E = sp.Matrix(3, 3, lambda i, j: sp.Rational(int(g.integers(-9, 9)), 10**4))
     E = (E + E.T) / 2
-    ubi = 4 * U.T * (sp.eye(3) + E)  # B = I / 4: a cubic lattice of 4 A, exact
-    B = np.eye(3) / 4
-    ubi_f = np.array(evaluate(ubi, {}), float)[None]
-    # ubi rounded once (relative 1 ulp), K^T K and its eigh (backward stable, ~10 ulps of |K|^2 = 1) and the square
-    # root: entries of E within ~16 ulps of 1, absolutely
-    agree(np.array(evaluate(E, {}), float)[None], lambda *z: lattice_strain(*z)[0], ubi_f, B, rtol=0, atol=16 * EPS)
-    agree(np.array(evaluate(U, {}), float)[None], lambda *z: lattice_strain(*z)[1], ubi_f, B, rtol=0, atol=16 * EPS)
+    a, b, c, be = sp.Integer(4), sp.Integer(5), sp.Integer(6), sp.rad(95)
+    Bm = sp.N(page_B(metric(a, b, c, 0, sp.cos(be), 0), 0), 40)
+    for B in (sp.eye(3) / 4, Bm):  # cubic of 4 A (exact), and monoclinic
+        Bv = np.array(evaluate(B, {}), float)
+        for Ev in (E, sp.zeros(3, 3)):
+            ubi = B.inv() * U.T * (sp.eye(3) + Ev)
+            ubi_f = np.array(evaluate(ubi, {}), float)[None]
+            # ubi and B round once (relative 1 ulp each, of cond(B) in K = B ubi), K^T K and its eigh (backward
+            # stable, ~10 ulps of |K|^2 = 1) and the square root: entries of E within 16 ulps of cond(B), absolutely
+            t = {"rtol": 0, "atol": 16 * EPS * np.linalg.cond(Bv)}
+            agree(np.array(evaluate(Ev, {}), float)[None], lambda *z: lattice_strain(*z)[0], ubi_f, Bv, **t)
+            agree(np.array(evaluate(U, {}), float)[None], lambda *z: lattice_strain(*z)[1], ubi_f, Bv, **t)
+
+
+def test_split_strain():
+    """cal-strain's split: E_dev is traceless and E_h I + E_dev = E, for any E."""
+    E = sp.Matrix(3, 3, sp.symbols("e0:9", real=True))
+    h = E.trace() / 3
+    assert is_zero((E - h * sp.eye(3)).trace())
+
+
+def test_split_strain_code():
+    """split_strain against cal-strain's split, and the peak-weighted means over the fitted orientations."""
+    from anri.calib.fit import split_strain
+
+    g = rng(25)
+    Es = []
+    for _ in range(2):
+        E = sp.Matrix(3, 3, lambda i, j: sp.Rational(int(g.integers(-99, 99)), 10**5))
+        Es.append((E + E.T) / 2)
+    n = [10, 30]
+    hyd = [E.trace() / 3 for E in Es]
+    dev = [E - h * sp.eye(3) for E, h in zip(Es, hyd)]
+    Ev = np.array([evaluate(E, {}) for E in Es])
+    got = split_strain(Ev, np.array(n))
+    # a trace, a third and a subtraction on entries <= 1e-3: a few ulps of them
+    t = tol(1e-3)
+    np.testing.assert_allclose(got["hydrostatic"], [float(h) for h in hyd], rtol=0, atol=t["atol"])
+    np.testing.assert_allclose(got["deviatoric"], [evaluate(d, {}) for d in dev], rtol=0, atol=t["atol"])
+    mean_h = sum(ni * h for ni, h in zip(n, hyd)) / sum(n)
+    mean_d = sum((ni * d for ni, d in zip(n, dev)), sp.zeros(3, 3)) / sum(n)
+    np.testing.assert_allclose(got["mean_hydrostatic"], float(mean_h), rtol=0, atol=t["atol"])
+    np.testing.assert_allclose(got["mean_deviatoric"], evaluate(mean_d, {}), rtol=0, atol=t["atol"])
+
+
+def test_ring_ds_code():
+    """ring_ds: bcc iron's rings up to 2 theta max are the distinct d* = |h| / a, h + k + l even, with
+    2 asin(lambda d* / 2) <= 2 theta max (dif-bragg); exactly the ones the rule keeps."""
+    from anri.calib.rings import ring_ds
+
+    a, lam, tmax = sp.Rational(28665, 10000), sp.Rational(3, 10), 20
+    dsmax = 2 * sp.sin(sp.rad(tmax) / 2) / lam
+    n2 = sorted({h * h + k * k + l * l for h in range(-9, 10) for k in range(-9, 10) for l in range(-9, 10)
+                 if (h + k + l) % 2 == 0 and 0 < h * h + k * k + l * l and sp.sqrt(h * h + k * k + l * l) / a <= dsmax})  # fmt: skip
+    want = np.array([float(sp.N(sp.sqrt(m) / a, 30)) for m in n2])
+    got = ring_ds(np.array([float(a)] * 3 + [90.0] * 3), 229, float(lam), float(tmax))
+    # rings 1e-4 apart are merged; bcc's are further apart. d* = sqrt(h^T G* h): a few ulps of it (test_reflections_code)
+    assert len(got) == len(want)
+    np.testing.assert_allclose(got, want, **tol(float(want.max())))
 
 
 def test_mad_factor():
@@ -179,3 +236,49 @@ def test_mad_factor():
 def test_pixel_angle_quoted():
     """One 75 um Eiger pixel at 150 mm subtends 0.03 deg (rounded)."""
     assert round(float(sp.N(sp.deg(sp.atan(sp.Rational(75, 150000))), 30)), 2) == 0.03
+
+
+def test_ring_residual_code():
+    """cal-ring-residual: assign puts each pixel at its nearest ring if within t, unless that ring is closer than 2t
+    to a neighbour, and in sector floor((eta + 180) n / 360); ring_offsets is each (ring, sector)'s weighted mean 2theta
+    less the ring's 2 asin(lambda d* / 2). The pixels' angles from pixel_tth_eta (test_tilt_x_code); the rest exactly."""
+    from fractions import Fraction as Fr
+
+    from anri.calib.fit import base_pars
+    from anri.calib.rings import assign, pixel_tth_eta, ring_offsets
+    from anri.maths.utils import float64
+
+    pars = {"y_center": 1024.0, "y_size": 75.0, "tilt_y": 1e-3, "z_center": 1030.0, "z_size": 75.0, "tilt_z": -2e-3,
+            "tilt_x": 0.0, "distance": 150e3, "o11": 1, "o12": 0, "o21": 0, "o22": 1, "wavelength": 0.3}  # fmt: skip
+    g = rng(41)
+    px = {"sc": g.uniform(0, 2048, 4000), "fc": g.uniform(0, 2048, 4000), "intensity": g.integers(1, 9, 4000) * 1.0}
+    ds = np.array([0.30, 0.45, 0.452, 0.60])  # the middle two closer than 2 t: left out
+    tol, n_eta = 0.1, 8
+    with float64():
+        p = {k: jnp.float64(v) for k, v in base_pars(pars, 0.0).items()}
+        tth, eta = (np.asarray(a) for a in pixel_tth_eta(jnp.asarray(px["sc"]), jnp.asarray(px["fc"]), p))
+    t = [float(sp.N(sp.deg(2 * sp.asin(sp.Float(pars["wavelength"], 30) * sp.Float(d, 30) / 2)), 30)) for d in ds]
+    used = [all(abs(t[r] - t[q]) > 2 * tol for q in range(len(t)) if q != r) for r in range(len(t))]
+    ring = np.full(len(tth), -1)
+    for i, x in enumerate(tth):
+        r = int(np.argmin([abs(x - y) for y in t]))
+        if abs(x - t[r]) < tol and used[r]:
+            ring[i] = r
+    sector = np.floor((eta + 180.0) * n_eta / 360.0).astype(int)
+    a = assign(px, ds, pars, tol, n_eta)
+    np.testing.assert_array_equal(a["ring"], ring)
+    np.testing.assert_array_equal(a["group"][ring >= 0], (ring * n_eta + sector)[ring >= 0])
+    np.testing.assert_array_equal(a["used"], used)
+    off = ring_offsets(px, ds, pars, tol, n_eta)
+    for r in range(len(t)):
+        for j in range(n_eta):
+            m = (ring == r) & (sector == j)
+            if not m.any():
+                assert np.isnan(off["offset"][r, j])
+                continue
+            w = [Fr(float(v)) for v in px["intensity"][m]]
+            mean = sum(wi * Fr(float(x)) for wi, x in zip(w, tth[m])) / sum(w)
+            # sums of a few hundred products of 2theta (<= 30 deg) and integers, then a quotient and a subtraction:
+            # that many ulps of 30 deg
+            assert abs(off["offset"][r, j] - (float(mean) - t[r])) <= 16 * EPS * 30 * m.sum(), (r, j)
+

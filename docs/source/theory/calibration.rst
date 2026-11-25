@@ -21,7 +21,7 @@ origin (:eq:`dif-raytrace` inverted, :eq:`frm-eta`), as ImageD11 computes it: th
 :func:`anri.calib.rings.pixel_tth_eta`.
 
 A phase's rings are its reflections' :math:`d^*` (:doc:`crystal`), those within ``merge`` of each other taken as one,
-at :math:`2\theta_r = 2\arcsin(\lambda d^*_r / 2)` (:eq:`dif-bragg`).
+at :math:`2\theta_r = 2\arcsin(\lambda d^*_r / 2)` (:eq:`dif-bragg`) (``tests/theory/test_calibration.py::test_ring_ds_code``).
 
 **Code:** :func:`anri.calib.rings.ring_ds`.
 
@@ -38,7 +38,8 @@ residual, the weighted mean :math:`2\theta` of its pixels minus its ring's:
 
     \rho_{rj} = \frac{\sum_{p \in (r, j)} w_p\, 2\theta_p}{\sum_{p \in (r, j)} w_p} - 2\theta_r(\lambda).
 
-**Definition:** the rings' residuals.
+**Definition:** the rings' residuals. ``assign`` and ``ring_offsets`` are checked against this rule, exactly, from
+the pixels' angles (``tests/theory/test_calibration.py::test_ring_residual_code``).
 
 **Code:** :func:`anri.calib.rings.assign`, :func:`anri.calib.rings.ring_offsets`.
 
@@ -183,8 +184,9 @@ Schur complement), leaving a system the size of :math:`\vec{x}`:
     \Delta\vec{a}_o = -\matr{H}_{oo}^{-1}\left(\vec{b}_o + \matr{H}_{ox} \Delta\vec{x}\right),
 
 the same step as solving for everything together, damped as above (Levenberg-Marquardt: :math:`\mu` times the diagonal
-of both blocks, and :math:`10^{-12}\operatorname{tr}\matr{H}_{oo}` added to each orientation's diagonal so that an
-orientation with too few peaks stays invertible).
+of both blocks, and :math:`16\epsilon\operatorname{tr}\matr{H}_{oo}` added to each orientation's diagonal, the block's own
+rounding (:math:`\epsilon` float64's), so that an orientation with too few peaks stays invertible without moving a
+determined step).
 
 **Proof:** ``tests/theory/test_calibration.py::test_schur_step``, ``tests/theory/test_calibration.py::test_schur_code``.
 
@@ -233,7 +235,8 @@ symmetric. Its strain from the reference lattice :math:`\matr{B}` (scaled by :ma
 in the sample frame: :math:`\matr{K}^T\matr{K} = (\matr{I} + \matr{E})^2` for any rotation, and :math:`\matr{I} +
 \matr{E}` is its positive square root.
 
-**Proof:** ``tests/theory/test_calibration.py::test_strain_from_ubi``, ``tests/theory/test_calibration.py::test_strain_code``.
+**Proof:** ``tests/theory/test_calibration.py::test_strain_from_ubi``, ``tests/theory/test_calibration.py::test_strain_code``,
+``tests/theory/test_calibration.py::test_split_strain``, ``tests/theory/test_calibration.py::test_split_strain_code``.
 
 On a strain-free calibrant a right geometry leaves only noise, as ImageD11's silicon notebook
 estimates its precision. A deviatoric strain shared by every orientation (its peak-weighted mean) points to the tilts or
@@ -241,7 +244,8 @@ the centre; a hydrostatic one to the wavelength or the distance against the refe
 :math:`\chi^2` with free lattices to that without tells how much of the misfit the strains explain.
 
 **Code:** :func:`anri.calib.fit.strain_left`, :func:`anri.calib.fit.lattice_strain`,
-:func:`anri.calib.fit.split_strain`.
+:func:`anri.calib.fit.split_strain`. ``strain_left`` is a fit (a lattice per grain, by least squares), so it has no
+code check of its own; its parts, the strain and its split, are checked above.
 
 Remaking a calibration
 ----------------------

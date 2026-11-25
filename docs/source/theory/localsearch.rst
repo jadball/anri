@@ -89,6 +89,9 @@ at most ``per_voxel`` (16), and replaces them by their 27 children, each startin
 occupancy. Each finer voxel fits (MLEM with SQUAREM, :eq:`lik-squarem`) the children its 3 × 3 coarser neighbourhood
 held, an orientation held by several neighbours at its largest occupancy there, at most ``cand`` of them.
 
+A coarser level's voxels are the points of its grid (centred on the axis) within 0.75 of its step of a finer voxel
+(``tests/theory/test_localsearch.py::test_coarse_positions_code``).
+
 **Code:** :func:`anri.index.local.level_rows`, :func:`anri.index.local.kept`, :func:`anri.index.local.inherit`,
 :func:`anri.index.occupancy.inherit_candidates`, :func:`anri.index.occupancy.coarse_positions`,
 :func:`anri.index.occupancy.fit_occupancy`, :func:`anri.index.stages.stage_fit`.

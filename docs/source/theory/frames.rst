@@ -46,10 +46,12 @@ through the metric tensors :math:`\matr{G} = [\vec{a}_i \cdot \vec{a}_j]` and :m
 :math:`\vec{a}_i` as the rows of a matrix :math:`\matr{A}`, the :math:`\vec{a}^*_j` are the rows of :math:`\matr{A}^{-T}`.
 
 **Definition:** the reciprocal basis, and :math:`d^*`. **Proof:** ``tests/theory/test_frames.py::test_reciprocal_metric``
-(:math:`\matr{G}^* = \matr{G}^{-1}`), ``tests/theory/test_frames.py::test_metric_code``.
+(:math:`\matr{G}^* = \matr{G}^{-1}`), ``tests/theory/test_frames.py::test_metric_code``. The cell's volume is
+:math:`V = \sqrt{\det\matr{G}}` (``tests/theory/test_frames.py::test_volume``).
 
 **Code:** :func:`anri.crystal.lattice.lpars_to_mt`, :func:`anri.crystal.lattice.mt_to_rmt`,
-:func:`anri.crystal.lattice.mt_to_lpars`.
+:func:`anri.crystal.lattice.rmt_to_mt`, :func:`anri.crystal.lattice.mt_to_lpars`,
+:func:`anri.crystal.lattice.metric_to_volume`.
 
 Crystal Cartesian frame
 -----------------------
@@ -79,7 +81,7 @@ equals :math:`1/c`.)
 \matr{G}^*` for any lattice, and FABLE's last element is :math:`1/c`), ``tests/theory/test_frames.py::test_B_code``.
 
 **Code:** :func:`anri.crystal.lattice.lpars_rlpars_to_B`, :func:`anri.crystal.lattice.lpars_to_B`,
-:func:`anri.crystal.structure.B_matrix`.
+:func:`anri.crystal.structure.B_matrix`, :func:`anri.crystal.lattice.B_to_rmt`.
 
 .. figure:: figures/frames_crystal.svg
     :width: 75%
@@ -269,6 +271,34 @@ and fast, the derivatives of :eq:`frm-det` in :math:`s` and :math:`f` (constant,
 
 **Code:** :func:`anri.geom.detector.detector_basis_vectors_lab`, :func:`anri.geom.detector.raytrace_to_det`.
 
+Representations of a rotation
+-----------------------------
+
+Besides matrices, Anri writes a rotation by :math:`\theta` about the unit axis :math:`\hat{n}` as a unit quaternion
+:math:`q = (w, \vec{v}) = (\cos\tfrac{\theta}{2}, \sin\tfrac{\theta}{2}\,\hat{n})` (either sign: Anri keeps
+:math:`w \ge 0`) or a Rodrigues vector :math:`\vec{r} = \tan\tfrac{\theta}{2}\,\hat{n} = \vec{v}/w`:
+
+.. math::
+    :label: frm-quat
+
+    \matr{R}(q) = (w^2 - |\vec{v}|^2)\matr{I} + 2\vec{v}\vec{v}^T + 2w[\vec{v}]_\times, \qquad
+    \matr{R}(\vec{r}) = \matr{I} + \frac{2}{1 + |\vec{r}|^2}\left([\vec{r}]_\times + [\vec{r}]_\times^2\right),
+
+and the rotation :math:`b` followed by :math:`a` is the Hamilton product,
+:math:`ab = (a_w b_w - \vec{a}_v \cdot \vec{b}_v,\ a_w \vec{b}_v + b_w \vec{a}_v + \vec{a}_v \times \vec{b}_v)`, with
+:math:`\matr{R}(ab) = \matr{R}(a)\matr{R}(b)`. Back from a matrix: :math:`\vec{r} = 2\vec{a}\,/\,(1 +
+\operatorname{tr}\matr{R})` with :math:`[\vec{a}]_\times = (\matr{R} - \matr{R}^T)/2`, and :math:`q` by Shepperd's method (as
+:func:`anri.maths.rotation.mat_to_quat` cites it): :math:`4w^2 = 1 + \operatorname{tr}\matr{R}`, :math:`4v_i^2 = 1 + 2R_{ii} - \operatorname{tr}\matr{R}`, the largest
+of the four taken as the root and the others from the sums and differences of the off-diagonal pairs.
+
+**Definition:** the representations of [Rowenhorst2015]_. **Proof:** ``tests/theory/test_frames.py::test_quaternion``
+(:math:`\matr{R}(q)` is :eq:`ps-rotation`'s exponential, Rodrigues' formula; :math:`\matr{R}(\vec{r})` the same rotation;
+the product's matrix the matrices' product; the inverses recover :math:`\vec{r}` and :math:`q`),
+``tests/theory/test_frames.py::test_quaternion_code``.
+
+**Code:** :func:`anri.maths.rotation.quat_to_mat`, :func:`anri.maths.rotation.rod_to_mat`,
+:func:`anri.maths.rotation.quat_mul`, :func:`anri.maths.rotation.mat_to_rod`, :func:`anri.maths.rotation.mat_to_quat`.
+
 Checked against FABLE's test case
 ---------------------------------
 
@@ -308,7 +338,7 @@ wavelength with :math:`hc = 12.39842` keV Å (CODATA), FABLE with 12.398 (the va
 of FABLE's :math:`\matr{U}`, printed to six digits and orthogonal only to about :math:`10^{-6}`. FABLE gives the pixel
 as whole pixels.
 
-``tests/unit/geom/test_fable_case.py`` runs this case, with FABLE's :math:`hc`, through
+``tests/reference/test_tables.py::TestFableCase`` runs this case, with FABLE's :math:`hc`, through
 :func:`anri.fwd.peak.get_centroid` in CI.
 
 What is left out

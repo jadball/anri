@@ -91,7 +91,10 @@ def _sphere_path_ratio(mu_r: ArrayLike, tth: ArrayLike, n: int = 12) -> jax.Arra
 
     Becker and Coppens (1974, equation 52): the paths ``T1`` back along the incident beam and ``T2`` on along the
     diffracted beam, averaged over the sphere with weight ``exp(-mu (T1 + T2))``. ``mu_r`` is mu times the radius.
-    Gauss-Legendre quadrature in radius and polar angle, uniform in azimuth (n points each).
+    Gauss-Legendre quadrature in radius and polar angle, uniform in azimuth (n points each). The unweighted mean is the
+    same quadrature's, not 3 R / 2 itself: the paths' square roots at the surface leave the rule ~1e-4 off, and the
+    ratio of two of its means is exactly 1 at mu = 0, as it must be. For mu R <= 1 it is within 7e-4 of a 64-point
+    rule's.
     """
     g, w = (jnp.asarray(a) for a in np.polynomial.legendre.leggauss(n))
     r = 0.5 * (g + 1)  # radius in [0, 1], weight r^2 dr
@@ -105,7 +108,7 @@ def _sphere_path_ratio(mu_r: ArrayLike, tth: ArrayLike, n: int = 12) -> jax.Arra
     a0, a1, p2 = p @ u0, p @ u, (p**2).sum(-1)
     t = (a0 + jnp.sqrt(jnp.maximum(a0**2 - p2 + 1, 0))) + (-a1 + jnp.sqrt(jnp.maximum(a1**2 - p2 + 1, 0)))
     e = wt * jnp.exp(-jnp.asarray(mu_r, t.dtype) * t)
-    return (e * t).sum() / e.sum() / 1.5
+    return ((e * t).sum() / e.sum()) / ((wt * t).sum() / wt.sum())
 
 
 def extinction_parameters(

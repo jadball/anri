@@ -125,8 +125,41 @@ them up there. Where code and the pages disagree, the code is wrong, or the page
 - **No implicit filtering.** Priors or constraints coupling voxels, truncated spectra, smoothing and iterations stopped
   early are filters. Avoid them where possible; where one is used it is a **Filter** paragraph on the pages (what it
   removes, its bias), it is never a default, and the unfiltered result is reported beside it.
-- A numerical test that re-checks a proved identity is not needed; test what the proofs cannot (compilation,
-  shapes, the integration of the parts).
+
+### Tests: each computation checked once, at its level
+
+The tests follow the verification split of scientific computing. Put each check at its level, once; before writing
+one, look for it at the other levels.
+
+1. **The maths is right** (`tests/theory/`): sympy proofs that derive each numbered equation from the definitions on
+   the pages. Prove identities symbolically (reduce to zero, exact ranks, exact integrals); numbers only where no
+   identity can be stated, and then evaluated exactly (30 digits, rationals), never sampled on a grid or fitted.
+2. **The code matches the maths** (the `*_code` checks in `tests/theory/`): the function on a page's **Code:** line
+   against the proved expression, computed independently, at a few points, in float64 (float32 where the function
+   is). The tolerance is derived from rounding, in the test: ulps times the condition of that value, from its own
+   terms (`tests/theory/common.py::tol`, `agree`). Exact results (integers, bins, sums of small rationals) are
+   checked exactly. A fixed number (`rtol=1e-12`) is not a tolerance, and widening one until the test passes hides
+   a bug: find the term that rounds.
+3. **The code works as software** (`tests/unit/`): compiling and recompiles, shapes and dtypes (float32 stays
+   float32 under x64), batching and sharding agreeing with one call, two code paths or options agreeing, stages,
+   provenance and files, error handling, and regressions a proof cannot see. Not maths: a unit test that checks a
+   formula, a round trip or a limit numerically is level 2 in disguise and belongs in `tests/theory`.
+4. **The methods work** (validation): a fit recovers the truth from a phantom or a simulation (the stage and
+   end-to-end tests in `tests/unit`). Not a substitute for any of the above.
+
+Beside the levels, **`tests/reference/`** checks that Anri agrees with older software and published sources on the
+basics: ImageD11, Dans_Diffraction, FABLE's worked example, NIST XCOM, Becker and Coppens' tables. Their tolerances are
+the sources' own accuracy (digits given, a fit's stated error). They are evidence of conventions, not proofs.
+
+- **Every Code-line function has a level-2 check**, named on the page's **Proof:** line. A function that is a fit,
+  an estimator or a sampled statistic has none; say so on the page and test it at levels 3 and 4.
+- **New maths, new check**: a page equation gets its proof and, if code computes it, its `_code` check in the same
+  change. An approximation the code makes (a switch to a simpler form, a quadrature) goes on the page with its
+  bound, proved or **Measured:**.
+- **A failing check is a finding**, not a tolerance to raise: report it, and fix the code or the page.
+- **Run tests one process per file** (`pytest tests/theory/test_x.py`). One process over the whole suite compiles
+  over a thousand programs and can exceed Linux's limit on memory mappings; that is known, not to be "fixed" in
+  `conftest.py`.
 
 ## Reason through code before running it
 
@@ -293,7 +326,8 @@ CI (`.github/workflows/main.yml`) tests Python 3.9 and 3.14 on Ubuntu for pushes
 
 ## Development
 
-- Lint and format with `ruff`, type-check with `ty`, test with `pytest tests/`. All code outside `anri/sandbox` must pass.
+- Lint and format with `ruff`, type-check with `ty`, test with `pytest`, one file per process (`tests/theory`,
+  `tests/unit`, `tests/reference`: see "Tests" above). All code outside `anri/sandbox` must pass.
 - Cite papers in the style of `CONTRIBUTING.md` ("Citing papers"). Never cite a paper, page or DOI you have not checked: ask
   the maintainer for the PDF.
 - Hooks in `.githooks/` catch CI failures early: pre-commit runs `ruff check .`; pre-push builds the docs with `sphinx-build -W` (notebooks not executed, ~30 s). Enable them once per clone with `git config core.hooksPath .githooks`.

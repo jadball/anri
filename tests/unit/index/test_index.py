@@ -19,6 +19,7 @@ PARS = {
     "wavelength": 12.398419843320026 / 43.0, "wedge": 0.0, "chi": 0.0,
 }  # fmt: skip
 A_FE = 2.8665
+E32 = float(np.finfo(np.float32).eps)
 
 
 def geometry(sig_beam=0.5):
@@ -106,48 +107,6 @@ class TestDiagnostics(unittest.TestCase):
             ix.diagnostics.ring_windows(cake, [4])
 
 
-class TestTolerances(unittest.TestCase):
-    def test_first_order_bound(self):
-        """A rotation by delta moves each reflection by at most the tolerances (|sin eta| > 0.3)."""
-        c, B, _ = iron()
-        rings = ix.data.ring_table(*c, PARS["wavelength"], 3)
-        geom = geometry()
-        U0 = rotations(200, 0)
-        axis = np.random.default_rng(1).normal(size=(200, 3))
-        dU = anri.maths.rotation.quat_to_mat(np.column_stack([np.full(200, np.cos(np.radians(0.5))),
-                                                       np.sin(np.radians(0.5)) * axis / np.linalg.norm(axis, axis=1, keepdims=True)]))  # fmt: skip
-        e0, o0, k0, _ = ix.search.predict(jnp.asarray(U0), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom)
-        e1, o1, k1, _ = ix.search.predict(
-            jnp.asarray((dU @ U0).astype(np.float32)), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom
-        )
-        te, to = ix.search.match_tolerances(
-            e0, jnp.asarray(rings["ring_j"]), jnp.asarray(rings["tth"]), jnp.zeros(3), 1.0, 0.0
-        )
-        use = np.asarray(k0 & k1) & (np.abs(np.sin(np.radians(np.asarray(e0)))) > 0.3)
-        de = np.abs((np.asarray(e1) - np.asarray(e0) + 180) % 360 - 180)
-        do = np.abs((np.asarray(o1) - np.asarray(o0) + 180) % 360 - 180)
-        self.assertLessEqual((de / np.asarray(te))[use].max(), 1.02)
-        self.assertLessEqual((do / np.asarray(to))[use].max(), 1.02)
-
-    def test_completeness_boxes(self):
-        lit = np.zeros((1, 360, 180), bool)
-        lit[0, 190, 50] = True  # eta 10..11, omega 50..51
-        table = ix.data.lit_table(jnp.asarray(lit))
-        eta = jnp.array([[12.2, 10.5, 10.5]])
-        om = jnp.array([[50.5, 52.7, 50.5]])
-        ok = jnp.ones((1, 3), bool)
-
-        def comp(te, to):
-            c, n = ix.search.completeness(table, eta, om, ok, jnp.zeros(3, jnp.int32), jnp.full((1, 3), te), jnp.full((1, 3), to),
-                                  0.0, 1.0, 1.0, 360, 180)  # fmt: skip
-            self.assertEqual(int(n[0]), 3)
-            return float(c[0])
-
-        self.assertAlmostEqual(comp(0.1, 0.1), 1 / 3, places=6)  # only the prediction in the lit bin
-        self.assertAlmostEqual(comp(2.0, 0.1), 2 / 3, places=6)  # the eta neighbour too
-        self.assertAlmostEqual(comp(2.0, 2.5), 1.0, places=6)  # and the omega neighbour
-
-
 class TestOccupancy(unittest.TestCase):
     def test_fewer_orientations_than_candidates(self):
         """Fewer orientations than the candidates asked for: as many candidates as orientations (issue #32)."""
@@ -187,70 +146,6 @@ class TestOccupancy(unittest.TestCase):
         ratio = np.asarray(wa).sum(-1)[0, 0] / np.asarray(w0).sum(-1)[0, 0]
         np.testing.assert_allclose(ratio, expected, rtol=0.02)
 
-    def test_adjoint(self):
-        """<A f, r> = <f, A^T r>."""
-        c, B, _ = iron()
-        rings = ix.data.ring_table(*c, PARS["wavelength"], 2)
-        geom = geometry()
-        pred = ix.search.predictions(rotations(16, 2), B, rings, geom, 0.2)
-        rng = np.random.default_rng(3)
-        pos = jnp.asarray(np.column_stack([rng.uniform(-4, 4, (32, 2)), np.zeros(32)]), jnp.float32)
-        scan = {"y0": 0.0, "dty0": -6.0, "ystep": 1.0, "n_rows": 13, "om0": 0.0}
-        dims = (1.0, 1.0, 360, 180)
-        n_cells = 2 * 360 * 180 * 13
-        cand = jnp.asarray(rng.integers(0, 16, (32, 4)), jnp.int32)
-        f = jnp.asarray(rng.uniform(size=(32, 4)), jnp.float32)
-        r = jnp.asarray(rng.uniform(size=n_cells), jnp.float32)
-        Af = ix.occupancy.forward(f, cand, pred, jnp.asarray(rings["ring_j"]), pos, scan, dims, n_cells, 8)
-        ATr = ix.occupancy.backward(r, cand, pred, jnp.asarray(rings["ring_j"]), pos, scan, dims, 8)
-        self.assertGreater(float(jnp.sum(Af)), 0)
-        np.testing.assert_allclose(float(jnp.sum(Af * r)), float(jnp.sum(f * ATr)), rtol=1e-4)
-
-    def test_adjoint_beam_profile(self):
-        """<A f, r> = <f, A^T r> with a beam profile over the rows too."""
-        c, B, _ = iron()
-        rings = ix.data.ring_table(*c, PARS["wavelength"], 2)
-        pred = ix.search.predictions(rotations(16, 2), B, rings, geometry(), 0.2)
-        rng = np.random.default_rng(3)
-        pos = jnp.asarray(np.column_stack([rng.uniform(-4, 4, (32, 2)), np.zeros(32)]), jnp.float32)
-        scan = {"y0": 0.0, "dty0": -6.0, "ystep": 1.0, "n_rows": 13, "om0": 0.0, "sig_beam": 0.6, "width_beam": 0.0,
-                "voxel": 1.0}  # fmt: skip
-        dims = (1.0, 1.0, 360, 180, ix.occupancy.beam_rows(scan))
-        n_cells = 2 * 360 * 180 * 13
-        cand = jnp.asarray(rng.integers(0, 16, (32, 4)), jnp.int32)
-        f = jnp.asarray(rng.uniform(size=(32, 4)), jnp.float32)
-        r = jnp.asarray(rng.uniform(size=n_cells), jnp.float32)
-        Af = ix.occupancy.forward(f, cand, pred, jnp.asarray(rings["ring_j"]), pos, scan, dims, n_cells, 8)
-        ATr = ix.occupancy.backward(r, cand, pred, jnp.asarray(rings["ring_j"]), pos, scan, dims, 8)
-        self.assertGreater(float(jnp.sum(Af)), 0)
-        np.testing.assert_allclose(float(jnp.sum(Af * r)), float(jnp.sum(f * ATr)), rtol=1e-4)
-
-    def test_beam_profile_rows(self):
-        """Row weights: sum 1, centred on the voxel, variance of the beam plus the voxel's chord (omega 0: a box)."""
-        sig, ystep, vox = 0.8, 1.0, 1.0
-        scan = {"y0": 0.0, "dty0": -10.0, "ystep": ystep, "n_rows": 21, "om0": -180.0, "sig_beam": sig,
-                "width_beam": 0.0, "voxel": vox}  # fmt: skip
-        n_beam = ix.occupancy.beam_rows(scan)
-        n_k, n_e, n_o = scan["n_rows"], 360, 360
-        for x, y in ((0.0, 0.3), (0.0, -2.45), (0.0, 4.0)):
-            pos = jnp.asarray([[x, y, 0.0]], jnp.float32)
-            one = jnp.ones((1, 1, 1))
-            idx, wt = ix.occupancy.system(one * 10.0, one * 0.0, one > 0, one, jnp.asarray([0]), pos, scan, 1.0, 1.0, n_e, n_o,
-                                n_beam)  # fmt: skip
-            idx, wt = np.asarray(idx).ravel(), np.asarray(wt).ravel()
-            rows = idx[idx >= 0] % n_k
-            w = np.bincount(rows, weights=wt[idx >= 0], minlength=n_k)
-            dty = scan["dty0"] + np.arange(n_k) * ystep
-            centre = scan["y0"] - y  # at omega 0 the voxel is in the beam at dty = y0 - y
-            self.assertAlmostEqual(w.sum(), 1.0, delta=0.01)
-            self.assertAlmostEqual((w * dty).sum() / w.sum(), centre, delta=0.01)
-            var = (w * (dty - centre) ** 2).sum() / w.sum()
-            self.assertAlmostEqual(var, sig**2 + vox**2 / 12, delta=0.05 * (sig**2 + vox**2 / 12))
-        # 0.5 um beam on 0.2 um rows: 9 rows; the fit's coarse level (rows summed in pairs) needs 7 of 0.4 um
-        fine = {**scan, "ystep": 0.2, "sig_beam": 0.5 / 2.3548, "voxel": 0.2}
-        self.assertEqual(ix.occupancy.beam_rows(fine), 9)
-        self.assertEqual(ix.occupancy.beam_rows(ix.data.coarsen_scan(fine, 2)), 7)
-
     def test_padding_is_invisible(self):
         """Padded voxels get no entries: a far-away one (1e6, 1e6) would cross the axis's ray at omega 135, 315."""
         pred = (jnp.array([[10.0, 10.0]]), jnp.array([[135.0, 315.0]]), jnp.ones((1, 2), bool), jnp.ones((1, 2)))
@@ -263,7 +158,7 @@ class TestOccupancy(unittest.TestCase):
         data = ix.occupancy.forward(jnp.ones((1, 1)), jnp.zeros((1, 1), jnp.int32), pred, ring_j, pos[:1], scan, dims,
                                     n_cells, 1)  # fmt: skip
         f, _ = ix.occupancy.candidates(data, pred, ring_j, pos, scan, dims, 1, 1, qc=1, log=lambda _: None)
-        np.testing.assert_allclose(f, [[1.0], [0.0]], atol=1e-6)
+        np.testing.assert_allclose(f, [[1.0], [0.0]], atol=16 * E32)  # float32, the padded voxel exactly 0
 
     def test_full_turn_seam(self):
         """A full turn wraps omega's corners at the seam; a partial scan drops the corners past its ends."""
@@ -271,12 +166,13 @@ class TestOccupancy(unittest.TestCase):
         for n_o, b_o in ((360, 1.0), (3600, 0.1)):
             om = om0 + b_o * jnp.array([0.1, n_o - 0.1])  # 0.4 of a bin either side of the seam
             corners = ix.data.eta_omega_corners(jnp.zeros(2), om, om0, 1.0, b_o, 360, n_o)
-            np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 1.0, atol=1e-4)
+            # bilinear weights sum to 1 (idx-bilinear), in float32
+            np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 1.0, atol=16 * E32)
             np.testing.assert_array_equal(corners[0][1], [n_o - 1, n_o - 1])
             np.testing.assert_array_equal(corners[1][1], [0, 0])
         corners = ix.data.eta_omega_corners(jnp.zeros(1), jnp.array([om0 + 0.1]), om0, 1.0, 1.0, 360, 180)
         np.testing.assert_array_equal(corners[0][1], [-1])  # half a turn: the corner before om0 is outside
-        np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 0.6, atol=1e-5)
+        np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 0.6, atol=16 * E32)
 
     def test_dty_offsets_match_histogram(self):
         """Offsets and exposure leave out the frames past the scan's ends, as the histogram does, not wrap them."""
@@ -292,13 +188,8 @@ class TestOccupancy(unittest.TestCase):
         np.testing.assert_array_equal(offsets[0, 2:], 0.0)
 
     def test_dty_offsets(self):
-        """Rows away from their nominal dty: a helical scan's offsets, and system putting a voxel in the right rows."""
-        n_rows, n_fr, ystep = 5, 360, 1.0
-        om = np.tile((np.arange(n_fr) + 0.5) * 360.0 / n_fr, (n_rows, 1))
-        dty = np.arange(n_rows)[:, None] * ystep + ystep * (om / 360.0 - 0.5)  # one step per turn, row mean on the row
-        edges = (np.arange(n_rows + 1) - 0.5) * ystep
-        dd = ix.data.dty_offsets(dty, om, edges, 1, 0.0, 1.0, 360, 0.0, ystep)
-        np.testing.assert_allclose(dd[2], ystep * ((np.arange(360) + 0.5) / 360.0 - 0.5), atol=1e-9)
+        """system puts a voxel in the rows its ddty offsets say (the offsets: test_indexing.py::test_dty_offsets_code)."""
+        ystep = 1.0
         for n_beam in (0, 7):  # the 2-row model and a beam profile
             # a beam wide enough that rows sample its profile evenly (a narrow one, sampled at whole rows, has its
             # centroid a little off its centre)
@@ -479,33 +370,6 @@ class TestOccupancy(unittest.TestCase):
             direct = ix.data.dty_offsets(dty, om, edges, g, 0.0, 1.0, 360, c["dty0"], c["ystep"])
             np.testing.assert_allclose(c["ddty"], direct, atol=1e-6)
 
-    def test_coarsen_scan_partial_group(self):
-        """Without exposure, a partial last group gets the share of g rows it sums, as coarsen_rows sums the data."""
-        for n_rows, g in ((5, 2), (7, 3), (541, 9), (6, 2)):
-            c = ix.data.coarsen_scan({"dty0": 0.0, "ystep": 1.0, "n_rows": n_rows}, g)
-            Hc, _ = ix.data.coarsen_rows(np.ones(n_rows), n_rows, g)
-            if n_rows % g:
-                np.testing.assert_allclose(np.asarray(c["exposure"])[:, 0], np.asarray(Hc) / g)
-            else:
-                self.assertNotIn("exposure", c)  # whole groups: nothing to correct
-        # system() takes a per-row exposure [n_rows, 1]: the weight of a prediction in a row scales with it
-        scan = {"y0": 0.0, "dty0": -1.0, "ystep": 1.0, "n_rows": 3, "om0": -180.0, "k_in_lab": jnp.array([1.0, 0.0, 0.0]),
-                "wedge": 0.0, "chi": 0.0}  # fmt: skip
-        pos = jnp.zeros((1, 3), jnp.float32)  # on the axis: row 1 (dty 0) at every omega
-        args = (jnp.full((1, 1, 1), 10.0), jnp.full((1, 1, 1), 0.3), jnp.ones((1, 1, 1), bool), jnp.ones((1, 1, 1)),
-                jnp.asarray([0]), pos)  # fmt: skip
-        _, w1 = ix.occupancy.system(*args, scan, 1.0, 1.0, 360, 360)
-        _, w2 = ix.occupancy.system(
-            *args, {**scan, "exposure": jnp.asarray([[1.0], [0.25], [1.0]])}, 1.0, 1.0, 360, 360
-        )
-        self.assertAlmostEqual(float(np.asarray(w2).sum()), 0.25 * float(np.asarray(w1).sum()), places=5)
-
-    def test_coarsen_rows(self):
-        H = np.arange(2 * 7, dtype=float)
-        Hc, n = ix.data.coarsen_rows(H, 7, 3)
-        self.assertEqual(n, 3)
-        np.testing.assert_allclose(np.asarray(Hc), [0 + 1 + 2, 3 + 4 + 5, 6, 7 + 8 + 9, 10 + 11 + 12, 13])
-
 
 class TestPopulations(unittest.TestCase):
     def test_parent_twin_and_decoy(self):
@@ -520,7 +384,7 @@ class TestPopulations(unittest.TestCase):
         f = np.array([[0.3, 0.2, 0.15, 0.15, 0.17, 0.03]])
         cand = np.arange(6)[None]
         frac, U, spread, n = ix.populations.group(f, cand, U_list, ops, 2.0)
-        np.testing.assert_allclose(frac[0, :3], [0.8, 0.17, 0.03], atol=1e-5)
+        np.testing.assert_allclose(frac[0, :3], [0.8, 0.17, 0.03], atol=16 * E32)  # float32 shares of the occupancy
         np.testing.assert_array_equal(n[0, :3], [4, 1, 1])
         self.assertLess(anri.crystal.orientation.disorientation(U[0, :1], U0[None], ops)[0], 0.5)
         self.assertLess(anri.crystal.orientation.disorientation(U[0, 1:2], (twin @ U0)[None], ops)[0], 0.05)  # float32
@@ -531,7 +395,7 @@ class TestPopulations(unittest.TestCase):
         U = np.asarray(anri.maths.rotation.rmat_from_axis_angle(jnp.array([[0.0, 0.0, 1.0]]), jnp.array([0, 10, 10.1])))
         f = np.array([[0.3, 0.25, 0.25]], np.float32)
         frac, mean, _, n = ix.populations.group(f, np.arange(3)[None], U, np.eye(3)[None], 1.0, p=2, m=3, vb=1)
-        np.testing.assert_allclose(frac[0], [0.625, 0.375], rtol=1e-5)
+        np.testing.assert_allclose(frac[0], [0.625, 0.375], rtol=16 * E32)
         np.testing.assert_array_equal(n[0], [2, 1])
         self.assertAlmostEqual(float(np.degrees(anri.maths.rotation.rotation_angle(mean[0, 0]))), 10.05, places=2)
 
@@ -544,9 +408,9 @@ class TestPopulations(unittest.TestCase):
             np.ones((1, 64)), np.arange(64)[None], U, np.eye(3)[None], 1.0, vb=1
         )
         self.assertEqual(int(n[0, 0]), 64)  # every candidate considered: the whole occupancy is one population
-        np.testing.assert_allclose(frac[0, 0], 1.0, rtol=1e-5)
+        np.testing.assert_allclose(frac[0, 0], 1.0, rtol=16 * E32)
         frac16 = ix.populations.group(np.ones((1, 64)), np.arange(64)[None], U, np.eye(3)[None], 1.0, m=16)[0]
-        np.testing.assert_allclose(frac16[0, 0], 16 / 64, rtol=1e-5)  # m = 16 sees a quarter of it
+        np.testing.assert_allclose(frac16[0, 0], 16 / 64, rtol=16 * E32)  # m = 16 sees a quarter of it
         self.assertAlmostEqual(float(np.degrees(anri.maths.rotation.rotation_angle(mean[0, 0]))), 40.315, delta=0.01)
         self.assertGreater(spread[0, 0], 0.0)
 
@@ -920,32 +784,6 @@ class TestDatasetGroups(unittest.TestCase):
 
 
 class TestDiscMask(unittest.TestCase):
-    def test_disc(self):
-        """The voxels within the scanned dty range all round the axis: a disc, smaller when y0 is off the middle."""
-        scan = {"dty0": -5.0, "ystep": 1.0, "n_rows": 11}  # rows -5..5, edges -5.5..5.5
-        nr = ix.mask.voxel_grid(scan, 0.0)
-        m = ix.mask.disc_mask(scan, 0.0, nr)
-        r = np.hypot(*np.asarray(anri.geom.scan.recon_positions(nr, 1.0))[:, :2].T).reshape(nr, nr)
-        np.testing.assert_array_equal(m, r <= 5.5)
-        self.assertFalse(m[0, 0])  # a corner
-        self.assertTrue(m[nr // 2, nr // 2])
-        off = ix.mask.disc_mask(scan, 2.0, ix.mask.voxel_grid(scan, 2.0))
-        self.assertLess(off.sum(), m.sum())  # 3.5 from the nearer end
-        np.testing.assert_array_equal(ix.mask.disc_mask(scan, 0.0, nr, pad=1.5), r <= 7.0)
-        # a half-sample scan (rows -8..2, 0.5 past the axis edge): over a full turn out to the farther end, over half
-        # a turn to the nearer end
-        half = {"dty0": -8.0, "ystep": 1.0, "n_rows": 11}
-        nh = ix.mask.voxel_grid(half, 0.0)
-        rh = np.hypot(*np.asarray(anri.geom.scan.recon_positions(nh, 1.0))[:, :2].T).reshape(nh, nh)
-        turn = {**half, "n_o": round(360 / ix.data.B_O)}
-        np.testing.assert_array_equal(ix.mask.disc_mask(turn, 0.0, nh), rh <= 8.5)
-        np.testing.assert_array_equal(ix.mask.disc_mask({**half, "n_o": round(180 / ix.data.B_O)}, 0.0, nh), rh <= 2.5)
-        np.testing.assert_array_equal(ix.mask.disc_mask(half, 0.0, nh), rh <= 2.5)  # no omega range: half a turn
-        self.assertFalse(ix.mask.disc_mask(turn, 3.0, nh).any())  # y0 past the scan's end: no voxel seen all round
-        wide = ix.mask.voxel_grid(scan, 0.0, grid_pad=2.5)  # 3 voxels more on every side
-        self.assertEqual(wide, nr + 6)
-        inner = np.asarray(anri.geom.scan.recon_positions(wide, 1.0)).reshape(wide, wide, 3)[3:-3, 3:-3]
-        np.testing.assert_allclose(inner.reshape(-1, 3), np.asarray(anri.geom.scan.recon_positions(nr, 1.0)))
 
     def test_back_projection_grid(self):
         """The back-projection is on the histogram's grid (with --grid-pad), as the disc and the fit; else voxel_grid."""
@@ -1118,17 +956,13 @@ class TestDetectorCoverage(unittest.TestCase):
 
 class TestLocalSearch(unittest.TestCase):
     def test_children(self):
-        """27 rotations around each orientation, the middle one itself, step / 3 apart along each sample axis."""
+        """27 children per orientation, in order, the middle one itself (values: test_localsearch.py::test_children_code)."""
         u, _, vt = np.linalg.svd(rotations(2, 3).astype(np.float64))
         U = u @ vt  # exact rotations (rotations() gives float32)
         ch = ix.local.children(U, 3.0)
         self.assertEqual(ch.shape, (54, 3, 3))
         np.testing.assert_allclose(ch[13], U[0], atol=1e-12)
         np.testing.assert_allclose(ch[27 + 13], U[1], atol=1e-12)
-        np.testing.assert_allclose(np.einsum("nji,njk->nik", ch, ch), np.broadcast_to(np.eye(3), ch.shape), atol=1e-12)
-        ang = np.degrees(np.arccos(np.clip((np.einsum("nij,ij->n", ch[:27], U[0]) - 1) / 2, -1, 1)))
-        self.assertAlmostEqual(np.sort(ang)[1], 1.0, places=6)  # nearest neighbours 1 deg off
-        self.assertAlmostEqual(ang.max(), np.sqrt(3), places=6)  # the corners
 
     def test_kept_and_inherit(self):
         """A voxel's orientations holding min_share of its occupancy are subdivided; it inherits their children only."""
@@ -1139,25 +973,13 @@ class TestLocalSearch(unittest.TestCase):
         self.assertEqual(c0.shape, (2, 54))
         np.testing.assert_array_equal(c0[0, :27], np.arange(27, 54))  # orientation 5: the second subdivided
         np.testing.assert_array_equal(c0[0, 27:], np.arange(27))  # orientation 2: the first
-        np.testing.assert_allclose(f0[0], np.repeat([0.6 / 27, 0.38 / 27], 27), rtol=1e-6)
+        np.testing.assert_allclose(f0[0], np.repeat([0.6 / 27, 0.38 / 27], 27), rtol=2 * E32)  # one float32 quotient
         np.testing.assert_array_equal(c0[1, :27], np.arange(27))
         np.testing.assert_array_equal(c0[1, 27:], -1)
         np.testing.assert_array_equal(f0[1, 27:], 0)
         # a small share is kept however much more the others hold (a thin twin), unlike a cover of the largest
         use, _, _ = ix.local.inherit(np.array([[0.97, 0.03]], np.float32), np.array([[0, 1]], np.int32), 2)
         np.testing.assert_array_equal(use, [True, True])
-
-    def test_population_radius(self):
-        """Populations are grouped within a histogram bin, or 1.8 x the fitted orientations' spacing if coarser."""
-        self.assertEqual(ix.populations.radius(0.0926), 1.0)  # a fit with levels: the bin
-        self.assertAlmostEqual(ix.populations.radius(2.5), 4.5)  # a plain fit of a 2.5 deg grid
-
-    def test_level_rows(self):
-        """Each level's voxels are about radius x its worst case wide, the last on the dty step."""
-        # 141.5 um radius, 0.289 deg: 0.71 um, 3 rows of 0.25 um; then 0.096 deg: 1 row (DTL1z45)
-        self.assertEqual(ix.local.level_rows(141.5, 0.289, 0.25, 1), [3, 1])
-        self.assertEqual(ix.local.level_rows(141.5, 2.6, 0.25, 2), [26, 9, 1])  # the last forced to one row
-        self.assertEqual(ix.local.level_rows(5.0, 0.29, 1.0, 0), [1])
 
     def test_predictions_in_chunks(self):
         """Predicting in chunks gives the same predictions, padded to whole chunks that predict nothing."""
@@ -1198,14 +1020,6 @@ class TestInherit(unittest.TestCase):
         cand, _, lost = ix.occupancy.inherit_candidates(fine[:1], pos_c, f_c, cand_c, 1)
         self.assertEqual(cand[0, 0], 12)
         self.assertAlmostEqual(float(lost[0]), 0.5 / 13.5, places=6)
-
-    def test_coarse_positions(self):
-        """A coarse grid centred on the axis, its voxels within 0.75 coarse steps of the fine ones."""
-        fine = np.asarray(anri.geom.scan.recon_positions(9, 1.0))
-        fine = fine[np.hypot(fine[:, 0], fine[:, 1]) <= 3.0]
-        pos_c = ix.occupancy.coarse_positions(fine, 3.0)
-        np.testing.assert_allclose(np.sort(np.unique(pos_c[:, 0])), [-3.0, 0.0, 3.0], atol=1e-6)
-        self.assertEqual(len(pos_c), 9)  # the 3 x 3 coarse voxels around a disc of radius 3
 
     def test_duplicates(self):
         """An orientation in several neighbours ranks by its largest occupancy, and comes once (issue #28)."""
@@ -1257,7 +1071,7 @@ class TestPowder(unittest.TestCase):
         """A uniform intensity per sr comes out flat; whole rings have coverage 1 (their analytic solid angle)."""
         p = self._pattern(np.ones((2200, 2100), bool))
         whole = (p["tth"] > 1.0) & (p["tth"] < 20.0)  # rings entirely on the detector
-        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=1e-4)
+        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=16 * E32)  # float32 sums over the ring's pixels
         np.testing.assert_allclose(p["coverage"][whole], 1.0, atol=0.02)
         np.testing.assert_allclose(p["lit_fraction"][whole], 1.0)
         np.testing.assert_allclose(p["sigma"][whole], p["sigma_counting"][whole])  # no spread over eta
@@ -1269,7 +1083,7 @@ class TestPowder(unittest.TestCase):
         good[:, : int(PARS["y_center"])] = False
         p = self._pattern(good)
         whole = (p["tth"] > 1.0) & (p["tth"] < 20.0)
-        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=1e-4)
+        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=16 * E32)  # float32 sums over the ring's pixels
         np.testing.assert_allclose(p["coverage"][whole], 0.5, atol=0.02)
 
     def test_write_xye(self):

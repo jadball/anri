@@ -19,9 +19,14 @@ wave-vector is a reciprocal-lattice vector (the Laue condition):
     \vec{Q} = \vec{k}_{\text{out}} - \vec{k}_{\text{in}} = \vec{g},
     \qquad |\vec{k}_{\text{out}}| = |\vec{k}_{\text{in}}| = \frac{1}{\lambda}.
 
-**Definition:** elastic, kinematic scattering.
+**Definition:** elastic, kinematic scattering. Checked against the code, with the wave-vectors of length
+:math:`1/\lambda`, by ``tests/theory/test_diffraction.py::test_q_code``; :math:`\vec{Q}` has the :math:`\eta` of
+:math:`\vec{k}_{\text{out}}` about any beam (``tests/theory/test_diffraction.py::test_eta_of_q``,
+``tests/theory/test_diffraction.py::test_q_tth_eta_code``).
 
-**Code:** :func:`anri.diffract.scatter.k_to_q_lab`, :func:`anri.diffract.scatter.q_lab_to_k_out`.
+**Code:** :func:`anri.diffract.scatter.k_to_q_lab`, :func:`anri.diffract.scatter.q_lab_to_k_out`,
+:func:`anri.diffract.scatter.scale_norm_k`, :func:`anri.diffract.scatter.peak_lab_to_k_out`,
+:func:`anri.diffract.scatter.q_lab_to_tth_eta`.
 
 Squaring :math:`\vec{k}_{\text{out}} = \vec{g} + \vec{k}_{\text{in}}` and using the equal lengths gives the Ewald
 condition
@@ -125,7 +130,9 @@ any beam it is a unit vector at :math:`2\theta` from :math:`\hat{k}` whose :eq:`
 
 Beam divergence enters here: an incoming ray tilted by small angles :math:`(k_y, k_z)` (radians) across the beam is
 :math:`\vec{k}_{\text{in}} \propto \hat{k} + k_y\hat{e}_h + k_z\hat{e}_v`, normalised to :math:`1/\lambda`. The forward model
-evaluates the centroid at :math:`k_y = k_z = 0` and uses the tilts only through their derivatives (:doc:`peak_shape`).
+evaluates the centroid at :math:`k_y = k_z = 0` and uses the tilts only through their derivatives (:doc:`peak_shape`);
+``tests/theory/test_diffraction.py::test_divergence_code`` checks :func:`anri.fwd.peak.hkl_to_k_omega`'s incoming
+and diffracted wave-vectors and omega for tilts.
 
 Where the voxel scatters from
 -----------------------------
@@ -164,7 +171,8 @@ horizontal line is :math:`y = (k_y/k_x)\,x` through the lab origin, and dty move
 For a beam along :math:`x` and no tilts that is :math:`\text{dty} = y_0 - (x_s \sin\omega + y_s \cos\omega)`: each voxel
 traces a sinusoid in (omega, dty), the sinogram.
 
-**Proof:** ``tests/theory/test_diffraction.py::test_dty``, ``tests/theory/test_diffraction.py::test_dty_code``.
+**Proof:** ``tests/theory/test_diffraction.py::test_dty``, ``tests/theory/test_diffraction.py::test_dty_code``,
+``tests/theory/test_diffraction.py::test_dty_and_origin_code`` (with :eq:`dif-column`'s origin at that dty).
 
 **Code:** :func:`anri.geom.gonio.find_dty_for_beam_xy`, :func:`anri.geom.gonio.dty_and_origin_lab`,
 :func:`anri.fwd.scan.get_centroid_scan`.
@@ -199,9 +207,12 @@ parameters [FABLEgeom]_. The solution does not depend on the length of :math:`\h
 **Code:** :func:`anri.geom.detector.raytrace_to_det`, :func:`anri.geom.detector.detector_basis_vectors_lab`.
 
 Chaining :eq:`frm-g`, :eq:`dif-omega`, the origin and :eq:`dif-raytrace` gives the forward model's one centroid
-function, which the renderer, the box-beam and the scanning models all call.
+function, which the renderer, the box-beam and the scanning models all call. Checked as a chain, tilted beam,
+goniometer and detector, for a column at a given dty, a cube, the scan's dty (:eq:`dif-dty`) and the box beam's
+(dty = :math:`y_0` = 0), by ``tests/theory/test_diffraction.py::test_centroid_code``.
 
-**Code:** :func:`anri.fwd.peak.get_centroid`.
+**Code:** :func:`anri.fwd.peak.get_centroid`, :func:`anri.fwd.scan.get_centroid_scan`,
+:func:`anri.fwd.box.get_centroid_box`.
 
 .. _theory_rotation_motion:
 
