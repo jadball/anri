@@ -120,34 +120,44 @@ When you're ready to contribute code to address an open issue, please follow the
 
     Our continuous integration (CI) testing runs [a number of checks](https://github.com/jadball/anri/actions) for each pull request on [GitHub Actions](https://github.com/features/actions). You can run most of these tests locally, which is something you should do *before* opening a PR to help speed up the review process and make it easier for us.
 
-    First, you should run [`isort`](https://github.com/PyCQA/isort) and [`black`](https://github.com/psf/black) to make sure you code is formatted consistently.
-    Many IDEs support code formatters as plugins, so you may be able to setup isort and black to run automatically everytime you save.
-    For example, [`black.vim`](https://github.com/psf/black/tree/master/plugin) will give you this functionality in Vim. But both `isort` and `black` are also easy to run directly from the command line.
-    Just run this from the root of your clone:
+    First, lint, format and type-check with [`ruff`](https://github.com/astral-sh/ruff) and
+    [`ty`](https://github.com/astral-sh/ty), from the root of your clone:
 
-        isort .
-        black .
-
-    Our CI also uses [`ruff`](https://github.com/astral-sh/ruff) to lint the code base and [`mypy`](http://mypy-lang.org/) for type-checking. You should run both of these next with
-
+        ruff format .
         ruff check .
+        ty check .
 
-    and
+    Tests are run with [`pytest`](https://docs.pytest.org/en/latest/), one file per process (the whole suite in one
+    process compiles more JAX programs than Linux allows memory mappings for):
 
-        mypy .
+        pytest tests/theory/test_intensity.py
 
-    We also strive to maintain high test coverage, so most contributions should include additions to [the unit tests](https://github.com/jadball/anri/tree/main/tests). These tests are run with [`pytest`](https://docs.pytest.org/en/latest/), which you can use to locally run any test modules that you've added or changed.
+    Each computation is tested once, at its level, so put a new test where it belongs:
 
-    For example, if you've fixed a bug in `anri/a/b.py`, you can run the tests specific to that module with
+    - **`tests/theory/`: the maths and the code that computes it.** Each numbered equation of
+      `docs/source/theory/` is proved with sympy from the definitions on the pages, symbolically wherever it can be.
+      Each function a page names on a **Code:** line has a `_code` check comparing it with the proved expression,
+      computed independently, at a tolerance derived from rounding (ulps times the condition of that value: see
+      `tests/theory/common.py`), never a fixed number. Name the proof and the check on the page's **Proof:** line;
+      `tests/theory/test_pages.py` checks that every named test exists. New maths goes on a page first, with its proof.
+    - **`tests/unit/`: the code as software.** Compilation and recompiles, shapes and dtypes, batching agreeing with one
+      call, options and code paths agreeing, stages, provenance and files, error handling, regressions, and the stage
+      tests that check a method recovers a simulated truth. Not formulas: a numerical check of an identity belongs in
+      `tests/theory`.
+    - **`tests/reference/`: agreement with older software and published sources** (ImageD11, Dans_Diffraction, FABLE,
+      NIST XCOM, Becker and Coppens), at the sources' own accuracy.
 
-        pytest -v tests/a/b_test.py
+    If you fixed a bug, add the test that fails without your fix at the level where the bug was: a wrong formula in
+    `tests/theory`, a wrong shape or a crash in `tests/unit`.
 
     If your contribution involves additions to any public part of the API, we require that you write docstrings
     for each function, method, class, or module that you add.
     See the [Writing docstrings](#writing-docstrings) section below for details on the syntax.
-    You should test to make sure the API documentation can build without errors by running
+    You should test to make sure the documentation, theory pages included, builds without errors by running
 
-        make docs
+        cd docs && sphinx-build -W -b html -D nbsphinx_execute=never source build/html
+
+    (as the pre-push hook and the deploy job do; `make docs` serves a live preview while you edit).
 
     If the build fails, it's most likely due to small formatting issues. If the error message isn't clear, feel free to comment on this in your pull request.
 
