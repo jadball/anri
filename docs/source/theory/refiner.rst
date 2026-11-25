@@ -158,15 +158,15 @@ The beam's weight within a peak
 
 The renderer folds the beam's weight into every peak (:eq:`int-fold`); a moment refiner cannot, since it has no shape
 to fold it into. This section derives what that costs. Take a voxel at radius :math:`r` from the axis, with lab
-coordinates :math:`(\zeta, \eta)` along and across the beam at omega :math:`\bar\omega`. Over a further turn
+coordinates :math:`(\zeta, \upsilon)` along and across the beam at omega :math:`\bar\omega`. Over a further turn
 :math:`\delta` its dty (:eq:`dif-dty`, beam along :math:`x`) moves by
 
 .. math::
     :label: rf-beam-motion
 
-    \text{dty}_v(\bar\omega + \delta) - \text{dty}_v(\bar\omega) = -\zeta\sin\delta - \eta(\cos\delta - 1),
+    \text{dty}_v(\bar\omega + \delta) - \text{dty}_v(\bar\omega) = -\zeta\sin\delta - \upsilon(\cos\delta - 1),
     \qquad |\cdot| \le 2r\,|\sin(\delta/2)| \le r|\delta|,
-    \qquad \frac{d\,\text{dty}_v}{d\omega} = -\zeta,\quad \frac{d^2\text{dty}_v}{d\omega^2} = \eta .
+    \qquad \frac{d\,\text{dty}_v}{d\omega} = -\zeta,\quad \frac{d^2\text{dty}_v}{d\omega^2} = \upsilon .
 
 The move is one component of the voxel's chord. Its rate is the voxel's position along the ray: exactly the
 coordinate a single projection does not see.
@@ -300,7 +300,7 @@ at its own, is the same as moving its light across the ray, at the mean angle, b
     :label: rf-beam-misplace
 
     w_{bk}(\bar\omega + \delta) = P\big(\text{dty}_b - \text{dty}_v(\bar\omega) - m(\delta)\big), \qquad
-    m(\delta) = -\zeta\sin\delta - \eta(\cos\delta - 1), \qquad |m| \le r|\delta| .
+    m(\delta) = -\zeta\sin\delta - \upsilon(\cos\delta - 1), \qquad |m| \le r|\delta| .
 
 So the moment refiner is an exact tomography of each reflection's light, with every photon moved across the ray by
 :math:`m(\delta)`: by about :math:`\zeta\delta`, with an rms of :math:`|\zeta| s_{kh} \le r\, s_{kh}` over the
@@ -516,12 +516,14 @@ and bias bound instead (:eq:`rf-linear`).
 
 The model is linear in the unknowns. No linearisation in the deformation is made, except the beam's weight across
 each population's omega extent, which is bounded (:eq:`rf-beam-taylor`), not modelled. What stays non-linear is which
-cells form each region, a discrete function of where the populations' spots are. It is fixed for an iteration, as
-the window origins are (:doc:`peak_shape`), and re-made from the new estimates.
+cells form each region, a discrete function of where the populations' spots are. It is fixed once, from the
+indexer's populations, and never re-made from the refiner's own estimates (:eq:`rf-box-margin`). Re-making it would
+choose the regions from the data being fitted, which voids the selection bound (:eq:`rf-sandwich`) and the background's
+unchosen complement (:eq:`rf-background`).
 
 **Regions.** A population's box in a reflection is the set of cells within half-widths :math:`(t_s, t_f, t_\omega)`
-of its predicted spot centre (from :math:`\matr{Y}^{(1)}`). The half-widths are a size, fixed from the population's
-measured second moments, never a shape. A region is a connected union of boxes, so every population whose box meets
+of its spot centre as the indexer predicts it. The half-widths are a size, fixed from the indexer's spread for the
+population and the instrument's width (:eq:`rf-box-width`), never a shape. A region is a connected union of boxes, so every population whose box meets
 it is in it, with its whole box. Separated populations have regions of their own; merged ones share a region and
 enter it as a ray sum. Which voxel along a ray holds which part of the light is never decided within a region. It is
 decided by the tomography: by the same populations' regions in other rows and other reflections.
@@ -1159,8 +1161,12 @@ reason, beyond :eq:`dif-rotation-motion`'s smearing, for leaving out reflections
 
 **What is determined per population.** Write a population's first moment absolutely, :math:`\matr{Z}_k = \int
 \matr{F}\matr{U}_k\matr{B}\, d\mu_k`, so that it adds :math:`\matr{Z}_k\vec{h}` to every region it is in, whatever
-its reference orientation. Two populations of one voxel in the same region of a row then have equal columns there:
-only :math:`\matr{Z}_k + \matr{Z}_{k'}` is seen. Their difference is seen only in the rows where they are in
+its reference orientation. Two populations of one voxel in the same region of a row then have columns that differ
+only by their beam weights :math:`a_{bk}`, :math:`a_{bk'}`, taken at their own mean omegas (A3). Those differ by the
+beam's slope times the omegas' difference, the same small term that :eq:`rf-beam-taylor` bounds as a misfit. A
+separation drawn from it would rest on the beam profile's derivative, the model detail that :eq:`rf-discrete` warns
+of, and it is not reported as determined. To that order the columns are equal, and only :math:`\matr{Z}_k +
+\matr{Z}_{k'}` is seen. Their difference is seen only in the rows where they are in
 different regions, through :math:`(\matr{Z}_k - \matr{Z}_{k'})\vec{h}` for those reflections, and
 
 .. math::
@@ -1282,7 +1288,11 @@ for the Hessian. Then :math:`\matr{D}` has full column rank, and
 is the orthogonal projector onto the seen fields; the weak part is :math:`(\matr{I} - \matr{P})`. The normal equations
 :math:`\matr{D}^T\matr{D}\vec{\phi} = \matr{D}^T\vec{v}` carry the boundary conditions implicitly (in the continuum
 limit: Neumann for the gradient; for the Hessian, those of a free plate edge, :eq:`rf-plate`). They are sparse,
-symmetric and positive definite: conjugate gradients per domain. In one dimension every field is a gradient and nothing
+symmetric and positive definite: conjugate gradients per domain. Their conditioning grows with the domain. They are
+a discrete Laplacian and bilaplacian, whose symbols :math:`|\vec{k}|^2` and :math:`|\vec{k}|^4` span factors of about
+:math:`(n/2)^2` and :math:`(n/2)^4` on a domain :math:`n` voxels wide (as in :eq:`rf-cost`). So unpreconditioned
+conjugate gradients need of order :math:`n` and :math:`n^2` steps (:eq:`rf-cg`), and domains of hundreds of voxels
+need a multigrid or Fourier preconditioner, not derived here. In one dimension every field is a gradient and nothing
 is weak, as the slice argument says.
 
 **Proof:** ``tests/theory/test_refiner.py::test_discrete_projector``
@@ -1689,8 +1699,25 @@ The number of iterations follows from the condition number. For a symmetric posi
 eigenvalues in :math:`[\ell, L]`, :math:`\kappa = L/\ell`, the step :math:`2/(\ell + L)` contracts the error by
 :math:`(\kappa - 1)/(\kappa + 1)` per iteration. That reaches a tolerance :math:`\tau` within :math:`(\kappa/2)\ln(1/\tau)`
 iterations, since :math:`\ln\frac{\kappa - 1}{\kappa + 1} = -2\operatorname{atanh}(1/\kappa) \le -2/\kappa`. Conjugate
-gradients minimise the same error over a Krylov space that holds that iterate, so they need no more. The ray sums'
-normal operator is a convolution:
+gradients do better. Their error after :math:`k` steps is the least :math:`\|p(\matr{A})\vec{e}_0\|_{\matr{A}}` over
+polynomials of degree :math:`k` with :math:`p(0) = 1`, and the Chebyshev polynomial :math:`T_k` shifted onto
+:math:`[\ell, L]` is one of them, so
+
+.. math::
+    :label: rf-cg
+
+    \frac{\|\vec{e}_k\|_{\matr{A}}}{\|\vec{e}_0\|_{\matr{A}}} \le \frac{1}{T_k\big(\frac{\kappa + 1}{\kappa - 1}\big)}
+    \le 2\left(\frac{\sqrt\kappa - 1}{\sqrt\kappa + 1}\right)^k, \qquad
+    k \ge \frac{\sqrt\kappa}{2}\ln\frac{2}{\tau}\ \text{steps reach } \tau,
+
+since :math:`|T_k| \le 1` on :math:`[-1, 1]`, :math:`T_k(x) \ge \tfrac{1}{2}(x + \sqrt{x^2 - 1})^k` for :math:`x \ge
+1`, and :math:`x + \sqrt{x^2 - 1} = (\sqrt\kappa + 1)/(\sqrt\kappa - 1)` at :math:`x = (\kappa + 1)/(\kappa - 1)`.
+The count goes as :math:`\sqrt\kappa`, not :math:`\kappa`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_cg_bound`` (:math:`T_k(\cos t) = \cos kt` and the closed form, for
+:math:`k \le 6`; the identity at :math:`x = (\kappa + 1)/(\kappa - 1)`; the logarithm's bound; the numbers).
+
+The ray sums' normal operator is a convolution:
 
 .. math::
     :label: rf-cost
@@ -1703,10 +1730,12 @@ normal operator is a convolution:
 With the beam's profile on both sides it falls as :math:`T(\vec{k})^2/|\vec{k}|`. On an :math:`n`-voxel-wide grid
 :math:`|\vec{k}|` spans a factor :math:`n/2` (from the grid's size to its Nyquist), so :math:`\kappa \gtrsim n/2`. A ramp preconditioner :math:`|\vec{k}|` along dty, per reflection (as in filtered
 back-projection), leaves :math:`T(\vec{k})^2`. Then :math:`\kappa = 1/T(k_{\max})^2`: 5.9 when the beam's FWHM is the
-dty step (the Nyquist period is 2 FWHM, :math:`T = 0.41`), and 20 iterations reach :math:`\tau = 10^{-3}`. With the
-FWHM two steps wide, :math:`T = 0.028` and :math:`\kappa = 1.2 \times 10^3`: the bound is then 4100 iterations, and
-conjugate gradients need no more. The weak combinations, estimated in place, would multiply :math:`\kappa` by
-:math:`1/\sin^2\theta` (30-530). Solving in the split parameterisation (:eq:`rf-split-grid`) with the weak block
+dty step (the Nyquist period is 2 FWHM, :math:`T = 0.41`). Then 20 plain iterations reach :math:`\tau = 10^{-3}`, and
+10 of conjugate gradients (:eq:`rf-cg`). With the FWHM two steps wide, :math:`T = 0.028` and :math:`\kappa = 1.2
+\times 10^3`: 4300 plain iterations, 134 of conjugate gradients. The weak combinations, estimated in place, would
+multiply :math:`\kappa` by :math:`1/\sin^2\theta` (30-530) for the first moments. For the metric's
+:math:`C_{\xi\xi}`, seen through :math:`\sin^2\theta` (:eq:`rf-amplify`), they would multiply it by
+:math:`1/\sin^4\theta` (890 to :math:`2.8 \times 10^5`). Solving in the split parameterisation (:eq:`rf-split-grid`) with the weak block
 scaled by its gain (:eq:`rf-smin`) is a change of units, not a filter; the condition number of the scaled system is
 not derived here.
 
@@ -1714,8 +1743,7 @@ not derived here.
 their starting values: a spectral filter, like :eq:`rf-project`'s. The solve runs to the tolerance :math:`\tau` on the
 normal equations' residual, never to a fixed count chosen to stop early.
 
-**Proof:** ``tests/theory/test_refiner.py::test_richardson_bound`` (the contraction; the logarithm's bound; the
-Krylov space), ``tests/theory/test_refiner.py::test_ray_normal_symbol`` (the transform; the numbers),
+**Proof:** ``tests/theory/test_refiner.py::test_richardson_bound`` (the contraction; the logarithm's bound), ``tests/theory/test_refiner.py::test_ray_normal_symbol`` (the transform; the numbers),
 ``tests/theory/test_refiner.py::test_cost_numbers``.
 
 The cost per iteration is set by :math:`F` and the reflections per voxel. Sub-populations per bin

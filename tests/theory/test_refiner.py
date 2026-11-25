@@ -1204,6 +1204,39 @@ def test_richardson_bound():
     assert sp.Poly(sp.expand(x / r0), A).degree() == 2  # x_3 = p(A) r0, deg p = 2 < 3
 
 
+def test_cg_bound():
+    """rf-cg: T_k(cos t) = cos(k t), so |T_k| <= 1 on [-1, 1], and T_k(x) = ((x + r)^k + (x - r)^k) / 2 with
+    r = sqrt(x^2 - 1) (k <= 6, against sympy's chebyshevt); for x >= 1 both terms are positive, so T_k(x) >=
+    (x + r)^k / 2. At x = (kappa + 1)/(kappa - 1), with kappa = q^2, q > 1: x + r = (q + 1)/(q - 1). So
+    1 / T_k(x) <= 2 ((q - 1)/(q + 1))^k, and ln((q - 1)/(q + 1)) = -2 atanh(1/q) <= -2/q (test_richardson_bound's
+    series) gives k >= (q / 2) ln(2 / tol). The numbers: kappa = 1 / T^2 at T = lim-transfer(2) and (1): 20 plain and
+    10 CG steps to 1e-3 for the first, 4300 and 134 for the second; 1 / sin^4 theta = 890 and 2.8e5 for Ni 420 at
+    43 keV and 111 at 70 keV."""
+    t, x = sp.symbols("t x", real=True)
+    for k in range(7):
+        assert is_zero(sp.simplify(sp.expand_trig(sp.chebyshevt(k, sp.cos(t)) - sp.cos(k * t))))
+        r = sp.sqrt(x**2 - 1)
+        assert is_zero(sp.expand(sp.chebyshevt(k, x) - ((x + r) ** k + (x - r) ** k) / 2))
+    q = sp.Symbol("q", positive=True)
+    xq = (q**2 + 1) / (q**2 - 1)
+    root = 2 * q / (q**2 - 1)  # sqrt(x^2 - 1) for q > 1: x^2 - 1 = 4 q^2 / (q^2 - 1)^2
+    assert is_zero(sp.simplify(xq**2 - 1 - root**2))
+    assert is_zero(sp.simplify(xq + root - (q + 1) / (q - 1)))
+
+    def T(lam):  # lim-transfer
+        return sp.exp(-(sp.pi**2) / (4 * sp.log(2) * lam**2))
+
+    k1, k2 = 1 / T(2) ** 2, 1 / T(1) ** 2
+    assert sp.ceiling(sp.N(k1 / 2 * sp.log(1000), 30)) == 21 and rounds_to(k1 / 2 * sp.log(1000), "20")
+    assert sp.ceiling(sp.N(sp.sqrt(k1) / 2 * sp.log(2000), 30)) == 10
+    assert rounds_to(k2 / 2 * sp.log(1000) / 100, "43")
+    assert sp.ceiling(sp.N(sp.sqrt(k2) / 2 * sp.log(2000), 30)) == 134
+    hc, a0 = sp.Rational(12398, 1000), sp.Rational(3524, 1000)
+    s420 = hc / 43 / (2 * a0 / sp.sqrt(20))
+    s111 = hc / 70 / (2 * a0 / sp.sqrt(3))
+    assert rounds_to(1 / s420**4 / 10, "89") and rounds_to(1 / s111**4 / 10**5, "2.8")
+
+
 def test_ray_normal_symbol():
     """rf-cost: back-projecting ray sums along every direction, R^T R f(x) = int_0^pi int f(x + t theta) dt d theta,
     is f convolved with 1/|z| (polar coordinates d^2 z = |t| dt d theta), whose 2D transform is 2 pi / |k|
@@ -1478,22 +1511,22 @@ def test_sandwich():
 
 def test_beam_motion():
     """rf-beam-motion: a voxel at (x, y) in the sample sits at dty_v(w) = y0 - (x sin w + y cos w). Over a further turn
-    d its dty moves by -zeta sin d - eta (cos d - 1), with (zeta, eta) its lab position along and across the beam at
+    d its dty moves by -zeta sin d - upsilon (cos d - 1), with (zeta, upsilon) its lab position along and across the beam at
     w; that move is the y-component of R_z(d) p - p, so its size is at most the chord 2 r |sin(d/2)| <= r |d|; and
-    d(dty_v)/dw = -zeta, d^2(dty_v)/dw^2 = eta, both at most r in size."""
+    d(dty_v)/dw = -zeta, d^2(dty_v)/dw^2 = upsilon, both at most r in size."""
     x, y, y0, w, d = sp.symbols("x y y0 omega delta", real=True)
     dty = y0 - (x * sp.sin(w) + y * sp.cos(w))
     lab = rz(w) * sp.Matrix([x, y, 0])
-    zeta, eta = lab[0], lab[1]
+    zeta, upsilon = lab[0], lab[1]
     move = dty.subs(w, w + d) - dty
-    assert is_zero(sp.expand_trig(move - (-zeta * sp.sin(d) - eta * (sp.cos(d) - 1))))
+    assert is_zero(sp.expand_trig(move - (-zeta * sp.sin(d) - upsilon * (sp.cos(d) - 1))))
     chord = rz(d) * lab - lab
     assert is_zero(sp.expand_trig(move + chord[1]))
     assert is_zero(sp.expand_trig(chord.dot(chord) - 4 * (x**2 + y**2) * sp.sin(d / 2) ** 2))
     # |sin(d/2)| <= |d|/2: d/2 - sin(d/2) vanishes at 0 and has the derivative (1 - cos(d/2))/2 >= 0
     assert is_zero(sp.diff(d / 2 - sp.sin(d / 2), d) - (1 - sp.cos(d / 2)) / 2)
-    assert is_zero(sp.diff(dty, w) + zeta) and is_zero(sp.diff(dty, w, 2) - eta)
-    assert is_zero(zeta**2 + eta**2 - (x**2 + y**2))
+    assert is_zero(sp.diff(dty, w) + zeta) and is_zero(sp.diff(dty, w, 2) - upsilon)
+    assert is_zero(zeta**2 + upsilon**2 - (x**2 + y**2))
 
 
 def test_beam_taylor():
@@ -1612,7 +1645,7 @@ def test_beam_numbers():
 
 def test_beam_misplace():
     """rf-beam-misplace: the weight at the photon's own omega, P(dty_b - dty_v(w + d)), is the profile at the mean
-    omega with the voxel moved by m(d) = -zeta sin d - eta (cos d - 1) (rf-beam-motion). The rows' sum of a Gaussian
+    omega with the voxel moved by m(d) = -zeta sin d - upsilon (cos d - 1) (rf-beam-motion). The rows' sum of a Gaussian
     profile, sum_n exp(-(n - y)^2 / 2 sigma^2), is by Poisson summation sqrt(2 pi) sigma (1 + 2 sum_k
     exp(-2 pi^2 sigma^2 k^2) cos 2 pi k y): its first harmonic's relative amplitude is 2 T(1) of lim-transfer, 0.057 at
     sigma = 1 / (2 sqrt(2 ln 2)) steps (FWHM one step)."""
