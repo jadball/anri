@@ -348,6 +348,68 @@ voxel to voxel, and it reaches the weak combinations amplified by up to :math:`1
 that the solved map then looks blurred by about the move is argued, not derived: the move is exact, its effect through
 the solve is not written out.
 
+Regions that follow the sinogram
+--------------------------------
+
+The move :math:`m(\delta)` is known for every point and every omega (:eq:`rf-beam-motion`). Most of it is common to a
+region: the voxels sharing a region lie along one ray, within the merged length :math:`D` (:eq:`lim-merged`), and
+move nearly together. A region can follow that common move instead of sitting in one dty row. Take a reference point
+of the region, its dty trace :math:`y_{\text{ref}}(\omega)`, and the region's mean omega :math:`\bar\omega_R`. Frame
+:math:`j`'s rows are relabelled by the reference's move, rounded to whole rows, and the frames are summed:
+
+.. math::
+    :label: rf-trace
+
+    T'_{R,b}[f] = \sum_j T_{R,\, b + n_j,\, j}[f], \qquad
+    n_j = \operatorname{round}\frac{y_{\text{ref}}(\omega_j) - y_{\text{ref}}(\bar\omega_R)}{\text{step}},
+
+with :math:`T_{R,b,j}` the region's statistic in row :math:`b` and frame :math:`j` (:eq:`rf-statistic`). In the model,
+population :math:`k` sits at :math:`\tilde y_k = \text{dty}_k(\bar\omega_k) - (y_{\text{ref}}(\bar\omega_k) -
+y_{\text{ref}}(\bar\omega_R))`: its offset from the trace, known from the geometry and its mean omega. Each frame's
+rows are shifted by a whole number, so the relabelling is a bijection of the cells: nothing is counted twice, no light
+is interpolated, and no unknown is added. :eq:`rf-linear` is unchanged, with :math:`a_{bk} = P(\text{dty}_b -
+\tilde y_k)`.
+
+**Definition:** the trace-following statistic. Rows shifted beyond the scanned range are lost, so a region that needs
+them is left out, as a reflection whose box reaches past an end of the omega range is.
+
+A photon of population :math:`k` diffracting at :math:`\omega` in frame :math:`j`, a turn :math:`\delta = \omega -
+\bar\omega_k` past the population's mean, is then misplaced by
+
+.. math::
+    :label: rf-trace-residual
+
+    e = \underbrace{\big[(\text{dty}_k - y_{\text{ref}})(\omega) - (\text{dty}_k - y_{\text{ref}})(\bar\omega_k)\big]}_{
+    \text{the offset } \vec{x}_k - \vec{x}_{\text{ref}} \text{ turned by } \delta}
+    + \underbrace{\big[y_{\text{ref}}(\omega) - y_{\text{ref}}(\omega_j)\big]}_{\text{within the frame}}
+    + \underbrace{\big[y_{\text{ref}}(\omega_j) - y_{\text{ref}}(\bar\omega_R) - n_j\,\text{step}\big]}_{\text{rounding}},
+    \qquad
+    |e| \le |\vec{x}_k - \vec{x}_{\text{ref}}|\,|\delta| + \frac{(r_{\text{ref}} + |r_f|)\,h}{2} + \frac{\text{step}}{2},
+
+with :math:`h` the frame's width. The first term replaces :math:`r|\delta|` (:eq:`rf-beam-misplace`) by the distance
+from the reference, at most :math:`D/2` steps along the ray: the distance from the axis no longer enters, except
+through the frame's width. The rounding is a sawtooth in omega, at most half a step.
+
+**Proof:** ``tests/theory/test_refiner.py::test_trace_residual`` (the decomposition, exact; the first term as the move
+of the offset, bounded by its chord; the frame's term by the trace's rate).
+
+The relabelling costs the frame's term, :math:`(r + |r_f|)h/2`, which the plain region does not have: for a
+population inside one frame, the plain region's move is :math:`r|\delta| \le r h/2` already. So it helps only where a
+population spans several frames, :math:`s_{kh} > h`; the choice is per region, from the indexer's spread, before the
+fit. At the edge of a 3000-step map with 0.05° frames (FWHM one step), the frame's term is 0.65 steps at most and 0.38
+in rms (uniform within the frame), and the rounding at most 0.5 (0.29 in rms). The first term, for a population of
+:math:`s = 0.25°` merged over :math:`D = 9` voxels along the ray, is 0.020 steps in rms. So the move is below a step
+in rms for any spread, wherever the voxel is, against :math:`s \le 0.038°` for the plain region
+(:eq:`rf-beam-voxel`).
+
+**Proof:** ``tests/theory/test_refiner.py::test_trace_numbers``
+
+What it does not change: the residual is still a misplacement, bounded, not modelled, and it still varies from
+reflection to reflection, so what reaches the weak combinations is :eq:`rf-amplify`'s amplification of the smaller
+move. For a bias of :math:`10^{-4}` rad rather than a voxel, the frame's term alone gives :math:`\kappa = 0.89` at the
+edge (:math:`r h/\sqrt{12}` against :math:`\sigma_b`), and the rounding's covariance with the features is not written
+out.
+
 The instrument
 --------------
 
@@ -1593,7 +1655,9 @@ What is left out
 - **The beam's weight within a peak, modelled.** Its first-order term is linear in :math:`\matr{Y}^{(2)}`
   (:eq:`rf-beam-first`) but is only bounded here. Deformed populations far from the axis have :math:`\kappa \gtrsim 1`
   and no moment model holds for them (:eq:`rf-beam-closure`); how to refine them (populations split finer by the
-  indexer, or the occupancy model :eq:`rf-beam-exact` itself) is not decided.
+  indexer, or the occupancy model :eq:`rf-beam-exact` itself) is not decided. Regions that follow the sinogram
+  (:eq:`rf-trace`) bound the move by the merged length and the frame's width instead of the distance from the axis;
+  whether to use them is the maintainer's choice.
 - **Parallax at second order in** :math:`\epsilon`: :eq:`rf-parallax-exact` is exact, but its expansion is written to
   first order only.
 - **Anisotropic boxes**: the indexer gives only an isotropic spread per population (:doc:`populations`), so

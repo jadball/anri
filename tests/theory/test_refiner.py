@@ -1540,3 +1540,49 @@ def test_beam_voxel():
     a = sp.Rational(1, 4) * deg
     assert is_zero(sp.sqrt((a**2 + a**2) / 2) - a)
     assert rounds_to(1500 * a, "6.5")
+
+
+def test_trace_residual():
+    """rf-trace-residual: with dty_v(w) = y0 - (x sin w + y cos w), the photon's misplacement against the trace,
+    e = dty_k(w) - n step - y~_k with y~_k = dty_k(wk) - (y_ref(wk) - y_ref(wR)), is exactly the three terms; the
+    first is the dty move (rf-beam-motion, without y0) of the offset x_k - x_ref over the turn w - wk, so at most
+    |x_k - x_ref| |w - wk| by the chord; the second has the trace's rate d y_ref / dw = -zeta_ref, at most r_ref in
+    size, so it is at most r_ref |w - w_j| <= r_ref h / 2 (a fly scan adds r_f to the rate)."""
+    x, y, xr, yr, y0, w, wk, wj, wR, n, st = sp.symbols(
+        "x y x_r y_r y0 omega omega_k omega_j omega_R n step", real=True
+    )
+
+    def dty(px, py, t):
+        return y0 - (px * sp.sin(t) + py * sp.cos(t))
+
+    yt = dty(x, y, wk) - (dty(xr, yr, wk) - dty(xr, yr, wR))
+    e = dty(x, y, w) - n * st - yt
+    t1 = (dty(x, y, w) - dty(xr, yr, w)) - (dty(x, y, wk) - dty(xr, yr, wk))
+    t2 = dty(xr, yr, w) - dty(xr, yr, wj)
+    t3 = dty(xr, yr, wj) - dty(xr, yr, wR) - n * st
+    assert is_zero(e - (t1 + t2 + t3))
+    dx, dy = x - xr, y - yr
+    assert is_zero(sp.expand(t1 - (dty(dx, dy, w) - dty(dx, dy, wk))))  # y0 cancels: the offset's own move
+    d = sp.Symbol("delta", real=True)
+    lab = rz(wk) * sp.Matrix([dx, dy, 0])
+    chord = rz(d) * lab - lab
+    assert is_zero(sp.expand_trig(t1.subs(w, wk + d) + chord[1]))
+    assert is_zero(sp.expand_trig(chord.dot(chord) - 4 * (dx**2 + dy**2) * sp.sin(d / 2) ** 2))
+    rate = sp.diff(dty(xr, yr, w), w)
+    assert is_zero(rate + (rz(w) * sp.Matrix([xr, yr, 0]))[0])
+
+
+def test_trace_numbers():
+    """rf-trace's numbers at the edge of a 3000-step map (r = 1500 steps), 0.05 deg frames: the frame's term r h / 2 =
+    0.65 steps, its rms r h / sqrt(12) = 0.38 (uniform within the frame); the rounding's rms step / sqrt(12) = 0.29;
+    the first term's rms (D / 2) s at D = 9, s = 0.25 deg, 0.020 steps; and kappa = r h / sqrt(12) / sigma_b = 0.89
+    with sigma_b = 1 / (2 sqrt(2 ln 2)) steps."""
+    deg = sp.pi / 180
+    h = sp.Rational(5, 100) * deg
+    assert rounds_to(1500 * h / 2, "0.65") and rounds_to(1500 * h / sp.sqrt(12), "0.38")
+    u = sp.Symbol("u", real=True)
+    assert is_zero(sp.integrate(u**2, (u, -sp.Rational(1, 2), sp.Rational(1, 2))) - sp.Rational(1, 12))
+    assert rounds_to(1 / sp.sqrt(12), "0.29")
+    assert rounds_to(sp.Rational(9, 2) * sp.Rational(1, 4) * deg, "0.020")
+    sig = 1 / (2 * sp.sqrt(2 * sp.log(2)))
+    assert rounds_to(1500 * h / sp.sqrt(12) / sig, "0.89")
