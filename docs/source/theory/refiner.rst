@@ -936,21 +936,40 @@ That is the mechanism of the failures: the weak combinations are set by the mode
 
 **Errors in the geometry.** An error :math:`\delta\matr{G}` (beam weights, a runout of about 1 µm, a beam profile
 known only roughly) gives a misfit :math:`\delta\matr{G}\,\vec{Y}`, and :math:`\vec{Y}` is dominated by the lattice
-itself: :math:`\matr{Y}^{(1)} \approx V\matr{I}`. Features centred on a reference per region, :math:`\vec{g} -
-\vec{g}_R` and :math:`|\vec{g}|^2 - |\vec{g}_R|^2` (with the counts fitted alongside), turn the misfit into
+itself: :math:`\matr{Y}^{(1)} \approx V\matr{I}`. How much of it reaches the deformation comes in three parts.
+
+The features' form does not matter to a fit that keeps the statistics' covariance. An invertible recombination
+:math:`\vec{T}' = \matr{Q}\vec{T}`, such as centring, maps :math:`\matr{G}` to :math:`\matr{Q}\matr{G}` and
+:math:`\matr{\Sigma}` to :math:`\matr{Q}\matr{\Sigma}\matr{Q}^T`. Since :math:`\matr{Q}^T(\matr{Q}\matr{\Sigma}
+\matr{Q}^T)^{-1}\matr{Q} = \matr{\Sigma}^{-1}`, the generalised-least-squares estimate is unchanged, and so is its
+bias. Centring the features on a reference per region, :math:`\vec{g} - \vec{g}_R` and :math:`|\vec{g}|^2 -
+|\vec{g}_R|^2` with the counts alongside, matters only for weights that drop the covariance, such as diagonal weights.
+The uncentred :math:`T[\vec{g}]` is almost :math:`\vec{g}_R T[1]`; centring removes that correlation, and diagonal
+weights then come close to the full ones.
+
+A population's error common to all of its rows is absorbed exactly. Write the weights' error as :math:`\delta a_{bk}
+= a_{bk}(\epsilon_k + \nu_{bk})`, with :math:`\epsilon_k` the part common to every row and reflection of population
+:math:`k`. Then :math:`(V_k, \matr{Y}_k) \to (1 + \epsilon_k)(V_k, \matr{Y}_k)` reproduces the data, and the mean
+deformation :math:`\matr{Y}_k/V_k` does not change. The rest, :math:`\nu_{bk}`, which varies from row to row, cannot
+be absorbed by any per-population unknown. It reaches a region's centred first moment as
 
 .. math::
     :label: rf-centre
 
-    \delta\matr{G}\,(\vec{Y} - \vec{Y}_R) = \sum_k \delta a_k V_k\, (\vec{m}_k - \vec{g}_R),
+    \sum_k a_{bk}\,\nu_{bk}\,V_k\,(\vec{m}_k - \vec{g}_R), \qquad \vec{m}_k = \matr{Y}^{(1)}_k\vec{g}_0/V_k,
 
-proportional to each population's deviation from the reference, about :math:`10^{-3}` of the lattice, instead of to
-the lattice. The counts' own misfit, :math:`\sum \delta a_k V_k`, falls on the densities, which are not sought. The
-deformation then inherits only the geometry's relative error, :math:`\delta a / a` times its own contrast. A runout
-that is common to every voxel and periodic in omega is also of the drift's form (:mod:`anri.index.drift`, measured
-from Friedel pairs), and can be fitted as one function of omega for the whole map.
+proportional to each population's deviation from the region's reference. Nothing here assumes grains. A region is
+whatever populations overlap in that reflection and row. With :math:`\vec{g}_R` the region's predicted light-weighted
+mean, the deviation is the spread of those populations' mean scattering vectors. Where they are nearly co-oriented it
+is about :math:`10^{-3}` of the lattice. Where a region merges misoriented populations (a strongly deformed voxel's
+populations, or unrelated spots that overlap on the ring) it is their misorientation, up to degrees. So the
+protection holds region by region, and is weakest where regions are most merged. The misfit left for the deformation
+is the row-to-row part :math:`\nu` of the geometry's relative error, times that spread. A runout that is common to
+every voxel and periodic in omega is also of the drift's form (:mod:`anri.index.drift`, measured from Friedel pairs),
+and can be fitted as one function of omega for the whole map.
 
-**Proof:** ``tests/theory/test_refiner.py::test_centred_features``
+**Proof:** ``tests/theory/test_refiner.py::test_centred_features`` (the recombination identity; the common scale
+absorbed; the misfit's form)
 
 **What to estimate.** Every voxel's numbers are estimated by the left inverse of :eq:`rf-linear`, each with its own
 covariance and its own bias bound :math:`\sum_j |A_{ij}|\bar\Delta_j`, and reported as not determined where the bound
@@ -1185,6 +1204,11 @@ the divergence theorem. It is three scalar Poisson problems per domain: sparse, 
 
 **Proof:** ``tests/theory/test_refiner.py::test_split_first_moments``
 
+A domain :math:`\Omega` exists only where the same populations share regions in every reflection. In a strongly
+deformed sample, which populations merge changes from reflection to reflection, and no such :math:`\Omega` exists:
+the split is then not defined by this construction. The estimate does not need it, since it is per voxel either way
+(the solve, below). Only the split's diagnostics and its use for conditioning (:eq:`rf-cost`) need a domain.
+
 The curl of :math:`\matr{M}`'s rows is not the dislocation density. To first order :math:`\matr{M} - V\matr{I} = V
 \matr{\beta}^* = -V\matr{\beta}^T` (per unit volume :math:`V`), and with :math:`\matr{\beta} = \varepsilon +
 [\vec{w}]_\times`,
@@ -1311,6 +1335,56 @@ The level is per direction and comes from the bounds of :eq:`rf-cut-bound`, :eq:
 :eq:`rf-alias-bound`, not from a choice. Where the bias bound is small, the noise sets it, and where the bias bound is
 large it sets it. Only :math:`\epsilon` and :math:`z` are choices: the precision sought, and the confidence. The level
 says which combinations the map determines; it removes none of them from the estimate (no truncation, above).
+
+What the bias bound costs
+-------------------------
+
+A reported number is a linear combination of the statistics, :math:`\hat{x}_i = \sum_j c_j T_j` (:math:`\vec{c}` the
+row :math:`i` of :math:`\matr{A}`). Its bias bound is :math:`B_i = \sum_j |c_j|\bar\Delta_j`, and, for independent
+statistics of sd :math:`\sigma_j`, its noise is :math:`\sigma_i = (\sum_j c_j^2\sigma_j^2)^{1/2}`. Biases add with
+their signs at worst aligned, noise in quadrature. With every statistic's bound a fixed multiple of its noise,
+:math:`\bar\Delta_j = \rho\,\sigma_j`,
+
+.. math::
+    :label: rf-bias-neff
+
+    \frac{B_i}{\sigma_i} = \rho\sqrt{n_{\text{eff}}}, \qquad
+    n_{\text{eff}} = \frac{\big(\sum_j |c_j|\sigma_j\big)^2}{\sum_j c_j^2\sigma_j^2}, \qquad
+    1 \le n_{\text{eff}} \le n,
+
+by Cauchy-Schwarz over the :math:`n` statistics it uses, with :math:`n_{\text{eff}} = n` when every
+:math:`|c_j|\sigma_j` is equal. A voxel's estimate draws on every region its rays reach, at least one per reflection,
+and a voxel seen equally in :math:`M` regions has :math:`n_{\text{eff}} = M`. The cut's bound equals the noise at 8600
+photons per region (:eq:`rf-cut-bound`, :math:`\rho = 1`). Such a voxel in :math:`M = 300` regions then has a bias bound
+17 times its error bar. Since :math:`\rho \propto N^{-1/2}`, the two meet only at :math:`M` times the photons,
+:math:`2.6 \times 10^6` per region. :eq:`rf-smin`'s sum :math:`\sum_j |u_{ij}|\bar\Delta_j` is the same kind of
+sum: a unit pattern spread evenly over :math:`n` entries has :math:`\sum_j |u_{ij}| = \sqrt{n}`. So a pattern spread
+over a whole map's regions is marked not determined unless :math:`s_i \ge \sqrt{n}\,\bar\Delta/\epsilon`. These
+are worst cases over the sign of every term. Where the signs vary, the bias is far below the bound, but no
+shape-free argument says by how much.
+
+**Proof:** ``tests/theory/test_refiner.py::test_bias_neff`` (Cauchy-Schwarz and its equality; the numbers).
+
+**What can be computed.** :math:`B_i` needs the whole row :math:`i` of :math:`\matr{A}`: one solve of the normal
+equations per reported number. For 3000 × 3000 voxels and 16 numbers each, that is :math:`1.4 \times 10^8` solves,
+which is not feasible. The block-sandwich variances can be computed. With independent signs :math:`z_b = \pm 1`, one
+per block, and :math:`\vec{w}_b = \matr{A}_{:b}\vec{e}_b`,
+
+.. math::
+    :label: rf-probe
+
+    \operatorname{E}\Big[\Big(\sum_b z_b w_{bi}\Big)^2\Big] = \sum_b w_{bi}^2, \qquad
+    \operatorname{Var}\Big[\Big(\sum_b z_b w_{bi}\Big)^2\Big] = 2\Big(\sum_b w_{bi}^2\Big)^2 - 2\sum_b w_{bi}^4
+    \le 2\Big(\sum_b w_{bi}^2\Big)^2,
+
+so :math:`n_p` solves, one per probe :math:`\matr{A}\sum_b z_b\vec{e}_b`, give every voxel's sandwich variance at
+once, to a relative sd of at most :math:`\sqrt{2/n_p}`. The same probes with :math:`z_j\bar\Delta_j` in place of the
+residuals give :math:`\sum_j A_{ij}^2\bar\Delta_j^2`: the bias the terms would give if their signs were independent.
+That is a scale, not a bound. The exact bound can then be computed only for chosen functionals (region means, a sample
+of voxels), at one solve each. Which ones is the maintainer's choice.
+
+**Proof:** ``tests/theory/test_refiner.py::test_sign_probes`` (three blocks: the expectation and variance over the eight
+sign patterns; the bound).
 
 Histograms
 ----------
@@ -1682,7 +1756,10 @@ The guarantee
 Under (A1)-(A6). Boxes taken from an indexer fitted to the same data are random; their selection bias is at most the
 light in the band between the boxes of the indexer's extreme placements (:eq:`rf-sandwich`), measured from the data
 and added to the bias bound. The indexer's error :math:`e` in :eq:`rf-box-margin` is a statistical bound, not a hard
-one: the completeness of the boxes, and the band's bound, hold with its confidence.
+one: the completeness of the boxes, and the band's bound, hold with its confidence. The light beyond a box is bounded
+through the population's variance (:eq:`ref-tail`, :eq:`rf-box-width`), taken from the indexer's spread and the
+instrument's width. Light below the cut is not recorded, so no measurement gives that variance: it is an input of the
+bound, from a model, like :math:`e`.
 
 1. **Noise** biases nothing (:eq:`rf-linear`). Error bars come from blocks that are independent exactly
    (:eq:`rf-harris`), with no noise model.
@@ -1701,8 +1778,10 @@ one: the completeness of the boxes, and the band's bound, hold with its confiden
 
 The refiner reports, per population, :math:`\hat{\vec{Y}}`, its block-sandwich covariance, and the bias bound
 :math:`\sum_j |A_{ij}|\bar\Delta_j`. That bound is computed from the geometry, the regions and the point spread's
-:math:`\chi(2\pi k)`, not from any spot shape. Where the bound exceeds the error bar, the estimate is limited by what
-the data cannot say, and the report says so.
+:math:`\chi(2\pi k)`, not from any spot shape, but it needs one solve per reported number and grows as
+:math:`\sqrt{n_{\text{eff}}}` against the noise (:eq:`rf-bias-neff`). At the scale of a map it is computed for chosen
+functionals only, and every voxel gets the sign-probe scale instead (:eq:`rf-probe`). Where the bound exceeds the error
+bar, the estimate is limited by what the data cannot say, and the report says so.
 
 What it costs, against :doc:`limits`:
 

@@ -379,21 +379,68 @@ def test_discrete_weak_directions():
 
 
 def test_centred_features():
-    """rf-centre: an error dG in the geometry (beam weights, runout) gives a misfit dG Y. Centred on a reference
-    (features g - g_R, |g|^2 - |g_R|^2, with the counts' column), the misfit is dG (Y - Y_R): proportional to the
-    deformation, not to the lattice. Here: one region, two populations of weights a_k (errors da_k), first moments."""
-    a = sp.symbols("a0:2", positive=True)
-    da = sp.symbols("da0:2", real=True)
-    V = sp.symbols("V0:2", positive=True)
-    gR = sp.Matrix(sp.symbols("gR0:3", real=True))
-    m = [gR + sp.Matrix(sp.symbols(f"dm{k}_0:3", real=True)) for k in range(2)]  # each population's mean g
-    true = sum(((a[k] + da[k]) * V[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1))
-    model = sum((a[k] * V[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1))
-    assert is_zero(true - model - sum((da[k] * V[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1)))
-    raw = sum(((a[k] + da[k]) * V[k] * m[k] for k in range(2)), sp.zeros(3, 1)) - sum(
-        (a[k] * V[k] * m[k] for k in range(2)), sp.zeros(3, 1)
+    """rf-centre. (1) An invertible recombination T' = Q T leaves the GLS estimate unchanged:
+    Q^T (Q Sigma Q^T)^-1 Q = Sigma^-1 (2 x 2, symbolic), so (G'^T W' G')^-1 G'^T W' T' = (G^T W G)^-1 G^T W T with
+    W = Sigma^-1. (2) A population's weight error common to all its rows, a_b (1 + eps), is absorbed exactly by
+    (V, Y) -> (1 + eps)(V, Y), and the mean Y / V is unchanged. (3) The remaining error a_b nu_b reaches a region's
+    centred first moment as sum_k a_k nu_k V_k (m_k - g_R), m_k = Y_k g0 / V_k (two populations, symbolic)."""
+    q = sp.Matrix(2, 2, sp.symbols("q0:4", real=True))
+    S = sp.Matrix(
+        [[sp.Symbol("s00", positive=True), sp.Symbol("s01")], [sp.Symbol("s01"), sp.Symbol("s11", positive=True)]]
     )
-    assert is_zero(raw - sum((da[k] * V[k] * m[k] for k in range(2)), sp.zeros(3, 1)))  # the whole lattice
+    assert is_zero(sp.simplify(q.T * (q * S * q.T).inv() * q - S.inv()))
+    # (2) one population over two rows: counts a_b (1 + eps) V, first moments a_b (1 + eps) Y g0
+    ab = sp.symbols("a0:2", positive=True)
+    eps = sp.Symbol("epsilon", real=True)
+    V = sp.Symbol("V", positive=True)
+    Yg = sp.Matrix(sp.symbols("y0:3", real=True))  # Y^(1) g0
+    for b in range(2):
+        assert is_zero(ab[b] * (1 + eps) * V - ab[b] * ((1 + eps) * V))
+        assert is_zero(ab[b] * (1 + eps) * Yg - ab[b] * ((1 + eps) * Yg))
+    assert is_zero(((1 + eps) * Yg) / ((1 + eps) * V) - Yg / V)
+    # (3) the centred misfit, two populations in one region
+    a = sp.symbols("a_0:2", positive=True)
+    nu = sp.symbols("nu0:2", real=True)
+    Vk = sp.symbols("V0:2", positive=True)
+    gR = sp.Matrix(sp.symbols("gR0:3", real=True))
+    Y = [sp.Matrix(sp.symbols(f"Y{k}_0:3", real=True)) for k in range(2)]  # Y_k^(1) g0
+    true = sum(((a[k] * (1 + nu[k])) * (Y[k] - Vk[k] * gR) for k in range(2)), sp.zeros(3, 1))
+    model = sum((a[k] * (Y[k] - Vk[k] * gR) for k in range(2)), sp.zeros(3, 1))
+    m = [Y[k] / Vk[k] for k in range(2)]
+    want = sum((a[k] * nu[k] * Vk[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1))
+    assert is_zero(sp.simplify(true - model - want))
+
+
+def test_bias_neff():
+    """rf-bias-neff: with x_j = |c_j| sigma_j >= 0 and bias bounds rho sigma_j, B / sigma = rho (sum x) / sqrt(sum x^2)
+    = rho sqrt(n_eff). Lagrange: n sum x^2 - (sum x)^2 = sum_{i<j} (x_i - x_j)^2 >= 0 (n_eff <= n, equal iff all x
+    equal), and (sum x)^2 - sum x^2 = 2 sum_{i<j} x_i x_j >= 0 (n_eff >= 1); three terms, symbolic. The numbers:
+    sqrt(300) = 17; 300 times 8600 photons is 2.6e6; 3000^2 voxels by 16 numbers is 1.4e8."""
+    x = sp.symbols("x0:3", nonnegative=True)
+    S1, S2 = sum(x), sum(xi**2 for xi in x)
+    pairs = list(itertools.combinations(range(3), 2))
+    assert is_zero(sp.expand(3 * S2 - S1**2 - sum((x[i] - x[j]) ** 2 for i, j in pairs)))
+    assert is_zero(sp.expand(S1**2 - S2 - 2 * sum(x[i] * x[j] for i, j in pairs)))
+    assert is_zero((3 * S2 - S1**2).subs({x[1]: x[0], x[2]: x[0]}))
+    assert rounds_to(sp.sqrt(300), "17") and rounds_to(300 * 8600 / sp.Integer(10) ** 6, "2.6")
+    assert rounds_to(3000**2 * 16 / sp.Integer(10) ** 8, "1.4")
+
+
+def test_sign_probes():
+    """rf-probe: over the 8 sign patterns z in {-1, 1}^3, the mean of (sum z_b w_b)^2 is sum w_b^2 and its variance is
+    2 (sum w^2)^2 - 2 sum w^4 <= 2 (sum w^2)^2; the mean of n_p independent probes then has relative sd at most
+    sqrt(2 / n_p)."""
+    w = sp.symbols("w0:3", real=True)
+    pats = list(itertools.product((-1, 1), repeat=3))
+    X = [sum(z * wi for z, wi in zip(p, w)) ** 2 for p in pats]
+    mean = sp.expand(sum(X) / 8)
+    var = sp.expand(sum(xx**2 for xx in X) / 8 - mean**2)
+    S2 = sum(wi**2 for wi in w)
+    S4 = sum(wi**4 for wi in w)
+    assert is_zero(mean - S2)
+    assert is_zero(sp.expand(var - (2 * S2**2 - 2 * S4)))
+    n = sp.Symbol("n_p", positive=True)
+    assert is_zero(sp.sqrt(2 * S2**2 / n) / S2 - sp.sqrt(2 / n))
 
 
 def test_projected_estimator():
