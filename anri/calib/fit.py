@@ -202,7 +202,10 @@ def _solve(H: tuple, mu: float) -> tuple:
     """
     Hxx, bx, Hxa, Haa, ba = H
     eye = np.eye(Haa.shape[-1])
-    Haa = Haa + mu * Haa * eye + 1e-12 * np.trace(Haa, axis1=1, axis2=2)[:, None, None] * eye + 1e-30 * eye
+    # a ridge of the blocks' own rounding (16 ulps of the trace; the smallest normal number where a block is 0) keeps
+    # them invertible where an orientation's peaks leave a direction free, without moving a determined step
+    ridge = 16 * np.finfo(float).eps * np.trace(Haa, axis1=1, axis2=2)[:, None, None] + np.finfo(float).tiny
+    Haa = Haa + mu * Haa * eye + ridge * eye
     Hinv = np.linalg.inv(Haa)
     S = Hxx + mu * np.diag(np.diag(Hxx)) - np.einsum("gna,gab,gmb->nm", Hxa, Hinv, Hxa)
     rhs = -bx + np.einsum("gna,gab,gb->n", Hxa, Hinv, ba)
@@ -409,7 +412,10 @@ def calibrate(peaks: dict, ubi: np.ndarray, grid_o: np.ndarray, grid_w: np.ndarr
         sub = {k: v[sel] for k, v in m.items()}
         sub["branch"] = branch[first]
         pk = {k: v[sel] for k, v in peaks.items()}
-        sig = np.maximum(1.4826 * np.median(np.abs(d - np.median(d, 0)), 0), (1e-4, 1e-4, 1e-6))  # noise-free data
+        # noise-free data: the peaks are float32 in the fit, rounded to the nearest float32, uniform over an ulp, so a
+        # perfect model's residuals have at least that rounding's sd, ulp / sqrt(12)
+        q = [np.spacing(np.float32(np.max(np.abs(pk[c])))) / np.sqrt(12) for c in ("sc", "fc", "omega")]
+        sig = np.maximum(1.4826 * np.median(np.abs(d - np.median(d, 0)), 0), q)
         good = valid & np.all(np.abs(d) < clip * sig, 1)
         log(f"round {rnd}: tolerance {tol:g}: {ok.sum()} of {len(ok)} peaks matched, {len(sel)} unique, {good.sum()} "
             f"within {clip:g} sigma; sigma (sc, fc, omega) {sig[0]:.3f} px, {sig[1]:.3f} px, {sig[2]:.4f} deg")  # fmt: skip

@@ -189,7 +189,11 @@ The moments come from the truncated normal: for :math:`x \sim N(\mu, \sigma^2)` 
     \operatorname{Var}[x] = \sigma^2 \left[1 + \frac{a\varphi(a) - b\varphi(b)}{Z}
     - \left(\frac{\varphi(a) - \varphi(b)}{Z}\right)^2\right].
 
-**Cited:** [JohnsonKotz1994]_. **Proof:** ``tests/theory/test_peak_shape.py::test_truncated_moments`` (the integrals of
+**Cited:** [JohnsonKotz1994]_. Where a cell's mass is below :math:`10^{-12}` its mean falls back to :math:`\mu` clipped into the cell and its variance to
+0, which keeps gradients finite; that changes the cell's contribution to any moment by at most its mass times its
+width, :math:`10^{-12}` of the peak's light per unit width, five orders below float32's resolution of the light.
+
+**Proof:** ``tests/theory/test_peak_shape.py::test_truncated_moments`` (the integrals of
 :math:`z\varphi` and :math:`z^2\varphi`), ``tests/theory/test_peak_shape.py::test_upper_tail_mass``
 (:math:`\Phi(-a) - \Phi(-b) = \Phi(b) - \Phi(a)`), ``tests/theory/test_peak_shape.py::test_truncated_moments_code``
 (both tails, bins narrow and wide, each to a tolerance derived from its cancellation).

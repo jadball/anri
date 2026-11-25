@@ -217,6 +217,12 @@ orientation's system entries (:eq:`idx-bilinear`'s corners of each prediction) p
 bin give one term with :math:`a_{qb}` their sum (the check uses bins coarse enough that they do), and keeps
 :math:`\mu_b - g_q a_{qb}` above :math:`10^{-6}\mu_b`, the drop in each term being the clipped model's.
 
+**Anri's choice:** where :math:`q` alone explains a bin holding data (:math:`\mu_b = g_q a_{qb}`, :math:`d_b > 0`), :math:`\Lambda_q`
+is infinite: no other orientation can explain those counts. The floor keeps it finite, for ranking and plots, at
+:math:`2(d_b \log 10^6 - \mu_b)` for that bin, and :math:`2(\log 10^6 - 1) = 25.6`: one count that only :math:`q`
+explains (:math:`\mu_b = d_b = 1`) keeps it at the default ``min_lr = 25``, as an infinite ratio would; more counts keep
+it by more. **Proof:** ``tests/theory/test_likelihood.py::test_likelihood_ratio_floor``.
+
 **Code:** :func:`anri.index.orientations.fit`, :func:`anri.index.orientations.select_by_likelihood`.
 
 Two caveats on reading 25 as 5σ. An occupancy cannot be negative, so the null sits on the boundary and its

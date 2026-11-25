@@ -14,6 +14,7 @@ from tests.theory.common import (
     evaluate,
     is_zero,
     rng,
+    rounds_to,
     tol,
 )
 
@@ -265,6 +266,19 @@ def test_censored_code():
             bound = (n_terms + 16) * eps * np.maximum(1, np.abs([w[0] for w in want]))
             assert np.all(np.abs(got[0] - [w[0] for w in want]) <= bound), (dd, dtype)
             assert np.all(np.abs(got[1] / np.array([w[1] for w in want]) - 1) <= 16 * eps), (dd, dtype)
+
+
+def test_likelihood_ratio_floor():
+    """lik-lr's floor: a bin only q explains, its model floored at 1e-6 mu, adds 2 (d log(mu / (1e-6 mu)) - (1 -
+    1e-6) mu); one count (mu = d = 1) gives 2 (log 1e6 - 1) + 2e-6 = 25.6 > 25 = min_lr, and the term grows with d at
+    a fixed d / mu."""
+    d, mu = sp.symbols("d mu", positive=True)
+    rest = mu / 10**6
+    term = 2 * (d * sp.log(mu / rest) - (mu - rest))
+    assert is_zero(term - 2 * (d * sp.log(10**6) - mu + mu / 10**6))
+    one = term.subs({d: 1, mu: 1})
+    assert rounds_to(one, "25.6") and one > 25
+    assert sp.diff(term.subs(mu, d), d) > 0  # d log 1e6 - d (1 - 1e-6) grows with d
 
 
 def test_censored_ratio_code():

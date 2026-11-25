@@ -112,8 +112,8 @@ def test_schur_step():
 
 
 def test_schur_code():
-    """anri's _solve is cal-schur, with Levenberg-Marquardt's mu diag(H) on both blocks and 1e-12 tr(H_oo) added to
-    each orientation's diagonal."""
+    """anri's _solve is cal-schur, with Levenberg-Marquardt's mu diag(H) on both blocks and 16 eps tr(H_oo) (plus the
+    smallest normal number) added to each orientation's diagonal."""
     from anri.calib.fit import _solve
 
     g = rng(8)
@@ -125,7 +125,8 @@ def test_schur_code():
         hxx, hxo, hoo = (sp.Matrix(x) for x in (H[:2, :2], H[:2, 2:], np.diag(np.diag(H)[2:])))
         m = sp.Rational(mu)
         hxx = hxx + m * sp.diag(*hxx.diagonal())
-        hoo = hoo * (1 + m) + sp.Rational(1, 10**12) * hoo + sp.Float(1e-30, 30) * sp.eye(2)
+        ridge = 16 * sp.Float(EPS, 30) * hoo + sp.Float(float(np.finfo(float).tiny), 30) * sp.eye(2)  # hoo diagonal
+        hoo = hoo * (1 + m) + ridge
         dx, da = _schur(hxx, hxo, hoo, sp.Matrix(bv[:2]), sp.Matrix(bv[2:]))
         Hc = (H[:2, :2], bv[:2], np.stack([H[:2, 2:3], H[:2, 3:4]]), np.diag(H)[2:, None, None], bv[2:, None])
         # a 2 x 2 solve after eliminating 1 x 1 blocks: a few roundings times the condition of H (computed here)

@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Constants derived instead of fixed: the calibration fit's ridge on each orientation's block is 16 ulps of its trace (was 1e-12 of it, plus 1e-30), and its floor on the residuals' sigma the float32 rounding of the peak columns the fit compares, ulp / sqrt(12) (was 1e-4 px, 1e-4 px, 1e-6 deg); `geom["psf_mix"]`'s fractions must sum to 1 to their sum's rounding (was 1e-6). The likelihood ratio's floor (10^-6 of the model) and the truncated moments' fallback (mass 10^-12) are justified on their pages.
+
 - The detector stage's known blurs (`anri.calib.detector.spot_terms`): the detector's vectors are built in float64 (they were float32 inside a float64 computation, 5e-6 relative off); the radial direction is the exact gradient of the pixel's 2theta (it was a difference over a pixel); the illuminated width across the beam moves the spot as the ray-plane intersection does, as the sample's length along the beam already did (it ignored the ray's obliquity). The terms are on the detector page (`det-spot-terms`), checked by `tests/theory/test_detector.py::test_spot_terms_code`.
 
 - Extinction with absorption (`anri.diffract.factors.extinction_parameters`): the sphere's absorption-weighted mean path is now divided by the same quadrature's unweighted mean, not by 3 R / 2, so the ratio is exactly 1 without absorption (it was up to 1.4e-4 off, from the paths' square roots at the surface); for mu R <= 1 it is within 7e-4 of a 64-point rule.

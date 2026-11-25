@@ -183,8 +183,9 @@ Schur complement), leaving a system the size of :math:`\vec{x}`:
     \Delta\vec{a}_o = -\matr{H}_{oo}^{-1}\left(\vec{b}_o + \matr{H}_{ox} \Delta\vec{x}\right),
 
 the same step as solving for everything together, damped as above (Levenberg-Marquardt: :math:`\mu` times the diagonal
-of both blocks, and :math:`10^{-12}\operatorname{tr}\matr{H}_{oo}` added to each orientation's diagonal so that an
-orientation with too few peaks stays invertible).
+of both blocks, and :math:`16\epsilon\operatorname{tr}\matr{H}_{oo}` added to each orientation's diagonal, the block's own
+rounding (:math:`\epsilon` float64's), so that an orientation with too few peaks stays invertible without moving a
+determined step).
 
 **Proof:** ``tests/theory/test_calibration.py::test_schur_step``, ``tests/theory/test_calibration.py::test_schur_code``.
 
