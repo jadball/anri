@@ -324,8 +324,12 @@ in proportion to it. At a fraction :math:`\rho` of the radius, :math:`\kappa = \
 
 **Proof:** ``tests/theory/test_refiner.py::test_beam_edge``
 
-A map meant as an image, accurate to a voxel, needs the light moved by less than a step. With the rms move
-:math:`r s` against one step:
+A map meant as an image, accurate to a voxel, needs the light moved by less than a step. This is the tomographic
+sampling criterion, a standard result: at radius :math:`r`, a turn of more than step / :math:`r` moves a point by more
+than a resolution element. Here the turn is not the spacing between projections but the spread of angles within one:
+a population that diffracts over an omega range :math:`s` is projected over that range of angles, and its light is
+smeared across the ray by :math:`r s`, as in continuous-rotation tomography. With the rms move :math:`r s` against one
+step:
 
 .. math::
     :label: rf-beam-voxel
@@ -342,7 +346,8 @@ edge, :math:`R/2`, :math:`R/4` and :math:`R/10`. A voxel split equally between t
 **Definition:** the condition for a map accurate to a voxel, as an rms move of one step; the equivalences and numbers
 are ``tests/theory/test_refiner.py::test_beam_voxel``.
 
-Two things this does not say. The move is a different component of the spread in each reflection, along a different
+What is particular to diffraction is the source of the spread: the sample's own orientations, not the scan. Two
+things the criterion does not say. The move is a different component of the spread in each reflection, along a different
 direction, so the reflections do not agree on where the light went. That disagreement is a misfit that varies from
 voxel to voxel, and it reaches the weak combinations amplified by up to :math:`1/\sin\theta` (:eq:`rf-amplify`). And
 that the solved map then looks blurred by about the move is argued, not derived: the move is exact, its effect through
@@ -353,7 +358,8 @@ Regions that follow the sinogram
 
 The move :math:`m(\delta)` is known for every point and every omega (:eq:`rf-beam-motion`). Most of it is common to a
 region: the voxels sharing a region lie along one ray, within the merged length :math:`D` (:eq:`lim-merged`), and
-move nearly together. A region can follow that common move instead of sitting in one dty row. Take a reference point
+move nearly together. A region can follow that common move instead of sitting in one dty row, as a known motion is
+compensated in tomography. Take a reference point
 of the region, its dty trace :math:`y_{\text{ref}}(\omega)`, and the region's mean omega :math:`\bar\omega_R`. Frame
 :math:`j`'s rows are relabelled by the reference's move, rounded to whole rows, and the frames are summed:
 
@@ -393,7 +399,8 @@ through the frame's width. The rounding is a sawtooth in omega, at most half a s
 **Proof:** ``tests/theory/test_refiner.py::test_trace_residual`` (the decomposition, exact; the first term as the move
 of the offset, bounded by its chord; the frame's term by the trace's rate).
 
-The relabelling costs the frame's term, :math:`(r + |r_f|)h/2`, which the plain region does not have: for a
+The relabelling costs the frame's term, :math:`(r + |r_f|)h/2`: the same sampling criterion for the frame's own
+omega range, which the plain region does not have. For a
 population inside one frame, the plain region's move is :math:`r|\delta| \le r h/2` already. So it helps only where a
 population spans several frames, :math:`s_{kh} > h`; the choice is per region, from the indexer's spread, before the
 fit. At the edge of a 3000-step map with 0.05° frames (FWHM one step), the frame's term is 0.65 steps at most and 0.38
