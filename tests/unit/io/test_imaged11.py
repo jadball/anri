@@ -122,8 +122,9 @@ class TestSpatial(unittest.TestCase):
             np.testing.assert_allclose(spatial[1], dy)
             slow, fast, _, _, _ = next(stream_sparse(sparse, [-0.5, 0.5], "rot_center", "dty", 100, spatial=spatial))
             s0, f0 = pixel // 30, pixel % 30
-            np.testing.assert_allclose(slow, s0 + dy[s0, f0], rtol=1e-6)
-            np.testing.assert_allclose(fast, f0 + dx[s0, f0], rtol=1e-6)
+            e32 = np.finfo(np.float32).eps  # one float32 sum: half an ulp of it
+            np.testing.assert_allclose(slow, s0 + dy[s0, f0], rtol=e32)
+            np.testing.assert_allclose(fast, f0 + dx[s0, f0], rtol=e32)
             self.assertIsNone(read_spatial({"e2dxfile": "", "e2dyfile": "", "detectorh5": "", "splinefile": ""}))
             with self.assertRaises(ValueError):
                 read_spatial({"splinefile": "x.spline"})

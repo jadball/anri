@@ -30,8 +30,9 @@ class TestQuartzFlyxdm(unittest.TestCase):
     def test_consistent(self):
         UBI = self.tmap.UBI[self.mask]
         UB = self.tmap.UB[self.mask]
-        np.testing.assert_allclose(UB @ UBI, np.broadcast_to(np.eye(3), UB.shape), atol=1e-12)
-        np.testing.assert_allclose(self.tmap.U[self.mask] @ self.tmap.B[self.mask], UB, atol=1e-12)
+        ulps = 16 * np.finfo(float).eps * 5  # products of entries up to ~5 (UBI of a ~5 A cell)
+        np.testing.assert_allclose(UB @ UBI, np.broadcast_to(np.eye(3), UB.shape), atol=ulps)
+        np.testing.assert_allclose(self.tmap.U[self.mask] @ self.tmap.B[self.mask], UB, atol=ulps)
 
 
 AM316L_H5 = os.path.join(os.path.dirname(__file__), "..", "data", "phantoms", "am316l", "am316l_tmap.h5")

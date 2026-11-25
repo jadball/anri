@@ -41,7 +41,7 @@ class TestSpaceGroup(unittest.TestCase):
         S = anri.crystal.structure.symmetry_matrices(225)
         self.assertEqual(S.shape, (192, 4, 4))  # 48 point operations x 4 F-centring translations
         R = S[:, :3, :3]
-        np.testing.assert_allclose(R @ R.transpose(0, 2, 1), np.broadcast_to(np.eye(3), R.shape), atol=1e-12)
+        np.testing.assert_array_equal(R @ R.transpose(0, 2, 1), np.broadcast_to(np.eye(3), R.shape))  # integers
         np.testing.assert_allclose(S[:, 3], np.broadcast_to([0, 0, 0, 1], (192, 4)))
 
     def test_lattice_parameters(self):

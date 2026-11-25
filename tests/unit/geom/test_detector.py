@@ -36,4 +36,6 @@ class TestRaytraceFloat32(unittest.TestCase):
             sc, fc = trace(jnp.asarray(k_out, dtype), jnp.asarray(origin, dtype), *basis)
             self.assertEqual(sc.dtype, dtype)
             out[dtype] = np.stack([sc, fc], 1).astype(np.float64)
-        np.testing.assert_allclose(out[np.float32], out[np.float64], atol=0.01)
+        # float32 rounds positions ~distance from the origin: 16 ulps of float32 of (distance + |origin|), in pixels
+        bound = 16 * np.finfo(np.float32).eps * (pars["distance"] + 50.0 * np.sqrt(2)) / pars["y_size"]
+        np.testing.assert_allclose(out[np.float32], out[np.float64], rtol=0, atol=bound)

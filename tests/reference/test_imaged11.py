@@ -33,6 +33,13 @@ jax.config.update("jax_enable_x64", True)
 CIF_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "cif")
 
 
+def _close(actual: object, desired: object, n: int = 16) -> None:
+    """Anri and the other software compute the same float64 formula, in their own order: they agree to n ulps of the
+    reference's largest element (measured: at most 4)."""
+    d = np.asarray(desired, float)
+    np.testing.assert_allclose(actual, d, rtol=0, atol=n * np.finfo(float).eps * float(np.max(np.abs(d))))
+
+
 def cellvolume(lp):
     """Unit cell volume from lattice parameters (as ImageD11.forward_model.forward_projector)."""
     ca, cb, cg = np.cos(np.radians(lp[3:]))
@@ -62,7 +69,7 @@ class TestLParsToMT(unittest.TestCase):
         uc = unitcell(lpars, 1)
         expected = uc.g
         result = anri.crystal.lattice.lpars_to_mt(lpars)
-        np.testing.assert_allclose(result, expected, atol=1e-15)
+        _close(result, expected)
 
 
 class TestBuildBMat(unittest.TestCase):
@@ -83,7 +90,7 @@ class TestBuildBMat(unittest.TestCase):
         uc = unitcell(lpars, 1)
         expected = uc.B
         result = anri.crystal.lattice.lpars_rlpars_to_B(lpars, rlpars)
-        np.testing.assert_allclose(result, expected, atol=1e-15)
+        _close(result, expected)
 
     def test_busing_levy(self):
         """Generate many random lattice parameters using Dan's logic and check Busing-Levy"""
@@ -92,6 +99,7 @@ class TestBuildBMat(unittest.TestCase):
         from Dans_Diffraction.functions_lattice import random_lattice
         from ImageD11.unitcell import unitcell
 
+        np.random.seed(0)  # random_lattice draws from NumPy's global generator
         lpars_list = [random_lattice(symmetry="triclinic") for _ in range(ntests)]
         lpars_batch = jnp.array(lpars_list)
 
@@ -107,7 +115,9 @@ class TestBuildBMat(unittest.TestCase):
 
             self.assertFalse(jnp.any(jnp.isnan(results[i])), f"NaN found at index {i} with input {lpars_batch[i]}")
 
-            np.testing.assert_allclose(results[i], expected, atol=1e-16)
+            # B comes from G^-1: both codes err by cond(G) ulps of it (as tests/theory/test_frames.py::test_B_code)
+            cond = np.linalg.cond(np.asarray(uc.g))
+            _close(results[i], expected, int(np.ceil(16 * cond)))
 
 
 class TestEverything(unittest.TestCase):
@@ -125,13 +135,13 @@ class TestEverything(unittest.TestCase):
         uc = unitcell(lpars, 1)
 
         mt = anri.crystal.lattice.lpars_to_mt(lpars)
-        np.testing.assert_allclose(mt, uc.g, atol=1e-15)
+        _close(mt, uc.g)
 
         rmt = anri.crystal.lattice.mt_to_rmt(mt)
-        np.testing.assert_allclose(rmt, uc.gi, atol=1e-15)
+        _close(rmt, uc.gi)
 
         B = anri.crystal.lattice.lpars_to_B(lpars)
-        np.testing.assert_allclose(B, uc.B)
+        _close(B, uc.B)
 
 
 class TestMetricTensors(unittest.TestCase):
@@ -143,11 +153,11 @@ class TestMetricTensors(unittest.TestCase):
         lpars = [4.9, 5.1, 5.4, 88.0, 92.0, 119.0]
         uc = unitcell_id11(lpars, "P")
         B = anri.crystal.lattice.lpars_to_B(jnp.array(lpars))
-        np.testing.assert_allclose(anri.crystal.lattice.B_to_rmt(B), uc.gi, rtol=1e-10)
-        np.testing.assert_allclose(anri.crystal.lattice.rmt_to_mt(jnp.asarray(uc.gi)), uc.g, rtol=1e-10)
+        _close(anri.crystal.lattice.B_to_rmt(B), uc.gi)
+        _close(anri.crystal.lattice.rmt_to_mt(jnp.asarray(uc.gi)), uc.g)
         # the metric tensor does not depend on the orientation
         U = anri.maths.rotation.rot_z(25.0) @ anri.maths.rotation.rot_x(35.0)
-        np.testing.assert_allclose(anri.crystal.lattice.UBI_to_mt(jnp.linalg.inv(U @ B)), uc.g, rtol=1e-10)
+        _close(anri.crystal.lattice.UBI_to_mt(jnp.linalg.inv(U @ B)), uc.g)
 
 
 class TestLattice(unittest.TestCase):
@@ -174,17 +184,17 @@ class TestLattice(unittest.TestCase):
                 uc = unitcell_id11(lp, "P")
             except np.linalg.LinAlgError:
                 continue
-            np.testing.assert_allclose(anri.crystal.structure.B_matrix(lp), uc.B, rtol=1e-7, atol=1e-10)
+            _close(anri.crystal.structure.B_matrix(lp), uc.B)
             with anri.maths.utils.float64():
                 mt = np.asarray(anri.crystal.lattice.lpars_to_mt(lp))
                 rmt = np.asarray(anri.crystal.lattice.mt_to_rmt(mt))
-                np.testing.assert_allclose(mt, uc.g, rtol=1e-7, atol=1e-10)
-                np.testing.assert_allclose(rmt, uc.gi, rtol=1e-7, atol=1e-10)
-                np.testing.assert_allclose(
+                _close(mt, uc.g)
+                _close(rmt, uc.gi)
+                _close(
                     anri.crystal.lattice.mt_to_lpars(rmt),
                     [uc.astar, uc.bstar, uc.cstar, uc.alphas, uc.betas, uc.gammas],
                 )
-                np.testing.assert_allclose(anri.crystal.lattice.metric_to_volume(mt), cellvolume(lp))
+                _close(anri.crystal.lattice.metric_to_volume(mt), cellvolume(lp))
 
 
 class TestReflections(unittest.TestCase):
@@ -199,7 +209,7 @@ class TestReflections(unittest.TestCase):
         ring, ring_ds = anri.crystal.structure.rings(r["ds"])
         uc = unitcell_id11(lp, sg)
         uc.makerings(dsmax, tol=1e-4)
-        np.testing.assert_allclose(ring_ds, uc.ringds, rtol=1e-6)
+        _close(ring_ds, uc.ringds)
         for i, ds in enumerate(uc.ringds):
             self.assertEqual(sorted(map(tuple, r["hkl"][ring == i].tolist())), sorted(uc.ringhkls[ds]))
 
@@ -226,8 +236,8 @@ class TestQLabToTthEta(unittest.TestCase):
         expected_eta = self.eta
 
         result_tth, result_eta = self.q_lab_to_tth_eta_vec(self.q_lab_id11, self.wavelength)
-        np.testing.assert_allclose(result_tth, expected_tth)
-        np.testing.assert_allclose(result_eta, expected_eta)
+        _close(result_tth, expected_tth)
+        _close(result_eta, expected_eta)
 
     def test_tth_eta_to_k_out_id11(self):
         # when we convert tth, eta to k_out and then to q_lab we should recover the original q_lab
@@ -236,7 +246,7 @@ class TestQLabToTthEta(unittest.TestCase):
         q_lab_vec = self.k_to_q_lab_vec(jnp.repeat(self.k_in[None, :], k_out_vec.shape[0], axis=0), k_out_vec)
 
         # atol: components of q near zero (the angles are random) differ by rounding only
-        np.testing.assert_allclose(q_lab_vec, self.q_lab_id11, atol=1e-12)
+        _close(q_lab_vec, self.q_lab_id11)
 
 
 class TestOmegaSolns(unittest.TestCase):
@@ -304,8 +314,8 @@ class TestOmegaSolns(unittest.TestCase):
 
         np.testing.assert_array_equal(valid1_anri, valid_id11)
         np.testing.assert_array_equal(valid2_anri, valid_id11)
-        np.testing.assert_allclose(omega1_anri[valid1_anri], omega1_id11[valid_id11])
-        np.testing.assert_allclose(omega2_anri[valid2_anri], omega2_id11[valid_id11])
+        _close(omega1_anri[valid1_anri], omega1_id11[valid_id11])
+        _close(omega2_anri[valid2_anri], omega2_id11[valid_id11])
 
     def test_omega_solns_id11_chi_wedge(self):
         chi = 10.0
@@ -334,8 +344,8 @@ class TestOmegaSolns(unittest.TestCase):
 
         np.testing.assert_array_equal(valid1_anri, valid_id11)
         np.testing.assert_array_equal(valid2_anri, valid_id11)
-        np.testing.assert_allclose(omega1_anri[valid1_anri], omega1_id11[valid_id11])
-        np.testing.assert_allclose(omega2_anri[valid2_anri], omega2_id11[valid_id11])
+        _close(omega1_anri[valid1_anri], omega1_id11[valid_id11])
+        _close(omega2_anri[valid2_anri], omega2_id11[valid_id11])
 
 
 class TestDetToQSample(unittest.TestCase):
@@ -401,7 +411,7 @@ class TestDetToQSample(unittest.TestCase):
         )
         v_lab_me = det_to_lab_vec(cf.sc, cf.fc, det_trans, beam_cen_shift, x_distance_shift)
         v_lab_id11 = jnp.column_stack([cf.xl, cf.yl, cf.zl])
-        np.testing.assert_allclose(v_lab_me, v_lab_id11)
+        _close(v_lab_me, v_lab_id11)
 
         # q_lab - just subtract diffraction origins then normalise and scale by 1/wavelength
         peak_lab_to_k_out_vec = vmap(
@@ -415,7 +425,7 @@ class TestDetToQSample(unittest.TestCase):
         )
         q_lab_me = k_to_q_lab_vec(k_in, k_out_me)
         q_lab_id11 = ImageD11.transform.compute_k_vectors(cf.tth, cf.eta, pars.get("wavelength")).T
-        np.testing.assert_allclose(q_lab_me, q_lab_id11)
+        _close(q_lab_me, q_lab_id11)
 
         # q_sample - rotate q_lab to sample frame by applying omega, wedge, chi
         lab_to_sample_vec = vmap(
@@ -431,7 +441,7 @@ class TestDetToQSample(unittest.TestCase):
             0.0,
         )
         q_sample_id11 = jnp.column_stack([cf.gx, cf.gy, cf.gz])
-        np.testing.assert_allclose(q_sample_me, q_sample_id11)
+        _close(q_sample_me, q_sample_id11)
 
 
 class TestDetectorRotationMatrix(unittest.TestCase):
@@ -443,7 +453,7 @@ class TestDetectorRotationMatrix(unittest.TestCase):
 
         expected = detector_rotation_matrix_id11(tilt_x, tilt_y, tilt_z)
         result = anri.geom.detector.detector_rotation_matrix(tilt_x, tilt_y, tilt_z)
-        np.testing.assert_allclose(result, expected)
+        _close(result, expected)
 
 
 class TestDetToLab(unittest.TestCase):
@@ -506,7 +516,7 @@ class TestDetToLab(unittest.TestCase):
         ).T
         det_to_lab_vec = jax.vmap(anri.geom.detector.det_to_lab, in_axes=[0, 0, None, None, None])
         result = det_to_lab_vec(sc, fc, det_trans, beam_cen_shift, x_distance_shift)
-        np.testing.assert_allclose(result, expected)
+        _close(result, expected)
 
 
 class TestRaytraceToDet(unittest.TestCase):
@@ -583,8 +593,10 @@ class TestRaytraceToDet(unittest.TestCase):
             det_origin_lab,
         )
 
-        np.testing.assert_allclose(sc_anri, self.sc_id11)
-        np.testing.assert_allclose(fc_anri, self.fc_id11)
+        # **Measured:** ImageD11 goes from (2theta, eta) to the pixel through its own detector formulas, whose rounding
+        # is its own (not derived here): 555 ulps of the largest pixel at most
+        _close(sc_anri, self.sc_id11, 1000)
+        _close(fc_anri, self.fc_id11, 1000)
 
 
 class TestSampleToLab(unittest.TestCase):
@@ -620,7 +632,7 @@ class TestSampleToLab(unittest.TestCase):
         desired = compute_grain_origins(
             omega=omega_arr, wedge=-wedge, chi=chi, t_x=vec_sample[:, 0], t_y=vec_sample[:, 1], t_z=vec_sample[:, 2]
         ).T
-        np.testing.assert_allclose(result, desired)
+        _close(result, desired)
 
 
 class TestFindDtyForBeamXY(unittest.TestCase):
@@ -659,10 +671,8 @@ class TestStepGrid(unittest.TestCase):
         ri, rj = anri.geom.scan.step_to_recon(si, sj, recon_shape)
         np.testing.assert_array_equal(np.stack([ri, rj]), np.stack(g.step_to_recon(si, sj, recon_shape)))
         np.testing.assert_array_equal(np.stack(anri.geom.scan.recon_to_step(ri, rj, recon_shape)), np.stack([si, sj]))
-        np.testing.assert_allclose(
-            np.stack(anri.geom.scan.step_to_sample(si, sj, 0.75)), np.stack(g.step_to_sample(si, sj, 0.75))
-        )
-        np.testing.assert_allclose(
+        _close(np.stack(anri.geom.scan.step_to_sample(si, sj, 0.75)), np.stack(g.step_to_sample(si, sj, 0.75)))
+        _close(
             np.stack(anri.geom.scan.recon_to_sample(ri, rj, recon_shape, 0.75)),
             np.stack(g.recon_to_sample(ri, rj, recon_shape, 0.75)),
         )
@@ -679,10 +689,10 @@ class TestIntensityFactors(unittest.TestCase):
         k_out = np.stack([np.cos(t), -np.sin(t) * np.sin(e), np.sin(t) * np.cos(e)], 1)
         k_in, axis = jnp.array([1.0, 0, 0]), jnp.array([0, 0, 1.0])
         L = jax.vmap(lorentz, in_axes=(None, 0, None))(k_in, k_out, axis)
-        np.testing.assert_allclose(L * lf(tth, eta), 1.0, rtol=1e-10)
+        _close(L * lf(tth, eta), 1.0)
         for f in [1.0, 0.9, 0.0]:
             P = jax.vmap(polarisation, in_axes=(None, 0, None))(k_in, k_out, f)
-            np.testing.assert_allclose(P, polarization(tth, eta, factor=f), atol=1e-12)
+            _close(P, polarization(tth, eta, factor=f))
 
 
 class TestSegment(unittest.TestCase):
@@ -753,8 +763,10 @@ class TestSpatial(unittest.TestCase):
                 h["entry_0000/pyFAI/Eiger2_CdTe_4M/pixel_corners"] = corners
             dx, dy = read_spatial({"detectorh5": path, "detector": "eiger"})
             ex, ey = get_e2dx_from_h5(path, detector="eiger")
-        np.testing.assert_allclose(dx, ex, atol=1e-5)
-        np.testing.assert_allclose(dy, ey, atol=1e-5)
+        # ImageD11 returns float32 maps: half a float32 ulp of each value, after the same float64 arithmetic
+        e32 = float(np.finfo(np.float32).eps)
+        np.testing.assert_allclose(dx, ex, rtol=0, atol=e32 * float(np.abs(ex).max()))
+        np.testing.assert_allclose(dy, ey, rtol=0, atol=e32 * float(np.abs(ey).max()))
 
 
 class TestGeomFromPars(unittest.TestCase):
@@ -775,13 +787,11 @@ class TestGeomFromPars(unittest.TestCase):
             xyz = anri.geom.detector.det_to_lab(
                 sc, fc, det["det_trans"], det["beam_cen_shift"], det["x_distance_shift"]
             )
-            np.testing.assert_allclose(
-                xyz, transform.compute_xyz_lab(np.array([[sc], [fc]]), **pars).ravel(), atol=1e-6
-            )
+            _close(xyz, transform.compute_xyz_lab(np.array([[sc], [fc]]), **pars).ravel())
             back = anri.geom.detector.raytrace_to_det(
                 xyz / jnp.linalg.norm(xyz), jnp.zeros(3), det["s_step_lab"], det["f_step_lab"], det["det_origin_lab"]
             )
-            np.testing.assert_allclose(back, (sc, fc), atol=1e-8)
+            _close(back, (sc, fc))
 
     def test_wedge_chi_against_imaged11(self):
         """A peak computed by anri from geom_from_pars maps back to its hkl through ImageD11's own geometry."""
@@ -822,7 +832,7 @@ class TestGeomFromPars(unittest.TestCase):
                 g = transform.compute_g_vectors(
                     tth, eta, np.array([c[2]]), pars["wavelength"], pars["wedge"], pars["chi"]
                 )
-                np.testing.assert_allclose((ubi @ g).ravel(), hkl, atol=1e-6)
+                _close((ubi @ g).ravel(), hkl)
                 checked += 1
         self.assertGreater(checked, 3)
 

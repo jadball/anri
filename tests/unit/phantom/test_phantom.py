@@ -26,7 +26,7 @@ class TestPolycrystal(unittest.TestCase):
         np.testing.assert_array_equal(inside.ravel(), np.linalg.norm(ph["pos"][:, :2], axis=1) <= 10.0)
         self.assertTrue(np.all(ph["grain"][~inside] == -1) and np.all(ph["grain"][inside] >= 0))
         self.assertTrue(np.isnan(ph["U"][~inside]).all())
-        np.testing.assert_allclose(np.linalg.det(ph["U"][inside]), 1.0, atol=1e-9)
+        np.testing.assert_allclose(np.linalg.det(ph["U"][inside]), 1.0, atol=16 * np.finfo(float).eps)
         self.assertGreater(ph["twin"].sum(), 0)
 
     def test_deterministic(self):
@@ -46,7 +46,7 @@ class TestPolycrystal(unittest.TestCase):
         # two voxels of one cell share an orientation; different cells of one grain are a little apart
         same = [np.flatnonzero((cell == c) & (grain == g) & ~twin)[:2] for c in np.unique(cell[(grain == g) & ~twin])]
         pairs = np.array([p for p in same if len(p) == 2])
-        np.testing.assert_allclose(U[pairs[:, 0]], U[pairs[:, 1]], atol=1e-12)
+        np.testing.assert_array_equal(U[pairs[:, 0]], U[pairs[:, 1]])  # one cell, one orientation: the same numbers
         cells = np.array([p[0] for p in same])
         spread = anri.crystal.orientation.disorientation(U[cells[:-1]], U[cells[1:]], ops)
         self.assertTrue(0.05 < np.median(spread) < 2.0)
@@ -77,7 +77,7 @@ class TestDeformation(unittest.TestCase):
         U, cell, ins, grain = ph["U"].reshape(-1, 3, 3), ph["cell"].ravel(), ph["inside"].ravel(), ph["grain"].ravel()
         for c in np.unique(cell[ins])[:20]:  # constant inside each cell (cells cross grain boundaries: one grain)
             m = (cell == c) & ins & (grain == grain[(cell == c) & ins][0])
-            np.testing.assert_allclose(U[m], np.broadcast_to(U[m][0], U[m].shape), atol=1e-12)
+            np.testing.assert_array_equal(U[m], np.broadcast_to(U[m][0], U[m].shape))
         np.testing.assert_allclose(ph["sig_rot"][ph["inside"]], np.radians(0.05))
 
     def test_bend(self):

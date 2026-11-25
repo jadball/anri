@@ -31,7 +31,8 @@ class TestBuildBMat(unittest.TestCase):
 
         result = anri.crystal.lattice.lpars_rlpars_to_B(lpars, rlpars)
         expected = Cell(a, b, c, alpha, beta, gamma).Bmatrix()
-        np.testing.assert_allclose(result, expected, atol=1e-15)
+        # the same float64 formula: 16 ulps of the largest entry
+        np.testing.assert_allclose(result, expected, rtol=0, atol=16 * np.finfo(float).eps * np.abs(expected).max())
 
 
 if __name__ == "__main__":

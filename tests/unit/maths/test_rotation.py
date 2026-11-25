@@ -17,9 +17,9 @@ class TestRmatFromAxisAngle(unittest.TestCase):
     def test_integer_axis(self):
         # an integer axis must not truncate a fractional angle (issue #34)
         np.testing.assert_allclose(anri.maths.rotation.rmat_from_axis_angle(jnp.array([0, 0, 1]), 30.5),
-                                   anri.maths.rotation.rot_z(30.5), atol=1e-12)  # fmt: skip
+                                   anri.maths.rotation.rot_z(30.5), atol=16 * np.finfo(float).eps)  # fmt: skip
         np.testing.assert_allclose(anri.maths.rotation.rmat_from_axis_angle(np.array([1, 0, 0]), np.array(0.5)),
-                                   anri.maths.rotation.rot_x(0.5), atol=1e-12)  # fmt: skip
+                                   anri.maths.rotation.rot_x(0.5), atol=16 * np.finfo(float).eps)  # fmt: skip
 
 
 class TestBatching(unittest.TestCase):
@@ -56,8 +56,9 @@ class TestRotations(unittest.TestCase):
 
     def test_random_rotations(self):
         R = anri.maths.rotation.random_rotations(1000, np.random.default_rng(1))
-        np.testing.assert_allclose(R @ np.swapaxes(R, 1, 2), np.broadcast_to(np.eye(3), R.shape), atol=1e-12)
-        np.testing.assert_allclose(np.linalg.det(R), 1.0, atol=1e-12)
+        ulps = 16 * np.finfo(float).eps  # products of entries <= 1
+        np.testing.assert_allclose(R @ np.swapaxes(R, 1, 2), np.broadcast_to(np.eye(3), R.shape), atol=ulps)
+        np.testing.assert_allclose(np.linalg.det(R), 1.0, atol=ulps)
 
 
 if __name__ == "__main__":

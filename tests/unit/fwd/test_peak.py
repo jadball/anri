@@ -14,6 +14,11 @@ from anri.fwd.peak import make_propagator
 jax.config.update("jax_enable_x64", True)
 
 
+def _ulps(x, n=16):
+    """n ulps of x's largest element: two computations of the same float64 arithmetic agree to rounding."""
+    return n * np.finfo(np.float64).eps * float(np.max(np.abs(np.asarray(x))))
+
+
 def _box_args():
     """Arguments of get_centroid_box for one valid peak: a rotated Fe grain away from the origin."""
     pars = {
@@ -53,31 +58,34 @@ class TestPropagate(unittest.TestCase):
         scan_args = (*self.args[:10], 0.0, *self.args[10:])  # y0 = 0
         full = anri.fwd.scan.propagate_cov_scan(*scan_args, self.cov_in)
         diag = make_propagator(anri.fwd.scan.get_centroid_scan, argnums=(1, 4, 6, 7), has_aux=True, diag_out=True)
-        np.testing.assert_allclose(diag(*scan_args, self.cov_in), jnp.diagonal(full), rtol=1e-10)
+        # the same propagation, options selecting elements: equal to rounding (16 ulps of the largest element)
+        np.testing.assert_allclose(diag(*scan_args, self.cov_in), jnp.diagonal(full), rtol=0, atol=_ulps(full))
         elems = make_propagator(
             anri.fwd.box.get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True, out_elems=((0, 0), (1, 1), (0, 1))
         )
         box = self.J @ self.cov_in @ self.J.T
-        np.testing.assert_allclose(elems(*self.args, self.cov_in), [box[0, 0], box[1, 1], box[0, 1]], rtol=1e-10)
+        np.testing.assert_allclose(elems(*self.args, self.cov_in), [box[0, 0], box[1, 1], box[0, 1]], rtol=0,
+                                   atol=_ulps(box))  # fmt: skip
 
     def test_full_covariance(self):
         # a correlated input covariance needs diagonal=False
         cov_in = self.cov_in.at[0, 3].set(1e-4).at[3, 0].set(1e-4)
         expected = self.J @ cov_in @ self.J.T
         full = make_propagator(anri.fwd.box.get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True, diagonal=False)
-        np.testing.assert_allclose(full(*self.args, cov_in), expected, rtol=1e-10)
+        np.testing.assert_allclose(full(*self.args, cov_in), expected, rtol=0, atol=_ulps(expected))
 
         def centroid_only(*a):
             return anri.fwd.box.get_centroid_box(*a)[0]
 
         no_aux = make_propagator(centroid_only, argnums=(1, 4, 6, 7), diagonal=False)
-        np.testing.assert_allclose(no_aux(*self.args, cov_in), expected, rtol=1e-10)
+        np.testing.assert_allclose(no_aux(*self.args, cov_in), expected, rtol=0, atol=_ulps(expected))
 
         # with out_elems: the selected elements of the full propagation
         elems = ((0, 0), (1, 1), (0, 1), (1, 2))
         sel = make_propagator(anri.fwd.box.get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True, diagonal=False,
                               out_elems=elems)  # fmt: skip
-        np.testing.assert_allclose(sel(*self.args, cov_in), [expected[i, j] for i, j in elems], rtol=1e-10)
+        np.testing.assert_allclose(sel(*self.args, cov_in), [expected[i, j] for i, j in elems], rtol=0,
+                                   atol=_ulps(expected))  # fmt: skip
 
     def test_errors(self):
         nothing = make_propagator(anri.fwd.box.get_centroid_box, argnums=(1, 4, 6, 7), has_aux=True, active_dims=())
@@ -94,14 +102,14 @@ class TestGetCentroid(unittest.TestCase):
             scan, valid = anri.fwd.scan.get_centroid_scan(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, y0, *det)
             self.assertTrue(bool(valid))
             cen, _ = anri.fwd.peak.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, scan[3], y0, *det)
-            np.testing.assert_allclose(cen, scan[:3], atol=1e-9)
+            np.testing.assert_allclose(cen, scan[:3], rtol=0, atol=_ulps(scan[:3]))  # the same chain: to rounding
 
     def test_box(self):
         ubi, origin, hkl, _, wl, k, ky, kz, wedge, chi, *det = _box_args()
         for es in (1.0, -1.0):
             box, _ = anri.fwd.box.get_centroid_box(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, *det)
             cube, _ = anri.fwd.peak.get_centroid(ubi, origin, hkl, es, wl, k, ky, kz, wedge, chi, 0.0, 0.0, *det, False)
-            np.testing.assert_allclose(box, cube, atol=1e-12)
+            np.testing.assert_allclose(box, cube, rtol=0, atol=_ulps(cube))
 
 
 if __name__ == "__main__":
