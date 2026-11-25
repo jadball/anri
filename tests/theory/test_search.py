@@ -350,3 +350,31 @@ def test_tolerance_measured():
     do = np.abs((o1 - o0 + 180) % 360 - 180)
     assert (de / te)[use].max() <= 1.0 and (do / to)[use].max() <= 1.0, ((de / te)[use].max(), (do / to)[use].max())
 
+
+def test_grid_chance_code():
+    """grid_chance: the median completeness over a random sample of the grid; with a sample as large as the grid it
+    is the whole grid's median (a sample without replacement is then a permutation), exactly, with the grid's size and
+    worst case."""
+    from anri.crystal.lattice import lpars_to_B
+    from anri.crystal.orientation import orientation_grid
+    from anri.index.data import lit_table, ring_table
+    from anri.index.search import completeness_of, grid_chance
+    from anri.io.imaged11 import geom_from_pars
+
+    ops = _ops("-1")
+    lp = np.array([4.0, 5.0, 6.0, 80.0, 100.0, 95.0])
+    B = np.asarray(lpars_to_B(lp), np.float32)
+    rings = ring_table(lp, 2, 0.3, 3)
+    rings["hw"] = np.full(len(rings["tth"]), 0.05)
+    pars = {"y_center": 1024.0, "y_size": 75.0, "tilt_y": 0.0, "z_center": 1024.0, "z_size": 75.0, "tilt_z": 0.0,
+            "tilt_x": 0.0, "distance": 150e3, "o11": 1, "o12": 0, "o21": 0, "o22": 1, "wavelength": 0.3}  # fmt: skip
+    geom = geom_from_pars(pars, 0.0, 0.0, 0.0, 0.0, sig_beam=0.5, voxel_size=1.0)
+    n_e, n_o = 720, 1440
+    lit_map = rng(42).random((3, n_e, n_o)) < 0.05
+    lit = {"table": lit_table(jnp.asarray(lit_map)), "om0": -180.0, "bins": (0.5, 0.25, n_e, n_o),
+           "frame_step": 0.25, "etacut": 0.1}  # fmt: skip
+    U, delta = orientation_grid(30.0, ops)
+    chance, n, d = grid_chance(30.0, ops, B, rings, geom, lit, np.random.default_rng(0), n_sample=len(U))
+    assert (n, d) == (len(U), delta)
+    assert chance == float(np.median(completeness_of(U, delta, B, rings, geom, lit)))
+

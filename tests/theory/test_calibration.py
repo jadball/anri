@@ -1,6 +1,7 @@
 """Proofs for docs/source/theory/calibration.rst: what the rings and the scan's peaks can determine (tilt_x, distance
 against wavelength, wavelength against lattice), the Schur-complement step, and the strain left."""
 
+import jax.numpy as jnp
 import numpy as np
 import sympy as sp
 
@@ -235,3 +236,49 @@ def test_mad_factor():
 def test_pixel_angle_quoted():
     """One 75 um Eiger pixel at 150 mm subtends 0.03 deg (rounded)."""
     assert round(float(sp.N(sp.deg(sp.atan(sp.Rational(75, 150000))), 30)), 2) == 0.03
+
+
+def test_ring_residual_code():
+    """cal-ring-residual: assign puts each pixel at its nearest ring if within t, unless that ring is closer than 2t
+    to a neighbour, and in sector floor((eta + 180) n / 360); ring_offsets is each (ring, sector)'s weighted mean 2theta
+    less the ring's 2 asin(lambda d* / 2). The pixels' angles from pixel_tth_eta (test_tilt_x_code); the rest exactly."""
+    from fractions import Fraction as Fr
+
+    from anri.calib.fit import base_pars
+    from anri.calib.rings import assign, pixel_tth_eta, ring_offsets
+    from anri.maths.utils import float64
+
+    pars = {"y_center": 1024.0, "y_size": 75.0, "tilt_y": 1e-3, "z_center": 1030.0, "z_size": 75.0, "tilt_z": -2e-3,
+            "tilt_x": 0.0, "distance": 150e3, "o11": 1, "o12": 0, "o21": 0, "o22": 1, "wavelength": 0.3}  # fmt: skip
+    g = rng(41)
+    px = {"sc": g.uniform(0, 2048, 4000), "fc": g.uniform(0, 2048, 4000), "intensity": g.integers(1, 9, 4000) * 1.0}
+    ds = np.array([0.30, 0.45, 0.452, 0.60])  # the middle two closer than 2 t: left out
+    tol, n_eta = 0.1, 8
+    with float64():
+        p = {k: jnp.float64(v) for k, v in base_pars(pars, 0.0).items()}
+        tth, eta = (np.asarray(a) for a in pixel_tth_eta(jnp.asarray(px["sc"]), jnp.asarray(px["fc"]), p))
+    t = [float(sp.N(sp.deg(2 * sp.asin(sp.Float(pars["wavelength"], 30) * sp.Float(d, 30) / 2)), 30)) for d in ds]
+    used = [all(abs(t[r] - t[q]) > 2 * tol for q in range(len(t)) if q != r) for r in range(len(t))]
+    ring = np.full(len(tth), -1)
+    for i, x in enumerate(tth):
+        r = int(np.argmin([abs(x - y) for y in t]))
+        if abs(x - t[r]) < tol and used[r]:
+            ring[i] = r
+    sector = np.floor((eta + 180.0) * n_eta / 360.0).astype(int)
+    a = assign(px, ds, pars, tol, n_eta)
+    np.testing.assert_array_equal(a["ring"], ring)
+    np.testing.assert_array_equal(a["group"][ring >= 0], (ring * n_eta + sector)[ring >= 0])
+    np.testing.assert_array_equal(a["used"], used)
+    off = ring_offsets(px, ds, pars, tol, n_eta)
+    for r in range(len(t)):
+        for j in range(n_eta):
+            m = (ring == r) & (sector == j)
+            if not m.any():
+                assert np.isnan(off["offset"][r, j])
+                continue
+            w = [Fr(float(v)) for v in px["intensity"][m]]
+            mean = sum(wi * Fr(float(x)) for wi, x in zip(w, tth[m])) / sum(w)
+            # sums of a few hundred products of 2theta (<= 30 deg) and integers, then a quotient and a subtraction:
+            # that many ulps of 30 deg
+            assert abs(off["offset"][r, j] - (float(mean) - t[r])) <= 16 * EPS * 30 * m.sum(), (r, j)
+

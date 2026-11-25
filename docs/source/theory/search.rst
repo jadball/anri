@@ -131,7 +131,9 @@ A coarser grid has larger tolerances, so a wrong orientation is more likely to l
 orientations are wrong, so the median completeness over a random sample of the grid is its *chance completeness*. Anri
 takes the coarsest step (3, 2.5, 2, 1.5, 1°) whose chance completeness is at most ``max_chance`` (0.5).
 
-**Code:** :func:`anri.index.search.choose_grid`, :func:`anri.index.search.grid_chance`.
+**Code:** :func:`anri.index.search.choose_grid`, :func:`anri.index.search.grid_chance`. With a sample as large as the grid, ``grid_chance``
+is exactly the median of :func:`anri.index.search.completeness_of` over the whole grid
+(``tests/theory/test_search.py::test_grid_chance_code``).
 
 **Anri's choice:** the threshold is set by the data's own background of chance matches, not by a fixed completeness,
 since a crowded lit map (many grains, broad peaks) raises every orientation's completeness.

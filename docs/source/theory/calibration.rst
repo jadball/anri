@@ -38,7 +38,8 @@ residual, the weighted mean :math:`2\theta` of its pixels minus its ring's:
 
     \rho_{rj} = \frac{\sum_{p \in (r, j)} w_p\, 2\theta_p}{\sum_{p \in (r, j)} w_p} - 2\theta_r(\lambda).
 
-**Definition:** the rings' residuals.
+**Definition:** the rings' residuals. ``assign`` and ``ring_offsets`` are checked against this rule, exactly, from
+the pixels' angles (``tests/theory/test_calibration.py::test_ring_residual_code``).
 
 **Code:** :func:`anri.calib.rings.assign`, :func:`anri.calib.rings.ring_offsets`.
 
@@ -243,7 +244,8 @@ the centre; a hydrostatic one to the wavelength or the distance against the refe
 :math:`\chi^2` with free lattices to that without tells how much of the misfit the strains explain.
 
 **Code:** :func:`anri.calib.fit.strain_left`, :func:`anri.calib.fit.lattice_strain`,
-:func:`anri.calib.fit.split_strain`.
+:func:`anri.calib.fit.split_strain`. ``strain_left`` is a fit (a lattice per grain, by least squares), so it has no
+code check of its own; its parts, the strain and its split, are checked above.
 
 Remaking a calibration
 ----------------------

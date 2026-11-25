@@ -66,9 +66,11 @@ parallax), and the pixel goes to the nearest ring if within that ring's toleranc
 :func:`anri.index.data.histogram_pixels`.
 
 **Ring tolerances** are measured from the data, not assumed: each ring's :math:`2\theta` profile is taken within half
-the gap to its neighbours, its background (the median of the window's outer fifth) removed, and the tolerance is the
-distance from the ring's position to its centroid plus the half-width that holds 95 % of its net intensity. This sums
-everything that widens a ring: parallax (sample size over distance), strain, and detector distortion.
+the gap to its neighbours (for the end rings at most ``max_hw``), its background (the median of the
+window's outer fifth) removed, and the tolerance is the distance from the ring's position to its centroid plus the
+half-width that holds 95 % of its net intensity, plus half a profile bin (a bin's intensity may sit anywhere within it).
+This sums everything that widens a ring: parallax (sample size over distance), strain, and detector distortion. The
+rule is checked exactly, in rationals (``tests/theory/test_indexing.py::test_ring_widths_code``).
 
 **Code:** :func:`anri.index.data.ring_profile`, :func:`anri.index.data.ring_widths`.
 

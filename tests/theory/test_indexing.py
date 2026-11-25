@@ -309,3 +309,45 @@ def test_predictions_code():
     np.testing.assert_array_equal(w[:3], np.where(use, plp * np.repeat(rings["F2"], 2).astype(np.float32), 0.0))
     np.testing.assert_array_equal(e[:3], pe)
     np.testing.assert_array_equal(o[:3], po)
+
+
+def test_ring_widths_code():
+    """ring_widths: each ring's window is half the gap to its neighbours (at most max_hw at the ends); the background
+    the median of the window's outer fifth; the offset the net centroid less the ring; the half-width the distance
+    from the centroid holding frac of the net intensity, to the farther edge of its bin (half a bin added). Exactly,
+    in rationals, on a profile of small integers."""
+    from fractions import Fraction as Fr
+
+    from anri.index.data import ring_widths
+
+    g = rng(40)
+    lo, step, n = 4.5, 0.03125, 96  # powers of 2: bin centres exact
+    ring_tth = np.array([5.0, 5.7, 6.4])
+    prof = g.integers(0, 4, n).astype(float)
+    for t, a, w in ((5.0, 60, 0.05), (5.7, 40, 0.08), (6.4, 30, 0.04)):
+        x = lo + (np.arange(n) + 0.5) * step
+        prof += np.round(a * np.exp(-0.5 * ((x - t - 0.01) / w) ** 2))
+    off, hw = ring_widths(prof, lo, step, ring_tth, 0.95, 0.5)
+    X = [Fr(lo) + (Fr(i) + Fr(1, 2)) * Fr(step) for i in range(n)]
+    T = [Fr(str(t)) for t in ring_tth]
+    edge = 2 * Fr(1, 2)  # beyond the end rings: twice max_hw
+    gaps = [edge] + [T[i + 1] - T[i] for i in range(len(T) - 1)] + [edge]
+    for r, t in enumerate(T):
+        half = min(gaps[r], gaps[r + 1]) / 2  # the gaps below and above ring r
+        win = [(x, Fr(int(p))) for x, p in zip(X, prof) if abs(x - t) < half]
+        outer = sorted(p for x, p in win if abs(x - t) > Fr(8, 10) * half)
+        k = len(outer)
+        bg = (outer[(k - 1) // 2] + outer[k // 2]) / 2 if k else Fr(0)
+        net = [(x, max(p - bg, Fr(0))) for x, p in win]
+        tot = sum(v for _, v in net)
+        c = sum(x * v for x, v in net) / tot
+        by = sorted(net, key=lambda xv: abs(xv[0] - c))
+        cum, want_hw = Fr(0), None
+        for x, v in by:
+            cum += v
+            if cum >= Fr(95, 100) * tot:
+                want_hw = abs(x - c) + Fr(step) / 2
+                break
+        # sums of ~30 small integers and positions, exact in float64 but for the centroid's one quotient
+        assert abs(off[r] - float(c - t)) <= 16 * EPS * 7 and abs(hw[r] - float(want_hw)) <= 16 * EPS * 7, r
+
