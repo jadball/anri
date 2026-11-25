@@ -4,8 +4,11 @@ A refiner that needs no spot shape
 ==================================
 
 The refiner's task is each population's orientation and strain, from the recorded cells (:doc:`recording`), with
-no model of any spot's shape. This chapter derives one: its observables are exactly linear in shape-free unknowns.
-What noise, the cut, the group rule, the pixels and the instrument do to it is proved, term by term, as an identity
+no model of any spot's shape. This chapter derives one. Its observables are exactly linear in each voxel's
+distribution of deformation, and linear in a few shape-free moments of that distribution where a population's omega
+extent is small against the time its voxel spends in the beam (:eq:`rf-beam-taylor`). Where it is not, no finite set
+of moments describes a row's light (:eq:`rf-beam-closure`), and the chapter says how far its estimates then stray. What
+noise, the cut, the group rule, the pixels and the instrument do to it is proved, term by term, as an identity
 or a bound computed from the geometry and the data. Where no bound can exist, the chapter proves that too.
 
 *Cell* means, as in :doc:`recording`, one pixel in one frame of one dty row.
@@ -31,10 +34,14 @@ the shape of the detector's point spread beyond (A5). The assumptions are:
   (:eq:`lim-reciprocal`): statements about dislocations or compatibility are about :math:`\matr{\beta}`, not
   :math:`\matr{F}`.
 - **(A3) Integrated intensity.** Over a complete rotation through the reflection, a sub-volume of volume
-  :math:`dV` gives :math:`a_{bk}\,|F_h|^2 A_{kh}\, L(\vec{g}) P(\vec{g})\, dV` photons. :math:`a_{bk}` is the beam's
-  weight of the population's voxel in the frames of dty row :math:`b`, :math:`|F_h|^2` the structure factor and
-  :math:`A_{kh}` the transmission (:doc:`intensity`). :math:`L` and :math:`P` are the Lorentz and polarisation
-  factors at the sub-volume's own diffraction (:eq:`int-lorentz`, :eq:`int-pol`).
+  :math:`dV` gives :math:`|F_h|^2 A_{kh}\, L(\vec{g}) P(\vec{g})\, dV` photons, each weighted by
+  :math:`w_{bk}(\omega)`: the beam's weight of the population's voxel in dty row :math:`b` at the omega :math:`\omega`
+  at which that photon diffracts, along the scan's path (:eq:`int-beam-weight`, :eq:`int-dty-motion`). :math:`|F_h|^2`
+  is the structure factor and :math:`A_{kh}` the transmission (:doc:`intensity`). :math:`L` and :math:`P` are the
+  Lorentz and polarisation factors at the sub-volume's own diffraction (:eq:`int-lorentz`, :eq:`int-pol`). The weight
+  at the population's mean omega in the reflection, :math:`\bar\omega_{kh}`, is :math:`a_{bk} =
+  w_{bk}(\bar\omega_{kh})`. A voxel off the axis crosses the beam as omega turns, so the photons' weights differ from
+  :math:`a_{bk}`, by :eq:`rf-beam-taylor`.
 - **(A4) The instrument.** The incoming wavevector's direction and the wavelength vary from photon to photon,
   independently of the sample. The detector moves each photon by a displacement independent of the sample (the
   point spread; the sensor's depth, up to its mean, which the geometry holds).
@@ -137,11 +144,278 @@ For every rotation :math:`\matr{R}` and every :math:`\matr{F} = \matr{R}\matr{U}
     |\matr{R}\matr{U}\vec{g}_0|^2 = \vec{g}_0^T\matr{U}^T\matr{U}\vec{g}_0, \qquad
     \hat{\vec{g}}_p = \matr{R}_z(\omega_j - \omega)\,\vec{g}\ \Rightarrow\ |\hat{\vec{g}}_p| = |\vec{g}|.
 
-The sum of :math:`|\vec{g}|^2` therefore sees a population's strain and nothing of its orientation distribution. The
-frames' binning in omega changes only a rotation about the axis, so it changes :math:`|\vec{g}|` not at all. The
-strain observable :math:`T_R[|\vec{g}|^2]` is exact through any orientation spread and any frame width.
+Each photon's :math:`|\vec{g}|^2` therefore sees its sub-volume's strain and nothing of its orientation. The frames'
+binning in omega changes only a rotation about the axis, so it changes :math:`|\vec{g}|` not at all: per photon, the
+strain observable is exact through any orientation spread and any frame width. A row's sum is not: its photons are
+weighted by the beam at the omega where each diffracts, and that omega depends on the sub-volume's orientation and
+strain together (:eq:`rf-beam-taylor`).
 
 **Proof:** ``tests/theory/test_refiner.py::test_rotation_invariant``
+
+The beam's weight within a peak
+-------------------------------
+
+The renderer folds the beam's weight into every peak (:eq:`int-fold`); a moment refiner cannot, since it has no shape
+to fold it into. This section derives what that costs. Take a voxel at radius :math:`r` from the axis, with lab
+coordinates :math:`(\zeta, \eta)` along and across the beam at omega :math:`\bar\omega`. Over a further turn
+:math:`\delta` its dty (:eq:`dif-dty`, beam along :math:`x`) moves by
+
+.. math::
+    :label: rf-beam-motion
+
+    \text{dty}_v(\bar\omega + \delta) - \text{dty}_v(\bar\omega) = -\zeta\sin\delta - \eta(\cos\delta - 1),
+    \qquad |\cdot| \le 2r\,|\sin(\delta/2)| \le r|\delta|,
+    \qquad \frac{d\,\text{dty}_v}{d\omega} = -\zeta,\quad \frac{d^2\text{dty}_v}{d\omega^2} = \eta .
+
+The move is one component of the voxel's chord. Its rate is the voxel's position along the ray: exactly the
+coordinate a single projection does not see.
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_motion``
+
+A photon of population :math:`k` in reflection :math:`h` diffracts at :math:`\bar\omega_{kh} + \delta`. Its offset
+:math:`\delta` is its sub-volume's (a function of :math:`\matr{F}\vec{g}_0`) plus the instrument's (:eq:`rf-omega-kernel`,
+independent by (A4)). Write :math:`s_{kh}` for the offset's standard deviation over the population's photons. In row
+:math:`b` the photon's weight is :math:`w(\delta) = P(u(\delta))`, with :math:`P` the beam's profile as the voxel sees
+it (:eq:`int-beam-weight`) and :math:`u = \text{dty}_b - \text{dty}_v` the voxel's offset from the row along the
+scan's path. Its rate :math:`u'` is :math:`\zeta` plus the rate :math:`r_f` of dty with omega in a fly scan
+(:eq:`int-dty-motion`). Taylor's theorem with the chain rule gives
+
+.. math::
+    :label: rf-beam-taylor
+
+    \big|w(\delta) - a_{bk} - w'(0)\,\delta\big| \le \tfrac{1}{2}\big(\|P''\|\,(r + |r_f|)^2 + \|P'\|\,r\big)\,\delta^2,
+    \qquad w'(0) = P'(u)\,(\zeta + r_f),
+    \qquad \|P'\| = \frac{e^{-1/2}}{\sigma_b},\quad \|P''\| = \frac{1}{\sigma_b^2}
+
+for a Gaussian profile of sd :math:`\sigma_b` and peak 1. A voxel's own extent convolves the profile with a probability
+density, which raises neither norm, so these hold for voxels of any shape. The parameter is
+:math:`\kappa_{kh} = (r + |r_f|)\,s_{kh}/\sigma_b`: how many beam widths the voxel crosses while the population
+diffracts.
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_taylor`` (the second derivative by the chain rule; the Gaussian's
+critical points and values).
+
+For a Gaussian beam, a Gaussian offset and linear motion, the weight is exactly :eq:`int-fold` with :math:`\beta =
+-u_0 c/\sigma_b^2` and :math:`\gamma = -c^2/\sigma_b^2` (:math:`c = \zeta + r_f`, :math:`u_0` the row's offset at
+:math:`\bar\omega`). In row :math:`b` the population then keeps, and is centred at,
+
+.. math::
+    :label: rf-beam-gauss
+
+    \frac{\sigma_b}{\sqrt{\sigma_b^2 + c^2 s^2}}\exp\!\left(-\frac{u_0^2}{2(\sigma_b^2 + c^2 s^2)}\right),
+    \qquad
+    \operatorname{E}_b[\delta] = -\frac{u_0\, c\, s^2}{\sigma_b^2 + c^2 s^2}:
+
+the beam it sees is widened to :math:`\sigma_b\sqrt{1 + \kappa^2}`, by its own spread, and each row sees a different
+part of its omega profile. At FWHM 1 µm, :math:`c = 200` µm and :math:`s = 0.1°`, :math:`\kappa = 0.82`, and a row one
+:math:`\sigma_b` off the voxel sees the omega offset's mean moved by :math:`8.6 \times 10^{-4}` rad, against
+orientation contrasts of :math:`10^{-4}`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_gauss``
+
+No finite set of moments fixes a row's light. Two omega distributions with the same mass, mean and variance, A
+(:math:`\pm s`, half each) and B (0 with :math:`1 - q`, :math:`\pm s/\sqrt{q}` with :math:`q/2` each), lit by a Gaussian
+beam centred on the voxel, keep
+
+.. math::
+    :label: rf-beam-closure
+
+    e^{-\kappa^2/2}
+    \quad\text{and}\quad
+    1 - q + q\,e^{-\kappa^2/2q},
+    \qquad \text{B} - \text{A} = \frac{(1/q - 1)\,\kappa^4}{8} + O(\kappa^6):
+
+0.607 against 0.784 at :math:`q = 1/4`, :math:`\kappa = 1`. In general the row's light is the series
+:math:`\sum_m P^{(m)}(u_0)\,c^m \operatorname{E}[\delta^m]/m!`, so moments up to order :math:`n` fix it only to order
+:math:`\kappa^n` (here :math:`n = 2`; the third moments, zero for both, leave the fourth order). A moment model is
+therefore an expansion in :math:`\kappa`, not an identity.
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_closure``
+
+What this does to the statistics. For a centred feature :math:`\tilde f` (:eq:`rf-centre`), the misfit of
+:math:`a_{bk}\int\tilde f\,d\mu_k` against the true :math:`\int w(\delta)\tilde f\,d\mu_k` has a first-order part
+:math:`w'(0)\int\delta\tilde f\,d\mu_k`. With :math:`\delta` measured from the population's mean, the counts
+(:math:`\tilde f = 1`) have none, and every other feature's is a covariance. To first order
+:math:`\delta = \vec{c}_h\cdot(\matr{F} - \matr{I})\vec{g}_0`, with :math:`\vec{c}_h` the gradient of the diffraction
+omega with :math:`\vec{g}` (its rotation part is :eq:`dif-rotation-motion`), so for a first-moment feature
+
+.. math::
+    :label: rf-beam-first
+
+    w'(0)\int\delta\,(\matr{F}\vec{g}_0 - \vec{g}_R)\,d\mu_k
+    \ \text{is linear in}\ Y^{(0)}_k, \matr{Y}^{(1)}_k, \matr{Y}^{(2)}_k,
+    \qquad
+    \Big|w'(0)\int\delta\tilde f\,d\mu_k\Big| \le e^{-1/2}\,\kappa_{kh}\,V_k\,\operatorname{sd}_k(\tilde f).
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_first_order_linear`` (three sub-volumes, symbolic; the covariance
+bound by Cauchy-Schwarz).
+
+So the first-order term could enter :math:`\matr{G}` through the second moments, with coefficients of the geometry
+alone. :doc:`limits` does not use second moments for the means (a free spread absorbs them), and modelling this term
+would tie every mean to its spread by :math:`\kappa`. So it is bounded, not modelled: both terms of
+:eq:`rf-beam-taylor` and :eq:`rf-beam-first` go into :math:`\bar\Delta`. For the rotation about the axis
+(:math:`\operatorname{sd}(\tilde f) = s`), at FWHM 1 µm and :math:`r = 200` µm, the first-order bound
+:math:`e^{-1/2}\kappa s` is :math:`8.7 \times 10^{-6}`, :math:`7.8 \times 10^{-5}` and :math:`8.7 \times 10^{-4}`
+rad at :math:`s = 0.01°`, :math:`0.03°` and :math:`0.1°` (:math:`\kappa` = 0.082, 0.25, 0.82). It stays below
+:math:`10^{-4}` rad for :math:`s` up to 0.068°, 0.034° and 0.021° at :math:`r` = 50, 200 and 500 µm. Near
+:math:`\eta = 0` and 180° a rotation's omega offset is magnified by :math:`|\cot\eta|` (:eq:`dif-rotation-motion`), so
+:math:`s` is larger there than the population's spread.
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_numbers``
+
+The moment refiner is therefore sound where every population's omega extent, times its voxel's distance from the axis,
+is well below the beam: undeformed and annealed grains (instrument-limited, :math:`s \lesssim 0.01°`), or small
+samples. For maps wanted accurate to a voxel, the condition is weaker (:eq:`rf-beam-voxel`). Where it is not, the rows do not see one common unknown per population: they see different parts of its omega
+profile, and the bound grows as :math:`\kappa s`. The light is still exactly linear in each population's
+distribution (A3), and the expectation of any region's sum is
+
+.. math::
+    :label: rf-beam-exact
+
+    \operatorname{E}\big[T_{R,b}[f]\big] = \sum_k |F_h|^2 A_{kh}\int w_{bk}\big(\bar\omega_{kh} + \delta(\matr{F})\big)
+    f(\matr{F}\vec{g}_0)\, K_R(\matr{F})\, d\mu_k(\matr{F}) - (\text{the cut and the group rule}),
+
+with :math:`K_R` the probability that a photon of :math:`\matr{F}` lands in :math:`R`. Where the instrument's own
+omega offset matters, the weight is averaged with :math:`K_R` over it. This is the indexer's model (:eq:`idx-linear`), whose
+unknowns are occupancies of orientations, each with its own projection angle.
+
+**Definition:** the expectation of a region's sum, by (A1)-(A4); :eq:`rf-hist` is its special case.
+
+**What** :math:`\kappa` **is not.** It is not a window around a starting point. The solve is linear in the moments
+wherever it starts, and the indexer's orientation only places the boxes, whose margins hold for rotations of any size
+(:eq:`rf-box-margin-exact`): a start further off needs a larger box, not a smaller :math:`\kappa`. :math:`\kappa`
+measures what is treated as one unknown: the omega extent of one population's own light. Two populations of one
+voxel each have their own mean omega and weight, and orientation changing from voxel to voxel, boundaries included,
+enters :math:`\matr{G}` exactly. Only the spread within a population enters :math:`\kappa`.
+
+Misplacement, and maps accurate to a voxel
+------------------------------------------
+
+The moment model's error has a plain form. Weighting a photon by the beam at its population's mean omega, instead of
+at its own, is the same as moving its light across the ray, at the mean angle, by the voxel's move
+(:eq:`rf-beam-motion`):
+
+.. math::
+    :label: rf-beam-misplace
+
+    w_{bk}(\bar\omega + \delta) = P\big(\text{dty}_b - \text{dty}_v(\bar\omega) - m(\delta)\big), \qquad
+    m(\delta) = -\zeta\sin\delta - \eta(\cos\delta - 1), \qquad |m| \le r|\delta| .
+
+So the moment refiner is an exact tomography of each reflection's light, with every photon moved across the ray by
+:math:`m(\delta)`: by about :math:`\zeta\delta`, with an rms of :math:`|\zeta| s_{kh} \le r\, s_{kh}` over the
+population. This holds for a profile that does not turn with omega (a point or round voxel); a square voxel's
+footprint also turns by :math:`\delta`, which moves its light by at most its half-diagonal times :math:`|\delta|`, far
+less. Summed over the rows, the moved light is kept, up to the rows' ripple :math:`\sum_b P(\text{dty}_b - y)`, whose
+relative amplitude is :math:`2T` at the dty step (:eq:`lim-transfer`): 0.057 when the beam's FWHM is the step.
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_misplace`` (the weight as a moved profile; the ripple by
+Poisson summation, and its number).
+
+At the edge of a map :math:`N` steps across, scanned with the beam's FWHM :math:`c` steps wide, the sample's radius is
+:math:`N/2` steps and :math:`\sigma_b = c/(2\sqrt{2\ln 2})` steps, so
+
+.. math::
+    :label: rf-beam-edge
+
+    \kappa_{\text{edge}} = \frac{N\sqrt{2\ln 2}}{c}\, s = 1.18\,\frac{N s}{c}:
+
+3532 :math:`s` (radians) for a 3000-step map at :math:`c = 1`, whatever the sample's size, because the beam is chosen
+in proportion to it. At a fraction :math:`\rho` of the radius, :math:`\kappa = \rho\,\kappa_{\text{edge}}`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_beam_edge``
+
+A map meant as an image, accurate to a voxel, needs the light moved by less than a step. This is the tomographic
+sampling criterion, a standard result: at radius :math:`r`, a turn of more than step / :math:`r` moves a point by more
+than a resolution element. Here the turn is not the spacing between projections but the spread of angles within one:
+a population that diffracts over an omega range :math:`s` is projected over that range of angles, and its light is
+smeared across the ray by :math:`r s`, as in continuous-rotation tomography. With the rms move :math:`r s` against one
+step:
+
+.. math::
+    :label: rf-beam-voxel
+
+    r\, s_{kh} \le \text{step}
+    \iff \kappa_{kh} \le \frac{\text{step}}{\sigma_b} = \frac{2\sqrt{2\ln 2}}{c}
+    \iff s_{kh} \le \frac{2}{N\rho}:
+
+:math:`\kappa \le 2.35` at :math:`c = 1` and :math:`r_f = 0`, against :math:`\kappa \ll 1` for a bias of
+:math:`10^{-4}` rad (:eq:`rf-beam-first`). On a 3000-step map, :math:`s \le` 0.038°, 0.076°, 0.15° and 0.38° at the
+edge, :math:`R/2`, :math:`R/4` and :math:`R/10`. A voxel split equally between two parts whose omega offsets differ by
+0.5° has :math:`s = 0.25°`, and its light is spread over :math:`\pm 6.5\rho` steps across the ray.
+
+**Definition:** the condition for a map accurate to a voxel, as an rms move of one step; the equivalences and numbers
+are ``tests/theory/test_refiner.py::test_beam_voxel``.
+
+What is particular to diffraction is the source of the spread: the sample's own orientations, not the scan. Two
+things the criterion does not say. The move is a different component of the spread in each reflection, along a different
+direction, so the reflections do not agree on where the light went. That disagreement is a misfit that varies from
+voxel to voxel, and it reaches the weak combinations amplified by up to :math:`1/\sin\theta` (:eq:`rf-amplify`). And
+that the solved map then looks blurred by about the move is argued, not derived: the move is exact, its effect through
+the solve is not written out.
+
+Regions that follow the sinogram
+--------------------------------
+
+The move :math:`m(\delta)` is known for every point and every omega (:eq:`rf-beam-motion`). Most of it is common to a
+region: the voxels sharing a region lie along one ray, within the merged length :math:`D` (:eq:`lim-merged`), and
+move nearly together. A region can follow that common move instead of sitting in one dty row, as a known motion is
+compensated in tomography. Take a reference point
+of the region, its dty trace :math:`y_{\text{ref}}(\omega)`, and the region's mean omega :math:`\bar\omega_R`. Frame
+:math:`j`'s rows are relabelled by the reference's move, rounded to whole rows, and the frames are summed:
+
+.. math::
+    :label: rf-trace
+
+    T'_{R,b}[f] = \sum_j T_{R,\, b + n_j,\, j}[f], \qquad
+    n_j = \operatorname{round}\frac{y_{\text{ref}}(\omega_j) - y_{\text{ref}}(\bar\omega_R)}{\text{step}},
+
+with :math:`T_{R,b,j}` the region's statistic in row :math:`b` and frame :math:`j` (:eq:`rf-statistic`). In the model,
+population :math:`k` sits at :math:`\tilde y_k = \text{dty}_k(\bar\omega_k) - (y_{\text{ref}}(\bar\omega_k) -
+y_{\text{ref}}(\bar\omega_R))`: its offset from the trace, known from the geometry and its mean omega. Each frame's
+rows are shifted by a whole number, so the relabelling is a bijection of the cells: nothing is counted twice, no light
+is interpolated, and no unknown is added. :eq:`rf-linear` is unchanged, with :math:`a_{bk} = P(\text{dty}_b -
+\tilde y_k)`.
+
+**Definition:** the trace-following statistic. Rows shifted beyond the scanned range are lost, so a region that needs
+them is left out, as a reflection whose box reaches past an end of the omega range is.
+
+A photon of population :math:`k` diffracting at :math:`\omega` in frame :math:`j`, a turn :math:`\delta = \omega -
+\bar\omega_k` past the population's mean, is then misplaced by
+
+.. math::
+    :label: rf-trace-residual
+
+    e = \underbrace{\big[(\text{dty}_k - y_{\text{ref}})(\omega) - (\text{dty}_k - y_{\text{ref}})(\bar\omega_k)\big]}_{
+    \text{the offset } \vec{x}_k - \vec{x}_{\text{ref}} \text{ turned by } \delta}
+    + \underbrace{\big[y_{\text{ref}}(\omega) - y_{\text{ref}}(\omega_j)\big]}_{\text{within the frame}}
+    + \underbrace{\big[y_{\text{ref}}(\omega_j) - y_{\text{ref}}(\bar\omega_R) - n_j\,\text{step}\big]}_{\text{rounding}},
+    \qquad
+    |e| \le |\vec{x}_k - \vec{x}_{\text{ref}}|\,|\delta| + \frac{(r_{\text{ref}} + |r_f|)\,h}{2} + \frac{\text{step}}{2},
+
+with :math:`h` the frame's width. The first term replaces :math:`r|\delta|` (:eq:`rf-beam-misplace`) by the distance
+from the reference, at most :math:`D/2` steps along the ray: the distance from the axis no longer enters, except
+through the frame's width. The rounding is a sawtooth in omega, at most half a step.
+
+**Proof:** ``tests/theory/test_refiner.py::test_trace_residual`` (the decomposition, exact; the first term as the move
+of the offset, bounded by its chord; the frame's term by the trace's rate).
+
+The relabelling costs the frame's term, :math:`(r + |r_f|)h/2`: the same sampling criterion for the frame's own
+omega range, which the plain region does not have. For a
+population inside one frame, the plain region's move is :math:`r|\delta| \le r h/2` already. So it helps only where a
+population spans several frames, :math:`s_{kh} > h`; the choice is per region, from the indexer's spread, before the
+fit. At the edge of a 3000-step map with 0.05° frames (FWHM one step), the frame's term is 0.65 steps at most and 0.38
+in rms (uniform within the frame), and the rounding at most 0.5 (0.29 in rms). The first term, for a population of
+:math:`s = 0.25°` merged over :math:`D = 9` voxels along the ray, is 0.020 steps in rms. So the move is below a step
+in rms for any spread, wherever the voxel is, against :math:`s \le 0.038°` for the plain region
+(:eq:`rf-beam-voxel`).
+
+**Proof:** ``tests/theory/test_refiner.py::test_trace_numbers``
+
+What it does not change: the residual is still a misplacement, bounded, not modelled, and it still varies from
+reflection to reflection, so what reaches the weak combinations is :eq:`rf-amplify`'s amplification of the smaller
+move. For a bias of :math:`10^{-4}` rad rather than a voxel, the frame's term alone gives :math:`\kappa = 0.89` at the
+edge (:math:`r h/\sqrt{12}` against :math:`\sigma_b`), and the rounding's covariance with the features is not written
+out.
 
 The instrument
 --------------
@@ -161,7 +435,9 @@ The model leaves one thing out: a photon from another incoming direction or wave
 different omega, while the statistic turns every photon back by its frame's centre, a rotation about the axis
 correlated with :math:`\vec{D}`. Its mean is zero to first order; its second order is not bounded here.
 Each is a factor and an offset common to every population: a scale fixed by calibration, or left free as one number
-for the whole map (:eq:`lim-common`: it biases only region means, like :math:`d_0`).
+for the whole map (:eq:`lim-common`: it biases only region means, like :math:`d_0`). The offset is common per
+reflection, not per ring's strain: read as a strain it is :math:`\operatorname{E}|\vec{D}|^2/(2|\vec{g}|^2)`, about
+:math:`10^{-6}` at ID11's convergence.
 
 **Proof:** ``tests/theory/test_refiner.py::test_instrument_independent``
 
@@ -212,7 +488,8 @@ populations' light is a ray sum:
 
 :math:`\matr{G}` is built from geometry alone: :math:`a_{bk}|F_h|^2 A_{kh}`, the powers of :math:`\vec{g}_0` and
 the parallax coefficients. :math:`\vec{\Delta}` collects everything (A1)-(A5) do not make linear: the cut, the group
-rule, the pixels' binning and light outside the region, each bounded below by :math:`\bar\Delta_j`. The identity
+rule, the pixels' binning, light outside the region, and the beam's weight within each population's omega extent
+(:eq:`rf-beam-taylor`, :eq:`rf-beam-first`), each bounded below by :math:`\bar\Delta_j`. The identity
 holds for any distribution of the noise :math:`\vec{\xi}`: the noise biases nothing. :math:`\matr{A}` is any left
 inverse, typically weighted least squares; its weights change efficiency, never the identity (:eq:`ref-bias`). The
 residuals :math:`\vec{e} = (\matr{I} - \matr{H})\vec{T}`, :math:`\matr{H} = \matr{G}\matr{A}`, have
@@ -236,7 +513,8 @@ generates its data with the model itself, so that no misfit reaches the weak dir
 neither (AGENTS.md rules out basis-function priors and coupling between voxels), so it reports each voxel's error bar
 and bias bound instead (:eq:`rf-linear`).
 
-The model is linear in the unknowns; no linearisation in the deformation is made. What stays non-linear is which
+The model is linear in the unknowns. No linearisation in the deformation is made, except the beam's weight across
+each population's omega extent, which is bounded (:eq:`rf-beam-taylor`), not modelled. What stays non-linear is which
 cells form each region, a discrete function of where the populations' spots are. It is fixed for an iteration, as
 the window origins are (:doc:`peak_shape`), and re-made from the new estimates.
 
@@ -676,7 +954,7 @@ all of their populations' light, and a region chosen from the data is biased (:e
 whether a shape-free refiner can do without them, and what their data-dependence actually costs.
 
 **Why regions.** Any statistic summed over a fixed set :math:`R` of cells has the expectation :math:`\sum_k a_{bk}\int
-K_R(\matr{F})\,d\mu_k(\matr{F})` (:eq:`rf-hist`), with :math:`K_R(\matr{F})` the probability that a photon of a
+K_R(\matr{F})\,d\mu_k(\matr{F})` (:eq:`rf-hist`, at :math:`\kappa = 0`; :eq:`rf-beam-exact` in general), with :math:`K_R(\matr{F})` the probability that a photon of a
 sub-volume :math:`\matr{F}` lands in :math:`R`. The unknowns of a moment refiner are a few moments of each population
 (:eq:`rf-moments`), not its whole distribution. :math:`\int K_R\,d\mu` is a function of those moments for every
 :math:`\mu` only if :math:`K_R` is constant on the population's support: only if :math:`R` holds all of its light.
@@ -987,10 +1265,11 @@ recorded sum over :math:`B`, each cell divided by its :math:`LP`, is
 .. math::
     :label: rf-hist
 
-    \sum_k a_{bk}|F_h|^2 A_{kh} \int K_B(\matr{F})\, d\mu_k(\matr{F}),
+    \sum_k |F_h|^2 A_{kh} \int w_{bk}\big(\bar\omega_{kh} + \delta(\matr{F})\big)\, K_B(\matr{F})\, d\mu_k(\matr{F}),
 
-with :math:`K_B(\matr{F})` the probability that a photon of a sub-volume :math:`\matr{F}` is counted in :math:`B`:
-linear in each population's distribution, for any bins. The moments are linear functionals of the finest histogram,
+with :math:`K_B(\matr{F})` the probability that a photon of a sub-volume :math:`\matr{F}` is counted in :math:`B`
+(:eq:`rf-beam-exact` with :math:`f = 1`): linear in each population's distribution, for any bins. The beam's weight
+stays inside the integral: a bin narrow in omega is lit at the omega of its own light. The moments are linear functionals of the finest histogram,
 the cells themselves. So the histogram keeps everything the moments keep and more. Its tomography is the indexer's
 linear model (:eq:`idx-linear`) with the exact kernel and the bounds of this page, at bins as fine as the kernel
 allows.
@@ -1147,8 +1426,8 @@ widths wide (:eq:`rf-bin-edge`), and take within each bin the counts and moments
 .. math::
     :label: rf-bin-moments
 
-    \sum_k a_{bk}|F_h|^2 A_{kh} \int_{\matr{F}\vec{g}_0 \in B} f(\matr{F}\vec{g}_0)\, d\mu_k(\matr{F})
-    + O\!\left(\frac{\sigma^2}{d^2}\right)\sup|f|,
+    \sum_k |F_h|^2 A_{kh} \int_{\matr{F}\vec{g}_0 \in B} w_{bk}\big(\bar\omega_{kh} + \delta(\matr{F})\big)\,
+    f(\matr{F}\vec{g}_0)\, d\mu_k(\matr{F}) + O\!\left(\frac{\sigma^2}{d^2}\right)\sup|f|,
 
 the moments of the part of the population whose light falls in the bin, up to the light within reach of the bin's
 edges. These bins are per reflection: the part of a population whose light falls in a bin of one reflection is not
@@ -1342,14 +1621,14 @@ no weak directions beyond the slice's.
 The guarantee
 -------------
 
-Under (A1)-(A5). Boxes taken from an indexer fitted to the same data are random; their selection bias is at most the
+Under (A1)-(A6). Boxes taken from an indexer fitted to the same data are random; their selection bias is at most the
 light in the band between the boxes of the indexer's extreme placements (:eq:`rf-sandwich`), measured from the data
 and added to the bias bound. The indexer's error :math:`e` in :eq:`rf-box-margin` is a statistical bound, not a hard
 one: the completeness of the boxes, and the band's bound, hold with its confidence.
 
 1. **Noise** biases nothing (:eq:`rf-linear`). Error bars come from blocks that are independent exactly
    (:eq:`rf-harris`), with no noise model.
-2. **Spot shape** enters nowhere in :math:`\matr{G}`. It enters only through the bounded terms 3-5 and the
+2. **Spot shape** enters nowhere in :math:`\matr{G}`. It enters only through the bounded terms 3-6 and the
    estimand's definition (light within each box).
 3. **The cut** biases each region's statistics by at most :math:`\kappa_c \sum_R |f_p - m|/(LP)_p`
    (:eq:`rf-cut-bound`), a number of the geometry. No estimator can do better than bound it (:eq:`rf-no-unbiased`).
@@ -1357,6 +1636,10 @@ one: the completeness of the boxes, and the band's bound, hold with its confiden
    unbounded amount otherwise: the faint compact spots of :doc:`recording`.
 5. **The pixels** bias a feature by at most its gradient times :eq:`rf-alias-bound`. Omega binning biases nothing in
    the strain (:eq:`rf-invariant`) and, in the rotation about the axis, at most :eq:`rf-omega-bound` under (A6).
+6. **The beam's weight within a peak** biases a centred feature by at most :eq:`rf-beam-first` plus
+   :eq:`rf-beam-taylor`'s remainder, growing as :math:`\kappa\,\operatorname{sd}(\tilde f)`. This is the only term in
+   which a population's own omega profile matters, and it is small only where :math:`\kappa \ll 1`
+   (:eq:`rf-beam-closure`).
 
 The refiner reports, per population, :math:`\hat{\vec{Y}}`, its block-sandwich covariance, and the bias bound
 :math:`\sum_j |A_{ij}|\bar\Delta_j`. That bound is computed from the geometry, the regions and the point spread's
@@ -1376,6 +1659,12 @@ What is left out
 ----------------
 
 - **The instrument's omega shift** correlated with :math:`\vec{D}` (:eq:`rf-instrument`), at second order.
+- **The beam's weight within a peak, modelled.** Its first-order term is linear in :math:`\matr{Y}^{(2)}`
+  (:eq:`rf-beam-first`) but is only bounded here. Deformed populations far from the axis have :math:`\kappa \gtrsim 1`
+  and no moment model holds for them (:eq:`rf-beam-closure`); how to refine them (populations split finer by the
+  indexer, or the occupancy model :eq:`rf-beam-exact` itself) is not decided. Regions that follow the sinogram
+  (:eq:`rf-trace`) bound the move by the merged length and the frame's width instead of the distance from the axis;
+  whether to use them is the maintainer's choice.
 - **Parallax at second order in** :math:`\epsilon`: :eq:`rf-parallax-exact` is exact, but its expansion is written to
   first order only.
 - **Anisotropic boxes**: the indexer gives only an isotropic spread per population (:doc:`populations`), so

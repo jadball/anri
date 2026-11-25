@@ -44,7 +44,11 @@ Exact ray sums, for any spot shape
 
 A cell's light is the sum over the contributors that light it (voxels, or populations within voxels :math:`v`),
 each weighted by the beam on it :math:`b_v` and its density :math:`\rho_v`, times its own spot's light in that cell
-:math:`s_{vp}`, of any shape: :math:`\lambda_p = \sum_v b_v \rho_v s_{vp}`. Then
+:math:`s_{vp}`, of any shape: :math:`\lambda_p = \sum_v b_v \rho_v s_{vp}`. The beam's weight changes as the voxel
+crosses the beam during its own peak (:eq:`int-fold`), so :math:`b_v s_{vp}` is one product per row: :math:`b_v` the
+weight at the contributor's mean omega, and :math:`s_{vp}` its light in that row, the weight's variation within the
+spot included. A contributor's spot is then the same in every row only while that variation is small
+(:eq:`rf-beam-taylor`). Then
 
 .. math::
     :label: mom-raysum
@@ -52,8 +56,8 @@ each weighted by the beam on it :math:`b_v` and its density :math:`\rho_v`, time
     \sum_{p \in R} \lambda_p f(\vec{x}_p) = \sum_v b_v\, \rho_v\, m^R_v[f], \qquad
     m^R_v[f] = \sum_{p \in R} s_{vp} f(\vec{x}_p):
 
-the moments of the light are beam- and density-weighted sums of each contributor's own (binned) spot moments. No
-light is divided between contributors, and no spot shape is assumed. A contributor's shape enters only through its
+the moments of the light are beam- and density-weighted sums of each contributor's own (binned) spot moments in
+that row. No light is divided between contributors, and no spot shape is assumed. A contributor's shape enters only through its
 own moments over :math:`R` (all its moments when :math:`R` holds all its light).
 
 **Proof:** ``tests/theory/test_moments.py::test_ray_sum``

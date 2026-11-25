@@ -10,6 +10,7 @@ from tests.theory.common import (
     is_zero,
     rank,
     rng,
+    rounds_to,
     skew,
     tol,
 )
@@ -344,3 +345,53 @@ def test_common_offset_is_k0():
     m = sum(wi * xi for wi, xi in zip(w, x)) / sum(w)
     ms = sum(wi * (xi + s) for wi, xi in zip(w, x)) / sum(w)
     assert is_zero(ms - m - s)
+
+
+def test_views_rank():
+    """lim-views: at one frequency, a view with g0 = a k + c z (+ s xi) gives the seen rows of beta^* g0 in the one
+    combination a (row k) + c (row z), and the seen metric in a^2 C_kk + 2 a c C_kz + c^2 C_zz. Two views determine the
+    two rows iff a1 c2 - a2 c1 != 0; three determine the three metric entries iff the determinant
+    (a1 c2 - a2 c1)(a1 c3 - a3 c1)(a2 c3 - a3 c2) != 0: pairwise distinct ratios a : c. Views per coherent window:
+    M L / (pi D), the density 2M / 2 pi times lim-mu's window 2 pi / (K D) at K = 2 pi / L."""
+    a = sp.symbols("a1:4", real=True)
+    c = sp.symbols("c1:4", real=True)
+    assert is_zero(sp.Matrix([[a[0], c[0]], [a[1], c[1]]]).det() - (a[0] * c[1] - a[1] * c[0]))
+    Q = sp.Matrix([[a[i] ** 2, 2 * a[i] * c[i], c[i] ** 2] for i in range(3)])
+    det = 2 * (a[0] * c[1] - a[1] * c[0]) * (a[0] * c[2] - a[2] * c[0]) * (a[1] * c[2] - a[2] * c[1])
+    assert is_zero(Q.det() - det)
+    # three ratios among the views: rank 3; any number of views on two ratios: rank 2 (the metric not determined)
+    Q2 = sp.Matrix([[1, 2, 1], [4, 4, 1], [1, 2, 1], [16, 8, 1], [4, 4, 1]])  # a : c = 1, 2, 1, 4, 2
+    assert rank(Q2) == 3
+    Q3 = sp.Matrix([[1, 2, 1], [4, 4, 1], [1, 2, 1], [4, 4, 1], [16, 16, 4]])  # a : c = 1, 2, 1, 2, 2
+    assert rank(Q3) == 2
+    M, L, D, K = sp.symbols("M L D K", positive=True)
+    win = 2 * sp.pi / (K * D)
+    assert is_zero((2 * M / (2 * sp.pi) * win).subs(K, 2 * sp.pi / L) - M * L / (sp.pi * D))
+
+
+def test_localisation_per_frame():
+    """lim-localise-frames: counts in (row, frame) are N_j P(dty - u(w_j; x0)) with each frame's share N_j free and
+    u's dependence on the position known. The shares cost nothing: a location family's cross information with its
+    amplitude is int d_x0 p = 0, so the position's information is the frames' sum, N / sigma^2 along u's gradient
+    (sampled continuously). Frames summed over a reflection instead see the beam convolved with the motion zeta d,
+    d ~ N(0, s^2): a Gaussian of variance sigma^2 + zeta^2 s^2, information N / (sigma^2 + zeta^2 s^2). A frame's own
+    omega width h moves the voxel by zeta h, a uniform of variance (zeta h)^2 / 12."""
+    y, x0, A = sp.symbols("y x0 A", real=True)
+    sg, zs, h = sp.symbols("sigma zs h", positive=True)
+    p = A * sp.exp(-((y - x0) ** 2) / (2 * sg**2)) / sp.sqrt(2 * sp.pi * sg**2)
+    cross = sp.integrate(sp.diff(p, x0) * sp.diff(p, A) / p, (y, -sp.oo, sp.oo), conds="none")
+    assert is_zero(cross)
+    info = sp.integrate(sp.diff(p, x0) ** 2 / p, (y, -sp.oo, sp.oo), conds="none")
+    assert is_zero(sp.simplify(info - A / sg**2))
+    t = sp.Symbol("t", real=True)
+    conv = sp.integrate(
+        sp.exp(-((y - x0 - t) ** 2) / (2 * sg**2)) / sp.sqrt(2 * sp.pi * sg**2)
+        * sp.exp(-(t**2) / (2 * zs**2)) / sp.sqrt(2 * sp.pi * zs**2),
+        (t, -sp.oo, sp.oo), conds="none",
+    ).rewrite(sp.erf)  # fmt: skip
+    S2 = sg**2 + zs**2
+    want = sp.exp(-((y - x0) ** 2) / (2 * S2)) / sp.sqrt(2 * sp.pi * S2)
+    assert is_zero(sp.factor(sp.expand_log(sp.log(sp.simplify(conv / want)), force=True)))
+    u = sp.Symbol("u", real=True)
+    assert is_zero(sp.integrate(u**2, (u, -h / 2, h / 2)) / h - h**2 / 12)
+    assert rounds_to(200 * sp.Rational(5, 100) * sp.pi / 180 / sp.sqrt(12), "0.05")  # um: 0.05 deg frames, 200 um

@@ -15,8 +15,10 @@ The results, in brief:
   :math:`\sigma_{\text{beam}}/\sqrt{N}`, finer than the beam.
 - **Merged light is a tomography with three weak combinations per spatial frequency**: the dislocation content whose
   Burgers vector lies along the ray, and the gradient along the frequency of the displacement along the ray, which a
-  dislocation-free field carries too. Six combinations are resolved to about 1.5-2 beam widths; region means of all
-  nine are robust.
+  dislocation-free field carries too. Six combinations are resolved to about 1.5-2 beam widths where each frequency
+  has views at enough distinct :math:`\eta` (:eq:`lim-views`); region means of all nine are robust. This page holds
+  each voxel's spot in one place in every row; a voxel crossing the beam during its own peak breaks that
+  (:eq:`rf-beam-taylor`).
 - **Errors common to every voxel bias only region means**, never the variation across a map.
 - **Second moments carry no information on the means through their expectation** once each voxel's own spread is
   free; they can only lower the means' noise through their correlation with the first moments (:doc:`moments`).
@@ -66,7 +68,10 @@ voxels the beam lights (:doc:`moments`):
 with :math:`a_{bv}` the beam's weight of voxel :math:`v` in the blob's row and :math:`N_v` its counts.
 
 **Definition:** the blob's first moment is exactly this ray sum for any spot shape (:doc:`moments`); this page
-linearises it in :math:`\matr{\beta}` by :eq:`lim-reciprocal`.
+linearises it in :math:`\matr{\beta}` by :eq:`lim-reciprocal`. One weight per voxel holds while the voxel's light in the
+reflection takes less time to diffract than the voxel takes to cross the beam (:math:`\kappa \ll 1`,
+:eq:`rf-beam-taylor`). Otherwise the weight varies across the voxel's own spot, and each row sees a different part of
+it (:eq:`rf-beam-gauss`).
 
 The ray is almost perpendicular to every :math:`\vec{g}` it sees:
 
@@ -96,7 +101,7 @@ c\hat{\vec{z}} + s\hat{\vec{\xi}}`, by :eq:`lim-reciprocal`:
 **Proof:** ``tests/theory/test_limits.py::test_fourier_slice`` (from the deformed UBI's first order, not from
 :eq:`lim-reciprocal`'s result).
 
-So at each :math:`\vec{k} \neq 0` the data see the **rows** :math:`\hat{\vec{k}}` and :math:`\hat{\vec{z}}` of
+So at each :math:`\vec{k} \neq 0` the data can see the **rows** :math:`\hat{\vec{k}}` and :math:`\hat{\vec{z}}` of
 :math:`\hat{\matr{\beta}}` (six numbers) directly, and its row :math:`\hat{\vec{\xi}}` (three numbers) only with weight
 :math:`s \sim \sin\theta`. A row :math:`i` of :math:`\matr{\beta}` is, for a compatible field, the gradient of the
 displacement component :math:`u_i`. At :math:`\vec{k} = 0` (means over regions) all nine are seen. In strain and
@@ -111,6 +116,25 @@ rotation, with :math:`\vec{k}` along :math:`x` and :math:`\vec{\xi}` along :math
     \text{weak:}\quad \varepsilon_{yy},\ \varepsilon_{xy} + w_z,\ \varepsilon_{yz} - w_x .
 
 **Proof:** ``tests/theory/test_limits.py::test_seen_and_weak`` (the rows of :math:`\varepsilon + [\vec{w}]_\times`).
+
+One view sees only one combination of these. A reflection whose ray carries :math:`\vec{k}` gives
+:math:`a\hat{\matr{\beta}}^T\hat{\vec{k}} + c\hat{\matr{\beta}}^T\hat{\vec{z}}` (three numbers, up to :math:`s`), and
+the metric's :math:`|\vec{g}|^2` only :math:`a^2 C_{kk} + 2ac\,C_{kz} + c^2 C_{zz}` (one). The views that carry
+:math:`\vec{k}` coherently (those within :eq:`lim-mu`'s window of directions) determine the seen part only if
+
+.. math::
+    :label: lim-views
+
+    a_1c_2 - a_2c_1 \ne 0 \ \text{(first moments, two views)}, \qquad
+    \det\begin{bmatrix} a_i^2 & 2a_ic_i & c_i^2 \end{bmatrix}_{i = 1}^{3}
+    = 2(a_1c_2 - a_2c_1)(a_1c_3 - a_3c_1)(a_2c_3 - a_3c_2) \ne 0 \ \text{(metric, three)} :
+
+two different ratios :math:`a : c` for the first moments, three pairwise different for the metric. Any number of
+views on fewer ratios leaves a true null. There are about :math:`ML/(\pi D)` views per window (below), so the metric's
+condition is the stricter.
+
+**Proof:** ``tests/theory/test_limits.py::test_views_rank`` (both determinants; rank 2 for any number of views on two
+ratios; the views per window from :eq:`lim-mu`'s integrals).
 
 Orientation and strain are entangled in two pairs only: the rotation about :math:`z` with the in-plane shear, and the
 rotation about :math:`\vec{k}` with :math:`\varepsilon_{\xi z}`. An orientation map at full resolution therefore carries
@@ -212,8 +236,10 @@ steps in a domain whose voxels share their spots over a length of :math:`D` voxe
 
 Assumptions: constant merged length :math:`D`; counting noise only, equal counts per spot; linear; aliasing (the
 Poisson-summation terms of the dty sampling) dropped, which needs :math:`L \gtrsim 4`; and enough reflections that
-every direction of :math:`\vec{k}` has a coherent view, :math:`M \gg 2\pi D / L`; with fewer, some directions get none
-(a true null). The weak combinations get at most :math:`\mu \sin^2\theta`.
+every direction of :math:`\vec{k}` has coherent views, :math:`ML/(\pi D) \gg 2`, on the distinct ratios
+:eq:`lim-views` needs; with fewer, some directions get none (a true null). :math:`\mu` is per view: the seen
+components share it through the conditioning of :eq:`lim-views`' matrix, and one beam weight per voxel and
+row (:math:`\kappa \ll 1`, :eq:`rf-beam-taylor`) is assumed. The weak combinations get at most :math:`\mu \sin^2\theta`.
 
 Separation
 ----------
@@ -255,8 +281,9 @@ metals are mostly separated; annealed grains are merged over the grain.
 Localisation
 ------------
 
-A separated population's counts versus dty follow the beam profile centred on its position across the ray. With
-:math:`N` photons, a Gaussian beam of width :math:`\sigma_{\text{beam}}`, sampled continuously:
+A separated population's counts versus dty, frame by frame, follow the beam profile centred on its position across
+the ray at that frame's omega. With :math:`N` photons, a Gaussian beam of width :math:`\sigma_{\text{beam}}`, sampled
+continuously:
 
 .. math::
     :label: lim-localise
@@ -268,9 +295,28 @@ A separated population's counts versus dty follow the beam profile centred on it
 Sampled in rows (the dty steps), the Cramér-Rao bound depends on where the population sits between rows; it is
 stationary, by symmetry, midway between rows and on a row. At a step of FWHM/2 both are within 2e-5 of
 :math:`\sigma_{\text{beam}}/\sqrt{N}`; at one FWHM, 0.84 (midway) and 1.27 (on a row) times it; at 1.5 FWHM, 0.57 and
-4.5 times. Reflections at different omegas give the two in-plane coordinates. This uses only the
-counts of the population's own light and the beam profile, a shared instrument function, so it does not depend on
-spot shapes. The TDXRD stage's radial runout (~1 µm, periodic in omega) is a position error of that size unless it is
+4.5 times. Reflections at different omegas give the two in-plane coordinates.
+
+The bound needs the frames kept apart. The voxel moves across the beam as omega turns (:eq:`rf-beam-motion`), so its
+centre in dty is a known function of the position at each frame's omega. Each frame's share of the light is free, and
+costs nothing: a location family's amplitude carries no information on its location. Summed over the reflection's
+frames instead, the counts follow the beam convolved with the motion over the population's omega extent:
+
+.. math::
+    :label: lim-localise-frames
+
+    \operatorname{sd}(x_0) = \frac{\sigma_{\text{beam}}}{\sqrt{N}}\ \text{(frame by frame)}, \qquad
+    \operatorname{sd}(x_0) = \frac{\sqrt{\sigma_{\text{beam}}^2 + \zeta^2 s^2}}{\sqrt{N}}\ \text{(frames summed)},
+
+for an omega offset of sd :math:`s` and the voxel at :math:`\zeta` along the beam, both Gaussian. A frame's own width
+:math:`h` still moves the voxel by :math:`\zeta h`, a uniform of variance :math:`(\zeta h)^2/12` added to the beam's:
+0.05 µm sd for 0.05° frames at :math:`\zeta = 200` µm.
+
+**Proof:** ``tests/theory/test_limits.py::test_localisation_per_frame`` (the amplitude's zero cross information; the
+information per photon; the convolution; the frame's uniform).
+
+So localisation uses only the counts of the population's own light, per frame, and the beam profile, a shared
+instrument function: it does not depend on spot shapes. The TDXRD stage's radial runout (~1 µm, periodic in omega) is a position error of that size unless it is
 modelled.
 
 **Anri's choice** (maintainer, 2026-11-23): volume fractions are *not* constrained to sum to a density (multiphase

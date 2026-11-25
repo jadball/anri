@@ -69,7 +69,8 @@ Measurement and limits
     aliasing, a spread's second-order mean, light beyond a region, and the cost of splitting merged light by shape.
     The lemmas the refiner uses.
 12. :doc:`refiner`: a refiner that needs no spot shape: deformation moments as a linear tomography, with the
-    noise, the cut, the group rule and the pixels each bounded, and what no estimator can do. The method.
+    noise, the cut, the group rule, the pixels and the beam's weight within each peak bounded, where that tomography
+    holds (a voxel crossing less than the beam during its own peak), and what no estimator can do. The method.
 
 Indexer
 =======
