@@ -433,8 +433,8 @@ def test_box_margin():
     """rf-box-margin: a rotation error delta (|delta| <= e) of the indexer's orientation moves a spot by
     d omega = j_w . delta, d eta = j_e . delta (dif-rotation-motion: j_w = (0, -cot eta, -1),
     j_e = (1, -tan theta / sin eta, 0)), so by Cauchy-Schwarz |d omega| <= e |j_w| = e / |sin eta| and
-    |d eta| <= e sqrt(1 + tan^2 theta / sin^2 eta), attained for delta along j; a strain |eps| <= eps_max moves 2 theta
-    by at most 2 eps_max tan theta and leaves omega and eta (Delta 2theta = -2 eps tan theta, from Bragg's law)."""
+    |d eta| <= e sqrt(1 + tan^2 theta / sin^2 eta), attained for delta along j; a lattice strain eps moves 2 theta by
+    -2 eps tan theta (Bragg's law). The strain's omega and eta terms are test_box_strain's."""
     eta, th = sp.symbols("eta theta", positive=True)
     jw = sp.Matrix([0, -sp.cot(eta), -1])
     je = sp.Matrix([1, -sp.tan(th) / sp.sin(eta), 0])
@@ -449,6 +449,55 @@ def test_box_margin():
     theta_eps = sp.asin(lam / (2 * d0 * (1 + eps)))
     dth = sp.diff(theta_eps, eps).subs(eps, 0)
     assert is_zero(sp.simplify(dth + sp.tan(sp.asin(lam / (2 * d0)))))
+
+
+def test_box_strain():
+    """rf-box-strain, rf-box-margin: g at its diffraction (beam along x, axis z, lab frame at the diffracting omega,
+    g = k_out - k_in), turned by eps [d]x or stretched by (1 + eps). The Ewald condition k_in . g + |g|^2 / 2 = 0 and
+    the implicit function theorem give the rotation's d omega = -d_z - d_y cot(eta) and d eta = d_x - d_y tan(theta) /
+    sin(eta) (dif-rotation-motion: the convention is the same), and the stretch's d omega = -tan(theta) / sin(eta),
+    d eta = -tan^2(theta) cot(eta), d 2theta = 2 tan(theta). For a unit u and symmetric E, |E u|^2 = (u . E u)^2 +
+    |E u - (u . E u) u|^2 (stretch and turn). Lagrange's identity gives the combined bounds:
+    (x^2 + y^2)(1 + T^2) - (x + T y)^2 = (T x - y)^2 >= 0, so eps_t + eps_g tan(theta) <= |eps| sec(theta), and
+    likewise eps_t J + eps_g tan^2(theta) |cot(eta)| <= |eps| sqrt(J^2 + tan^4(theta) cot^2(eta))."""
+    th, eta, lam, om, eps = sp.symbols("theta eta lambda omega epsilon", real=True)
+    X = sp.Matrix([1, 0, 0])
+    k_in = X / lam
+    g0 = (sp.Matrix([sp.cos(2 * th), -sp.sin(2 * th) * sp.sin(eta), sp.sin(2 * th) * sp.cos(eta)]) - X) / lam
+    at0 = {om: 0, eps: 0}
+
+    def moves(g):
+        ewald = k_in.dot(g) + g.dot(g) / 2
+        d_om = -ewald.diff(eps).subs(at0) / ewald.diff(om).subs(at0)
+        k_out = g + k_in
+        dk = (k_out.diff(om) * d_om + k_out.diff(eps)).subs(at0)
+        k0 = k_out.subs(at0)
+        d_eta = (-dk[1] * k0[2] + k0[1] * dk[2]) / (k0[1] ** 2 + k0[2] ** 2)  # d atan2(-k_y, k_z)
+        d_tth = -lam * dk[0] / sp.sin(2 * th)  # cos(2 theta) = lam k_out . x
+        return [sp.simplify(sp.trigsimp(x)) for x in (d_om, d_eta, d_tth)]
+
+    d = sp.Matrix(sp.symbols("d0:3", real=True))
+    r_om, r_eta, r_tth = moves(rz(om) * (sp.eye(3) + eps * skew(d)) * g0)
+    assert is_zero(sp.trigsimp(r_om - (-d[2] - d[1] * sp.cot(eta))))
+    assert is_zero(sp.trigsimp(r_eta - (d[0] - d[1] * sp.tan(th) / sp.sin(eta))))
+    assert is_zero(r_tth)
+    s_om, s_eta, s_tth = moves(rz(om) * (1 + eps) * g0)
+    assert is_zero(sp.simplify(sp.trigsimp(s_om + sp.tan(th) / sp.sin(eta))))
+    assert is_zero(sp.simplify(sp.trigsimp(s_eta + sp.tan(th) ** 2 * sp.cot(eta))))
+    assert is_zero(sp.simplify(sp.trigsimp(s_tth - 2 * sp.tan(th))))
+    # stretch and turn of a unit vector
+    u = sp.Matrix(sp.symbols("u0:3", real=True))
+    E = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"E_{min(i, j)}{max(i, j)}", real=True))
+    Eu = E * u
+    stretch = u.dot(Eu)
+    turn = Eu - stretch * u
+    # |E u|^2 - stretch^2 - |turn|^2 = stretch^2 (1 - |u|^2): zero on the unit sphere
+    assert is_zero(sp.expand(Eu.dot(Eu) - stretch**2 - turn.dot(turn) - stretch**2 * (1 - u.dot(u))))
+    # Lagrange's identity, for both combined bounds
+    x, y, T, J, c = sp.symbols("x y T J c", real=True)
+    assert is_zero(sp.expand((x**2 + y**2) * (1 + T**2) - (x + T * y) ** 2 - (T * x - y) ** 2))
+    assert is_zero(sp.expand((x**2 + y**2) * (J**2 + c**2) - (J * x + c * y) ** 2 - (c * x - J * y) ** 2))
+    assert is_zero(sp.simplify(sp.sqrt(1 + sp.tan(th) ** 2) - 1 / sp.cos(th)).subs(th, sp.Rational(1, 7)))
 
 
 def test_identify_populations():

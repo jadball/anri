@@ -1033,24 +1033,47 @@ One linear solve, and its split
 :math:`\vec{Y}`. Iterating them is unnecessary if the first boxes already hold the light. The indexer's orientation
 is within a rotation :math:`|\vec{\delta}| \le e` of a population's mean (:doc:`localsearch` gives :math:`e` per
 level). A rotation moves a spot by :math:`\Delta\omega = \vec{j}_\omega\cdot\vec{\delta}` and :math:`\Delta\eta =
-\vec{j}_\eta\cdot\vec{\delta}` (:eq:`dif-rotation-motion`). A strain :math:`|\varepsilon| \le
-\varepsilon_{\max}` changes :math:`2\theta`, and also turns :math:`\vec{g}` by up to about :math:`\varepsilon_{\max}`
-(:eq:`rf-box-margin-exact`), which adds to :math:`e`. So, by Cauchy-Schwarz,
+\vec{j}_\eta\cdot\vec{\delta}` (:eq:`dif-rotation-motion`). A strain moves the spot in two ways. It turns
+:math:`\vec{g}`, by an angle :math:`\varepsilon_t`, which acts as a rotation and adds to :math:`e`. And it changes
+:math:`|\vec{g}|` at a fixed direction, by a fraction :math:`\varepsilon_g`. That changes the Bragg angle, and so the
+omega at which the same direction diffracts. For :math:`\vec{g}` at its diffraction, the implicit function theorem on
+the Ewald condition (:eq:`dif-ewald`) gives, to first order,
+
+.. math::
+    :label: rf-box-strain
+
+    \Delta\omega = -\varepsilon_g\frac{\tan\theta}{\sin\eta}, \qquad
+    \Delta\eta = -\varepsilon_g\tan^2\theta\cot\eta, \qquad
+    \Delta 2\theta = 2\varepsilon_g\tan\theta, \qquad
+    \varepsilon_t^2 + \varepsilon_g^2 = |\varepsilon\hat{\vec{g}}|^2 \le \|\varepsilon\|^2 .
+
+The last holds because :math:`\varepsilon\hat{\vec{g}}` splits into its part along :math:`\hat{\vec{g}}` (the stretch)
+and across it (the turn).
+
+**Proof:** ``tests/theory/test_refiner.py::test_box_strain``
+
+So, by Cauchy-Schwarz, for a rotation :math:`|\vec{\delta}| \le e` and a strain of operator
+norm at most :math:`\varepsilon_{\max}`,
 
 .. math::
     :label: rf-box-margin
 
-    |\Delta\omega| \le \frac{e}{|\sin\eta|}, \qquad
-    |\Delta\eta| \le e\sqrt{1 + \frac{\tan^2\theta}{\sin^2\eta}}, \qquad
-    |\Delta 2\theta| \le 2\varepsilon_{\max}\tan\theta,
+    |\Delta\omega| \le \frac{e + \varepsilon_{\max}\sec\theta}{|\sin\eta|}, \qquad
+    |\Delta\eta| \le e J + \varepsilon_{\max}\sqrt{J^2 + \tan^4\theta\cot^2\eta}, \qquad
+    |\Delta 2\theta| \le 2\varepsilon_{\max}\tan\theta, \qquad
+    J = \sqrt{1 + \frac{\tan^2\theta}{\sin^2\eta}},
 
-each attained for :math:`\vec{\delta}` along its :math:`\vec{j}`. A box whose half-widths exceed these margins plus
-the light's own extent :math:`t` holds all of the population's light within :math:`t` of its true centre, wherever
-that is.
+each rotation term attained for :math:`\vec{\delta}` along its :math:`\vec{j}`. The strain's terms are first order in
+:math:`\varepsilon_{\max}`. The stretch's omega term, :math:`\varepsilon_{\max}\tan\theta/|\sin\eta|`, is as large as
+the turn's times :math:`\tan\theta`. An earlier version of this page left it out, which made the boxes too small. A
+box whose half-widths exceed these margins plus the light's own extent :math:`t` holds all of the population's light
+within :math:`t` of its true centre, wherever that is.
 
 **Proof:** ``tests/theory/test_refiner.py::test_box_margin`` (the lengths of :math:`\vec{j}`; Cauchy-Schwarz as
 :math:`|\vec{j}|^2|\vec{\delta}|^2 - (\vec{j}\cdot\vec{\delta})^2 = |\vec{j}\times\vec{\delta}|^2`; Bragg's law
-differentiated).
+differentiated), ``tests/theory/test_refiner.py::test_box_strain`` (the Ewald condition's implicit derivatives, in
+the convention that reproduces :eq:`dif-rotation-motion`; the split of :math:`\varepsilon\hat{\vec{g}}`; the
+combined bounds).
 
 To all orders, along the rotation :math:`\exp(t[\vec{\delta}]_\times)`, :math:`t \in [0, 1]`, the spot moves at
 :eq:`dif-rotation-motion`'s rates evaluated where it is. With :math:`s_0 = |\sin\eta|` at the start and :math:`s_*`
@@ -1070,7 +1093,9 @@ for real :math:`s_*` (:math:`(s_0 - e)^2 \ge 4e\tan\theta`). These margins hold 
 Reflections too close to the axis for a real :math:`s_*` are left out. A strain, of operator norm
 :math:`\|\varepsilon\|`, turns :math:`\vec{g}` by the angle on the right (since :math:`(\matr{I} +
 \varepsilon)\vec{u}\times\vec{u} = \varepsilon\vec{u}\times\vec{u}`), which adds to :math:`e`, and changes
-:math:`|\vec{g}|` within the factors given. This bounds :math:`2\theta` exactly through Bragg's law.
+:math:`|\vec{g}|` within the factors given. This bounds :math:`2\theta` exactly through Bragg's law. The stretch's
+omega and :math:`\eta` terms (:eq:`rf-box-strain`) are added to first order. Their second order, relative
+:math:`\varepsilon_{\max} \lesssim 10^{-2}` of themselves, is not bounded here.
 
 **Proof:** ``tests/theory/test_refiner.py::test_box_margin_exact`` (the root and its expansion; :math:`\sqrt{1 +
 T^2/s^2} < 1 + T/s`; the strain's cross product).
