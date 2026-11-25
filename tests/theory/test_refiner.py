@@ -1070,6 +1070,34 @@ def test_si_position_number():
     assert rounds_to(pix / sp.sqrt(500) / h, "0.021")
 
 
+def test_si_tails():
+    """rf-si-tails: a reflection's light is a core (1 - tau, share S(v) outside its frame) and a tail (tau, share t_o
+    outside), so S_obs = (1 - tau) S + tau t_o and S_obs - S = tau (t_o - S). A kernel-only fit solves S(v_hat) =
+    S_obs; by the implicit function theorem d v_hat / d tau = (t_o - S) / S'(v) at tau = 0. In the narrow limit
+    S = Phi(-d / sqrt(v)), v S'(v) = z phi(z) / 2 at z = d / sqrt(v), largest at z = 1 (its derivative is
+    phi(z)(1 - z^2) / 2). The numbers: phi(1) / 2 = 0.121, Phi(-1) = 0.159; tau = 1 % with t_o = 1 at z = 1 raises v
+    by 7.0 % and s by 3.4 %; the core beyond one frame at s = 0.15, Phi(-1 / 0.15) = 1.3e-11."""
+    tau, to, S, v, d = sp.symbols("tau t_o S v d", positive=True)
+    Sobs = (1 - tau) * S + tau * to
+    assert is_zero(sp.expand(Sobs - S - tau * (to - S)))
+    # S(v_hat) = S_obs(tau): d v_hat / d tau = (d S_obs / d tau) / S'(v) at tau = 0
+    assert is_zero(sp.diff(Sobs, tau) - (to - S))
+    z = sp.Symbol("z", positive=True)
+    phi = sp.exp(-(z**2) / 2) / sp.sqrt(2 * sp.pi)
+
+    def Phi(x):
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    vSv = v * sp.diff(Phi(-d / sp.sqrt(v)), v)
+    assert is_zero(sp.simplify(vSv - (z * phi / 2).subs(z, d / sp.sqrt(v))))
+    assert is_zero(sp.simplify(sp.diff(z * phi / 2, z) - phi * (1 - z**2) / 2))
+    top = (phi / 2).subs(z, 1)
+    assert rounds_to(top, "0.121") and rounds_to(Phi(-1), "0.159")
+    rise = sp.Rational(1, 100) * (1 - Phi(-1)) / top
+    assert rounds_to(100 * rise, "7.0") and rounds_to(100 * (sp.sqrt(1 + rise) - 1), "3.4")
+    assert rounds_to(Phi(-1 / sp.Rational(15, 100)) * 10**11, "1.3")
+
+
 def test_background_confound():
     """rf-background: background light b(x) = b0 + b1 . (x - centre) over a region adds to its counts, first and
     second moments b0 (S0, S1, S2) + b1 . (S1, S2, S3), S_n the box's own moments (with 1/(LP) weights), linearly. In a

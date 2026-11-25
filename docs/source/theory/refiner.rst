@@ -52,7 +52,8 @@ the shape of the detector's point spread beyond (A5). The assumptions are:
 - **(A6) The instrument's omega kernel is a factor.** Every peak's omega profile is the instrument's omega kernel
   convolved with something non-negative and otherwise arbitrary. The kernel is a Gaussian whose variance is
   :eq:`rf-omega-kernel` with three widths (horizontal and vertical convergence, bandwidth), measured on a single
-  rotation of an undeformed Si crystal and taken at the low end of their uncertainty. It is an operating condition of
+  rotation of an undeformed Si crystal, by a fit that includes the peaks' tails (:eq:`rf-si-tails`), and taken at the
+  low end of their uncertainty. It is an operating condition of
   the refinement: such a Si scan, with reflections on at least two rings, is measured with every experiment
   (:eq:`rf-omega-identify`). The kernel is never fitted to the sample.
 
@@ -612,7 +613,8 @@ two, and the rank is 2 for any number of reflections. Bandwidth and convergence 
 
 **Proof:** ``tests/theory/test_refiner.py::test_omega_identifiable`` (the derivative; the determinant; one ring's rank).
 
-So 500 or more Si reflections on two or more rings determine the kernel; the condition is the rings, not the count.
+So 500 or more Si reflections on two or more rings determine the kernel, if their peaks are the kernel alone (the
+tails below change that); the condition is the rings, not the count.
 Only reflections within a few kernel widths of a frame's edge carry information. With a kernel of sd :math:`\sigma`
 frames that is about a fraction :math:`6\sigma` of them, about 35 of 500 at :math:`\sigma = 0.012`: still many more
 than three unknowns.
@@ -663,6 +665,37 @@ fitting the positions jointly is necessary, not optional.
 
 **Proof:** ``tests/theory/test_refiner.py::test_si_position_orthogonal``,
 ``tests/theory/test_refiner.py::test_si_position_number``
+
+**Tails raise the floor.** Bright Si peaks have weak tails over 5-9 frames, most likely thermal diffuse scattering
+(measured on undeformed Si, AGENTS.md). Write a reflection's light as a core, the Bragg peak through the kernel,
+holding :math:`1 - \tau` of it, and a tail holding :math:`\tau`, of which a share :math:`t_o` lies outside the
+reflection's own frame. With :math:`S(v)` the core's share outside its frame, the light outside the frame is
+
+.. math::
+    :label: rf-si-tails
+
+    S_{\text{obs}} = (1 - \tau)S(v) + \tau t_o, \qquad S_{\text{obs}} - S(v) = \tau\,(t_o - S(v)), \qquad
+    \frac{\hat v - v}{v} = \frac{\tau\,(t_o - S)}{v\,\partial_v S} + O(\tau^2), \qquad
+    v\,\partial_v S = \tfrac{1}{2}z\varphi(z) \le \tfrac{1}{2}\varphi(1) = 0.121,
+
+with :math:`z = d/s` in the narrow limit (:eq:`rf-si-narrow`). :math:`S` rises strictly with :math:`v`
+(:eq:`rf-omega-identify`). A fit with the kernel alone solves :math:`S(\hat v) = S_{\text{obs}}`, so it returns
+:math:`\hat v > v` whenever the tail lies outside the frame more than the core does, :math:`t_o > S(v)`. For a tail
+spread over several frames that is always. It is the unsafe direction for (A6), and taking the low end of the fit's
+uncertainty does not undo a bias. At the reflections that carry the most information (:math:`z = 1`, :math:`S =
+\Phi(-1) = 0.159`), a tail of 1 % lying almost wholly outside the frame raises :math:`v` by 7.0 % (:math:`s` by
+3.4 %). Elsewhere the rise is larger.
+
+**Proof:** ``tests/theory/test_refiner.py::test_si_tails`` (the mixture; the implicit derivative; the maximum of
+:math:`z\varphi(z)`; the numbers).
+
+What the data give: for :math:`s \lesssim 0.15` frames the core puts less than :math:`\Phi(-1/0.15) = 1.3 \times
+10^{-11}` of its light two or more frames from its own, so those frames hold tail alone and measure it. The tail's
+light in the reflection's own frame and the one beside it is not measured. There it is mixed with the core's spill,
+and telling them apart needs a model of the tail within one frame of the Bragg point: a shape. So the floor
+:math:`v_{\text{lo}}` cannot be taken from a fit of the frame shares to the kernel alone. It must come from a fit
+that includes the tails. Which tail model to use (a diffuse-scattering form near the Bragg point, or a bound from the
+measured decay) is the maintainer's choice, not made here.
 
 The cut
 -------
@@ -1698,6 +1731,8 @@ What is left out
   :math:`\matr{Y}^{(2)}` is not written out.
 - **The omega kernel's Gaussian form** (:eq:`rf-omega-kernel`) is the instrument's, as the point spread's mixture
   is; a non-Gaussian bandwidth or convergence profile would change :eq:`rf-omega-bound`'s numbers, not its form.
+- **The Si peaks' tails** within one frame of the Bragg point: a kernel-only fit raises the floor (:eq:`rf-si-tails`),
+  and the tail model the fit needs is not chosen here.
 - **The Si fit's three-width covariance** for a given set of reflections is :eq:`rf-si-fisher` inverted; its
   conditioning depends on the rings and :math:`\eta` spread (:eq:`rf-omega-identify`), not written out for a typical
   scan.
