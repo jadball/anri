@@ -310,7 +310,7 @@ Packages are how malware gets in. Use what is already installed, or ask.
 
 ## CI and compatibility
 
-CI (`.github/workflows/main.yml`) tests Python 3.9 and 3.14 on Ubuntu for pushes and PRs. Release tags (`v*.*.*`) also test Linux, Windows and macOS (Intel and ARM). It runs `ruff check .` and `ty check .` with the **latest** ruff and ty, and has no GPU. Each job times out after 40 minutes, its test step after 35; the JAX compile cache is saved even when the tests fail or run out of time. The docs deploy from `main` only when every check passes.
+CI (`.github/workflows/main.yml`) tests Python 3.9 and 3.14 on Ubuntu for pushes and PRs. Release tags (`v*.*.*`) also test Linux, Windows and macOS (Intel and ARM). It runs `ruff check .` and `ty check .` with the **latest** ruff and ty, and has no GPU. Each job times out after 65 minutes, its test step after 60; the JAX compile cache is saved even when the tests fail or run out of time. The docs deploy from `main` only when every check passes.
 
 - **Python 3.9+.** No `match`, `zip(..., strict=True)`, parenthesised context managers, or `X | Y` types evaluated at runtime (fine in annotations with `from __future__ import annotations`).
 - **Old JAX and NumPy.** Python 3.9 gets JAX 0.4.30 and NumPy 1.26. So:

@@ -289,7 +289,8 @@ def test_rows_and_blocks_code():
 def test_predictions_code():
     """predictions: predict's (eta, omega) for each orientation (padded to whole chunks), used where it diffracts,
     |sin eta| > etacut and the orientation is real, its weight the Lorentz-polarisation factor times |F|^2 there and
-    0 elsewhere (idx-weight, coverage 1); exactly predict's outputs, combined."""
+    0 elsewhere (idx-weight, coverage 1); exactly predict's outputs, combined. predict is called on the same padded
+    batch of 4: a batch of another shape compiles differently, and float32 results can then differ by an ulp."""
     from anri.crystal.lattice import lpars_to_B
     from anri.index.search import predict, predictions
 
@@ -300,7 +301,8 @@ def test_predictions_code():
     geom = {"wavelength": 0.3, "k_in_lab": jnp.array([1.0, 0, 0]), "wedge": 0.0, "chi": 0.0, "pol_factor": 0.9}
     e, o, u, w = (np.asarray(a) for a in predictions(U, B, rings, geom, 0.2, qc=4))
     pe, po, pok, plp = (
-        np.asarray(a) for a in predict(jnp.asarray(U), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom)
+        np.asarray(a)[:3]
+        for a in predict(jnp.asarray(np.concatenate([U, U[:1]])), jnp.asarray(B), jnp.asarray(rings["hkls"]), geom)
     )
     assert e.shape[0] == 4  # padded to a whole chunk of 4
     use = pok & (np.abs(np.sin(np.radians(pe))) > 0.2)

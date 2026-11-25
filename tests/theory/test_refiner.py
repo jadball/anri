@@ -379,21 +379,68 @@ def test_discrete_weak_directions():
 
 
 def test_centred_features():
-    """rf-centre: an error dG in the geometry (beam weights, runout) gives a misfit dG Y. Centred on a reference
-    (features g - g_R, |g|^2 - |g_R|^2, with the counts' column), the misfit is dG (Y - Y_R): proportional to the
-    deformation, not to the lattice. Here: one region, two populations of weights a_k (errors da_k), first moments."""
-    a = sp.symbols("a0:2", positive=True)
-    da = sp.symbols("da0:2", real=True)
-    V = sp.symbols("V0:2", positive=True)
-    gR = sp.Matrix(sp.symbols("gR0:3", real=True))
-    m = [gR + sp.Matrix(sp.symbols(f"dm{k}_0:3", real=True)) for k in range(2)]  # each population's mean g
-    true = sum(((a[k] + da[k]) * V[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1))
-    model = sum((a[k] * V[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1))
-    assert is_zero(true - model - sum((da[k] * V[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1)))
-    raw = sum(((a[k] + da[k]) * V[k] * m[k] for k in range(2)), sp.zeros(3, 1)) - sum(
-        (a[k] * V[k] * m[k] for k in range(2)), sp.zeros(3, 1)
+    """rf-centre. (1) An invertible recombination T' = Q T leaves the GLS estimate unchanged:
+    Q^T (Q Sigma Q^T)^-1 Q = Sigma^-1 (2 x 2, symbolic), so (G'^T W' G')^-1 G'^T W' T' = (G^T W G)^-1 G^T W T with
+    W = Sigma^-1. (2) A population's weight error common to all its rows, a_b (1 + eps), is absorbed exactly by
+    (V, Y) -> (1 + eps)(V, Y), and the mean Y / V is unchanged. (3) The remaining error a_b nu_b reaches a region's
+    centred first moment as sum_k a_k nu_k V_k (m_k - g_R), m_k = Y_k g0 / V_k (two populations, symbolic)."""
+    q = sp.Matrix(2, 2, sp.symbols("q0:4", real=True))
+    S = sp.Matrix(
+        [[sp.Symbol("s00", positive=True), sp.Symbol("s01")], [sp.Symbol("s01"), sp.Symbol("s11", positive=True)]]
     )
-    assert is_zero(raw - sum((da[k] * V[k] * m[k] for k in range(2)), sp.zeros(3, 1)))  # the whole lattice
+    assert is_zero(sp.simplify(q.T * (q * S * q.T).inv() * q - S.inv()))
+    # (2) one population over two rows: counts a_b (1 + eps) V, first moments a_b (1 + eps) Y g0
+    ab = sp.symbols("a0:2", positive=True)
+    eps = sp.Symbol("epsilon", real=True)
+    V = sp.Symbol("V", positive=True)
+    Yg = sp.Matrix(sp.symbols("y0:3", real=True))  # Y^(1) g0
+    for b in range(2):
+        assert is_zero(ab[b] * (1 + eps) * V - ab[b] * ((1 + eps) * V))
+        assert is_zero(ab[b] * (1 + eps) * Yg - ab[b] * ((1 + eps) * Yg))
+    assert is_zero(((1 + eps) * Yg) / ((1 + eps) * V) - Yg / V)
+    # (3) the centred misfit, two populations in one region
+    a = sp.symbols("a_0:2", positive=True)
+    nu = sp.symbols("nu0:2", real=True)
+    Vk = sp.symbols("V0:2", positive=True)
+    gR = sp.Matrix(sp.symbols("gR0:3", real=True))
+    Y = [sp.Matrix(sp.symbols(f"Y{k}_0:3", real=True)) for k in range(2)]  # Y_k^(1) g0
+    true = sum(((a[k] * (1 + nu[k])) * (Y[k] - Vk[k] * gR) for k in range(2)), sp.zeros(3, 1))
+    model = sum((a[k] * (Y[k] - Vk[k] * gR) for k in range(2)), sp.zeros(3, 1))
+    m = [Y[k] / Vk[k] for k in range(2)]
+    want = sum((a[k] * nu[k] * Vk[k] * (m[k] - gR) for k in range(2)), sp.zeros(3, 1))
+    assert is_zero(sp.simplify(true - model - want))
+
+
+def test_bias_neff():
+    """rf-bias-neff: with x_j = |c_j| sigma_j >= 0 and bias bounds rho sigma_j, B / sigma = rho (sum x) / sqrt(sum x^2)
+    = rho sqrt(n_eff). Lagrange: n sum x^2 - (sum x)^2 = sum_{i<j} (x_i - x_j)^2 >= 0 (n_eff <= n, equal iff all x
+    equal), and (sum x)^2 - sum x^2 = 2 sum_{i<j} x_i x_j >= 0 (n_eff >= 1); three terms, symbolic. The numbers:
+    sqrt(300) = 17; 300 times 8600 photons is 2.6e6; 3000^2 voxels by 16 numbers is 1.4e8."""
+    x = sp.symbols("x0:3", nonnegative=True)
+    S1, S2 = sum(x), sum(xi**2 for xi in x)
+    pairs = list(itertools.combinations(range(3), 2))
+    assert is_zero(sp.expand(3 * S2 - S1**2 - sum((x[i] - x[j]) ** 2 for i, j in pairs)))
+    assert is_zero(sp.expand(S1**2 - S2 - 2 * sum(x[i] * x[j] for i, j in pairs)))
+    assert is_zero((3 * S2 - S1**2).subs({x[1]: x[0], x[2]: x[0]}))
+    assert rounds_to(sp.sqrt(300), "17") and rounds_to(300 * 8600 / sp.Integer(10) ** 6, "2.6")
+    assert rounds_to(3000**2 * 16 / sp.Integer(10) ** 8, "1.4")
+
+
+def test_sign_probes():
+    """rf-probe: over the 8 sign patterns z in {-1, 1}^3, the mean of (sum z_b w_b)^2 is sum w_b^2 and its variance is
+    2 (sum w^2)^2 - 2 sum w^4 <= 2 (sum w^2)^2; the mean of n_p independent probes then has relative sd at most
+    sqrt(2 / n_p)."""
+    w = sp.symbols("w0:3", real=True)
+    pats = list(itertools.product((-1, 1), repeat=3))
+    X = [sum(z * wi for z, wi in zip(p, w)) ** 2 for p in pats]
+    mean = sp.expand(sum(X) / 8)
+    var = sp.expand(sum(xx**2 for xx in X) / 8 - mean**2)
+    S2 = sum(wi**2 for wi in w)
+    S4 = sum(wi**4 for wi in w)
+    assert is_zero(mean - S2)
+    assert is_zero(sp.expand(var - (2 * S2**2 - 2 * S4)))
+    n = sp.Symbol("n_p", positive=True)
+    assert is_zero(sp.sqrt(2 * S2**2 / n) / S2 - sp.sqrt(2 / n))
 
 
 def test_projected_estimator():
@@ -433,8 +480,8 @@ def test_box_margin():
     """rf-box-margin: a rotation error delta (|delta| <= e) of the indexer's orientation moves a spot by
     d omega = j_w . delta, d eta = j_e . delta (dif-rotation-motion: j_w = (0, -cot eta, -1),
     j_e = (1, -tan theta / sin eta, 0)), so by Cauchy-Schwarz |d omega| <= e |j_w| = e / |sin eta| and
-    |d eta| <= e sqrt(1 + tan^2 theta / sin^2 eta), attained for delta along j; a strain |eps| <= eps_max moves 2 theta
-    by at most 2 eps_max tan theta and leaves omega and eta (Delta 2theta = -2 eps tan theta, from Bragg's law)."""
+    |d eta| <= e sqrt(1 + tan^2 theta / sin^2 eta), attained for delta along j; a lattice strain eps moves 2 theta by
+    -2 eps tan theta (Bragg's law). The strain's omega and eta terms are test_box_strain's."""
     eta, th = sp.symbols("eta theta", positive=True)
     jw = sp.Matrix([0, -sp.cot(eta), -1])
     je = sp.Matrix([1, -sp.tan(th) / sp.sin(eta), 0])
@@ -449,6 +496,55 @@ def test_box_margin():
     theta_eps = sp.asin(lam / (2 * d0 * (1 + eps)))
     dth = sp.diff(theta_eps, eps).subs(eps, 0)
     assert is_zero(sp.simplify(dth + sp.tan(sp.asin(lam / (2 * d0)))))
+
+
+def test_box_strain():
+    """rf-box-strain, rf-box-margin: g at its diffraction (beam along x, axis z, lab frame at the diffracting omega,
+    g = k_out - k_in), turned by eps [d]x or stretched by (1 + eps). The Ewald condition k_in . g + |g|^2 / 2 = 0 and
+    the implicit function theorem give the rotation's d omega = -d_z - d_y cot(eta) and d eta = d_x - d_y tan(theta) /
+    sin(eta) (dif-rotation-motion: the convention is the same), and the stretch's d omega = -tan(theta) / sin(eta),
+    d eta = -tan^2(theta) cot(eta), d 2theta = 2 tan(theta). For a unit u and symmetric E, |E u|^2 = (u . E u)^2 +
+    |E u - (u . E u) u|^2 (stretch and turn). Lagrange's identity gives the combined bounds:
+    (x^2 + y^2)(1 + T^2) - (x + T y)^2 = (T x - y)^2 >= 0, so eps_t + eps_g tan(theta) <= |eps| sec(theta), and
+    likewise eps_t J + eps_g tan^2(theta) |cot(eta)| <= |eps| sqrt(J^2 + tan^4(theta) cot^2(eta))."""
+    th, eta, lam, om, eps = sp.symbols("theta eta lambda omega epsilon", real=True)
+    X = sp.Matrix([1, 0, 0])
+    k_in = X / lam
+    g0 = (sp.Matrix([sp.cos(2 * th), -sp.sin(2 * th) * sp.sin(eta), sp.sin(2 * th) * sp.cos(eta)]) - X) / lam
+    at0 = {om: 0, eps: 0}
+
+    def moves(g):
+        ewald = k_in.dot(g) + g.dot(g) / 2
+        d_om = -ewald.diff(eps).subs(at0) / ewald.diff(om).subs(at0)
+        k_out = g + k_in
+        dk = (k_out.diff(om) * d_om + k_out.diff(eps)).subs(at0)
+        k0 = k_out.subs(at0)
+        d_eta = (-dk[1] * k0[2] + k0[1] * dk[2]) / (k0[1] ** 2 + k0[2] ** 2)  # d atan2(-k_y, k_z)
+        d_tth = -lam * dk[0] / sp.sin(2 * th)  # cos(2 theta) = lam k_out . x
+        return [sp.simplify(sp.trigsimp(x)) for x in (d_om, d_eta, d_tth)]
+
+    d = sp.Matrix(sp.symbols("d0:3", real=True))
+    r_om, r_eta, r_tth = moves(rz(om) * (sp.eye(3) + eps * skew(d)) * g0)
+    assert is_zero(sp.trigsimp(r_om - (-d[2] - d[1] * sp.cot(eta))))
+    assert is_zero(sp.trigsimp(r_eta - (d[0] - d[1] * sp.tan(th) / sp.sin(eta))))
+    assert is_zero(r_tth)
+    s_om, s_eta, s_tth = moves(rz(om) * (1 + eps) * g0)
+    assert is_zero(sp.simplify(sp.trigsimp(s_om + sp.tan(th) / sp.sin(eta))))
+    assert is_zero(sp.simplify(sp.trigsimp(s_eta + sp.tan(th) ** 2 * sp.cot(eta))))
+    assert is_zero(sp.simplify(sp.trigsimp(s_tth - 2 * sp.tan(th))))
+    # stretch and turn of a unit vector
+    u = sp.Matrix(sp.symbols("u0:3", real=True))
+    E = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"E_{min(i, j)}{max(i, j)}", real=True))
+    Eu = E * u
+    stretch = u.dot(Eu)
+    turn = Eu - stretch * u
+    # |E u|^2 - stretch^2 - |turn|^2 = stretch^2 (1 - |u|^2): zero on the unit sphere
+    assert is_zero(sp.expand(Eu.dot(Eu) - stretch**2 - turn.dot(turn) - stretch**2 * (1 - u.dot(u))))
+    # Lagrange's identity, for both combined bounds
+    x, y, T, J, c = sp.symbols("x y T J c", real=True)
+    assert is_zero(sp.expand((x**2 + y**2) * (1 + T**2) - (x + T * y) ** 2 - (T * x - y) ** 2))
+    assert is_zero(sp.expand((x**2 + y**2) * (J**2 + c**2) - (J * x + c * y) ** 2 - (c * x - J * y) ** 2))
+    assert is_zero(sp.simplify(sp.sqrt(1 + sp.tan(th) ** 2) - 1 / sp.cos(th)).subs(th, sp.Rational(1, 7)))
 
 
 def test_identify_populations():
@@ -1021,6 +1117,34 @@ def test_si_position_number():
     assert rounds_to(pix / sp.sqrt(500) / h, "0.021")
 
 
+def test_si_tails():
+    """rf-si-tails: a reflection's light is a core (1 - tau, share S(v) outside its frame) and a tail (tau, share t_o
+    outside), so S_obs = (1 - tau) S + tau t_o and S_obs - S = tau (t_o - S). A kernel-only fit solves S(v_hat) =
+    S_obs; by the implicit function theorem d v_hat / d tau = (t_o - S) / S'(v) at tau = 0. In the narrow limit
+    S = Phi(-d / sqrt(v)), v S'(v) = z phi(z) / 2 at z = d / sqrt(v), largest at z = 1 (its derivative is
+    phi(z)(1 - z^2) / 2). The numbers: phi(1) / 2 = 0.121, Phi(-1) = 0.159; tau = 1 % with t_o = 1 at z = 1 raises v
+    by 7.0 % and s by 3.4 %; the core beyond one frame at s = 0.15, Phi(-1 / 0.15) = 1.3e-11."""
+    tau, to, S, v, d = sp.symbols("tau t_o S v d", positive=True)
+    Sobs = (1 - tau) * S + tau * to
+    assert is_zero(sp.expand(Sobs - S - tau * (to - S)))
+    # S(v_hat) = S_obs(tau): d v_hat / d tau = (d S_obs / d tau) / S'(v) at tau = 0
+    assert is_zero(sp.diff(Sobs, tau) - (to - S))
+    z = sp.Symbol("z", positive=True)
+    phi = sp.exp(-(z**2) / 2) / sp.sqrt(2 * sp.pi)
+
+    def Phi(x):
+        return (1 + sp.erf(x / sp.sqrt(2))) / 2
+
+    vSv = v * sp.diff(Phi(-d / sp.sqrt(v)), v)
+    assert is_zero(sp.simplify(vSv - (z * phi / 2).subs(z, d / sp.sqrt(v))))
+    assert is_zero(sp.simplify(sp.diff(z * phi / 2, z) - phi * (1 - z**2) / 2))
+    top = (phi / 2).subs(z, 1)
+    assert rounds_to(top, "0.121") and rounds_to(Phi(-1), "0.159")
+    rise = sp.Rational(1, 100) * (1 - Phi(-1)) / top
+    assert rounds_to(100 * rise, "7.0") and rounds_to(100 * (sp.sqrt(1 + rise) - 1), "3.4")
+    assert rounds_to(Phi(-1 / sp.Rational(15, 100)) * 10**11, "1.3")
+
+
 def test_background_confound():
     """rf-background: background light b(x) = b0 + b1 . (x - centre) over a region adds to its counts, first and
     second moments b0 (S0, S1, S2) + b1 . (S1, S2, S3), S_n the box's own moments (with 1/(LP) weights), linearly. In a
@@ -1078,6 +1202,39 @@ def test_richardson_bound():
         x = x + al * r
         r = r - al * A * r
     assert sp.Poly(sp.expand(x / r0), A).degree() == 2  # x_3 = p(A) r0, deg p = 2 < 3
+
+
+def test_cg_bound():
+    """rf-cg: T_k(cos t) = cos(k t), so |T_k| <= 1 on [-1, 1], and T_k(x) = ((x + r)^k + (x - r)^k) / 2 with
+    r = sqrt(x^2 - 1) (k <= 6, against sympy's chebyshevt); for x >= 1 both terms are positive, so T_k(x) >=
+    (x + r)^k / 2. At x = (kappa + 1)/(kappa - 1), with kappa = q^2, q > 1: x + r = (q + 1)/(q - 1). So
+    1 / T_k(x) <= 2 ((q - 1)/(q + 1))^k, and ln((q - 1)/(q + 1)) = -2 atanh(1/q) <= -2/q (test_richardson_bound's
+    series) gives k >= (q / 2) ln(2 / tol). The numbers: kappa = 1 / T^2 at T = lim-transfer(2) and (1): 20 plain and
+    10 CG steps to 1e-3 for the first, 4300 and 134 for the second; 1 / sin^4 theta = 890 and 2.8e5 for Ni 420 at
+    43 keV and 111 at 70 keV."""
+    t, x = sp.symbols("t x", real=True)
+    for k in range(7):
+        assert is_zero(sp.simplify(sp.expand_trig(sp.chebyshevt(k, sp.cos(t)) - sp.cos(k * t))))
+        r = sp.sqrt(x**2 - 1)
+        assert is_zero(sp.expand(sp.chebyshevt(k, x) - ((x + r) ** k + (x - r) ** k) / 2))
+    q = sp.Symbol("q", positive=True)
+    xq = (q**2 + 1) / (q**2 - 1)
+    root = 2 * q / (q**2 - 1)  # sqrt(x^2 - 1) for q > 1: x^2 - 1 = 4 q^2 / (q^2 - 1)^2
+    assert is_zero(sp.simplify(xq**2 - 1 - root**2))
+    assert is_zero(sp.simplify(xq + root - (q + 1) / (q - 1)))
+
+    def T(lam):  # lim-transfer
+        return sp.exp(-(sp.pi**2) / (4 * sp.log(2) * lam**2))
+
+    k1, k2 = 1 / T(2) ** 2, 1 / T(1) ** 2
+    assert sp.ceiling(sp.N(k1 / 2 * sp.log(1000), 30)) == 21 and rounds_to(k1 / 2 * sp.log(1000), "20")
+    assert sp.ceiling(sp.N(sp.sqrt(k1) / 2 * sp.log(2000), 30)) == 10
+    assert rounds_to(k2 / 2 * sp.log(1000) / 100, "43")
+    assert sp.ceiling(sp.N(sp.sqrt(k2) / 2 * sp.log(2000), 30)) == 134
+    hc, a0 = sp.Rational(12398, 1000), sp.Rational(3524, 1000)
+    s420 = hc / 43 / (2 * a0 / sp.sqrt(20))
+    s111 = hc / 70 / (2 * a0 / sp.sqrt(3))
+    assert rounds_to(1 / s420**4 / 10, "89") and rounds_to(1 / s111**4 / 10**5, "2.8")
 
 
 def test_ray_normal_symbol():
@@ -1354,22 +1511,22 @@ def test_sandwich():
 
 def test_beam_motion():
     """rf-beam-motion: a voxel at (x, y) in the sample sits at dty_v(w) = y0 - (x sin w + y cos w). Over a further turn
-    d its dty moves by -zeta sin d - eta (cos d - 1), with (zeta, eta) its lab position along and across the beam at
+    d its dty moves by -zeta sin d - upsilon (cos d - 1), with (zeta, upsilon) its lab position along and across the beam at
     w; that move is the y-component of R_z(d) p - p, so its size is at most the chord 2 r |sin(d/2)| <= r |d|; and
-    d(dty_v)/dw = -zeta, d^2(dty_v)/dw^2 = eta, both at most r in size."""
+    d(dty_v)/dw = -zeta, d^2(dty_v)/dw^2 = upsilon, both at most r in size."""
     x, y, y0, w, d = sp.symbols("x y y0 omega delta", real=True)
     dty = y0 - (x * sp.sin(w) + y * sp.cos(w))
     lab = rz(w) * sp.Matrix([x, y, 0])
-    zeta, eta = lab[0], lab[1]
+    zeta, upsilon = lab[0], lab[1]
     move = dty.subs(w, w + d) - dty
-    assert is_zero(sp.expand_trig(move - (-zeta * sp.sin(d) - eta * (sp.cos(d) - 1))))
+    assert is_zero(sp.expand_trig(move - (-zeta * sp.sin(d) - upsilon * (sp.cos(d) - 1))))
     chord = rz(d) * lab - lab
     assert is_zero(sp.expand_trig(move + chord[1]))
     assert is_zero(sp.expand_trig(chord.dot(chord) - 4 * (x**2 + y**2) * sp.sin(d / 2) ** 2))
     # |sin(d/2)| <= |d|/2: d/2 - sin(d/2) vanishes at 0 and has the derivative (1 - cos(d/2))/2 >= 0
     assert is_zero(sp.diff(d / 2 - sp.sin(d / 2), d) - (1 - sp.cos(d / 2)) / 2)
-    assert is_zero(sp.diff(dty, w) + zeta) and is_zero(sp.diff(dty, w, 2) - eta)
-    assert is_zero(zeta**2 + eta**2 - (x**2 + y**2))
+    assert is_zero(sp.diff(dty, w) + zeta) and is_zero(sp.diff(dty, w, 2) - upsilon)
+    assert is_zero(zeta**2 + upsilon**2 - (x**2 + y**2))
 
 
 def test_beam_taylor():
@@ -1488,7 +1645,7 @@ def test_beam_numbers():
 
 def test_beam_misplace():
     """rf-beam-misplace: the weight at the photon's own omega, P(dty_b - dty_v(w + d)), is the profile at the mean
-    omega with the voxel moved by m(d) = -zeta sin d - eta (cos d - 1) (rf-beam-motion). The rows' sum of a Gaussian
+    omega with the voxel moved by m(d) = -zeta sin d - upsilon (cos d - 1) (rf-beam-motion). The rows' sum of a Gaussian
     profile, sum_n exp(-(n - y)^2 / 2 sigma^2), is by Poisson summation sqrt(2 pi) sigma (1 + 2 sum_k
     exp(-2 pi^2 sigma^2 k^2) cos 2 pi k y): its first harmonic's relative amplitude is 2 T(1) of lim-transfer, 0.057 at
     sigma = 1 / (2 sqrt(2 ln 2)) steps (FWHM one step)."""

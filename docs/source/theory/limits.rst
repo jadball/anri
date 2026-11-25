@@ -232,9 +232,22 @@ steps in a domain whose voxels share their spots over a length of :math:`D` voxe
 
     \mu = \frac{L}{\pi D}\, T^2 .
 
-**Proof:** ``tests/theory/test_limits.py::test_merged_information``
+The derivation. A ray through the domain sums :math:`D` voxels. Its first moment has noise variance :math:`D N_v W^2`
+(:math:`D N_v` photons, each of spread :math:`W`). A pattern :math:`A\cos(\vec{k}\cdot\vec{x} + \varphi)` adds
+:math:`N_v A\operatorname{Re}(e^{i\varphi}S)` to it, with :math:`S = \int_{-D/2}^{D/2} e^{i\kappa t}\,dt` and
+:math:`\kappa` the frequency's component along the ray. Averaged over the rays' phases, a ray gives the information
+:math:`N_v|S|^2/(2DW^2)` on :math:`A`. A view holds :math:`1/D` rays per voxel of the domain, where lone voxels give
+:math:`N_v/(2W^2)` each, so a view gives the fraction :math:`|S|^2/D^2 = \operatorname{sinc}^2(\kappa D/2)` of a lone
+view. A view at an angle :math:`\beta` from the perpendicular to :math:`\vec{k}` has :math:`\kappa = K\sin\beta
+\approx K\beta`. The :math:`M` reflections give views at a density :math:`M/2\pi` about each of the two
+perpendicular directions, so the views sum to :math:`(2M/2\pi)\int\operatorname{sinc}^2(KD\beta/2)\,d\beta = 2M/(KD)`.
+Dividing by the :math:`M` lone views, with the beam's :math:`T^2` and :math:`K = 2\pi/L`, gives :eq:`lim-mu`.
 
-Assumptions: constant merged length :math:`D`; counting noise only, equal counts per spot; linear; aliasing (the
+**Proof:** ``tests/theory/test_limits.py::test_merged_information`` (the ray's information and its phase average; the
+fraction per view; the segment and the window integrals; the assembly)
+
+Assumptions: constant merged length :math:`D`; a window narrow against the directions, :math:`KD \gg 1` (so the
+small-angle :math:`\kappa \approx K\beta` and the infinite integral hold); counting noise only, equal counts per spot; linear; aliasing (the
 Poisson-summation terms of the dty sampling) dropped, which needs :math:`L \gtrsim 4`; and enough reflections that
 every direction of :math:`\vec{k}` has coherent views, :math:`ML/(\pi D) \gg 2`, on the distinct ratios
 :eq:`lim-views` needs; with fewer, some directions get none (a true null). :math:`\mu` is per view: the seen

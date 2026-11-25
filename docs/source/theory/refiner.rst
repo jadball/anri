@@ -52,7 +52,8 @@ the shape of the detector's point spread beyond (A5). The assumptions are:
 - **(A6) The instrument's omega kernel is a factor.** Every peak's omega profile is the instrument's omega kernel
   convolved with something non-negative and otherwise arbitrary. The kernel is a Gaussian whose variance is
   :eq:`rf-omega-kernel` with three widths (horizontal and vertical convergence, bandwidth), measured on a single
-  rotation of an undeformed Si crystal and taken at the low end of their uncertainty. It is an operating condition of
+  rotation of an undeformed Si crystal, by a fit that includes the peaks' tails (:eq:`rf-si-tails`), and taken at the
+  low end of their uncertainty. It is an operating condition of
   the refinement: such a Si scan, with reflections on at least two rings, is measured with every experiment
   (:eq:`rf-omega-identify`). The kernel is never fitted to the sample.
 
@@ -157,15 +158,15 @@ The beam's weight within a peak
 
 The renderer folds the beam's weight into every peak (:eq:`int-fold`); a moment refiner cannot, since it has no shape
 to fold it into. This section derives what that costs. Take a voxel at radius :math:`r` from the axis, with lab
-coordinates :math:`(\zeta, \eta)` along and across the beam at omega :math:`\bar\omega`. Over a further turn
+coordinates :math:`(\zeta, \upsilon)` along and across the beam at omega :math:`\bar\omega`. Over a further turn
 :math:`\delta` its dty (:eq:`dif-dty`, beam along :math:`x`) moves by
 
 .. math::
     :label: rf-beam-motion
 
-    \text{dty}_v(\bar\omega + \delta) - \text{dty}_v(\bar\omega) = -\zeta\sin\delta - \eta(\cos\delta - 1),
+    \text{dty}_v(\bar\omega + \delta) - \text{dty}_v(\bar\omega) = -\zeta\sin\delta - \upsilon(\cos\delta - 1),
     \qquad |\cdot| \le 2r\,|\sin(\delta/2)| \le r|\delta|,
-    \qquad \frac{d\,\text{dty}_v}{d\omega} = -\zeta,\quad \frac{d^2\text{dty}_v}{d\omega^2} = \eta .
+    \qquad \frac{d\,\text{dty}_v}{d\omega} = -\zeta,\quad \frac{d^2\text{dty}_v}{d\omega^2} = \upsilon .
 
 The move is one component of the voxel's chord. Its rate is the voxel's position along the ray: exactly the
 coordinate a single projection does not see.
@@ -299,7 +300,7 @@ at its own, is the same as moving its light across the ray, at the mean angle, b
     :label: rf-beam-misplace
 
     w_{bk}(\bar\omega + \delta) = P\big(\text{dty}_b - \text{dty}_v(\bar\omega) - m(\delta)\big), \qquad
-    m(\delta) = -\zeta\sin\delta - \eta(\cos\delta - 1), \qquad |m| \le r|\delta| .
+    m(\delta) = -\zeta\sin\delta - \upsilon(\cos\delta - 1), \qquad |m| \le r|\delta| .
 
 So the moment refiner is an exact tomography of each reflection's light, with every photon moved across the ray by
 :math:`m(\delta)`: by about :math:`\zeta\delta`, with an rms of :math:`|\zeta| s_{kh} \le r\, s_{kh}` over the
@@ -515,12 +516,14 @@ and bias bound instead (:eq:`rf-linear`).
 
 The model is linear in the unknowns. No linearisation in the deformation is made, except the beam's weight across
 each population's omega extent, which is bounded (:eq:`rf-beam-taylor`), not modelled. What stays non-linear is which
-cells form each region, a discrete function of where the populations' spots are. It is fixed for an iteration, as
-the window origins are (:doc:`peak_shape`), and re-made from the new estimates.
+cells form each region, a discrete function of where the populations' spots are. It is fixed once, from the
+indexer's populations, and never re-made from the refiner's own estimates (:eq:`rf-box-margin`). Re-making it would
+choose the regions from the data being fitted, which voids the selection bound (:eq:`rf-sandwich`) and the background's
+unchosen complement (:eq:`rf-background`).
 
 **Regions.** A population's box in a reflection is the set of cells within half-widths :math:`(t_s, t_f, t_\omega)`
-of its predicted spot centre (from :math:`\matr{Y}^{(1)}`). The half-widths are a size, fixed from the population's
-measured second moments, never a shape. A region is a connected union of boxes, so every population whose box meets
+of its spot centre as the indexer predicts it. The half-widths are a size, fixed from the indexer's spread for the
+population and the instrument's width (:eq:`rf-box-width`), never a shape. A region is a connected union of boxes, so every population whose box meets
 it is in it, with its whole box. Separated populations have regions of their own; merged ones share a region and
 enter it as a ray sum. Which voxel along a ray holds which part of the light is never decided within a region. It is
 decided by the tomography: by the same populations' regions in other rows and other reflections.
@@ -612,7 +615,8 @@ two, and the rank is 2 for any number of reflections. Bandwidth and convergence 
 
 **Proof:** ``tests/theory/test_refiner.py::test_omega_identifiable`` (the derivative; the determinant; one ring's rank).
 
-So 500 or more Si reflections on two or more rings determine the kernel; the condition is the rings, not the count.
+So 500 or more Si reflections on two or more rings determine the kernel, if their peaks are the kernel alone (the
+tails below change that); the condition is the rings, not the count.
 Only reflections within a few kernel widths of a frame's edge carry information. With a kernel of sd :math:`\sigma`
 frames that is about a fraction :math:`6\sigma` of them, about 35 of 500 at :math:`\sigma = 0.012`: still many more
 than three unknowns.
@@ -663,6 +667,37 @@ fitting the positions jointly is necessary, not optional.
 
 **Proof:** ``tests/theory/test_refiner.py::test_si_position_orthogonal``,
 ``tests/theory/test_refiner.py::test_si_position_number``
+
+**Tails raise the floor.** Bright Si peaks have weak tails over 5-9 frames, most likely thermal diffuse scattering
+(measured on undeformed Si, AGENTS.md). Write a reflection's light as a core, the Bragg peak through the kernel,
+holding :math:`1 - \tau` of it, and a tail holding :math:`\tau`, of which a share :math:`t_o` lies outside the
+reflection's own frame. With :math:`S(v)` the core's share outside its frame, the light outside the frame is
+
+.. math::
+    :label: rf-si-tails
+
+    S_{\text{obs}} = (1 - \tau)S(v) + \tau t_o, \qquad S_{\text{obs}} - S(v) = \tau\,(t_o - S(v)), \qquad
+    \frac{\hat v - v}{v} = \frac{\tau\,(t_o - S)}{v\,\partial_v S} + O(\tau^2), \qquad
+    v\,\partial_v S = \tfrac{1}{2}z\varphi(z) \le \tfrac{1}{2}\varphi(1) = 0.121,
+
+with :math:`z = d/s` in the narrow limit (:eq:`rf-si-narrow`). :math:`S` rises strictly with :math:`v`
+(:eq:`rf-omega-identify`). A fit with the kernel alone solves :math:`S(\hat v) = S_{\text{obs}}`, so it returns
+:math:`\hat v > v` whenever the tail lies outside the frame more than the core does, :math:`t_o > S(v)`. For a tail
+spread over several frames that is always. It is the unsafe direction for (A6), and taking the low end of the fit's
+uncertainty does not undo a bias. At the reflections that carry the most information (:math:`z = 1`, :math:`S =
+\Phi(-1) = 0.159`), a tail of 1 % lying almost wholly outside the frame raises :math:`v` by 7.0 % (:math:`s` by
+3.4 %). Elsewhere the rise is larger.
+
+**Proof:** ``tests/theory/test_refiner.py::test_si_tails`` (the mixture; the implicit derivative; the maximum of
+:math:`z\varphi(z)`; the numbers).
+
+What the data give: for :math:`s \lesssim 0.15` frames the core puts less than :math:`\Phi(-1/0.15) = 1.3 \times
+10^{-11}` of its light two or more frames from its own, so those frames hold tail alone and measure it. The tail's
+light in the reflection's own frame and the one beside it is not measured. There it is mixed with the core's spill,
+and telling them apart needs a model of the tail within one frame of the Bragg point: a shape. So the floor
+:math:`v_{\text{lo}}` cannot be taken from a fit of the frame shares to the kernel alone. It must come from a fit
+that includes the tails. Which tail model to use (a diffuse-scattering form near the Bragg point, or a bound from the
+measured decay) is the maintainer's choice, not made here.
 
 The cut
 -------
@@ -903,21 +938,40 @@ That is the mechanism of the failures: the weak combinations are set by the mode
 
 **Errors in the geometry.** An error :math:`\delta\matr{G}` (beam weights, a runout of about 1 µm, a beam profile
 known only roughly) gives a misfit :math:`\delta\matr{G}\,\vec{Y}`, and :math:`\vec{Y}` is dominated by the lattice
-itself: :math:`\matr{Y}^{(1)} \approx V\matr{I}`. Features centred on a reference per region, :math:`\vec{g} -
-\vec{g}_R` and :math:`|\vec{g}|^2 - |\vec{g}_R|^2` (with the counts fitted alongside), turn the misfit into
+itself: :math:`\matr{Y}^{(1)} \approx V\matr{I}`. How much of it reaches the deformation comes in three parts.
+
+The features' form does not matter to a fit that keeps the statistics' covariance. An invertible recombination
+:math:`\vec{T}' = \matr{Q}\vec{T}`, such as centring, maps :math:`\matr{G}` to :math:`\matr{Q}\matr{G}` and
+:math:`\matr{\Sigma}` to :math:`\matr{Q}\matr{\Sigma}\matr{Q}^T`. Since :math:`\matr{Q}^T(\matr{Q}\matr{\Sigma}
+\matr{Q}^T)^{-1}\matr{Q} = \matr{\Sigma}^{-1}`, the generalised-least-squares estimate is unchanged, and so is its
+bias. Centring the features on a reference per region, :math:`\vec{g} - \vec{g}_R` and :math:`|\vec{g}|^2 -
+|\vec{g}_R|^2` with the counts alongside, matters only for weights that drop the covariance, such as diagonal weights.
+The uncentred :math:`T[\vec{g}]` is almost :math:`\vec{g}_R T[1]`; centring removes that correlation, and diagonal
+weights then come close to the full ones.
+
+A population's error common to all of its rows is absorbed exactly. Write the weights' error as :math:`\delta a_{bk}
+= a_{bk}(\epsilon_k + \nu_{bk})`, with :math:`\epsilon_k` the part common to every row and reflection of population
+:math:`k`. Then :math:`(V_k, \matr{Y}_k) \to (1 + \epsilon_k)(V_k, \matr{Y}_k)` reproduces the data, and the mean
+deformation :math:`\matr{Y}_k/V_k` does not change. The rest, :math:`\nu_{bk}`, which varies from row to row, cannot
+be absorbed by any per-population unknown. It reaches a region's centred first moment as
 
 .. math::
     :label: rf-centre
 
-    \delta\matr{G}\,(\vec{Y} - \vec{Y}_R) = \sum_k \delta a_k V_k\, (\vec{m}_k - \vec{g}_R),
+    \sum_k a_{bk}\,\nu_{bk}\,V_k\,(\vec{m}_k - \vec{g}_R), \qquad \vec{m}_k = \matr{Y}^{(1)}_k\vec{g}_0/V_k,
 
-proportional to each population's deviation from the reference, about :math:`10^{-3}` of the lattice, instead of to
-the lattice. The counts' own misfit, :math:`\sum \delta a_k V_k`, falls on the densities, which are not sought. The
-deformation then inherits only the geometry's relative error, :math:`\delta a / a` times its own contrast. A runout
-that is common to every voxel and periodic in omega is also of the drift's form (:mod:`anri.index.drift`, measured
-from Friedel pairs), and can be fitted as one function of omega for the whole map.
+proportional to each population's deviation from the region's reference. Nothing here assumes grains. A region is
+whatever populations overlap in that reflection and row. With :math:`\vec{g}_R` the region's predicted light-weighted
+mean, the deviation is the spread of those populations' mean scattering vectors. Where they are nearly co-oriented it
+is about :math:`10^{-3}` of the lattice. Where a region merges misoriented populations (a strongly deformed voxel's
+populations, or unrelated spots that overlap on the ring) it is their misorientation, up to degrees. So the
+protection holds region by region, and is weakest where regions are most merged. The misfit left for the deformation
+is the row-to-row part :math:`\nu` of the geometry's relative error, times that spread. A runout that is common to
+every voxel and periodic in omega is also of the drift's form (:mod:`anri.index.drift`, measured from Friedel pairs),
+and can be fitted as one function of omega for the whole map.
 
-**Proof:** ``tests/theory/test_refiner.py::test_centred_features``
+**Proof:** ``tests/theory/test_refiner.py::test_centred_features`` (the recombination identity; the common scale
+absorbed; the misfit's form)
 
 **What to estimate.** Every voxel's numbers are estimated by the left inverse of :eq:`rf-linear`, each with its own
 covariance and its own bias bound :math:`\sum_j |A_{ij}|\bar\Delta_j`, and reported as not determined where the bound
@@ -1033,24 +1087,47 @@ One linear solve, and its split
 :math:`\vec{Y}`. Iterating them is unnecessary if the first boxes already hold the light. The indexer's orientation
 is within a rotation :math:`|\vec{\delta}| \le e` of a population's mean (:doc:`localsearch` gives :math:`e` per
 level). A rotation moves a spot by :math:`\Delta\omega = \vec{j}_\omega\cdot\vec{\delta}` and :math:`\Delta\eta =
-\vec{j}_\eta\cdot\vec{\delta}` (:eq:`dif-rotation-motion`). A strain :math:`|\varepsilon| \le
-\varepsilon_{\max}` changes :math:`2\theta`, and also turns :math:`\vec{g}` by up to about :math:`\varepsilon_{\max}`
-(:eq:`rf-box-margin-exact`), which adds to :math:`e`. So, by Cauchy-Schwarz,
+\vec{j}_\eta\cdot\vec{\delta}` (:eq:`dif-rotation-motion`). A strain moves the spot in two ways. It turns
+:math:`\vec{g}`, by an angle :math:`\varepsilon_t`, which acts as a rotation and adds to :math:`e`. And it changes
+:math:`|\vec{g}|` at a fixed direction, by a fraction :math:`\varepsilon_g`. That changes the Bragg angle, and so the
+omega at which the same direction diffracts. For :math:`\vec{g}` at its diffraction, the implicit function theorem on
+the Ewald condition (:eq:`dif-ewald`) gives, to first order,
+
+.. math::
+    :label: rf-box-strain
+
+    \Delta\omega = -\varepsilon_g\frac{\tan\theta}{\sin\eta}, \qquad
+    \Delta\eta = -\varepsilon_g\tan^2\theta\cot\eta, \qquad
+    \Delta 2\theta = 2\varepsilon_g\tan\theta, \qquad
+    \varepsilon_t^2 + \varepsilon_g^2 = |\varepsilon\hat{\vec{g}}|^2 \le \|\varepsilon\|^2 .
+
+The last holds because :math:`\varepsilon\hat{\vec{g}}` splits into its part along :math:`\hat{\vec{g}}` (the stretch)
+and across it (the turn).
+
+**Proof:** ``tests/theory/test_refiner.py::test_box_strain``
+
+So, by Cauchy-Schwarz, for a rotation :math:`|\vec{\delta}| \le e` and a strain of operator
+norm at most :math:`\varepsilon_{\max}`,
 
 .. math::
     :label: rf-box-margin
 
-    |\Delta\omega| \le \frac{e}{|\sin\eta|}, \qquad
-    |\Delta\eta| \le e\sqrt{1 + \frac{\tan^2\theta}{\sin^2\eta}}, \qquad
-    |\Delta 2\theta| \le 2\varepsilon_{\max}\tan\theta,
+    |\Delta\omega| \le \frac{e + \varepsilon_{\max}\sec\theta}{|\sin\eta|}, \qquad
+    |\Delta\eta| \le e J + \varepsilon_{\max}\sqrt{J^2 + \tan^4\theta\cot^2\eta}, \qquad
+    |\Delta 2\theta| \le 2\varepsilon_{\max}\tan\theta, \qquad
+    J = \sqrt{1 + \frac{\tan^2\theta}{\sin^2\eta}},
 
-each attained for :math:`\vec{\delta}` along its :math:`\vec{j}`. A box whose half-widths exceed these margins plus
-the light's own extent :math:`t` holds all of the population's light within :math:`t` of its true centre, wherever
-that is.
+each rotation term attained for :math:`\vec{\delta}` along its :math:`\vec{j}`. The strain's terms are first order in
+:math:`\varepsilon_{\max}`. The stretch's omega term, :math:`\varepsilon_{\max}\tan\theta/|\sin\eta|`, is as large as
+the turn's times :math:`\tan\theta`. An earlier version of this page left it out, which made the boxes too small. A
+box whose half-widths exceed these margins plus the light's own extent :math:`t` holds all of the population's light
+within :math:`t` of its true centre, wherever that is.
 
 **Proof:** ``tests/theory/test_refiner.py::test_box_margin`` (the lengths of :math:`\vec{j}`; Cauchy-Schwarz as
 :math:`|\vec{j}|^2|\vec{\delta}|^2 - (\vec{j}\cdot\vec{\delta})^2 = |\vec{j}\times\vec{\delta}|^2`; Bragg's law
-differentiated).
+differentiated), ``tests/theory/test_refiner.py::test_box_strain`` (the Ewald condition's implicit derivatives, in
+the convention that reproduces :eq:`dif-rotation-motion`; the split of :math:`\varepsilon\hat{\vec{g}}`; the
+combined bounds).
 
 To all orders, along the rotation :math:`\exp(t[\vec{\delta}]_\times)`, :math:`t \in [0, 1]`, the spot moves at
 :eq:`dif-rotation-motion`'s rates evaluated where it is. With :math:`s_0 = |\sin\eta|` at the start and :math:`s_*`
@@ -1070,7 +1147,9 @@ for real :math:`s_*` (:math:`(s_0 - e)^2 \ge 4e\tan\theta`). These margins hold 
 Reflections too close to the axis for a real :math:`s_*` are left out. A strain, of operator norm
 :math:`\|\varepsilon\|`, turns :math:`\vec{g}` by the angle on the right (since :math:`(\matr{I} +
 \varepsilon)\vec{u}\times\vec{u} = \varepsilon\vec{u}\times\vec{u}`), which adds to :math:`e`, and changes
-:math:`|\vec{g}|` within the factors given. This bounds :math:`2\theta` exactly through Bragg's law.
+:math:`|\vec{g}|` within the factors given. This bounds :math:`2\theta` exactly through Bragg's law. The stretch's
+omega and :math:`\eta` terms (:eq:`rf-box-strain`) are added to first order. Their second order, relative
+:math:`\varepsilon_{\max} \lesssim 10^{-2}` of themselves, is not bounded here.
 
 **Proof:** ``tests/theory/test_refiner.py::test_box_margin_exact`` (the root and its expansion; :math:`\sqrt{1 +
 T^2/s^2} < 1 + T/s`; the strain's cross product).
@@ -1082,8 +1161,12 @@ reason, beyond :eq:`dif-rotation-motion`'s smearing, for leaving out reflections
 
 **What is determined per population.** Write a population's first moment absolutely, :math:`\matr{Z}_k = \int
 \matr{F}\matr{U}_k\matr{B}\, d\mu_k`, so that it adds :math:`\matr{Z}_k\vec{h}` to every region it is in, whatever
-its reference orientation. Two populations of one voxel in the same region of a row then have equal columns there:
-only :math:`\matr{Z}_k + \matr{Z}_{k'}` is seen. Their difference is seen only in the rows where they are in
+its reference orientation. Two populations of one voxel in the same region of a row then have columns that differ
+only by their beam weights :math:`a_{bk}`, :math:`a_{bk'}`, taken at their own mean omegas (A3). Those differ by the
+beam's slope times the omegas' difference, the same small term that :eq:`rf-beam-taylor` bounds as a misfit. A
+separation drawn from it would rest on the beam profile's derivative, the model detail that :eq:`rf-discrete` warns
+of, and it is not reported as determined. To that order the columns are equal, and only :math:`\matr{Z}_k +
+\matr{Z}_{k'}` is seen. Their difference is seen only in the rows where they are in
 different regions, through :math:`(\matr{Z}_k - \matr{Z}_{k'})\vec{h}` for those reflections, and
 
 .. math::
@@ -1126,6 +1209,11 @@ its boundary. Orthogonality is :math:`\nabla\cdot(\phi\vec{w}) = \nabla\phi\cdot
 the divergence theorem. It is three scalar Poisson problems per domain: sparse, local, and computable at any scale.
 
 **Proof:** ``tests/theory/test_refiner.py::test_split_first_moments``
+
+A domain :math:`\Omega` exists only where the same populations share regions in every reflection. In a strongly
+deformed sample, which populations merge changes from reflection to reflection, and no such :math:`\Omega` exists:
+the split is then not defined by this construction. The estimate does not need it, since it is per voxel either way
+(the solve, below). Only the split's diagnostics and its use for conditioning (:eq:`rf-cost`) need a domain.
 
 The curl of :math:`\matr{M}`'s rows is not the dislocation density. To first order :math:`\matr{M} - V\matr{I} = V
 \matr{\beta}^* = -V\matr{\beta}^T` (per unit volume :math:`V`), and with :math:`\matr{\beta} = \varepsilon +
@@ -1200,7 +1288,11 @@ for the Hessian. Then :math:`\matr{D}` has full column rank, and
 is the orthogonal projector onto the seen fields; the weak part is :math:`(\matr{I} - \matr{P})`. The normal equations
 :math:`\matr{D}^T\matr{D}\vec{\phi} = \matr{D}^T\vec{v}` carry the boundary conditions implicitly (in the continuum
 limit: Neumann for the gradient; for the Hessian, those of a free plate edge, :eq:`rf-plate`). They are sparse,
-symmetric and positive definite: conjugate gradients per domain. In one dimension every field is a gradient and nothing
+symmetric and positive definite: conjugate gradients per domain. Their conditioning grows with the domain. They are
+a discrete Laplacian and bilaplacian, whose symbols :math:`|\vec{k}|^2` and :math:`|\vec{k}|^4` span factors of about
+:math:`(n/2)^2` and :math:`(n/2)^4` on a domain :math:`n` voxels wide (as in :eq:`rf-cost`). So unpreconditioned
+conjugate gradients need of order :math:`n` and :math:`n^2` steps (:eq:`rf-cg`), and domains of hundreds of voxels
+need a multigrid or Fourier preconditioner, not derived here. In one dimension every field is a gradient and nothing
 is weak, as the slice argument says.
 
 **Proof:** ``tests/theory/test_refiner.py::test_discrete_projector``
@@ -1253,6 +1345,56 @@ The level is per direction and comes from the bounds of :eq:`rf-cut-bound`, :eq:
 :eq:`rf-alias-bound`, not from a choice. Where the bias bound is small, the noise sets it, and where the bias bound is
 large it sets it. Only :math:`\epsilon` and :math:`z` are choices: the precision sought, and the confidence. The level
 says which combinations the map determines; it removes none of them from the estimate (no truncation, above).
+
+What the bias bound costs
+-------------------------
+
+A reported number is a linear combination of the statistics, :math:`\hat{x}_i = \sum_j c_j T_j` (:math:`\vec{c}` the
+row :math:`i` of :math:`\matr{A}`). Its bias bound is :math:`B_i = \sum_j |c_j|\bar\Delta_j`, and, for independent
+statistics of sd :math:`\sigma_j`, its noise is :math:`\sigma_i = (\sum_j c_j^2\sigma_j^2)^{1/2}`. Biases add with
+their signs at worst aligned, noise in quadrature. With every statistic's bound a fixed multiple of its noise,
+:math:`\bar\Delta_j = \rho\,\sigma_j`,
+
+.. math::
+    :label: rf-bias-neff
+
+    \frac{B_i}{\sigma_i} = \rho\sqrt{n_{\text{eff}}}, \qquad
+    n_{\text{eff}} = \frac{\big(\sum_j |c_j|\sigma_j\big)^2}{\sum_j c_j^2\sigma_j^2}, \qquad
+    1 \le n_{\text{eff}} \le n,
+
+by Cauchy-Schwarz over the :math:`n` statistics it uses, with :math:`n_{\text{eff}} = n` when every
+:math:`|c_j|\sigma_j` is equal. A voxel's estimate draws on every region its rays reach, at least one per reflection,
+and a voxel seen equally in :math:`M` regions has :math:`n_{\text{eff}} = M`. The cut's bound equals the noise at 8600
+photons per region (:eq:`rf-cut-bound`, :math:`\rho = 1`). Such a voxel in :math:`M = 300` regions then has a bias bound
+17 times its error bar. Since :math:`\rho \propto N^{-1/2}`, the two meet only at :math:`M` times the photons,
+:math:`2.6 \times 10^6` per region. :eq:`rf-smin`'s sum :math:`\sum_j |u_{ij}|\bar\Delta_j` is the same kind of
+sum: a unit pattern spread evenly over :math:`n` entries has :math:`\sum_j |u_{ij}| = \sqrt{n}`. So a pattern spread
+over a whole map's regions is marked not determined unless :math:`s_i \ge \sqrt{n}\,\bar\Delta/\epsilon`. These
+are worst cases over the sign of every term. Where the signs vary, the bias is far below the bound, but no
+shape-free argument says by how much.
+
+**Proof:** ``tests/theory/test_refiner.py::test_bias_neff`` (Cauchy-Schwarz and its equality; the numbers).
+
+**What can be computed.** :math:`B_i` needs the whole row :math:`i` of :math:`\matr{A}`: one solve of the normal
+equations per reported number. For 3000 × 3000 voxels and 16 numbers each, that is :math:`1.4 \times 10^8` solves,
+which is not feasible. The block-sandwich variances can be computed. With independent signs :math:`z_b = \pm 1`, one
+per block, and :math:`\vec{w}_b = \matr{A}_{:b}\vec{e}_b`,
+
+.. math::
+    :label: rf-probe
+
+    \operatorname{E}\Big[\Big(\sum_b z_b w_{bi}\Big)^2\Big] = \sum_b w_{bi}^2, \qquad
+    \operatorname{Var}\Big[\Big(\sum_b z_b w_{bi}\Big)^2\Big] = 2\Big(\sum_b w_{bi}^2\Big)^2 - 2\sum_b w_{bi}^4
+    \le 2\Big(\sum_b w_{bi}^2\Big)^2,
+
+so :math:`n_p` solves, one per probe :math:`\matr{A}\sum_b z_b\vec{e}_b`, give every voxel's sandwich variance at
+once, to a relative sd of at most :math:`\sqrt{2/n_p}`. The same probes with :math:`z_j\bar\Delta_j` in place of the
+residuals give :math:`\sum_j A_{ij}^2\bar\Delta_j^2`: the bias the terms would give if their signs were independent.
+That is a scale, not a bound. The exact bound can then be computed only for chosen functionals (region means, a sample
+of voxels), at one solve each. Which ones is the maintainer's choice.
+
+**Proof:** ``tests/theory/test_refiner.py::test_sign_probes`` (three blocks: the expectation and variance over the eight
+sign patterns; the bound).
 
 Histograms
 ----------
@@ -1557,8 +1699,25 @@ The number of iterations follows from the condition number. For a symmetric posi
 eigenvalues in :math:`[\ell, L]`, :math:`\kappa = L/\ell`, the step :math:`2/(\ell + L)` contracts the error by
 :math:`(\kappa - 1)/(\kappa + 1)` per iteration. That reaches a tolerance :math:`\tau` within :math:`(\kappa/2)\ln(1/\tau)`
 iterations, since :math:`\ln\frac{\kappa - 1}{\kappa + 1} = -2\operatorname{atanh}(1/\kappa) \le -2/\kappa`. Conjugate
-gradients minimise the same error over a Krylov space that holds that iterate, so they need no more. The ray sums'
-normal operator is a convolution:
+gradients do better. Their error after :math:`k` steps is the least :math:`\|p(\matr{A})\vec{e}_0\|_{\matr{A}}` over
+polynomials of degree :math:`k` with :math:`p(0) = 1`, and the Chebyshev polynomial :math:`T_k` shifted onto
+:math:`[\ell, L]` is one of them, so
+
+.. math::
+    :label: rf-cg
+
+    \frac{\|\vec{e}_k\|_{\matr{A}}}{\|\vec{e}_0\|_{\matr{A}}} \le \frac{1}{T_k\big(\frac{\kappa + 1}{\kappa - 1}\big)}
+    \le 2\left(\frac{\sqrt\kappa - 1}{\sqrt\kappa + 1}\right)^k, \qquad
+    k \ge \frac{\sqrt\kappa}{2}\ln\frac{2}{\tau}\ \text{steps reach } \tau,
+
+since :math:`|T_k| \le 1` on :math:`[-1, 1]`, :math:`T_k(x) \ge \tfrac{1}{2}(x + \sqrt{x^2 - 1})^k` for :math:`x \ge
+1`, and :math:`x + \sqrt{x^2 - 1} = (\sqrt\kappa + 1)/(\sqrt\kappa - 1)` at :math:`x = (\kappa + 1)/(\kappa - 1)`.
+The count goes as :math:`\sqrt\kappa`, not :math:`\kappa`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_cg_bound`` (:math:`T_k(\cos t) = \cos kt` and the closed form, for
+:math:`k \le 6`; the identity at :math:`x = (\kappa + 1)/(\kappa - 1)`; the logarithm's bound; the numbers).
+
+The ray sums' normal operator is a convolution:
 
 .. math::
     :label: rf-cost
@@ -1571,10 +1730,12 @@ normal operator is a convolution:
 With the beam's profile on both sides it falls as :math:`T(\vec{k})^2/|\vec{k}|`. On an :math:`n`-voxel-wide grid
 :math:`|\vec{k}|` spans a factor :math:`n/2` (from the grid's size to its Nyquist), so :math:`\kappa \gtrsim n/2`. A ramp preconditioner :math:`|\vec{k}|` along dty, per reflection (as in filtered
 back-projection), leaves :math:`T(\vec{k})^2`. Then :math:`\kappa = 1/T(k_{\max})^2`: 5.9 when the beam's FWHM is the
-dty step (the Nyquist period is 2 FWHM, :math:`T = 0.41`), and 20 iterations reach :math:`\tau = 10^{-3}`. With the
-FWHM two steps wide, :math:`T = 0.028` and :math:`\kappa = 1.2 \times 10^3`: the bound is then 4100 iterations, and
-conjugate gradients need no more. The weak combinations, estimated in place, would multiply :math:`\kappa` by
-:math:`1/\sin^2\theta` (30-530). Solving in the split parameterisation (:eq:`rf-split-grid`) with the weak block
+dty step (the Nyquist period is 2 FWHM, :math:`T = 0.41`). Then 20 plain iterations reach :math:`\tau = 10^{-3}`, and
+10 of conjugate gradients (:eq:`rf-cg`). With the FWHM two steps wide, :math:`T = 0.028` and :math:`\kappa = 1.2
+\times 10^3`: 4300 plain iterations, 134 of conjugate gradients. The weak combinations, estimated in place, would
+multiply :math:`\kappa` by :math:`1/\sin^2\theta` (30-530) for the first moments. For the metric's
+:math:`C_{\xi\xi}`, seen through :math:`\sin^2\theta` (:eq:`rf-amplify`), they would multiply it by
+:math:`1/\sin^4\theta` (890 to :math:`2.8 \times 10^5`). Solving in the split parameterisation (:eq:`rf-split-grid`) with the weak block
 scaled by its gain (:eq:`rf-smin`) is a change of units, not a filter; the condition number of the scaled system is
 not derived here.
 
@@ -1582,8 +1743,7 @@ not derived here.
 their starting values: a spectral filter, like :eq:`rf-project`'s. The solve runs to the tolerance :math:`\tau` on the
 normal equations' residual, never to a fixed count chosen to stop early.
 
-**Proof:** ``tests/theory/test_refiner.py::test_richardson_bound`` (the contraction; the logarithm's bound; the
-Krylov space), ``tests/theory/test_refiner.py::test_ray_normal_symbol`` (the transform; the numbers),
+**Proof:** ``tests/theory/test_refiner.py::test_richardson_bound`` (the contraction; the logarithm's bound), ``tests/theory/test_refiner.py::test_ray_normal_symbol`` (the transform; the numbers),
 ``tests/theory/test_refiner.py::test_cost_numbers``.
 
 The cost per iteration is set by :math:`F` and the reflections per voxel. Sub-populations per bin
@@ -1624,7 +1784,10 @@ The guarantee
 Under (A1)-(A6). Boxes taken from an indexer fitted to the same data are random; their selection bias is at most the
 light in the band between the boxes of the indexer's extreme placements (:eq:`rf-sandwich`), measured from the data
 and added to the bias bound. The indexer's error :math:`e` in :eq:`rf-box-margin` is a statistical bound, not a hard
-one: the completeness of the boxes, and the band's bound, hold with its confidence.
+one: the completeness of the boxes, and the band's bound, hold with its confidence. The light beyond a box is bounded
+through the population's variance (:eq:`ref-tail`, :eq:`rf-box-width`), taken from the indexer's spread and the
+instrument's width. Light below the cut is not recorded, so no measurement gives that variance: it is an input of the
+bound, from a model, like :math:`e`.
 
 1. **Noise** biases nothing (:eq:`rf-linear`). Error bars come from blocks that are independent exactly
    (:eq:`rf-harris`), with no noise model.
@@ -1643,8 +1806,10 @@ one: the completeness of the boxes, and the band's bound, hold with its confiden
 
 The refiner reports, per population, :math:`\hat{\vec{Y}}`, its block-sandwich covariance, and the bias bound
 :math:`\sum_j |A_{ij}|\bar\Delta_j`. That bound is computed from the geometry, the regions and the point spread's
-:math:`\chi(2\pi k)`, not from any spot shape. Where the bound exceeds the error bar, the estimate is limited by what
-the data cannot say, and the report says so.
+:math:`\chi(2\pi k)`, not from any spot shape, but it needs one solve per reported number and grows as
+:math:`\sqrt{n_{\text{eff}}}` against the noise (:eq:`rf-bias-neff`). At the scale of a map it is computed for chosen
+functionals only, and every voxel gets the sign-probe scale instead (:eq:`rf-probe`). Where the bound exceeds the error
+bar, the estimate is limited by what the data cannot say, and the report says so.
 
 What it costs, against :doc:`limits`:
 
@@ -1673,6 +1838,8 @@ What is left out
   :math:`\matr{Y}^{(2)}` is not written out.
 - **The omega kernel's Gaussian form** (:eq:`rf-omega-kernel`) is the instrument's, as the point spread's mixture
   is; a non-Gaussian bandwidth or convergence profile would change :eq:`rf-omega-bound`'s numbers, not its form.
+- **The Si peaks' tails** within one frame of the Bragg point: a kernel-only fit raises the floor (:eq:`rf-si-tails`),
+  and the tail model the fit needs is not chosen here.
 - **The Si fit's three-width covariance** for a given set of reflections is :eq:`rf-si-fisher` inverted; its
   conditioning depends on the rings and :math:`\eta` spread (:eq:`rf-omega-identify`), not written out for a typical
   scan.
