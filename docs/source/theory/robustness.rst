@@ -279,15 +279,16 @@ any plausible shape error unless the shape is known to the precision of the coun
 (:doc:`detector`) and a population's own spread are not. The robust alternative keeps the light whole: its counts
 and moments over a region holding all of it are the beam- and density-weighted ray sums of every contributor's own
 moments (:eq:`mom-raysum`), exact for any shape, and they determine the merged contributors as a tomography
-(:doc:`limits`), with no information on their separation.
+(:doc:`limits`), with no information on their separation, where each contributor's spot is the same in every row
+(:eq:`rf-beam-taylor`).
 
 What follows for a refiner
 --------------------------
 
 Every statistic above that is robust either keeps one population's light alone or a set of populations' light
 whole: none divides light by its shape. With no spot shape trusted at all, :doc:`refiner` builds the refiner on that:
-deformation moments as an exactly linear tomography of region sums, and the noise, the cut, the group rule and the
-pixels each bounded.
+deformation moments as a linear tomography of region sums, and the noise, the cut, the group rule, the pixels and
+the beam's weight within each peak each bounded.
 
 What is left out
 ----------------

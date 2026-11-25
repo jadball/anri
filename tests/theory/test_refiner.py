@@ -1346,3 +1346,141 @@ def test_sandwich():
         for extra in itertools.combinations(band, n):
             Rh = R0 | set(extra)
             assert abs(sum(vals[p] for p in Rh) - sum(vals[p] for p in R0)) <= bound
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The beam's weight within a peak (rf-beam-motion, rf-beam-taylor, rf-beam-gauss, rf-beam-closure, rf-beam-first)
+
+
+def test_beam_motion():
+    """rf-beam-motion: a voxel at (x, y) in the sample sits at dty_v(w) = y0 - (x sin w + y cos w). Over a further turn
+    d its dty moves by -zeta sin d - eta (cos d - 1), with (zeta, eta) its lab position along and across the beam at
+    w; that move is the y-component of R_z(d) p - p, so its size is at most the chord 2 r |sin(d/2)| <= r |d|; and
+    d(dty_v)/dw = -zeta, d^2(dty_v)/dw^2 = eta, both at most r in size."""
+    x, y, y0, w, d = sp.symbols("x y y0 omega delta", real=True)
+    dty = y0 - (x * sp.sin(w) + y * sp.cos(w))
+    lab = rz(w) * sp.Matrix([x, y, 0])
+    zeta, eta = lab[0], lab[1]
+    move = dty.subs(w, w + d) - dty
+    assert is_zero(sp.expand_trig(move - (-zeta * sp.sin(d) - eta * (sp.cos(d) - 1))))
+    chord = rz(d) * lab - lab
+    assert is_zero(sp.expand_trig(move + chord[1]))
+    assert is_zero(sp.expand_trig(chord.dot(chord) - 4 * (x**2 + y**2) * sp.sin(d / 2) ** 2))
+    # |sin(d/2)| <= |d|/2: d/2 - sin(d/2) vanishes at 0 and has the derivative (1 - cos(d/2))/2 >= 0
+    assert is_zero(sp.diff(d / 2 - sp.sin(d / 2), d) - (1 - sp.cos(d / 2)) / 2)
+    assert is_zero(sp.diff(dty, w) + zeta) and is_zero(sp.diff(dty, w, 2) - eta)
+    assert is_zero(zeta**2 + eta**2 - (x**2 + y**2))
+
+
+def test_beam_taylor():
+    """rf-beam-taylor: the weight w(d) = P(u(d)) of a photon diffracting a turn d past the population's mean omega,
+    with u = dty_b - dty_v the voxel's offset from the row along the scan's path, has w'' = P''(u) u'^2 + P'(u) u'',
+    with |u'| <= r + |r_f| and |u''| <= r (rf-beam-motion; dty_b linear in omega within the path, int-dty-motion);
+    Taylor's remainder is then at most (||P''|| (r + |r_f|)^2 + ||P'|| r) d^2 / 2. For a Gaussian profile of peak 1,
+    ||P'|| = e^(-1/2)/sigma (at |u| = sigma) and ||P''|| = 1/sigma^2 (at u = 0; the other critical points, u^2 =
+    3 sigma^2, give 2 e^(-3/2)/sigma^2, less)."""
+    d, s = sp.symbols("delta sigma", positive=True)
+    u = sp.Function("u")(d)
+    P = sp.Function("P")
+    w = P(u)
+    q = sp.Symbol("q", real=True)
+    P1, P2 = (sp.Subs(sp.Derivative(P(q), q, n), q, u) for n in (1, 2))
+    assert is_zero((sp.diff(w, d, 2) - (P2 * sp.diff(u, d) ** 2 + P1 * sp.diff(u, d, 2))).doit())
+    G = sp.exp(-(q**2) / (2 * s**2))
+    G1, G2 = sp.diff(G, q), sp.diff(G, q, 2)
+    assert set(sp.solve(sp.diff(G1, q), q)) == {-s, s}
+    assert is_zero(sp.Abs(G1.subs(q, s)) - sp.exp(-sp.Rational(1, 2)) / s)
+    assert set(sp.solve(sp.diff(G2, q), q)) == {0, -sp.sqrt(3) * s, sp.sqrt(3) * s}
+    assert is_zero(sp.Abs(G2.subs(q, 0)) - 1 / s**2)
+    assert is_zero(G2.subs(q, sp.sqrt(3) * s) - 2 * sp.exp(-sp.Rational(3, 2)) / s**2)
+    assert 2 * sp.exp(-sp.Rational(3, 2)) < 1
+    assert sp.limit(G2, q, sp.oo) == 0 and sp.limit(G1, q, sp.oo) == 0
+
+
+def test_beam_gauss():
+    """rf-beam-gauss: a Gaussian profile exp(-u^2 / 2 sigma^2), linear motion u = u0 + c d and a Gaussian omega offset
+    d ~ N(0, s^2): the light kept is sigma / sqrt(sigma^2 + c^2 s^2) exp(-u0^2 / 2 (sigma^2 + c^2 s^2)) (the beam
+    widened by c s), and its mean offset is -u0 c s^2 / (sigma^2 + c^2 s^2). This is int-fold with beta = -u0 c /
+    sigma^2 and gamma = -c^2 / sigma^2. The page's numbers: FWHM 1 um, c = 200 um, s = 0.1 deg, u0 = sigma."""
+    d = sp.Symbol("delta", real=True)
+    u0, c = sp.symbols("u0 c", real=True)
+    sg, s = sp.symbols("sigma s", positive=True)
+    N = sp.exp(-(d**2) / (2 * s**2)) / sp.sqrt(2 * sp.pi * s**2)
+    wgt = sp.exp(-((u0 + c * d) ** 2) / (2 * sg**2))
+    kept = sp.integrate(N * wgt, (d, -sp.oo, sp.oo), conds="none").rewrite(sp.erf)  # erf + erfc = 1
+    S2 = sg**2 + c**2 * s**2
+    ratio = sp.simplify(kept / (sg / sp.sqrt(S2) * sp.exp(-(u0**2) / (2 * S2))))
+    assert is_zero(sp.factor(sp.expand_log(sp.log(ratio), force=True)))
+    first = sp.integrate(d * N * wgt, (d, -sp.oo, sp.oo), conds="none").rewrite(sp.erf)
+    assert is_zero(sp.simplify(first / kept + u0 * c * s**2 / S2))
+    beta, gamma = -u0 * c / sg**2, -(c**2) / sg**2  # int-fold's log-quadratic weight about d = 0
+    assert is_zero(sp.expand(sp.log(wgt) - (-(u0**2) / (2 * sg**2) + beta * d + gamma * d**2 / 2)))
+    Sp = 1 / (1 / s**2 - gamma)
+    assert is_zero(sp.simplify(Sp * beta + u0 * c * s**2 / S2))
+    assert is_zero(sp.simplify(sp.sqrt(Sp / s**2) - sg / sp.sqrt(S2)))
+    sig = sp.Rational(1) / (2 * sp.sqrt(2 * sp.log(2)))  # um
+    kap = 200 * sp.pi / 1800 / sig
+    assert rounds_to(kap, "0.82")
+    assert rounds_to(kap * (sp.pi / 1800) / (1 + kap**2) * 10**4, "8.6")  # rad, at u0 = sigma
+
+
+def test_beam_closure():
+    """rf-beam-closure: two omega distributions with the same mass, mean and variance, A (+-s, 1/2 each) and B (0 with
+    1 - q, +-s/sqrt(q) with q/2 each), lit by a Gaussian beam centred on the voxel (u0 = 0, linear motion, kappa =
+    c s / sigma): A keeps exp(-kappa^2 / 2), B keeps 1 - q + q exp(-kappa^2 / 2q). They agree to kappa^2 and differ
+    by (1/q - 1) kappa^4 / 8 at the fourth order; at q = 1/4, kappa = 1, 0.607 against 0.784."""
+    k, q = sp.symbols("kappa q", positive=True)
+    A = sp.exp(-(k**2) / 2)
+    B = 1 - q + q * sp.exp(-(k**2) / (2 * q))
+    for m in range(3):  # equal moments of the omega offset, in units of s: 1, 0, 1
+        mA = sp.Rational(1, 2) * (1 + (-1) ** m)
+        mB = (1 - q) * (1 if m == 0 else 0) + q / 2 * (q ** -sp.Rational(m, 2)) * (1 + (-1) ** m)
+        assert is_zero(mA - mB)
+    ser = sp.series(B - A, k, 0, 6).removeO()
+    assert is_zero(sp.expand(ser - (1 / q - 1) * k**4 / 8))
+    assert rounds_to(A.subs(k, 1), "0.607") and rounds_to(B.subs({k: 1, q: sp.Rational(1, 4)}), "0.784")
+
+
+def test_beam_first_order_linear():
+    """rf-beam-first: with the omega offset to first order d = c . (F - I) g0 (c the gradient of the diffraction
+    omega with g, known from the geometry), the first-order beam term of a centred first moment, sum_i V_i d_i
+    (F_i g0 - g_R), is linear in V, Y1 and Y2 (three sub-volumes, symbolic); and it is bounded by V sd(d) sd(f) when
+    the offsets have mean zero (Cauchy-Schwarz, as the covariance)."""
+    g0 = sp.Matrix(sp.symbols("g0:3", real=True))
+    gR = sp.Matrix(sp.symbols("gR0:3", real=True))
+    cv = sp.Matrix(sp.symbols("c0:3", real=True))
+    F = [_mat(f"F{i}_") for i in range(3)]
+    V = sp.symbols("V0:3", positive=True)
+    dl = [(cv.T * (F[i] - sp.eye(3)) * g0)[0] for i in range(3)]
+    lhs = sum((V[i] * dl[i] * (F[i] * g0 - gR) for i in range(3)), sp.zeros(3, 1))
+    Y0 = sum(V)
+    Y1 = sum((V[i] * F[i] for i in range(3)), sp.zeros(3))
+    Y2 = {(a, k, b, m): sum(V[i] * F[i][a, k] * F[i][b, m] for i in range(3)) for a, k, b, m in
+          itertools.product(range(3), repeat=4)}  # fmt: skip
+    for b in range(3):
+        rhs = sum(cv[a] * Y2[a, k, b, m] * g0[k] * g0[m] for a in range(3) for k in range(3) for m in range(3))
+        rhs -= sum(cv[a] * g0[a] * Y1[b, m] * g0[m] for a in range(3) for m in range(3))
+        rhs -= gR[b] * (cv.T * (Y1 - Y0 * sp.eye(3)) * g0)[0]
+        assert is_zero(lhs[b] - rhs)
+    # the covariance bound: (E[d f])^2 <= E[d^2] E[f^2], here as the Gram determinant of two vectors
+    a = sp.Matrix(sp.symbols("a0:3", real=True))
+    b = sp.Matrix(sp.symbols("b0:3", real=True))
+    assert is_zero(a.dot(a) * b.dot(b) - a.dot(b) ** 2 - a.cross(b).dot(a.cross(b)))
+
+
+def test_beam_numbers():
+    """rf-beam-taylor's numbers: kappa = (r + |r_f|) s / sigma and the first-order bound e^(-1/2) kappa s for the
+    rotation about the axis, FWHM 1 um, r = 200 um, r_f = 0, s = 0.01, 0.03, 0.1 deg; and the largest s for which
+    that bound stays below 1e-4 rad at r = 50, 200 and 500 um."""
+    sig = sp.Rational(1) / (2 * sp.sqrt(2 * sp.log(2)))
+    deg = sp.pi / 180
+    for sd, kap, bias in (("0.01", "0.082", "8.7e-6"), ("0.03", "0.25", "7.8e-5"), ("0.1", "0.82", "8.7e-4")):
+        s = sp.Rational(sd) * deg
+        k = 200 * s / sig
+        assert rounds_to(k, kap)
+        b = sp.exp(-sp.Rational(1, 2)) * k * s
+        mant, ex = bias.split("e")
+        assert rounds_to(b * sp.Integer(10) ** (-int(ex)), mant)
+    for r, smax in ((50, "0.068"), (200, "0.034"), (500, "0.021")):
+        s = sp.sqrt(sp.Rational(1, 10**4) * sig / (sp.exp(-sp.Rational(1, 2)) * r))
+        assert rounds_to(s / deg, smax)
