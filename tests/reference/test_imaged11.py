@@ -180,6 +180,8 @@ class TestLattice(unittest.TestCase):
         for _ in range(50):
             np.random.seed(int(rng.integers(1 << 30)))
             lp = np.asarray(random_lattice(symmetry=kinds[int(rng.integers(len(kinds)))]), float)
+            if not np.isfinite(cellvolume(lp)):
+                continue  # angles no cell can have (older Dans_Diffraction draws them): both give NaN, which is no check
             try:
                 uc = unitcell_id11(lp, "P")
             except np.linalg.LinAlgError:
