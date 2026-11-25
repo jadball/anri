@@ -184,6 +184,39 @@ threshold: a wrong one is absorbed by whatever else is fitted.
 holding most of its charge, nearly the pixel holding its centre: a box integration of where it stopped, not a blur. The
 core :math:`\sigma` stands for what is measured (convergence, residual charge sharing), not for the cloud's size.
 
+The detector stage (``python -m anri.calib detector``) fits the point spread to isolated spots, each convolved with
+the radial blurs it knows from the geometry, at the spot's pixel :math:`\vec{P} = \vec{d}_0 + s\vec{s} + f\vec{f}` seen from
+the lab origin along :math:`\hat{k} = \vec{P}/|\vec{P}|`, with :math:`\matr{A} = [\vec{s}, \vec{f}]`, :math:`\vec{n} =
+\vec{s} \times \vec{f}` and the radial direction :math:`\hat{u} = \nabla 2\theta / |\nabla 2\theta|` in pixels:
+
+.. math::
+    :label: det-spot-terms
+
+    \begin{aligned}
+    \sigma_{\text{bw}} &= \frac{2\tan\theta\; \sigma_\lambda/\lambda}{|\nabla 2\theta|}, &
+    \vec{m}(\vec{d}) &= \matr{A}^+\Big(\vec{d} - \hat{k}\,\frac{\vec{n} \cdot \vec{d}}{\vec{n} \cdot \hat{k}}\Big), \\
+    \sigma^2_{\text{known}} &= \sigma_{\text{bw}}^2 + \frac{(v\, \hat{u} \cdot \vec{m}(\hat{y}))^2}{12}
+      + \sum_{\vec{a} \in \{\hat{z}, \hat{y}\}} \big(\sigma_{\vec{a}}\; |\vec{P}|\, \hat{u} \cdot \vec{m}(\delta\vec{k}_{\vec{a}})\big)^2, &
+    b &= t\, |\hat{u} \cdot \vec{m}(\hat{x})|, \\
+    \delta\vec{k}_{\vec{a}} &= \vec{a} \times \hat{x} + \delta\omega\; \hat{z} \times \vec{g}, \quad
+    \delta\omega = -\frac{\vec{g} \cdot (\vec{a} \times \hat{x})}{(\hat{z} \times \vec{g}) \cdot \hat{x}}, \quad
+    \vec{g} = \hat{k} - \hat{x} &&
+    \end{aligned}
+
+(:math:`\matr{A}^+ = (\matr{A}^T\matr{A})^{-1}\matr{A}^T`): the bandwidth's spread across the ring (:eq:`dif-bragg`,
+:math:`\sigma_\lambda/\lambda` from its FWHM by :eq:`int-fwhm`); the illuminated width :math:`v` across the beam, a box;
+the convergence :math:`\sigma_{\vec{a}}` of the beam about :math:`\hat{z}` (horizontal) and :math:`\hat{y}` (vertical), the crystal
+turning by :math:`\delta\omega` to diffract the tilted beam within its frame; and the sample's length :math:`t` along the beam, a
+box of width :math:`b`. :math:`\vec{m}(\vec{d})` is how far the spot moves per unit the source moves along :math:`\vec{d}`, the
+ray's direction fixed; :math:`|\vec{P}|\vec{m}(\delta\vec{k})` how far it moves per unit turn of the ray, the source fixed.
+
+**Proof:** ``tests/theory/test_detector.py::test_spot_terms`` (:math:`d 2\theta / d\lambda = 2\tan\theta/\lambda`; the ray's
+intersection with the plane moves by :math:`\vec{m}` for a moved source and by :math:`|\vec{P}|\vec{m}(\delta\vec{k})` for a turned
+unit ray; :math:`\delta\omega` keeps the Ewald condition and :math:`|\hat{k}_{\text{out}}| = 1` to first order),
+``tests/theory/test_detector.py::test_spot_terms_code``.
+
+**Code:** :func:`anri.calib.detector.spot_terms`.
+
 .. _theory_detector_sensor:
 
 A thick sensor

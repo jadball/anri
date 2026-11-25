@@ -66,11 +66,6 @@ class TestDetectorResponse(unittest.TestCase):
 
 
 class TestThickness(unittest.TestCase):
-    def test_box_width(self):
-        """A source's length along the beam: about thickness x tan(2theta) / pixel radially (detector ~ normal)."""
-        rows, cols = np.array([700.0, 1600.0, 1116.0]), np.array([1050.0, 900.0, 1700.0])
-        t = spot_terms(rows.astype(int), cols.astype(int), PARS, None, None, BANDWIDTH, 1e-3, 100.0)
-        np.testing.assert_allclose(t["box"], 100.0 * np.tan(np.radians(t["tth"])) / 75.0, rtol=0.02)
 
     def test_fit_with_and_without_the_box(self):
         """Spots smeared by a box: the fit that knows it recovers the point spread; one that does not, a wider core."""
@@ -95,24 +90,6 @@ class TestThickness(unittest.TestCase):
         self.assertAlmostEqual(known["wing"], WING, delta=0.1)
         self.assertAlmostEqual(known["fraction"], FRACTION, delta=0.03)
         self.assertGreater(blind["core"], known["core"] + 0.05)
-
-
-class TestConvergence(unittest.TestCase):
-    def test_radial_where_expected(self):
-        """Horizontal convergence (about z) turns the whole pattern about z: radial at eta = +-90 by sigma D / cos^2 2theta,
-        tangential at eta = 0, 180. Vertical convergence the other way round."""
-        rows, cols = np.array([1116, 1116, 400, 1830]), np.array([300, 1800, 1050, 1050])  # left, right, up, down
-        none = spot_terms(rows, cols, PARS, None, None, 1e-9, 1e-3)
-        sig = 1e-4
-        h = spot_terms(rows, cols, PARS, None, None, 1e-9, 1e-3, convergence=(sig, 0.0))
-        v = spot_terms(rows, cols, PARS, None, None, 1e-9, 1e-3, convergence=(0.0, sig))
-        side = np.abs(np.sin(np.radians(none["eta"]))) > 0.99
-        self.assertEqual(side.sum(), 2)
-        want = (sig * PARS["distance"] / np.cos(np.radians(none["tth"])) ** 2 / 75.0) ** 2
-        np.testing.assert_allclose((h["var_known"] - none["var_known"])[side], want[side], rtol=0.03)
-        np.testing.assert_allclose((v["var_known"] - none["var_known"])[~side], want[~side], rtol=0.03)
-        self.assertLess(np.max((h["var_known"] - none["var_known"])[~side]), 1e-3 * want.max())
-        self.assertLess(np.max((v["var_known"] - none["var_known"])[side]), 1e-3 * want.max())
 
 
 class TestProfile(unittest.TestCase):

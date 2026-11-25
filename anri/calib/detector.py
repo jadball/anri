@@ -116,38 +116,45 @@ def spot_terms(rows: np.ndarray, cols: np.ndarray, pars: dict, spatial: tuple | 
     from anri.calib.fit import base_pars
     from anri.calib.rings import pixel_tth_eta
     from anri.fwd.render import SENSOR_SLICES, _sensor_kernel
-    from anri.maths.utils import float64
+    from anri.maths.utils import float64, fwhm_to_sigma
 
     sc, fc = np.asarray(rows, np.float64), np.asarray(cols, np.float64)
     if spatial is not None:
         dx, dy = spatial
         sc, fc = sc + dy[rows, cols], fc + dx[rows, cols]
     p = base_pars(pars, 0.0)
-    det = io.detector_from_pars(pars)
     with float64():
+        det = io.detector_from_pars(pars)  # in float64: outside, its vectors would be float32
         pj = {k: jnp.float64(x) for k, x in p.items()}
 
         def tth_eta(s: np.ndarray, f: np.ndarray) -> tuple:
             return tuple(np.asarray(a) for a in pixel_tth_eta(jnp.asarray(s), jnp.asarray(f), pj))
 
         tth, eta = tth_eta(sc, fc)
-        g = np.stack([(tth_eta(sc + 0.5, fc)[0] - tth_eta(sc - 0.5, fc)[0]),
-                      (tth_eta(sc, fc + 0.5)[0] - tth_eta(sc, fc - 0.5)[0])], 1)  # fmt: skip  d 2theta / d pixel, deg
+        # d 2theta / d pixel (deg), exact: JAX's derivative of the pixel's 2theta, not a difference over a pixel
+        d_tth = jax.vmap(jax.grad(lambda a, b: pixel_tth_eta(a[None], b[None], pj)[0][0], argnums=(0, 1)))
+        g = np.stack([np.asarray(x) for x in d_tth(jnp.asarray(sc), jnp.asarray(fc))], 1)
         dtth = np.linalg.norm(g, axis=1)  # deg per pixel along u
         u = g / dtth[:, None]
         th = np.radians(tth / 2)
-        bw = np.degrees(2 * bandwidth / (2 * np.sqrt(2 * np.log(2))) * np.tan(th)) / dtth  # px
+        bw = np.degrees(2 * fwhm_to_sigma(bandwidth) * np.tan(th)) / dtth  # px: d 2theta = 2 tan(theta) dl / l
         A = np.stack([np.asarray(det["s_step_lab"]), np.asarray(det["f_step_lab"])], 1)  # pixels to lab
-        e_h = np.linalg.solve(A.T @ A, A.T @ np.array([0.0, 1.0, 0.0]))  # lab y (horizontal, across the beam) in px
-        horiz = np.abs(u @ (e_h / np.linalg.norm(e_h)))
-        var_known = bw**2 + (voxel / float(pars["y_size"]) * horiz) ** 2 / 12  # the voxel's width as a box
-        # a source moved along the beam (lab x) by 1 um: where its ray to this spot meets the detector, in pixels
         o_lab, n = np.asarray(det["det_origin_lab"]), np.cross(A[:, 0], A[:, 1])
         p_lab = o_lab[None] + sc[:, None] * A[:, 0] + fc[:, None] * A[:, 1]
         k = p_lab / np.linalg.norm(p_lab, axis=1, keepdims=True)
-        dp = np.array([1.0, 0.0, 0.0])[None] - k * (n[0] / (k @ n))[:, None]
-        along = np.linalg.solve(A.T @ A, (dp @ A).T).T  # [n, 2] pixels per um along the beam
-        box = thickness * np.abs(np.sum(along * u, 1))
+
+        def moved(d: np.ndarray) -> np.ndarray:
+            """Pixels [n, 2] the spot moves per um the source moves along d, its ray's direction fixed.
+
+            The ray's intersection with the detector plane moves by d - k (n . d) / (n . k), in pixels.
+            """
+            dp = d[None] - k * ((n @ d) / (k @ n))[:, None]
+            return np.linalg.solve(A.T @ A, (dp @ A).T).T
+
+        # the illuminated width across the beam (lab y) and length along it (lab x), each a box over the source
+        across = voxel * np.abs(np.sum(moved(np.array([0.0, 1.0, 0.0])) * u, 1))
+        var_known = bw**2 + across**2 / 12
+        box = thickness * np.abs(np.sum(moved(np.array([1.0, 0.0, 0.0])) * u, 1))
         # convergence: the beam tilted by a small rotation d (about lab z: horizontal; about lab y: vertical), the
         # crystal turned by d_omega about z so that Bragg holds again (|k_in + g| = |k_in|), the ray's change on the
         # detector
