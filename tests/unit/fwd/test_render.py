@@ -238,33 +238,6 @@ class TestSpatialDistortion(unittest.TestCase):
             np.testing.assert_allclose(v1, v0, rtol=1e-9, atol=1e-12 * v0.max())
 
 
-class TestOmegaSpread(unittest.TestCase):
-    def test_sig_omega_broadens_omega(self):
-        """sig_omega adds its variance to every peak's omega variance, and leaves its centroid in place."""
-        _, det_shape, geom, entries, hkl, omega_c = _single_peak_setup()
-        one = {"ubi": entries["ubi"][:1], "pos": np.zeros((1, 3)), "density": np.ones(1)}
-        omega = (np.floor(omega_c / 0.01) + np.arange(-60, 61)) * 0.01 + 0.005  # fine frames around the peak
-        row = make_row(omega, np.zeros_like(omega))
-        moments = {}
-        for sig in (0.0, 0.05):
-            frame, _, value, _ = render_row(
-                one,
-                hkl[None],
-                np.ones(1),
-                {**geom, "sig_omega": sig},
-                row,
-                det_shape,
-                window=(61, 7, 7),
-                min_value=0.0,
-                batch=BATCH,
-            )
-            w = np.bincount(frame, weights=value, minlength=omega.size)
-            mean = (w * omega).sum() / w.sum()
-            moments[sig] = (mean, (w * (omega - mean) ** 2).sum() / w.sum() - 0.01**2 / 12)  # minus the frame width
-        self.assertAlmostEqual(moments[0.05][0], moments[0.0][0], delta=1e-4)
-        self.assertAlmostEqual(moments[0.05][1] - moments[0.0][1], 0.05**2, delta=0.02 * 0.05**2)
-
-
 class TestOrientationSpread(unittest.TestCase):
     """An entry's "sig_rot" (intrinsic orientation spread) against a cloud of explicitly rotated sub-entries."""
 

@@ -72,6 +72,25 @@ derivative, every element of the (:math:`s_c, f_c, \omega`) covariance, for a fu
 **Code:** :func:`anri.maths.rotation.skew`, :func:`anri.maths.rotation.rmat_from_axis_angle`,
 :func:`anri.fwd.render.render_peaks` (an entry's "sig_rot", [N] or [N, 3, 3]).
 
+To this covariance the renderer adds the detector's point spread in slow and fast (:doc:`detector`), an optional
+extra spread in omega, and a floor:
+
+.. math::
+    :label: ps-floor
+
+    \Sigma_{ss} \mathrel{+}= \sigma_{\text{psf}}^2 + 10^{-4}, \qquad \Sigma_{ff} \mathrel{+}= \sigma_{\text{psf}}^2 + 10^{-4},
+    \qquad \Sigma_{\omega\omega} \mathrel{+}= \sigma_\omega^2 + 10^{-8}
+    \qquad (\text{pixels}^2, \text{pixels}^2, \text{degrees}^2).
+
+**Definition:** ``sig_omega`` (:math:`\sigma_\omega`, degrees) is a spread of every peak in omega the model does not
+derive, e.g. to smooth a refinement; it is 0 unless given. **Proof:** ``tests/theory/test_peak_shape.py::test_peak_shape_code``.
+
+**Anri's choice:** the floor keeps a peak with no broadening at all (a point source, no spreads) a proper Gaussian: it
+is 0.01 pixel and :math:`10^{-4}°` as a standard deviation, far below any measured spot (cores of 0.2-0.3 pixel, frames
+of 0.05°).
+
+**Code:** :func:`anri.fwd.render.render_peaks`.
+
 For a horizontal beam and an untilted axis (wedge = chi = 0), differentiating the Ewald condition
 :math:`2\vec{k}_{\text{in}} \cdot \vec{g} + |\vec{g}|^2 = 0` (:eq:`dif-ewald`) gives each input's omega shift, and so the
 omega variance in closed form:

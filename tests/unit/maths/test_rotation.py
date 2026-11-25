@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import numpy as np
 
 import anri.maths.rotation
-from anri.maths.rotation import mat_to_quat, mat_to_rod, quat_mul, quat_to_mat, rod_to_mat
 
 jax.config.update("jax_enable_x64", True)
 
@@ -34,18 +33,6 @@ class TestBatching(unittest.TestCase):
         for i in range(5):
             one = anri.maths.rotation.rmat_from_axis_angle(jnp.asarray(ax[i]), ang[i])
             np.testing.assert_allclose(R[i], one, rtol=0, atol=16 * eps)
-
-
-class TestConversions(unittest.TestCase):
-    def test_round_trips(self):
-        U = random_rotations(500)
-        np.testing.assert_allclose(quat_to_mat(mat_to_quat(U)), U, atol=1e-12)
-        small = U[np.trace(U, axis1=1, axis2=2) > -0.5]  # rotation angles well below 180 degrees
-        np.testing.assert_allclose(np.asarray(rod_to_mat(mat_to_rod(small))), small, atol=1e-5)
-
-    def test_quat_mul_is_matrix_product(self):
-        a, b = random_rotations(50, 1), random_rotations(50, 2)
-        np.testing.assert_allclose(quat_to_mat(quat_mul(mat_to_quat(a), mat_to_quat(b))), a @ b, atol=1e-12)
 
 
 class TestRotationHelpers(unittest.TestCase):

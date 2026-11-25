@@ -278,6 +278,23 @@ def test_peak_cov_rotation_code():
             np.testing.assert_array_less(np.abs(got - want), bound)
 
 
+def test_peak_shape_code():
+    """_peak_shape's shape is _peak_cov's covariance plus ps-floor: the point spread in slow and fast, sig_omega in
+    omega, and the floors; the covariances unchanged."""
+    from anri.fwd.render import _peak_shape
+
+    with float64():
+        geom = {**_geom(), "sig_wavelength": 0.3 * 1e-3, "sig_ky": 2e-4, "sig_kz": 3e-4, "sig_psf": 0.7,
+                "sig_omega": 0.05}  # fmt: skip
+        ubi = jnp.asarray(np.linalg.qr(rng(38).normal(size=(3, 3)))[0] * 3.0)
+        args = (ubi, jnp.zeros(3), jnp.array([1.0, 1.0, 0.0]), 1.0)
+        cov = np.asarray(_peak_cov(*args, 0.0, geom))
+        _, shape, _ = _peak_shape(*args, None, {"dty_mid": 0.0}, geom)
+    want = cov + np.array([0.49 + 1e-4, 0.49 + 1e-4, 0.0025 + 1e-8, 0, 0, 0])
+    # one or two float64 additions to each variance: an ulp or two of the sum
+    np.testing.assert_allclose([float(x) for x in shape], want, rtol=2 * EPS, atol=0)
+
+
 # ---------------------------------------------------------------------------------------------- ps-truncated
 
 

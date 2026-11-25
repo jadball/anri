@@ -284,3 +284,76 @@ def test_detector_code():
         steps = [ev(page.diff(x), vals) for x in (s, f)] + [ev(page.subs({s: 0, f: 0}), vals)]
         for i in range(3):
             agree(steps[i], lambda *a, i=i: detector.detector_basis_vectors_lab(*a)[i], *tr, **t)
+
+
+def _rq(w: sp.Expr, v: sp.MatrixBase) -> sp.Matrix:
+    """frm-quat's R(q)."""
+    return (w**2 - v.dot(v)) * sp.eye(3) + 2 * v * v.T + 2 * w * skew(v)
+
+
+def _rr(r: sp.MatrixBase) -> sp.Matrix:
+    """frm-quat's R(r)."""
+    K = skew(r)
+    return sp.eye(3) + 2 / (1 + r.dot(r)) * (K + K * K)
+
+
+def _hamilton(a: sp.MatrixBase, b: sp.MatrixBase) -> sp.Matrix:
+    av, bv = sp.Matrix(a[1:]), sp.Matrix(b[1:])
+    return sp.Matrix([a[0] * b[0] - av.dot(bv), *(a[0] * bv + b[0] * av + av.cross(bv))])
+
+
+def test_quaternion():
+    """frm-quat. (1) R(q) at q = (cos t/2, sin t/2 n) is Rodrigues' I + sin t [n]x + (1 - cos t) [n]x^2, the
+    exponential (test_peak_shape.py::test_axis_angle). (2) R(r) at r = v / w is R(q) / |q|^2: the same rotation. (3)
+    For any quaternions, R(ab) = R(a) R(b) (each side homogeneous of degree 2 in a and in b, so it holds for unit ones).
+    (4) 2 a / (1 + tr R) recovers r; Shepperd's identities recover q."""
+    t = sp.Symbol("t", real=True)
+    a3 = vec("a")
+    n = a3 / sp.sqrt(a3.dot(a3))
+    K = skew(n)
+    rod = sp.eye(3) + sp.sin(t) * K + (1 - sp.cos(t)) * K * K
+    assert is_zero(_rq(sp.cos(t / 2), sp.sin(t / 2) * n) - rod)
+    w = sp.Symbol("w", positive=True)
+    v = vec("v")
+    q2 = w**2 + v.dot(v)
+    assert is_zero(_rr(v / w) - _rq(w, v) / q2)
+    A, B = sp.Matrix(sp.symbols("a0:4", real=True)), sp.Matrix(sp.symbols("b0:4", real=True))
+    ab = _hamilton(A, B)
+    RA, RB, RAB = (_rq(q[0], sp.Matrix(q[1:])) for q in (A, B, ab))
+    assert is_zero(RAB - RA * RB)  # homogeneous of degree 2 in each: the normalisations multiply
+    r = vec("r")
+    R = _rr(r)
+    axial = sp.Matrix([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / 2
+    assert is_zero(2 * axial / (1 + R.trace()) - r)
+    # Shepperd's identities for a unit q, written homogeneously (R(q) / |q|^2)
+    R = _rq(w, v) / q2
+    assert is_zero((1 + R.trace()) * q2 - 4 * w**2)
+    for i in range(3):
+        assert is_zero((1 + 2 * R[i, i] - R.trace()) * q2 - 4 * v[i] ** 2)
+    assert is_zero((R[2, 1] - R[1, 2]) * q2 - 4 * w * v[0])
+    assert is_zero((R[1, 0] + R[0, 1]) * q2 - 4 * v[0] * v[1])
+
+
+def test_quaternion_code():
+    """quat_to_mat, rod_to_mat, quat_mul, mat_to_rod and mat_to_quat against frm-quat, at rational quaternions (each
+    of Shepperd's four branches, and a half turn, w = 0)."""
+    qs = [sp.Matrix(q) for q in ([3, 1, -2, 1], [1, 4, 1, -2], [1, -1, 5, 2], [1, 2, -1, 6], [0, 1, 2, 2])]
+    qs = [q / sp.sqrt(q.dot(q)) for q in qs]
+    qv = np.array([ev(q, {}) for q in qs])
+    R = np.array([evaluate(_rq(q[0], sp.Matrix(q[1:])), {}) for q in qs])
+    # entries are sums of a few products of components <= 1: 16 ulps
+    agree(R, rotation.quat_to_mat, qv, **tol(1.0))
+    rods = [sp.Matrix(q[1:]) / q[0] for q in qs[:4]]
+    agree(np.array([evaluate(_rr(r), {}) for r in rods]), rotation.rod_to_mat, np.array([ev(r, {}) for r in rods]),
+          **tol(1.0 + max(float(sp.N(r.norm(), 30)) for r in rods)))  # fmt: skip
+    prods = [_hamilton(a, b) for a, b in zip(qs, qs[1:])]
+    agree(np.array([ev(p, {}) for p in prods]), rotation.quat_mul, qv[:-1], qv[1:], **tol(4.0))
+    # mat_to_rod: R's entries round once; the axial part and 1 + trace = 4 / (1 + |r|^2) each by a few ulps, so r
+    # errs by (1 + |r|^2) times them, relative to |r| as well
+    for r, Rv in zip(rods, R[:4]):
+        rv, rn = ev(r, {}), float(sp.N(r.norm(), 30))
+        agree(rv, rotation.mat_to_rod, Rv, **tol((1 + rn**2) * (1 + rn)))
+    # mat_to_quat: Shepperd's best-conditioned root (its component >= 1/2) and quotients by it: a few ulps; w >= 0
+    want = np.array([q * (1 if q[0] >= 0 else -1) for q in qv])
+    agree(want, rotation.mat_to_quat, R, **tol(4.0))
+
