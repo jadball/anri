@@ -246,7 +246,7 @@ class TestAbsorption(unittest.TestCase):
             given = sim.stages.load_prepare(sim.stages.stage_prepare(
                 map_file, parfile, os.path.join(tmp, "c_prepare.h5"), mu_map=os.path.join(tmp, "mu.npy"), **quiet))  # fmt: skip
             for (a, _, _), (b, _, _) in zip(per["phases"], given["phases"]):
-                np.testing.assert_allclose(a["optical_depth"], b["optical_depth"], atol=1e-6)
+                np.testing.assert_array_equal(a["optical_depth"], b["optical_depth"])  # the same map, the same arithmetic
             self.assertGreater(per["phases"][0][0]["optical_depth"].max(), 0.1)
             row = make_row(plain["omega"][1], plain["dty"][1])
             totals = [render_phases(p["phases"], p["geom"], row, p["det_shape"], min_value=0.0, batch=1024)[2].sum()

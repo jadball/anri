@@ -19,6 +19,7 @@ PARS = {
     "wavelength": 12.398419843320026 / 43.0, "wedge": 0.0, "chi": 0.0,
 }  # fmt: skip
 A_FE = 2.8665
+E32 = float(np.finfo(np.float32).eps)
 
 
 def geometry(sig_beam=0.5):
@@ -157,7 +158,7 @@ class TestOccupancy(unittest.TestCase):
         data = ix.occupancy.forward(jnp.ones((1, 1)), jnp.zeros((1, 1), jnp.int32), pred, ring_j, pos[:1], scan, dims,
                                     n_cells, 1)  # fmt: skip
         f, _ = ix.occupancy.candidates(data, pred, ring_j, pos, scan, dims, 1, 1, qc=1, log=lambda _: None)
-        np.testing.assert_allclose(f, [[1.0], [0.0]], atol=1e-6)
+        np.testing.assert_allclose(f, [[1.0], [0.0]], atol=16 * E32)  # float32, the padded voxel exactly 0
 
     def test_full_turn_seam(self):
         """A full turn wraps omega's corners at the seam; a partial scan drops the corners past its ends."""
@@ -165,12 +166,13 @@ class TestOccupancy(unittest.TestCase):
         for n_o, b_o in ((360, 1.0), (3600, 0.1)):
             om = om0 + b_o * jnp.array([0.1, n_o - 0.1])  # 0.4 of a bin either side of the seam
             corners = ix.data.eta_omega_corners(jnp.zeros(2), om, om0, 1.0, b_o, 360, n_o)
-            np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 1.0, atol=1e-4)
+            # bilinear weights sum to 1 (idx-bilinear), in float32
+            np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 1.0, atol=16 * E32)
             np.testing.assert_array_equal(corners[0][1], [n_o - 1, n_o - 1])
             np.testing.assert_array_equal(corners[1][1], [0, 0])
         corners = ix.data.eta_omega_corners(jnp.zeros(1), jnp.array([om0 + 0.1]), om0, 1.0, 1.0, 360, 180)
         np.testing.assert_array_equal(corners[0][1], [-1])  # half a turn: the corner before om0 is outside
-        np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 0.6, atol=1e-5)
+        np.testing.assert_allclose(sum(we * wo * inside for _, _, we, wo, inside in corners), 0.6, atol=16 * E32)
 
     def test_dty_offsets_match_histogram(self):
         """Offsets and exposure leave out the frames past the scan's ends, as the histogram does, not wrap them."""
@@ -382,7 +384,7 @@ class TestPopulations(unittest.TestCase):
         f = np.array([[0.3, 0.2, 0.15, 0.15, 0.17, 0.03]])
         cand = np.arange(6)[None]
         frac, U, spread, n = ix.populations.group(f, cand, U_list, ops, 2.0)
-        np.testing.assert_allclose(frac[0, :3], [0.8, 0.17, 0.03], atol=1e-5)
+        np.testing.assert_allclose(frac[0, :3], [0.8, 0.17, 0.03], atol=16 * E32)  # float32 shares of the occupancy
         np.testing.assert_array_equal(n[0, :3], [4, 1, 1])
         self.assertLess(anri.crystal.orientation.disorientation(U[0, :1], U0[None], ops)[0], 0.5)
         self.assertLess(anri.crystal.orientation.disorientation(U[0, 1:2], (twin @ U0)[None], ops)[0], 0.05)  # float32
@@ -393,7 +395,7 @@ class TestPopulations(unittest.TestCase):
         U = np.asarray(anri.maths.rotation.rmat_from_axis_angle(jnp.array([[0.0, 0.0, 1.0]]), jnp.array([0, 10, 10.1])))
         f = np.array([[0.3, 0.25, 0.25]], np.float32)
         frac, mean, _, n = ix.populations.group(f, np.arange(3)[None], U, np.eye(3)[None], 1.0, p=2, m=3, vb=1)
-        np.testing.assert_allclose(frac[0], [0.625, 0.375], rtol=1e-5)
+        np.testing.assert_allclose(frac[0], [0.625, 0.375], rtol=16 * E32)
         np.testing.assert_array_equal(n[0], [2, 1])
         self.assertAlmostEqual(float(np.degrees(anri.maths.rotation.rotation_angle(mean[0, 0]))), 10.05, places=2)
 
@@ -406,9 +408,9 @@ class TestPopulations(unittest.TestCase):
             np.ones((1, 64)), np.arange(64)[None], U, np.eye(3)[None], 1.0, vb=1
         )
         self.assertEqual(int(n[0, 0]), 64)  # every candidate considered: the whole occupancy is one population
-        np.testing.assert_allclose(frac[0, 0], 1.0, rtol=1e-5)
+        np.testing.assert_allclose(frac[0, 0], 1.0, rtol=16 * E32)
         frac16 = ix.populations.group(np.ones((1, 64)), np.arange(64)[None], U, np.eye(3)[None], 1.0, m=16)[0]
-        np.testing.assert_allclose(frac16[0, 0], 16 / 64, rtol=1e-5)  # m = 16 sees a quarter of it
+        np.testing.assert_allclose(frac16[0, 0], 16 / 64, rtol=16 * E32)  # m = 16 sees a quarter of it
         self.assertAlmostEqual(float(np.degrees(anri.maths.rotation.rotation_angle(mean[0, 0]))), 40.315, delta=0.01)
         self.assertGreater(spread[0, 0], 0.0)
 
@@ -971,7 +973,7 @@ class TestLocalSearch(unittest.TestCase):
         self.assertEqual(c0.shape, (2, 54))
         np.testing.assert_array_equal(c0[0, :27], np.arange(27, 54))  # orientation 5: the second subdivided
         np.testing.assert_array_equal(c0[0, 27:], np.arange(27))  # orientation 2: the first
-        np.testing.assert_allclose(f0[0], np.repeat([0.6 / 27, 0.38 / 27], 27), rtol=1e-6)
+        np.testing.assert_allclose(f0[0], np.repeat([0.6 / 27, 0.38 / 27], 27), rtol=2 * E32)  # one float32 quotient
         np.testing.assert_array_equal(c0[1, :27], np.arange(27))
         np.testing.assert_array_equal(c0[1, 27:], -1)
         np.testing.assert_array_equal(f0[1, 27:], 0)
@@ -1069,7 +1071,7 @@ class TestPowder(unittest.TestCase):
         """A uniform intensity per sr comes out flat; whole rings have coverage 1 (their analytic solid angle)."""
         p = self._pattern(np.ones((2200, 2100), bool))
         whole = (p["tth"] > 1.0) & (p["tth"] < 20.0)  # rings entirely on the detector
-        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=1e-4)
+        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=16 * E32)  # float32 sums over the ring's pixels
         np.testing.assert_allclose(p["coverage"][whole], 1.0, atol=0.02)
         np.testing.assert_allclose(p["lit_fraction"][whole], 1.0)
         np.testing.assert_allclose(p["sigma"][whole], p["sigma_counting"][whole])  # no spread over eta
@@ -1081,7 +1083,7 @@ class TestPowder(unittest.TestCase):
         good[:, : int(PARS["y_center"])] = False
         p = self._pattern(good)
         whole = (p["tth"] > 1.0) & (p["tth"] < 20.0)
-        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=1e-4)
+        np.testing.assert_allclose(p["intensity"][whole], 2.0, rtol=16 * E32)  # float32 sums over the ring's pixels
         np.testing.assert_allclose(p["coverage"][whole], 0.5, atol=0.02)
 
     def test_write_xye(self):

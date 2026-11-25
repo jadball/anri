@@ -34,6 +34,7 @@ jax.config.update("jax_enable_x64", True)
 # Peaks per render call. render_row pads a call to at least 1024 peaks per device so that real scans compile few
 # shapes; these tests render a few hundred peaks per row, so a small batch renders them without that padding.
 BATCH = 256
+EPS = float(np.finfo(np.float64).eps)
 
 
 def _single_peak_setup():
@@ -181,8 +182,9 @@ class TestPointSpreadMixture(unittest.TestCase):
         a, sa = self._render({"sig_psf": 0.7})
         b, sb = self._render({"psf_mix": ((1.0, 0.7),)})
         self.assertEqual(a.keys(), b.keys())
-        np.testing.assert_allclose([b[k] for k in a], [a[k] for k in a], rtol=1e-12)
-        np.testing.assert_allclose(sb["captured"], sa["captured"], rtol=1e-12)
+        # one component is the same arithmetic as sig_psf: to rounding
+        np.testing.assert_allclose([b[k] for k in a], [a[k] for k in a], rtol=16 * EPS)
+        np.testing.assert_allclose(sb["captured"], sa["captured"], rtol=16 * EPS)
 
     def test_mixture_is_weighted_sum(self):
         core, s1 = self._render({"sig_psf": 0.3})
@@ -191,10 +193,11 @@ class TestPointSpreadMixture(unittest.TestCase):
         keys = set(core) | set(wing)
         self.assertEqual(set(mix), keys)
         want = np.array([0.7 * core.get(k, 0.0) + 0.3 * wing.get(k, 0.0) for k in sorted(keys)])
-        np.testing.assert_allclose([mix[k] for k in sorted(keys)], want, rtol=1e-10, atol=1e-14)
-        np.testing.assert_allclose(sm["captured"], 0.7 * s1["captured"] + 0.3 * s2["captured"], rtol=1e-12)
+        # the mixture renders each component and sums them with their shares: a few ulps of the largest value
+        np.testing.assert_allclose([mix[k] for k in sorted(keys)], want, rtol=0, atol=16 * EPS * np.abs(want).max())
+        np.testing.assert_allclose(sm["captured"], 0.7 * s1["captured"] + 0.3 * s2["captured"], rtol=16 * EPS)
         # the light beyond each face: the components' by their shares (one window); each face's decay the largest
-        np.testing.assert_allclose(sm["face_light"], 0.7 * s1["face_light"] + 0.3 * s2["face_light"], rtol=1e-12)
+        np.testing.assert_allclose(sm["face_light"], 0.7 * s1["face_light"] + 0.3 * s2["face_light"], rtol=16 * EPS)
         np.testing.assert_array_equal(sm["face_decay"], np.maximum(s1["face_decay"], s2["face_decay"]))
 
     def test_faces_complete_the_window(self):
@@ -203,7 +206,8 @@ class TestPointSpreadMixture(unittest.TestCase):
             _, st = self._render(extra)
             self.assertEqual(st["face_light"].shape, (st["n_peaks"], 6))
             self.assertGreater(st["face_light"][:, 2:].min(), 0.0)  # the 11 x 11 window leaves a tail on every side
-            np.testing.assert_allclose(st["captured"] + st["face_light"].sum(1), st["in_range"], rtol=0, atol=1e-12)
+            # the window and its six faces partition the scan's light (ps-face-sum): sums of 7 masses <= 1, to rounding
+            np.testing.assert_allclose(st["captured"] + st["face_light"].sum(1), st["in_range"], rtol=0, atol=16 * EPS)
             self.assertTrue(np.all((st["face_decay"] >= 0) & (st["face_decay"] < 1)))
 
     def test_fractions_must_sum_to_one(self):
@@ -462,7 +466,8 @@ class TestExtinction(unittest.TestCase):
                                            geom["k_in_lab"], 0.0, 0.0, 0.0, 0.0)  # fmt: skip
         p = float(polarisation(k_in, k_out, geom["pol_factor"]))
         q = float(polarisation_extinction(k_in, k_out, geom["pol_factor"], 0.8, 1.5, True))
-        np.testing.assert_allclose(b[2] / a[2], q / p, rtol=1e-4)
+        # the same pixels times one factor: the ratio to rounding (two quotients of the factors)
+        np.testing.assert_allclose(b[2] / a[2], q / p, rtol=16 * EPS)
 
 
 class TestWindowClasses(unittest.TestCase):
@@ -532,7 +537,7 @@ class TestLargeBatch(unittest.TestCase):
         big = np.asarray(render_peaks(e, h, b, *args)[2])
         small = np.concatenate([np.asarray(render_peaks(e[i : i + 256], h[i : i + 256], b[i : i + 256], *args)[2])
                                 for i in range(0, 4096, 256)])  # fmt: skip
-        np.testing.assert_allclose(big, small, rtol=0, atol=1e-9 * small.max())
+        np.testing.assert_array_equal(big, small)  # the same arithmetic per peak, whatever the batch
 
 
 class TestGrainMap(unittest.TestCase):
@@ -592,7 +597,7 @@ class TestGrainMap(unittest.TestCase):
         b = render_row(self.voxels, self.hkls, F2, self.geom, self.row, self.det_shape, batch=BATCH, **kw)
         np.testing.assert_array_equal(a[0], b[0])
         np.testing.assert_array_equal(a[1], b[1])
-        np.testing.assert_allclose(a[2], b[2], rtol=1e-12)
+        np.testing.assert_allclose(a[2], b[2], rtol=16 * EPS)  # a grain map is the same per-voxel arithmetic
 
     def test_splat(self):
         """Spots rendered whole (splat) match the per-voxel render: intensity, frame by frame and pixel by pixel."""
@@ -610,7 +615,7 @@ class TestGrainMap(unittest.TestCase):
         np.testing.assert_allclose(per_frame[1], per_frame[0], rtol=0, atol=2e-3 * per_frame[0].max())
         self.assertLess(np.abs(dense[1] - dense[0]).max(), 0.05 * dense[0].max())
         for st in (a[3], b[3]):  # per peak (with splat, its spot's kernel's): the window and its faces are the scan's
-            np.testing.assert_allclose(st["captured"] + st["face_light"].sum(1), st["in_range"], rtol=0, atol=1e-9)
+            np.testing.assert_allclose(st["captured"] + st["face_light"].sum(1), st["in_range"], rtol=0, atol=16 * EPS)
         with self.assertRaises(ValueError):  # one kernel per spot: sig_rot must be the same over a grain
             render_row({**self.grains, "sig_rot": np.arange(len(self.grains["pos"])) * 1e-5}, self.hkls, F2,
                        self.geom, self.row, self.det_shape, splat=True)  # fmt: skip
@@ -626,7 +631,7 @@ class TestGrainMap(unittest.TestCase):
         ent, hkls, F2_j = to_device(self.grains, self.hkls, F2)
         self.assertTrue(np.all(np.diff(np.asarray(ent["grain"])) >= 0))
         for k in ("pos", "density", "sig_rot"):  # every per-entry array moved with its grain label
-            np.testing.assert_allclose(np.sort(np.asarray(ent[k]), 0), np.sort(self.grains[k], 0), rtol=1e-6)
+            np.testing.assert_array_equal(np.sort(np.asarray(ent[k]), 0), np.sort(self.grains[k], 0))  # moved, not changed
         kw = {"window": (3, 7, 7), "max_frames": 7, "batch": BATCH}
         for splat in (False, True):
             a = render_row(self.grains, self.hkls, F2, self.geom, self.row, self.det_shape, splat=splat, **kw)
@@ -758,11 +763,11 @@ class TestMerge(unittest.TestCase):
         h_fr, h_px, h_val = _merge_host(c_fr[:c_count], c_px[:c_count], c_val[:c_count], npix)
         np.testing.assert_array_equal(fr[:count], h_fr)
         np.testing.assert_array_equal(px[:count], h_px)
-        np.testing.assert_allclose(val[:count], h_val, rtol=1e-12)
+        np.testing.assert_allclose(val[:count], h_val, rtol=16 * EPS)  # sums of the same values, in another order
         self.assertTrue(np.all(h_fr >= 0) and np.all(np.diff(h_fr.astype(np.int64) * npix + h_px) > 0))
         # merging the device's output again on the host changes nothing (render_row does both on GPUs)
         again = _merge_host(fr[:count], px[:count], val[:count], npix)
-        np.testing.assert_allclose(again[2], h_val, rtol=1e-12)
+        np.testing.assert_allclose(again[2], h_val, rtol=16 * EPS)
 
     def test_valid_from_shards_compiles_few_shapes(self):
         """The valid elements of each shard, sliced in a few bucketed lengths, not one per count (issue #35)."""
