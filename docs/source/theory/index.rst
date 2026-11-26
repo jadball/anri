@@ -56,7 +56,7 @@ Forward model
 5. :doc:`intensity`: how bright a peak is: Lorentz, polarisation, the beam's profile over a voxel, absorption.
 6. :doc:`peak_shape`: how wide a peak is and how it is spread over pixels and frames; windows.
 7. :doc:`detector`: the sensor's depth, the point spread, the distortion and the pixels.
-8. :doc:`recording`: what the detector records: counting noise, frames, the monitor and the threshold.
+8. :doc:`recording`: what the detector records: counting noise, shared pixels, frames, the monitor and the threshold.
 
 Measurement and limits
 ======================
@@ -70,7 +70,8 @@ Measurement and limits
     The lemmas the refiner uses.
 12. :doc:`refiner`: a refiner that needs no spot shape: deformation moments as a linear tomography, with the
     noise, the cut, the group rule, the pixels and the beam's weight within each peak bounded, where that tomography
-    holds (a voxel crossing less than the beam during its own peak), and what no estimator can do. The method.
+    holds (a voxel crossing less than the beam during its own peak), smooth windows where boxes overlap, module gaps
+    and shared pixels, and what no estimator can do. The method.
 
 Indexer
 =======

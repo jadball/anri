@@ -1743,3 +1743,231 @@ def test_trace_numbers():
     assert rounds_to(sp.Rational(9, 2) * sp.Rational(1, 4) * deg, "0.020")
     sig = 1 / (2 * sp.sqrt(2 * sp.log(2)))
     assert rounds_to(1500 * h / sp.sqrt(12) / sig, "0.89")
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Windows instead of regions, cells with no data, wide cells, the omega kernel's factor, counting
+# (rf-coverage, rf-window, rf-window-norms, rf-mask, rf-taper, rf-alias-wide, rf-omega-factor, rf-count)
+
+
+def test_coverage():
+    """rf-coverage: n boxes of area a placed independently and uniformly on a torus of area A leave a point uncovered
+    with probability (1 - a/A)^n <= e^(-n a / A) (log(1 - x) <= -x), and a box meets each other box of its size when
+    their centres are within 2 b_eta x 2 b_omega, so it meets (n - 1) 4 a / A others on average. With n = 2 m_h N and
+    A = 4 pi^2, n a / A = lambda. The page's numbers: Ni 220 (m_h = 12), N = 3000, boxes of 1, 5 and 0.2 deg; N = 400
+    at 1 deg."""
+    x = sp.Symbol("x", positive=True)
+    # log(1 - x) + x is 0 at x = 0 and has the derivative -x / (1 - x) < 0 on (0, 1)
+    assert is_zero(sp.diff(sp.log(1 - x) + x, x) + x / (1 - x))
+    assert sp.log(1 - x).subs(x, 0) + 0 == 0
+    n, a, A = sp.symbols("n a A", positive=True)
+    p_meet = 4 * a / A  # the centre of another box within the 2b x 2b rectangle about this one's
+    assert is_zero((n - 1) * p_meet - 4 * (n * a / A) * (n - 1) / n)
+
+    def lam(N, deg):
+        b = sp.Rational(deg) * sp.pi / 180
+        return 2 * 12 * N * b**2 / (4 * sp.pi**2)
+
+    assert rounds_to(lam(3000, 1), "0.56") and rounds_to(4 * lam(3000, 1), "2.2")
+    assert rounds_to(lam(3000, 5), "13.9") and rounds_to(sp.exp(-lam(3000, 5)) * 10**7, "9.3")
+    assert rounds_to(4 * lam(3000, "0.2"), "0.089") and rounds_to(4 * lam(400, 1), "0.30")
+
+
+def test_window_taylor():
+    """rf-window: for any three sub-volumes (volumes V_i, deformations F_i, photons g_i = F_i g0) and c = g0, the
+    second-order Taylor expansion of psi about c, integrated over the population, is psi(c) V + grad psi . m1 +
+    H : m2 / 2 with m1 = (Y1 - V I) g0 and m2 = Y2[g0, g0] - (Y1 g0) g0^T - g0 (Y1 g0)^T + V g0 g0^T, linear in V, Y1
+    and Y2: exact for every quadratic psi, and for a cubic it misses exactly the cubic term's own sum. In one dimension,
+    f(1) - f(0) - f'(0) - f''(0)/2 = int_0^1 (1 - t)^2 / 2 f'''(t) dt (Taylor's integral remainder, by parts) and
+    int_0^1 (1 - t)^2 / 2 dt = 1/6, so the remainder is at most sup|f'''| / 6 times |g - c|^3 along the segment."""
+    g0 = sp.Matrix(sp.symbols("g0:3", real=True))
+    F = [_mat(f"F{i}_") for i in range(3)]
+    V = sp.symbols("V0:3", positive=True)
+    Vt = sum(V)
+    Y1g = sum((V[i] * F[i] * g0 for i in range(3)), sp.zeros(3, 1))
+    Y2gg = sum((V[i] * (F[i] * g0) * (F[i] * g0).T for i in range(3)), sp.zeros(3))  # Y2[g0, g0]
+    m1 = Y1g - Vt * g0
+    m2 = Y2gg - Y1g * g0.T - g0 * Y1g.T + Vt * g0 * g0.T
+    d = [F[i] * g0 - g0 for i in range(3)]
+    assert is_zero(m1 - sum((V[i] * d[i] for i in range(3)), sp.zeros(3, 1)))
+    assert is_zero(m2 - sum((V[i] * d[i] * d[i].T for i in range(3)), sp.zeros(3)))
+    # a general quadratic psi(g) = a + b.(g - c) + (g - c)^T Q (g - c) / 2: the expansion is exact
+    a = sp.Symbol("a", real=True)
+    b = sp.Matrix(sp.symbols("b0:3", real=True))
+    Q = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"q{min(i, j)}{max(i, j)}", real=True))
+
+    def psi(x):
+        u = x - g0
+        return a + b.dot(u) + (u.T * Q * u)[0] / 2
+
+    lhs = sum(V[i] * psi(F[i] * g0) for i in range(3))
+    rhs = a * Vt + b.dot(m1) + sum(Q[i, j] * m2[i, j] for i in range(3) for j in range(3)) / 2
+    assert is_zero(lhs - rhs)
+    # a cubic term t . (g - c) e1 e1-component^2: the expansion misses exactly its own sum
+    t = sp.Symbol("t", real=True)
+    cubic = sum(V[i] * t * d[i][0] ** 3 for i in range(3))
+    lhs3 = sum(V[i] * (psi(F[i] * g0) + t * d[i][0] ** 3) for i in range(3))
+    assert is_zero(lhs3 - rhs - cubic)
+    # the one-dimensional integral remainder, for a general quintic and for exp
+    s, u = sp.symbols("s u", real=True)
+    cs = sp.symbols("k0:6", real=True)
+    for f in (sum(cs[k] * s**k for k in range(6)), sp.exp(u * s)):
+        rem = f.subs(s, 1) - f.subs(s, 0) - sp.diff(f, s).subs(s, 0) - sp.diff(f, s, 2).subs(s, 0) / 2
+        integral = sp.integrate((1 - s) ** 2 / 2 * sp.diff(f, s, 3), (s, 0, 1))
+        assert is_zero(sp.simplify(rem - integral))
+    assert sp.integrate((1 - s) ** 2 / 2, (s, 0, 1)) == sp.Rational(1, 6)
+    assert sp.integrate((1 - s), (s, 0, 1)) == sp.Rational(1, 2)  # the first-order model's remainder constant
+
+
+def test_window_norms():
+    """rf-window-norms: for phi = exp(-x^2 / 2 sigma^2), |phi'| is largest at |x| = sigma (e^(-1/2) / sigma),
+    |phi''| at 0 (1 / sigma^2), and |phi'''| at x^2 = (3 - sqrt 6) sigma^2, where it is
+    sqrt 6 sqrt(3 - sqrt 6) e^(-(3 - sqrt 6)/2) / sigma^3 = 1.380 / sigma^3 (the other critical points, x^2 =
+    (3 + sqrt 6) sigma^2, give 0.375 / sigma^3). The window's remainder at W = 3 and 5 (e + s): 0.0085 and 0.0018."""
+    z = sp.Symbol("z", real=True)
+    g = sp.exp(-(z**2) / 2)
+    g1, g2, g3 = (sp.diff(g, z, k) for k in (1, 2, 3))
+    assert set(sp.solve(sp.diff(g1, z), z)) == {-1, 1} and is_zero(sp.Abs(g1.subs(z, 1)) - sp.exp(-sp.Rational(1, 2)))
+    assert is_zero(sp.Abs(g2.subs(z, 0)) - 1)
+    crit = set(sp.solve(sp.diff(g3, z), z))
+    r_lo, r_hi = sp.sqrt(3 - sp.sqrt(6)), sp.sqrt(3 + sp.sqrt(6))
+    assert crit == {-r_lo, r_lo, -r_hi, r_hi}
+    peak = sp.sqrt(6) * sp.sqrt(3 - sp.sqrt(6)) * sp.exp(-(3 - sp.sqrt(6)) / 2)
+    assert is_zero(sp.Abs(g3.subs(z, r_lo)) - peak)
+    assert rounds_to(peak, "1.380") and rounds_to(sp.Abs(g3.subs(z, r_hi)), "0.375")
+    assert sp.limit(g3, z, sp.oo) == 0
+    assert rounds_to(peak / 6 / 27, "0.0085") and rounds_to(peak / 6 / 125, "0.0018")
+
+
+def test_taper():
+    """rf-taper: S(z) = 35 z^4 - 84 z^5 + 70 z^6 - 20 z^7 rises from 0 to 1 on [0, 1] with its first three derivatives
+    zero at both ends, so extended by 0 and 1 it is three times continuously differentiable. Its derivatives are
+    -140 z^3 (z - 1)^3, -420 z^2 (z - 1)^2 (2 z - 1) and -840 z (z - 1)(5 z^2 - 5 z + 1), largest at their critical
+    points: 35/16 (z = 1/2), 84 sqrt 5 / 25 = 7.51 (z = 1/2 -+ sqrt 5 / 10) and 105/2 (z = 1/2)."""
+    z = sp.Symbol("z", real=True)
+    S = 35 * z**4 - 84 * z**5 + 70 * z**6 - 20 * z**7
+    assert S.subs(z, 0) == 0 and S.subs(z, 1) == 1
+    for k in (1, 2, 3):
+        assert sp.diff(S, z, k).subs(z, 0) == 0 and sp.diff(S, z, k).subs(z, 1) == 0
+    S1, S2, S3 = (sp.diff(S, z, k) for k in (1, 2, 3))
+    assert is_zero(S1 + 140 * z**3 * (z - 1) ** 3)
+    assert is_zero(S2 + 420 * z**2 * (z - 1) ** 2 * (2 * z - 1))
+    assert is_zero(S3 + 840 * z * (z - 1) * (5 * z**2 - 5 * z + 1))
+
+    def sup(d):
+        pts = [r for r in sp.solve(sp.diff(d, z), z) if r.is_real and 0 <= r <= 1] + [sp.Integer(0), sp.Integer(1)]
+        return max((sp.Abs(d.subs(z, r)) for r in pts), key=lambda e: float(sp.N(e)))
+
+    assert is_zero(sup(S1) - sp.Rational(35, 16))
+    assert is_zero(sup(S2) - 84 * sp.sqrt(5) / 25) and rounds_to(84 * sp.sqrt(5) / 25, "7.51")
+    assert is_zero(sup(S3) - sp.Rational(105, 2))
+    assert is_zero(S2.subs(z, sp.Rational(1, 2) - sp.sqrt(5) / 10) - 84 * sp.sqrt(5) / 25)
+
+
+def test_alias_wide():
+    """rf-alias-wide: a cell a pixels wide is a pixel of a coarser grid, on which the point spread's characteristic
+    function at 2 pi k per cell is chi_psf(2 pi k / a) per pixel, so rf-alias-bound in cells, times a, bounds the
+    rounding in pixels: 0.0676 px at a = 1 and 0.414 px at a = 2 for the measured point spread. In strain, with
+    tan 2 theta = rho px / L: Si at 72.24 keV, 180 mm, 75 um pixels, rho = 132 px for 111 (2 theta = 3.14 deg), the
+    alias bound of one pixel moves |g| by 5.1e-4, and by 1.3e-4 on 620 (rho = 487 px); a merged shared pixel's by 3.1e-3
+    on 111. The approximation E[u] / rho is within 5 % of the exact value at these radii (it leaves out cos^2 2 theta
+    and the sin theta / theta factors)."""
+    import mpmath as mp
+
+    mp.mp.dps = 20
+    f, sc, sw = mp.mpf("0.28"), mp.mpf("0.25"), mp.mpf("1.3")
+
+    def chi(nu):  # per pixel, at nu cycles per pixel
+        return (1 - f) * mp.exp(-((2 * mp.pi * nu * sc) ** 2) / 2) + f * mp.exp(-((2 * mp.pi * nu * sw) ** 2) / 2)
+
+    def bound(a):
+        return a * min(mp.mpf(1) / 2, mp.nsum(lambda k: chi(k / a) / (mp.pi * k), [1, mp.inf]))
+
+    assert rounds_to(sp.Float(str(bound(1)), 20), "0.0676") and rounds_to(sp.Float(str(bound(2)), 20), "0.414")
+    lam = mp.mpf("12.398419843320026") / mp.mpf("72.24")  # keV -> Angstrom (hc)
+    L, px, a_si = mp.mpf(180), mp.mpf("0.075"), mp.mpf("5.4309")
+
+    def strain(hkl, eu):
+        d = a_si / mp.sqrt(sum(h * h for h in hkl))
+        th = mp.asin(lam / (2 * d))
+        rho = L * mp.tan(2 * th) / px
+        th2 = mp.atan((rho + eu) * px / L) / 2
+        return rho, mp.sin(th2) / mp.sin(th) - 1, th
+
+    rho, e111, th = strain((1, 1, 1), bound(1))
+    assert rounds_to(sp.Float(str(rho), 20), "132") and rounds_to(sp.Float(str(2 * th * 180 / mp.pi), 20), "3.14")
+    assert rounds_to(sp.Float(str(e111 * 10**4), 20), "5.1")
+    assert abs(e111 / (bound(1) / rho) - 1) < mp.mpf("0.05")
+    rho620, e620, _ = strain((6, 2, 0), bound(1))
+    assert rounds_to(sp.Float(str(rho620), 20), "487") and rounds_to(sp.Float(str(e620 * 10**4), 20), "1.3")
+    assert abs(e620 / (bound(1) / rho620) - 1) < mp.mpf("0.05")
+    _, e111w, _ = strain((1, 1, 1), bound(2))
+    assert rounds_to(sp.Float(str(e111w * 10**3), 20), "3.1")
+
+
+def test_omega_factor():
+    """rf-omega-factor: a Gaussian convolved with a probability measure nu (here any three atoms with positive
+    weights) is positive everywhere, since each term is; so a kernel that vanishes anywhere (a top-hat, or a
+    convolution of top-hats) has no Gaussian factor. The characteristic functions multiply, and |chi_nu| <= 1 (|sum
+    w_i e^(i t y_i)| <= sum w_i = 1), so a factor's |chi| bounds the kernel's at every t."""
+    x, v = sp.Symbol("x", real=True), sp.Symbol("v", positive=True)
+    y = sp.symbols("y0:3", real=True)
+    w = sp.symbols("w0:3", positive=True)
+    k = sum(w[i] * sp.exp(-((x - y[i]) ** 2) / (2 * v)) / sp.sqrt(2 * sp.pi * v) for i in range(3))
+    assert all(term.is_positive for term in k.args)
+    assert k.is_positive
+    top = sp.Piecewise((1, sp.Abs(x) <= sp.Rational(1, 2)), (0, True))
+    assert top.subs(x, 1) == 0  # the top-hat vanishes outside its support, so it is no such convolution
+    t = sp.Symbol("t", real=True)
+    chi_g = sp.exp(-v * t**2 / 2)
+    chi_nu = sum(w[i] * sp.exp(sp.I * t * y[i]) for i in range(3))
+    # |chi_nu|^2 <= (sum w)^2 by the triangle inequality; with sum w = 1 the factor's |chi| bounds the product's
+    tri = (sum(w)) ** 2 - sp.expand(chi_nu * sp.conjugate(chi_nu))
+    vals = {w[0]: sp.Rational(1, 5), w[1]: sp.Rational(1, 2), w[2]: sp.Rational(3, 10)}
+    for tv, yv in ((sp.Rational(7, 3), (0, 1, -2)), (sp.Rational(1, 2), (3, -1, 5))):
+        num = sp.N(tri.subs(vals).subs({t: tv, y[0]: yv[0], y[1]: yv[1], y[2]: yv[2]}), 30)
+        assert sp.re(num) >= 0
+    assert is_zero(sp.Abs(chi_g) - chi_g)
+
+
+def test_count():
+    """rf-count: the Friedel mate -h at omega + pi sees the same rays (dty_v(w + pi) = 2 y0 - dty_v(w), so row b
+    there is row 2 y0 - b here) with g -> -g, so its first-moment statistic is minus this one's and its count and
+    metric statistics are equal: no new equation. Counting rows against unknowns in a disc of pi D^2 / 4 voxels seen by
+    M' reflections of D rows each: D <= 4 M' / pi (counts), 4 M' / (3 pi) (first moments: 3 per row, 9 per voxel),
+    2 M' / (3 pi) (metric: 1 per row, 6 per voxel); 191, 64 and 32 at M' = 150."""
+    x, y, y0, w = sp.symbols("x y y0 omega", real=True)
+
+    def dty(om):
+        return y0 - (x * sp.sin(om) + y * sp.cos(om))
+
+    assert is_zero(sp.expand_trig(dty(w + sp.pi) - (2 * y0 - dty(w))))
+    g0 = sp.Matrix(sp.symbols("g0:3", real=True))
+    Y1, C = _mat("Y"), _mat("C")
+    assert is_zero(Y1 * (-g0) + Y1 * g0)
+    assert is_zero(((-g0).T * C * (-g0))[0] - (g0.T * C * g0)[0])
+    D, M = sp.symbols("D M", positive=True)
+    for per_row, per_voxel, lim in ((1, 1, 4 * M / sp.pi), (3, 9, 4 * M / (3 * sp.pi)), (1, 6, 2 * M / (3 * sp.pi))):
+        Dmax = sp.solve(sp.Eq(per_row * M * D, per_voxel * sp.pi * D**2 / 4), D)
+        assert is_zero(Dmax[0] - lim)
+    assert [int(sp.floor(lim.subs(M, 150))) for lim in (4 * M / sp.pi, 4 * M / (3 * sp.pi), 2 * M / (3 * sp.pi))] == [
+        190,
+        63,
+        31,
+    ]
+    assert rounds_to((4 * M / sp.pi).subs(M, 150), "191") and rounds_to((2 * M / (3 * sp.pi)).subs(M, 150), "32")
+    assert rounds_to((4 * M / (3 * sp.pi)).subs(M, 150), "64")
+
+
+def test_window_beam_numbers():
+    """The indexer's omega taken as exact (refiner.rst, "What kappa is not"): a population at zeta = 1.5 mm, e = 1e-4
+    rad and |sin eta| = 0.5 is moved across the ray by zeta e / |sin eta| = 0.30 um, 0.71 sigma_b for a 1 um FWHM
+    (sigma_b = FWHM / (2 sqrt(2 ln 2))); a row one sigma_b off the true position then has the weight
+    exp(-((sigma_b - shift)^2 - sigma_b^2) / (2 sigma_b^2)), 58 % above the true one. And the beam's angular scale in
+    kappa_w (rf-window-norms) there, sigma_b |sin eta| / r, is 1.4e-4 rad."""
+    sb = 1 / (2 * sp.sqrt(2 * sp.log(2)))  # um, at FWHM 1 um
+    shift = sp.Rational(1500) * sp.Rational(1, 10**4) / sp.Rational(1, 2)
+    assert rounds_to(shift, "0.30") and rounds_to(shift / sb, "0.71")
+    ratio = sp.exp(-((sb - shift) ** 2 - sb**2) / (2 * sb**2)) - 1
+    assert rounds_to(100 * ratio, "58")
+    assert rounds_to(sb * sp.Rational(1, 2) / 1500 * 10**4, "1.4")

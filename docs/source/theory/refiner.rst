@@ -50,10 +50,11 @@ the shape of the detector's point spread beyond (A5). The assumptions are:
   function at :math:`2\pi k` per pixel is used (:eq:`rf-alias-bound`). In words: no spot is ever sharper than the
   detector's own blur, so a spot's centre is pinned well within a pixel.
 - **(A6) The instrument's omega kernel is a factor.** Every peak's omega profile is the instrument's omega kernel
-  convolved with something non-negative and otherwise arbitrary. The kernel is a Gaussian whose variance is
+  convolved with something non-negative and otherwise arbitrary. The floor used is a Gaussian whose variance is
   :eq:`rf-omega-kernel` with three widths (horizontal and vertical convergence, bandwidth), measured on a single
   rotation of an undeformed Si crystal, by a fit that includes the peaks' tails (:eq:`rf-si-tails`), and taken at the
-  low end of their uncertainty. It is an operating condition of
+  low end of their uncertainty. It must be a factor of the kernel, so its variance is that of the kernel's Gaussian
+  parts only (:eq:`rf-omega-factor`). It is an operating condition of
   the refinement: such a Si scan, with reflections on at least two rings, is measured with every experiment
   (:eq:`rf-omega-identify`). The kernel is never fitted to the sample.
 
@@ -287,7 +288,14 @@ wherever it starts, and the indexer's orientation only places the boxes, whose m
 (:eq:`rf-box-margin-exact`): a start further off needs a larger box, not a smaller :math:`\kappa`. :math:`\kappa`
 measures what is treated as one unknown: the omega extent of one population's own light. Two populations of one
 voxel each have their own mean omega and weight, and orientation changing from voxel to voxel, boundaries included,
-enters :math:`\matr{G}` exactly. Only the spread within a population enters :math:`\kappa`.
+enters :math:`\matr{G}` through each population's mean omega. Only the spread within a population enters
+:math:`\kappa`. That mean omega is the indexer's, known only within :math:`e/|\sin\eta|`. Taken as exact, its error
+moves the population across the ray by :math:`(r + |r_f|)\,e/|\sin\eta|`: 0.71 :math:`\sigma_b` for :math:`e =
+10^{-4}` rad at 1.5 mm from the axis, :math:`|\sin\eta| = 0.5` and a 1 µm FWHM. That changes the weight of the rows a
+beam width away by 58 %. So the weight is expanded about the indexer's omega, not evaluated at it: its first order is
+linear in the population's first moment (:eq:`rf-window`, with the window a box), and only the remainder is bounded,
+with :math:`e` added to the spread in :math:`\kappa_w` (:eq:`rf-window-norms`; the numbers are
+``tests/theory/test_refiner.py::test_window_beam_numbers``).
 
 Misplacement, and maps accurate to a voxel
 ------------------------------------------
@@ -458,8 +466,11 @@ eigenvalues are :math:`f''` (radial) and :math:`f'/\rho` (tangential), so
     \big(1 + O(\rho^2/L^2)\big):
 
 :math:`5.7 \times 10^{-6}` of :math:`|\vec{g}|^2` for a point spread of 0.5 px² per axis at :math:`\rho = 420` px.
-It is the same for every population at one place on the detector, so it goes into the common scale
-(:eq:`lim-common`).
+It is the same for every population at one place on the detector, but not one number for the map: it goes as
+:math:`1/\rho^2`, so it differs from ring to ring (:math:`5.7 \times 10^{-5}` at :math:`\rho = 132` px, Si 111 at
+72 keV and 180 mm). As one scale (:eq:`lim-common`) it would read as a strain varying with the ring, which an
+incomplete set of reflections turns into a deviatoric strain. It is known from the point spread and the sensor, so
+it is computed per cell and subtracted.
 
 **Proof:** ``tests/theory/test_refiner.py::test_displacement_common_term``
 
@@ -515,7 +526,8 @@ neither (AGENTS.md rules out basis-function priors and coupling between voxels),
 and bias bound instead (:eq:`rf-linear`).
 
 The model is linear in the unknowns. No linearisation in the deformation is made, except the beam's weight across
-each population's omega extent, which is bounded (:eq:`rf-beam-taylor`), not modelled. What stays non-linear is which
+each population's omega extent and about the indexer's mean omega: expanded to first order (:eq:`rf-window`) and
+bounded beyond it (:eq:`rf-beam-taylor`). What stays non-linear is which
 cells form each region, a discrete function of where the populations' spots are. It is fixed once, from the
 indexer's populations, and never re-made from the refiner's own estimates (:eq:`rf-box-margin`). Re-making it would
 choose the regions from the data being fitted, which voids the selection bound (:eq:`rf-sandwich`) and the background's
@@ -526,7 +538,9 @@ of its spot centre as the indexer predicts it. The half-widths are a size, fixed
 population and the instrument's width (:eq:`rf-box-width`), never a shape. A region is a connected union of boxes, so every population whose box meets
 it is in it, with its whole box. Separated populations have regions of their own; merged ones share a region and
 enter it as a ray sum. Which voxel along a ray holds which part of the light is never decided within a region. It is
-decided by the tomography: by the same populations' regions in other rows and other reflections.
+decided by the tomography: by the same populations' regions in other rows and other reflections. In a deformed sample
+the boxes overlap along every ring and join into regions that hold most of it (:eq:`rf-coverage`). There, smooth
+windows replace the regions (:ref:`theory_refiner_windows`); boxes are kept for light that is alone in them.
 
 What the regions estimate. The estimand is each population's moments of its light *within its box*. For light
 symmetric about the box's centre it is the moment of all the light. In general it differs by the light beyond the
@@ -555,6 +569,28 @@ spread (a core of 0.25 px holding 72 %, a wing of 1.3 px). A feature's first-ord
 **Proof:** ``tests/theory/test_refiner.py::test_alias_bound_any_spot`` (the bound; asymmetric spots, the point spread
 convolved with exponentials of either sign, against their cells' masses).
 
+A cell :math:`a` pixels wide across the ring is one pixel of a coarser grid, on which the point spread's
+characteristic function at :math:`2\pi k` per cell is :math:`\chi_{\text{psf}}(2\pi k/a)` per pixel. In strain the
+rounding moves :math:`|\vec{g}|` with the ring's radius :math:`\rho` (pixels, :math:`\tan 2\theta = \rho\,\text{px}/L`):
+
+.. math::
+    :label: rf-alias-wide
+
+    |\operatorname{E}[u]| \le a\,\min\Big(\tfrac{1}{2},\ \sum_{k \ge 1}\frac{|\chi_{\text{psf}}(2\pi k/a)|}{\pi k}\Big),
+    \qquad
+    \varepsilon_{\text{alias}} = \frac{\sin\theta(\rho + |\operatorname{E}[u]|)}{\sin\theta(\rho)} - 1
+    \approx \frac{|\operatorname{E}[u]|}{\rho}:
+
+0.0676 px for a pixel and 0.414 px for a merged shared pixel (:math:`a = 2`, :eq:`rec-shared`). For Si at 72.24 keV,
+180 mm and 75 µm pixels the pixel's bound is :math:`5.1 \times 10^{-4}` in strain on 111 (:math:`\rho = 132` px) and
+:math:`1.3 \times 10^{-4}` on 620 (:math:`\rho = 487` px); a shared pixel's is :math:`3.1 \times 10^{-3}` on 111. These
+are worst cases, reached by the sharpest spots, where :math:`\kappa` is smallest. So a sharp population is where the
+bias bound, not the error bar, sets what is determined. A window can avoid the shared pixels' columns with the taper
+of :eq:`rf-taper`, at the cost of their light.
+
+**Proof:** ``tests/theory/test_refiner.py::test_alias_wide`` (the rescaled bound at :math:`a = 1, 2`; the strains
+from Bragg's law; the small-angle form within 5 %).
+
 **Omega.** Frames bin omega as pixels bin the detector, and (A6) does for omega what (A5) does for the pixels. With
 no lattice rotation, :eq:`ps-omega` gives a reflection's omega shift as three independent terms, so the instrument's
 omega kernel has variance
@@ -571,6 +607,27 @@ bandwidth. A lower variance :math:`v_{\text{lo}} \le v` is still a factor of the
 measured widths can be used safely.
 
 **Proof:** ``tests/theory/test_refiner.py::test_omega_kernel_variance``
+
+**Which floor is a factor.** A Gaussian is a factor only of kernels that are positive everywhere:
+
+.. math::
+    :label: rf-omega-factor
+
+    k = N(0, v_{\text{lo}}) * \nu,\quad \nu \ge 0,\quad \int d\nu = 1
+    \ \Rightarrow\ k(x) = \int \varphi_{v_{\text{lo}}}(x - y)\, d\nu(y) > 0 \ \text{ for every } x, \qquad
+    |\chi_k(t)| = |\chi_{\text{lo}}(t)|\,|\chi_\nu(t)| \le |\chi_{\text{lo}}(t)|.
+
+So a part of the kernel with compact support, such as a top-hat aperture (planar lenses, nearly transparent across
+their aperture) or a bandwidth profile with steep edges, has no Gaussian factor. The kernel then has one only through
+its other parts (the source's size, a CRL's absorption apodisation), and only of those parts' variance. A Gaussian
+fitted to the whole kernel returns about its total variance, which is not a factor when the rest is not Gaussian: the
+unsafe direction for (A6), as the tails are (:eq:`rf-si-tails`). So :math:`v_{\text{lo}}` is the variance of the parts
+that are Gaussian, from the optics. Alternatively, :eq:`rf-omega-bound` takes the characteristic function of any
+measured factor in place of :math:`e^{-2\pi^2k^2r^2}`. Which parts of ID11's kernel are Gaussian, for each optic, is
+the maintainer's to say.
+
+**Proof:** ``tests/theory/test_refiner.py::test_omega_factor`` (a Gaussian convolved with any positive atoms is
+positive; a top-hat vanishes; the characteristic functions multiply, and :math:`|\chi_\nu| \le 1`).
 
 With :math:`r = \sqrt{v_{\text{lo}}}/h` the floor's sd in frames, :eq:`rf-alias-bound` in frames gives
 
@@ -852,6 +909,34 @@ of :math:`\matr{\Sigma}_{bb}`. So it errs large by the bias and small by the lev
 falls as the number of unknowns over the number of blocks. It is consistent as the blocks per unknown grow, with no
 model of the noise.
 
+Counting the unknowns
+---------------------
+
+Merged light is seen only through ray sums, so a merged domain's unknowns cannot outnumber its independent rows. A
+reflection's Friedel mate, :math:`-\vec{h}` at :math:`\omega + \pi`, sees the same rays, since :math:`\text{dty}_v(\omega
++ \pi) = 2y_0 - \text{dty}_v(\omega)`, with :math:`\vec{g} \to -\vec{g}`. Its first-moment rows of :math:`\matr{G}` are
+minus this reflection's, and its count and metric rows are equal: it adds photons, not equations. For a domain
+:math:`D` voxels across (a disc of :math:`\pi D^2/4` voxels, rows at the beam's FWHM), seen by :math:`M'` reflections
+with distinct rays (Friedel pairs once), each reflection gives at most :math:`D` rows per statistic, so
+
+.. math::
+    :label: rf-count
+
+    \operatorname{rank}\matr{G} \le \#\text{rows}
+    \ \Rightarrow\
+    D \le \frac{4M'}{\pi}\ \ (V), \qquad
+    D \le \frac{4M'}{3\pi}\ \ (\matr{Y}^{(1)}:\ 3 \text{ per row, } 9 \text{ per voxel}), \qquad
+    D \le \frac{2M'}{3\pi}\ \ (\text{the metric}:\ 1 \text{ per row, } 6 \text{ per voxel}),
+
+as necessary conditions, not sufficient ones. For :math:`M = 300` reflections (:math:`M' = 150`) the limits are 191, 64
+and 32 voxels. A uniformly oriented grain of 50-100 µm, scanned at 1 µm, exceeds the metric's. Its per-voxel strain is
+then not determined by any statistic, before noise, the weak combinations or the beam's transfer enter, and the
+singular values say so (:eq:`rf-smin`). Windows (:eq:`rf-window`) add rows only where the populations' light separates
+along the ring, as in a deformed grain, not where it coincides.
+
+**Proof:** ``tests/theory/test_refiner.py::test_count`` (the Friedel mate's rays and signs, symbolic; the counts'
+arithmetic; the numbers).
+
 The weak directions
 -------------------
 
@@ -1079,6 +1164,186 @@ needed: it would halve the counts to remove a bias the band already bounds.
 
 **Proof:** ``tests/theory/test_refiner.py::test_sandwich`` (every region between :math:`R_0` and :math:`R_1` on a
 strip, exactly; the triangle inequality).
+
+.. _theory_refiner_windows:
+
+Windows instead of regions
+--------------------------
+
+**When regions merge.** A region is a connected union of boxes, so it grows wherever boxes overlap, and overlap is
+what deformed metals do: many populations along each ray, with small accumulating misorientations, lay their boxes
+side by side along each ring (the bananas). Take a ring of multiplicity :math:`m_h` (Friedel mates included) and
+:math:`N` populations of unrelated orientation lit in a row. Each population's reflections on the ring cross the Ewald
+sphere twice per turn. With boxes :math:`b_\eta \times b_\omega` placed independently and uniformly on the ring's
+:math:`(\eta, \omega)` torus:
+
+.. math::
+    :label: rf-coverage
+
+    \lambda = \frac{2 m_h N\, b_\eta b_\omega}{4\pi^2}, \qquad
+    P(\text{a point in no box}) = \Big(1 - \frac{\lambda}{2 m_h N}\Big)^{2 m_h N} \le e^{-\lambda}, \qquad
+    \operatorname{E}[\text{other boxes meeting a box}] = 4\lambda\,\frac{2 m_h N - 1}{2 m_h N},
+
+the last for boxes of one size, which meet when their centres are within :math:`2b_\eta \times 2b_\omega`. For Ni 220
+(:math:`m_h = 12`) and :math:`N = 3000`, one population per voxel along a ray of a 3000-step map, boxes of 1° give
+:math:`\lambda = 0.56`: each box meets 2.2 others, so the regions join along the ring. Boxes of 5° give
+:math:`\lambda = 13.9`, and only :math:`9.3 \times 10^{-7}` of the ring is in no box. Boxes of 0.2° meet 0.089 others,
+and a 400-step map at 1° meets 0.30. Populations of one grain overlap by design and are merged on purpose; :math:`N`
+counts unrelated orientations, which in a texture is every voxel along the ray. The real region sizes are known from
+the indexer's boxes before the fit. A region that holds most of a ring gives a handful of moments for thousands of
+populations.
+
+**Proof:** ``tests/theory/test_refiner.py::test_coverage`` (:math:`\log(1 - x) \le -x`; the meeting count; the
+numbers).
+
+**Smooth windows.** The completeness that :eq:`rf-forced` demands comes from the region's edge: an indicator, whose sum
+over a population depends on how its light lies about the edge. A weight that is smooth where every population's
+light lies needs no completeness at all. For a window :math:`\phi`, fixed before the data from the indexer's
+populations and the detector's mask, the statistic is :eq:`rf-statistic` with each cell weighted by
+:math:`\phi_p = \phi(\hat{\vec{g}}_p)`:
+
+.. math::
+
+    T_\phi[f] = \sum_p \frac{M_{\text{ref}}}{M_j}\,\frac{r_p\,\phi_p\, f(\hat{\vec{g}}_p)}{L(\hat{\vec{g}}_p) P(\hat{\vec{g}}_p)} .
+
+A photon of population :math:`k` with scattering vector :math:`\vec{g}` then counts
+:math:`\psi(\vec{g}) = \phi(\vec{g})\,f(\vec{g})\,w_{bk}(\omega_h(\vec{g}))`, with :math:`w_{bk}` the beam's weight at the
+omega where :math:`\vec{g}` diffracts (A3). The cut, the group rule, the binning and the instrument enter as for regions
+(below and above). Taylor's theorem about the indexer's prediction :math:`\vec{c} = \vec{g}_0` gives, for any
+distribution :math:`\mu_k`,
+
+.. math::
+    :label: rf-window
+
+    \begin{aligned}
+    \int\psi\, d\mu_k &= \psi(\vec{c})\,V_k + \nabla\psi(\vec{c})\cdot\vec{m}_1
+    + \tfrac{1}{2}\nabla\nabla\psi(\vec{c}) : \matr{m}_2 + R_3, \qquad
+    |R_3| \le \frac{\|\nabla^3\psi\|}{6}\int|\vec{g} - \vec{c}|^3\, d\mu_k, \\
+    \vec{m}_1 &= (\matr{Y}^{(1)}_k - V_k\matr{I})\vec{g}_0, \qquad
+    \matr{m}_2 = \matr{Y}^{(2)}_k[\vec{g}_0, \vec{g}_0] - (\matr{Y}^{(1)}_k\vec{g}_0)\vec{g}_0^T
+    - \vec{g}_0(\matr{Y}^{(1)}_k\vec{g}_0)^T + V_k\vec{g}_0\vec{g}_0^T,
+    \end{aligned}
+
+with :math:`\|\nabla^3\psi\|` the largest third directional derivative between :math:`\vec{c}` and the light. Stopped
+one order earlier, without :math:`\matr{m}_2`, the remainder is at most :math:`\tfrac{1}{2}\|\nabla^2\psi\|\int|\vec{g}
+- \vec{c}|^2 d\mu_k`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_window_taylor`` (exact for every quadratic :math:`\psi` and any three
+sub-volumes; a cubic misses exactly its own sum; the moments' linearity; Taylor's integral remainder and its constant).
+
+So a window's statistic is linear in :math:`(V_k, \matr{Y}^{(1)}_k, \matr{Y}^{(2)}_k)` of every population whose light
+reaches it, with coefficients :math:`\psi(\vec{c}_k)`, :math:`\nabla\psi(\vec{c}_k)` and :math:`\nabla\nabla\psi(\vec{c}_k)`
+from the geometry, however the populations overlap. No population needs to be complete in any window, and nothing is
+merged: a window sees each population with its own weight :math:`\phi(\vec{c}_k)`. Overlapping windows (a partition of
+unity along each ring) see neighbouring populations with different weights. A region is the case of :math:`\phi = 1` on
+a set, whose derivatives vanish inside it, so a complete region has no remainder at all. A window trades that
+completeness for a third-order remainder.
+
+**What sets the remainder.** :math:`\psi` is a product of factors, each smooth on its own angular scale: the window,
+of width :math:`W`; the feature, centred (:eq:`rf-centre`); and the beam, which the voxel crosses over the angle
+:math:`\sigma_b|\sin\eta|/(r + |r_f|)` of :math:`\vec{g}` (:eq:`rf-beam-taylor`, a turn of :math:`\vec{g}` moving its
+omega by the turn over :math:`|\sin\eta|`). With :math:`e` the indexer's error and :math:`s` the population's spread,
+the remainder relative to the population's light is of order :math:`\kappa_w^3` (:math:`\kappa_w^2` for the
+first-order model), for
+
+.. math::
+    :label: rf-window-norms
+
+    \kappa_w = \frac{e + s}{W_{\text{eff}}}, \quad
+    W_{\text{eff}} = \min\Big(W,\ t,\ \frac{\sigma_b|\sin\eta|}{r + |r_f|}\Big); \qquad
+    \|\phi'\| = \frac{e^{-1/2}}{\sigma}, \quad \|\phi''\| = \frac{1}{\sigma^2}, \quad
+    \|\phi'''\| = \frac{\sqrt{6}\sqrt{3 - \sqrt{6}}\; e^{-(3 - \sqrt{6})/2}}{\sigma^3} = \frac{1.380}{\sigma^3}
+
+for a Gaussian window or beam profile of peak 1 and sd :math:`\sigma`, with :math:`t` the width of a taper near unmeasured
+cells (:eq:`rf-taper`). :math:`\kappa_w` is :eq:`rf-beam-taylor`'s :math:`\kappa` with the indexer's error added, and
+the window's own width. The rigorous remainder uses :math:`\psi`'s derivatives through the product and chain rules,
+computed per term from the geometry. Where the beam does not limit it, a Gaussian window at :math:`W = 3(e + s)` leaves
+at most :math:`1.380/(6 \cdot 27) = 0.0085` of the light, and 0.0018 at :math:`W = 5(e + s)`.
+
+**Proof:** ``tests/theory/test_refiner.py::test_window_norms`` (the critical points of the Gaussian's derivatives and
+their values; the numbers).
+
+**The beam and the indexer's omega.** In :math:`\nabla\psi(\vec{c})` the beam's factor contributes
+:math:`w'\,\nabla(\text{dty}\circ\omega_h)`: the light moves between rows by its first moment. So the indexer's error in
+a population's mean omega enters :math:`\matr{G}` linearly, through :math:`\vec{m}_1`, with a known coefficient. That is
+the same expansion with :math:`\phi = 1` on a box, so boxes get it too. What remains is second order in
+:math:`\kappa_w` (first-order model) or third (second-order). The second-order model ties a population's counts to its
+spread through :math:`w''`, the beam widened by its own spread (:eq:`rf-beam-gauss`): that is why :doc:`limits` keeps
+free spreads out of the means, and whether to fit :math:`\matr{Y}^{(2)}` here is the maintainer's choice. The
+expansion holds only for :math:`\kappa_w < 1`. At 1.5 mm from the axis with a 1 µm beam at :math:`|\sin\eta| = 0.5`,
+that needs :math:`e + s` below :math:`1.4 \times 10^{-4}` rad (``tests/theory/test_refiner.py::test_window_beam_numbers``). Windows do not relax :math:`\kappa`: the beam crossing a
+population's own omega extent is a sampling limit (:eq:`rf-beam-voxel`). Windows remove the merging, which is set by
+the overlap of many populations, each compact.
+
+**What a window resolves.** Two populations of one voxel are told apart in a reflection by the difference of their
+weights, :math:`\phi(\vec{c}_k) - \phi(\vec{c}_{k'}) \approx \nabla\phi\cdot(\vec{c}_k - \vec{c}_{k'})`: about their
+separation over :math:`W`. Windows narrower than their separation see them apart, as boxes would. Wider windows see
+their sum, with the difference through the gradient, and :eq:`rf-identify` decides what is determined, from the
+weights. Narrower windows resolve more; wider ones leave smaller remainders. The floor is :math:`e + s`.
+
+**The cut and the error bars.** The cut's bound for a window is :eq:`rf-cut-bound` with every cell weighted by
+:math:`|\phi_p|`, :math:`\kappa_c\sum_p|\phi_p(f_p - m)|/(LP)_p`, no more than a box of the same reach. The windows overlap,
+but cells in different frames and rows are independent exactly, so the sandwich's blocks (:eq:`rf-harris`) are (row,
+frame) pairs, whatever the windows.
+
+**Anri's choice:** where the indexer's boxes join into regions much larger than one population's (:eq:`rf-coverage`,
+from the boxes before the fit), the statistics are smooth windows, with every population whose light reaches a
+window in its model through :eq:`rf-window`. Boxes are kept for light that is alone in them, where they have no
+remainder.
+
+Cells with no data
+------------------
+
+On cells that were never measured (the gaps between modules, masked pixels, the area beyond the detector's edges, the
+frames beyond the scan), the data are missing, not zero, and so is the light that fell there. A window that vanishes on
+the whole unmeasured area :math:`U` (as a set of positions, not only of cell centres) makes the mask invisible:
+
+.. math::
+    :label: rf-mask
+
+    \phi = 0 \text{ on } U \ \Rightarrow\
+    \sum_{p \notin U} r_p\,\phi_p f_p = \sum_p r_p\,\phi_p f_p, \qquad
+    \operatorname{E}\Big[\sum_{p \notin U} \frac{r_p\,\phi_p f_p}{(LP)_p}\Big]
+    = \sum_k |F_h|^2 A_{kh}\int\psi\, d\mu_k - (\text{the cut and the group rule}).
+
+A photon that lands in :math:`U` is lost, and has weight 0 in the model; any other lands in a measured cell. So the
+statistic is the window's on a detector without gaps, exactly, and :eq:`rf-window` holds as written. A masked pixel is
+never kept, so near :math:`U` the group rule removes more (:eq:`rec-animal` with :math:`a_q = 0`). The window therefore
+vanishes also within the rule's reach of :math:`U`, :math:`m - 1` pixels (:eq:`rec-reach`). The light near the gaps
+costs information, never accuracy.
+
+**Definition:** the masked window; the two sums agree term by term, and every photon's weight is :math:`\phi` at
+where it lands.
+
+A window stays smooth across :math:`U`'s edges through a taper. Take the C³ step
+
+.. math::
+    :label: rf-taper
+
+    S(z) = 35z^4 - 84z^5 + 70z^6 - 20z^7 \ \text{on } [0, 1], \qquad
+    S^{(k)}(0) = S^{(k)}(1) = 0\ \ (k = 1, 2, 3), \qquad
+    \|S'\| = \tfrac{35}{16},\quad \|S''\| = \tfrac{84\sqrt{5}}{25} = 7.51,\quad \|S'''\| = \tfrac{105}{2},
+
+extended by 0 below and 1 above. Let :math:`B` be 1 on an interval and fall to 0 through :math:`S` over a width
+:math:`t` on either side. Then each masked rectangle (a gap, a masked pixel, the detector's edge; in omega, the scan's
+ends) contributes the factor :math:`1 - B_s(s)\,B_f(f)`, which is 0 on it, 1 beyond its taper, and C³. The window is
+:math:`\phi` times their product. Its derivatives near :math:`U` scale as :math:`\|S^{(k)}\|/t^k` (:eq:`rf-window-norms`
+through :math:`t`). A population within :math:`t` of a gap keeps the part of its light the taper weights.
+
+**Proof:** ``tests/theory/test_refiner.py::test_taper`` (the end values and derivatives; the factored derivatives;
+their largest values).
+
+A box cannot do this: it is an indicator, and a box meeting :math:`U` loses whatever its population put there, by its
+shape (:eq:`rf-forced`).
+
+**Anri's rule:** a box that meets the unmeasured area, dilated by its margins (:eq:`rf-box-margin`) and the group rule's
+reach, is left out, as a box reaching past an end of the omega range is. On an Ag2S scan the module gaps hid every ring
+over :math:`\eta = \pm(65`-86)°, about 10 % of the reflections (the indexer's ``detector_coverage``). A window loses
+only the gaps and their tapers.
+
+**Anri's rule:** shared pixels (:eq:`rec-shared`) are merged into their physical pixels before any statistic. The
+merged cell's centre is its physical pixel's, and its binning bound is that of a cell two pixels wide
+(:eq:`rf-alias-wide`).
 
 One linear solve, and its split
 -------------------------------
@@ -1802,7 +2067,13 @@ bound, from a model, like :math:`e`.
 6. **The beam's weight within a peak** biases a centred feature by at most :eq:`rf-beam-first` plus
    :eq:`rf-beam-taylor`'s remainder, growing as :math:`\kappa\,\operatorname{sd}(\tilde f)`. This is the only term in
    which a population's own omega profile matters, and it is small only where :math:`\kappa \ll 1`
-   (:eq:`rf-beam-closure`).
+   (:eq:`rf-beam-closure`). The indexer's error in each population's mean omega enters linearly, and its remainder
+   with :math:`\kappa_w` (:eq:`rf-window-norms`).
+7. **Overlap** costs nothing with windows: each window's statistic is linear in the moments of every population it
+   reaches, within the third-order remainder of :eq:`rf-window`; no region has to be complete or merged.
+8. **Unmeasured cells** (module gaps, masked pixels, the detector's and the scan's edges) bias nothing with windows
+   that vanish on them (:eq:`rf-mask`); boxes that meet them are left out. Shared pixels are merged into their
+   physical pixels, with their own binning bound (:eq:`rec-shared`, :eq:`rf-alias-wide`).
 
 The refiner reports, per population, :math:`\hat{\vec{Y}}`, its block-sandwich covariance, and the bias bound
 :math:`\sum_j |A_{ij}|\bar\Delta_j`. That bound is computed from the geometry, the regions and the point spread's
@@ -1854,4 +2125,12 @@ What is left out
   but their own sizes are estimates (runout about 1 µm).
 - **Multi-phase overlaps**: populations of different phases sharing a region add their ray sums like any others;
   nothing more is needed, but nothing is checked.
+- **The windows' order and widths**: the first- or second-order model of :eq:`rf-window` (the second ties counts to
+  spreads through the beam), the window width :math:`W` against what it resolves, and the taper width :math:`t`, are
+  the maintainer's to choose. Which regions count as merged (:eq:`rf-coverage`) is read from the indexer's boxes; the
+  threshold is a choice.
+- **Each population's extent**: :eq:`rf-window`'s remainder needs a bound on :math:`\int|\vec{g} - \vec{c}|^3`, from
+  the indexer's error and spread, an input of the bound like the variance of :eq:`ref-tail`.
+- **Shared pixels**: the readout's rule for dividing a count is to be confirmed (:eq:`rec-shared`).
+- **The count** (:eq:`rf-count`) is a necessary condition; the conditioning of a merged domain near it is not derived.
 - **Code**: none of the refiner is in anri yet.
