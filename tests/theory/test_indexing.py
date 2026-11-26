@@ -353,3 +353,17 @@ def test_ring_widths_code():
         # sums of ~30 small integers and positions, exact in float64 but for the centroid's one quotient
         assert abs(off[r] - float(c - t)) <= 16 * EPS * 7 and abs(hw[r] - float(want_hw)) <= 16 * EPS * 7, r
 
+
+def test_coverage_at_prediction():
+    """idx-coverage: on a bin [0, 1] x [0, 1] (eta across, 2theta along the ring) cut by a gap's edge, measured where
+    eta < c (a gap crossing the ring) or where 2theta < c (a gap running along it), the bin's coverage, the measured
+    area's share, is c, and it is the mean of m over a prediction placed uniformly in the bin. A prediction is at one
+    place, where m is 0 or 1, so it differs from c by c or 1 - c, at most max(c, 1 - c)."""
+    c = sp.Symbol("c", positive=True)
+    x, y = sp.symbols("x y", real=True)
+    for m in (sp.Piecewise((1, x < c), (0, True)), sp.Piecewise((1, y < c), (0, True))):
+        area = sp.integrate(sp.integrate(m, (x, 0, 1)), (y, 0, 1))
+        assert is_zero(sp.simplify(area.subs(c, sp.Rational(3, 10)) - sp.Rational(3, 10)))
+        assert is_zero(sp.simplify(area.subs(c, sp.Rational(7, 10)) - sp.Rational(7, 10)))
+    for cv in (sp.Rational(1, 10), sp.Rational(1, 2), sp.Rational(4, 5)):
+        assert max(abs(1 - cv), abs(0 - cv)) == max(cv, 1 - cv)

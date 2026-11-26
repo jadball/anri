@@ -60,6 +60,28 @@ the shape of the detector's point spread beyond (A5). The assumptions are:
 
 The geometry (detector, beam profile across dty, wavelength) is known from calibration (:doc:`calibration`).
 
+The method
+----------
+
+In the order it runs. The rest of the chapter derives each step and what it costs.
+
+1. Shared pixels are merged into their physical pixels (:eq:`rec-shared`).
+2. Each population gets, in each reflection, one soft box: a Gaussian weight centred on its predicted spot, which
+   fades to zero before every unmeasured cell (:eq:`rf-fade`). Soft boxes overlap freely. Nothing is merged, and no
+   spot is dropped for touching a gap.
+3. A soft box's width is computed, not chosen: the narrowest that keeps the error of every photon's weight below the
+   counting noise of every population whose light reaches it (:eq:`rf-window-width`), from the indexer's error,
+   spread and photon count.
+4. Each soft box gives, per dty row, the counts, first moments and :math:`|\vec{g}|^2` of its cells, each cell divided
+   by its Lorentz and polarisation factors and its frame's monitor (:eq:`rf-statistic`).
+5. Their expectation is linear in every population's volume, first moment and metric, with coefficients from the
+   geometry and the beam, to first order in each population's extent about its prediction (:eq:`rf-window`). One
+   linear least-squares solve gives them all (:eq:`rf-linear`). Error bars come from the residuals, in blocks of one
+   row and frame (:eq:`rf-harris`).
+6. The solve is repeated with every width doubled. Where the two disagree beyond their noise, the expansion has
+   failed, and the population is reported as not determined (:eq:`rf-width-check`). Its beam parameter
+   :math:`\kappa_w`, which doubling cannot test, is reported with it (:eq:`rf-window-norms`).
+
 The estimand
 ------------
 
@@ -362,70 +384,6 @@ voxel to voxel, and it reaches the weak combinations amplified by up to :math:`1
 that the solved map then looks blurred by about the move is argued, not derived: the move is exact, its effect through
 the solve is not written out.
 
-Regions that follow the sinogram
---------------------------------
-
-The move :math:`m(\delta)` is known for every point and every omega (:eq:`rf-beam-motion`). Most of it is common to a
-region: the voxels sharing a region lie along one ray, within the merged length :math:`D` (:eq:`lim-merged`), and
-move nearly together. A region can follow that common move instead of sitting in one dty row, as a known motion is
-compensated in tomography. Take a reference point
-of the region, its dty trace :math:`y_{\text{ref}}(\omega)`, and the region's mean omega :math:`\bar\omega_R`. Frame
-:math:`j`'s rows are relabelled by the reference's move, rounded to whole rows, and the frames are summed:
-
-.. math::
-    :label: rf-trace
-
-    T'_{R,b}[f] = \sum_j T_{R,\, b + n_j,\, j}[f], \qquad
-    n_j = \operatorname{round}\frac{y_{\text{ref}}(\omega_j) - y_{\text{ref}}(\bar\omega_R)}{\text{step}},
-
-with :math:`T_{R,b,j}` the region's statistic in row :math:`b` and frame :math:`j` (:eq:`rf-statistic`). In the model,
-population :math:`k` sits at :math:`\tilde y_k = \text{dty}_k(\bar\omega_k) - (y_{\text{ref}}(\bar\omega_k) -
-y_{\text{ref}}(\bar\omega_R))`: its offset from the trace, known from the geometry and its mean omega. Each frame's
-rows are shifted by a whole number, so the relabelling is a bijection of the cells: nothing is counted twice, no light
-is interpolated, and no unknown is added. :eq:`rf-linear` is unchanged, with :math:`a_{bk} = P(\text{dty}_b -
-\tilde y_k)`.
-
-**Definition:** the trace-following statistic. Rows shifted beyond the scanned range are lost, so a region that needs
-them is left out, as a reflection whose box reaches past an end of the omega range is.
-
-A photon of population :math:`k` diffracting at :math:`\omega` in frame :math:`j`, a turn :math:`\delta = \omega -
-\bar\omega_k` past the population's mean, is then misplaced by
-
-.. math::
-    :label: rf-trace-residual
-
-    e = \underbrace{\big[(\text{dty}_k - y_{\text{ref}})(\omega) - (\text{dty}_k - y_{\text{ref}})(\bar\omega_k)\big]}_{
-    \text{the offset } \vec{x}_k - \vec{x}_{\text{ref}} \text{ turned by } \delta}
-    + \underbrace{\big[y_{\text{ref}}(\omega) - y_{\text{ref}}(\omega_j)\big]}_{\text{within the frame}}
-    + \underbrace{\big[y_{\text{ref}}(\omega_j) - y_{\text{ref}}(\bar\omega_R) - n_j\,\text{step}\big]}_{\text{rounding}},
-    \qquad
-    |e| \le |\vec{x}_k - \vec{x}_{\text{ref}}|\,|\delta| + \frac{(r_{\text{ref}} + |r_f|)\,h}{2} + \frac{\text{step}}{2},
-
-with :math:`h` the frame's width. The first term replaces :math:`r|\delta|` (:eq:`rf-beam-misplace`) by the distance
-from the reference, at most :math:`D/2` steps along the ray: the distance from the axis no longer enters, except
-through the frame's width. The rounding is a sawtooth in omega, at most half a step.
-
-**Proof:** ``tests/theory/test_refiner.py::test_trace_residual`` (the decomposition, exact; the first term as the move
-of the offset, bounded by its chord; the frame's term by the trace's rate).
-
-The relabelling costs the frame's term, :math:`(r + |r_f|)h/2`: the same sampling criterion for the frame's own
-omega range, which the plain region does not have. For a
-population inside one frame, the plain region's move is :math:`r|\delta| \le r h/2` already. So it helps only where a
-population spans several frames, :math:`s_{kh} > h`; the choice is per region, from the indexer's spread, before the
-fit. At the edge of a 3000-step map with 0.05° frames (FWHM one step), the frame's term is 0.65 steps at most and 0.38
-in rms (uniform within the frame), and the rounding at most 0.5 (0.29 in rms). The first term, for a population of
-:math:`s = 0.25°` merged over :math:`D = 9` voxels along the ray, is 0.020 steps in rms. So the move is below a step
-in rms for any spread, wherever the voxel is, against :math:`s \le 0.038°` for the plain region
-(:eq:`rf-beam-voxel`).
-
-**Proof:** ``tests/theory/test_refiner.py::test_trace_numbers``
-
-What it does not change: the residual is still a misplacement, bounded, not modelled, and it still varies from
-reflection to reflection, so what reaches the weak combinations is :eq:`rf-amplify`'s amplification of the smaller
-move. For a bias of :math:`10^{-4}` rad rather than a voxel, the frame's term alone gives :math:`\kappa = 0.89` at the
-edge (:math:`r h/\sqrt{12}` against :math:`\sigma_b`), and the rounding's covariance with the features is not written
-out.
-
 The instrument
 --------------
 
@@ -527,26 +485,22 @@ and bias bound instead (:eq:`rf-linear`).
 
 The model is linear in the unknowns. No linearisation in the deformation is made, except the beam's weight across
 each population's omega extent and about the indexer's mean omega: expanded to first order (:eq:`rf-window`) and
-bounded beyond it (:eq:`rf-beam-taylor`). What stays non-linear is which
-cells form each region, a discrete function of where the populations' spots are. It is fixed once, from the
-indexer's populations, and never re-made from the refiner's own estimates (:eq:`rf-box-margin`). Re-making it would
-choose the regions from the data being fitted, which voids the selection bound (:eq:`rf-sandwich`) and the background's
-unchosen complement (:eq:`rf-background`).
+bounded beyond it (:eq:`rf-beam-taylor`). What stays non-linear is where
+each soft box sits and how wide it is, functions of the indexer's populations. They are fixed once, from the
+indexer, and never re-made from the refiner's own estimates. Re-making them would choose the weights from the data
+being fitted, which voids the selection bound (:eq:`rf-sandwich`) and the background's unchosen complement
+(:eq:`rf-background`).
 
-**Regions.** A population's box in a reflection is the set of cells within half-widths :math:`(t_s, t_f, t_\omega)`
-of its spot centre as the indexer predicts it. The half-widths are a size, fixed from the indexer's spread for the
-population and the instrument's width (:eq:`rf-box-width`), never a shape. A region is a connected union of boxes, so every population whose box meets
-it is in it, with its whole box. Separated populations have regions of their own; merged ones share a region and
-enter it as a ray sum. Which voxel along a ray holds which part of the light is never decided within a region. It is
-decided by the tomography: by the same populations' regions in other rows and other reflections. In a deformed sample
-the boxes overlap along every ring and join into regions that hold most of it (:eq:`rf-coverage`). There, smooth
-windows replace the regions (:ref:`theory_refiner_windows`); boxes are kept for light that is alone in them.
+**Regions and soft boxes.** The chapter's first statistic was a hard box per population, merged with every box it
+meets into a region, so that each region holds all of its populations' light (:eq:`rf-forced`). In a deformed sample
+those regions join along whole rings (:eq:`rf-coverage`), so the method uses soft boxes instead
+(:ref:`theory_refiner_windows`). Hard boxes and regions remain below where a lemma is stated for them, and a hard box
+is a soft box with an indicator for its weight. Which voxel along a ray holds which part of the light is never decided
+within a box. It is decided by the tomography: by the same populations' boxes in other rows and other reflections.
 
-What the regions estimate. The estimand is each population's moments of its light *within its box*. For light
-symmetric about the box's centre it is the moment of all the light. In general it differs by the light beyond the
-box. For a spot of variance :math:`\sigma^2` that difference is at most :math:`\sigma^2/t` in the first moment, per
-axis, for any shape (:eq:`ref-tail`); otherwise it depends on the shape, and no estimator can know it. Light beyond
-every box that lies above the cut is recorded in cells outside every region; it is reported, never fitted.
+What a soft box estimates: each population's own moments, :math:`V_k`, :math:`\matr{Y}^{(1)}_k` and its metric
+(:eq:`rf-moments`), the same for every width. The width changes only the remainder and the noise. Light no
+population's soft box weights is recorded in cells it does not reach; it is reported, never fitted.
 
 The pixels
 ----------
@@ -793,25 +747,8 @@ spot of :math:`\sigma = 1` px.
 
 The bound falls as :math:`1/N` and the noise as :math:`1/\sqrt{N}`. Faint spots are therefore the ones whose cut bias
 can exceed their noise, by a factor this bound gives. The bound is tight in the worst case: light of one photon per
-cell over the whole box. Smaller boxes lower it and raise the light beyond the box (:eq:`ref-tail`); the half-widths
-trade the two. In a box of half-width :math:`t` cells along each of three axes, a first moment along one axis sums
-:math:`|x|` over :math:`(2t + 1)^2 t(t + 1) \approx 4t^4` cells. With the light beyond the faces known only through
-its variance :math:`\sigma^2`,
-
-.. math::
-    :label: rf-box-width
-
-    B(t) = \frac{4\kappa_c t^4}{N} + \frac{\sigma^2}{t}, \qquad
-    t_* = \Big(\frac{\sigma^2 N}{16\kappa_c}\Big)^{1/5}, \qquad B(t_*) = \frac{5}{4}\frac{\sigma^2}{t_*}:
-
-4.43 cells and 0.282 cells for :math:`\sigma = 1` cell, :math:`N = 10^4`, :math:`c = 1`. The worst case falls only
-as :math:`N^{-1/5}`, because a tail known only by its variance can hide anywhere. This sets the half-widths before the
-fit, from the indexer's spread and the instrument's width, never from the data being fitted. After the fit, the
-bound on the light beyond the faces is the measured one of :eq:`rf-shift`, usually much smaller.
-
-**Proof:** ``tests/theory/test_refiner.py::test_box_half_width``
-
-The group rule
+cell over the whole box. For a soft box every cell is weighted by its window, :math:`\kappa_c\sum_p|\phi_p(f_p -
+m)|/(LP)_p`. The group rule
 --------------
 
 Every kept neighbour of a kept pixel is in its group, so :math:`|G_p| \ge 1 +` (its kept neighbours) on every
@@ -1196,132 +1133,135 @@ populations.
 **Proof:** ``tests/theory/test_refiner.py::test_coverage`` (:math:`\log(1 - x) \le -x`; the meeting count; the
 numbers).
 
-**Smooth windows.** The completeness that :eq:`rf-forced` demands comes from the region's edge: an indicator, whose sum
+**Soft boxes.** The completeness that :eq:`rf-forced` demands comes from a region's edge: an indicator, whose sum
 over a population depends on how its light lies about the edge. A weight that is smooth where every population's
-light lies needs no completeness at all. For a window :math:`\phi`, fixed before the data from the indexer's
-populations and the detector's mask, the statistic is :eq:`rf-statistic` with each cell weighted by
-:math:`\phi_p = \phi(\hat{\vec{g}}_p)`:
+light lies needs no completeness at all. Each population :math:`k` gets, in each reflection, a window
+:math:`\phi_k`: a Gaussian of peak 1 and width :math:`W_k` in the angles of :math:`\vec{g}` along and across the
+ring and in omega, centred on its predicted spot, and faded to zero before every unmeasured cell (below). It is fixed
+before the data, from the indexer's populations and the detector's mask. Its statistic is :eq:`rf-statistic` with each
+cell weighted by :math:`\phi_{k,p} = \phi_k(\hat{\vec{g}}_p)`:
 
 .. math::
 
-    T_\phi[f] = \sum_p \frac{M_{\text{ref}}}{M_j}\,\frac{r_p\,\phi_p\, f(\hat{\vec{g}}_p)}{L(\hat{\vec{g}}_p) P(\hat{\vec{g}}_p)} .
+    T_k[f] = \sum_p \frac{M_{\text{ref}}}{M_j}\,\frac{r_p\,\phi_{k,p}\, f(\hat{\vec{g}}_p)}{L(\hat{\vec{g}}_p) P(\hat{\vec{g}}_p)},
+    \qquad f \in \{1,\ \vec{g} - \vec{c}_k,\ |\vec{g}|^2 - |\vec{c}_k|^2\} .
 
-A photon of population :math:`k` with scattering vector :math:`\vec{g}` then counts
-:math:`\psi(\vec{g}) = \phi(\vec{g})\,f(\vec{g})\,w_{bk}(\omega_h(\vec{g}))`, with :math:`w_{bk}` the beam's weight at the
-omega where :math:`\vec{g}` diffracts (A3). The cut, the group rule, the binning and the instrument enter as for regions
-(below and above). Taylor's theorem about the indexer's prediction :math:`\vec{c} = \vec{g}_0` gives, for any
-distribution :math:`\mu_k`,
+The soft boxes of other populations overlap it freely. Every population whose light reaches it is in its model: a
+photon of population :math:`k'` with scattering vector :math:`\vec{g}` has the weight :math:`\chi(\vec{g}) =
+\phi_k(\vec{g})\, w_{bk'}(\omega_h(\vec{g}))`, the window times the beam's weight at the omega where :math:`\vec{g}`
+diffracts (A3). The cut, the group rule, the binning and the instrument enter as for regions (below and above). For
+any distribution :math:`\mu_{k'}` and any feature :math:`f`, Taylor's theorem for :math:`\chi` about that population's
+prediction :math:`\vec{c} = \vec{g}_0` gives
 
 .. math::
     :label: rf-window
 
     \begin{aligned}
-    \int\psi\, d\mu_k &= \psi(\vec{c})\,V_k + \nabla\psi(\vec{c})\cdot\vec{m}_1
-    + \tfrac{1}{2}\nabla\nabla\psi(\vec{c}) : \matr{m}_2 + R_3, \qquad
-    |R_3| \le \frac{\|\nabla^3\psi\|}{6}\int|\vec{g} - \vec{c}|^3\, d\mu_k, \\
-    \vec{m}_1 &= (\matr{Y}^{(1)}_k - V_k\matr{I})\vec{g}_0, \qquad
-    \matr{m}_2 = \matr{Y}^{(2)}_k[\vec{g}_0, \vec{g}_0] - (\matr{Y}^{(1)}_k\vec{g}_0)\vec{g}_0^T
-    - \vec{g}_0(\matr{Y}^{(1)}_k\vec{g}_0)^T + V_k\vec{g}_0\vec{g}_0^T,
+    \int\chi f\, d\mu_{k'} &= \chi(\vec{c})\int f\, d\mu_{k'} + f(\vec{c})\,\nabla\chi(\vec{c})\cdot\vec{m}_1 + R, \qquad
+    \vec{m}_1 = (\matr{Y}^{(1)}_{k'} - V_{k'}\matr{I})\,\vec{g}_0, \\
+    |R| &\le \tfrac{1}{2}\|\nabla^2\chi\|\int|\vec{g} - \vec{c}|^2\,|f|\, d\mu_{k'}
+    + |\nabla\chi(\vec{c})|\int|\vec{g} - \vec{c}|\,|f - f(\vec{c})|\, d\mu_{k'},
     \end{aligned}
 
-with :math:`\|\nabla^3\psi\|` the largest third directional derivative between :math:`\vec{c}` and the light. Stopped
-one order earlier, without :math:`\matr{m}_2`, the remainder is at most :math:`\tfrac{1}{2}\|\nabla^2\psi\|\int|\vec{g}
-- \vec{c}|^2 d\mu_k`.
+with :math:`\|\nabla^2\chi\|` the largest second directional derivative between :math:`\vec{c}` and the light.
+:math:`\int f\,d\mu` is linear for each feature: :math:`V`, :math:`\matr{Y}^{(1)}\vec{g}_0 - V\vec{c}_k` and
+:math:`\vec{g}_0^T\matr{Y}^C\vec{g}_0 - V|\vec{c}_k|^2` (:eq:`rf-moments`). The metric stays exact under any
+rotation (:eq:`rf-invariant`): only the weight is expanded, never the feature.
 
-**Proof:** ``tests/theory/test_refiner.py::test_window_taylor`` (exact for every quadratic :math:`\psi` and any three
-sub-volumes; a cubic misses exactly its own sum; the moments' linearity; Taylor's integral remainder and its constant).
+**Proof:** ``tests/theory/test_refiner.py::test_window_taylor`` (the identity, exact for every affine weight and any
+three sub-volumes with any feature values; the moments' linearity; the first-order integral remainder and its
+constant).
 
-So a window's statistic is linear in :math:`(V_k, \matr{Y}^{(1)}_k, \matr{Y}^{(2)}_k)` of every population whose light
-reaches it, with coefficients :math:`\psi(\vec{c}_k)`, :math:`\nabla\psi(\vec{c}_k)` and :math:`\nabla\nabla\psi(\vec{c}_k)`
-from the geometry, however the populations overlap. No population needs to be complete in any window, and nothing is
-merged: a window sees each population with its own weight :math:`\phi(\vec{c}_k)`. Overlapping windows (a partition of
-unity along each ring) see neighbouring populations with different weights. A region is the case of :math:`\phi = 1` on
-a set, whose derivatives vanish inside it, so a complete region has no remainder at all. A window trades that
-completeness for a third-order remainder.
+So each soft box's statistics are linear in :math:`(V, \matr{Y}^{(1)}, \matr{Y}^C)` of every population whose light
+reaches it, with coefficients :math:`\chi(\vec{c}_{k'})` and :math:`\nabla\chi(\vec{c}_{k'})` from the geometry,
+however the populations overlap. No population needs to be complete in any soft box, and nothing is merged. Two
+populations of one voxel are told apart by the difference of their weights in each other's soft boxes, and
+:eq:`rf-identify` says what is determined, from those weights. A hard box is the case of an indicator weight. Its
+derivatives vanish inside, so a complete box has no remainder, and an incomplete one has no bound (:eq:`rf-forced`).
 
-**What sets the remainder.** :math:`\psi` is a product of factors, each smooth on its own angular scale: the window,
-of width :math:`W`; the feature, centred (:eq:`rf-centre`); and the beam, which the voxel crosses over the angle
-:math:`\sigma_b|\sin\eta|/(r + |r_f|)` of :math:`\vec{g}` (:eq:`rf-beam-taylor`, a turn of :math:`\vec{g}` moving its
-omega by the turn over :math:`|\sin\eta|`). With :math:`e` the indexer's error and :math:`s` the population's spread,
-the remainder relative to the population's light is of order :math:`\kappa_w^3` (:math:`\kappa_w^2` for the
-first-order model), for
+**What sets the remainder.** :math:`\chi` is the window times the beam's weight, each smooth on its own angular scale:
+the window's :math:`W`, and the angle :math:`\sigma_b|\sin\eta|/(r + |r_f|)` of :math:`\vec{g}` over which the voxel
+crosses the beam (:eq:`rf-beam-taylor`; a turn of :math:`\vec{g}` moves its omega by the turn over
+:math:`|\sin\eta|`). With :math:`a` a population's rms extent about its prediction, which holds the indexer's error
+:math:`e` and its spread :math:`s` (:math:`a^2 = e^2 + s^2` for an offset and a spread), the remainder relative to the
+population's light is of order :math:`\kappa_w^2`, for
 
 .. math::
     :label: rf-window-norms
 
-    \kappa_w = \frac{e + s}{W_{\text{eff}}}, \quad
+    \kappa_w = \frac{a}{W_{\text{eff}}}, \quad
     W_{\text{eff}} = \min\Big(W,\ \frac{\sigma_b|\sin\eta|}{r + |r_f|}\Big); \qquad
-    \|\phi'\| = \frac{e^{-1/2}}{\sigma}, \quad \|\phi''\| = \frac{1}{\sigma^2}, \quad
-    \|\phi'''\| = \frac{\sqrt{6}\sqrt{3 - \sqrt{6}}\; e^{-(3 - \sqrt{6})/2}}{\sigma^3} = \frac{1.380}{\sigma^3}
+    \|\phi'\| = \frac{e^{-1/2}}{\sigma}, \quad \|\phi''\| = \frac{1}{\sigma^2}
 
-for a Gaussian window or beam profile of peak 1 and sd :math:`\sigma`. :math:`\kappa_w` is :eq:`rf-beam-taylor`'s :math:`\kappa` with the indexer's error added, and
-the window's own width. The rigorous remainder uses :math:`\psi`'s derivatives through the product and chain rules,
-computed per term from the geometry. Where the beam does not limit it, a Gaussian window at :math:`W = 3(e + s)` leaves
-at most :math:`1.380/(6 \cdot 27) = 0.0085` of the light, and 0.0018 at :math:`W = 5(e + s)`.
+for a Gaussian window or beam profile of peak 1 and sd :math:`\sigma`. :math:`\kappa_w` is :eq:`rf-beam-taylor`'s
+:math:`\kappa` with the indexer's error added, and the window's own width.
 
 **Proof:** ``tests/theory/test_refiner.py::test_window_norms`` (the critical points of the Gaussian's derivatives and
-their values; the numbers).
+their values).
 
-**Soft boxes, and their widths.** The windows are boxes with soft edges: one per population and reflection, centred
-on its predicted spot, a Gaussian in the angles along and across the ring and in omega, of peak 1. Boxes of other
-populations may overlap it freely; they are never merged. Its width is not a choice. It is the narrowest that keeps the
-window's remainder below the counting noise of the population's own light (:math:`\rho = 1`, as for the cut in
-:eq:`rf-bias-neff`). With :math:`N` the population's photons in the reflection, :eq:`rf-window` and
-:eq:`rf-window-norms` give :math:`(1.380/6)\,(e + s)^3 N / W^3 \le \sqrt{N}`, or, for the first-order model,
-:math:`\tfrac{1}{2}(e + s)^2 N/W^2 \le \sqrt{N}`:
+**The widths.** For the counts (:math:`f = 1`) the remainder is at most :math:`\tfrac{1}{2}\|\nabla^2\chi\|\,N a^2`
+for a population of :math:`N` photons in the row and reflection. Holding it below their counting noise
+:math:`\sqrt{N}` (:math:`\rho = 1`, as for the cut in :eq:`rf-bias-neff`), with :math:`\|\nabla^2\chi\| = C/W^2`:
 
 .. math::
     :label: rf-window-width
 
-    W \ge (e + s)\,\Big(\frac{1.380}{6}\sqrt{N}\Big)^{1/3} \quad\text{(second order)}, \qquad
-    W \ge (e + s)\,\Big(\frac{\sqrt{N}}{2}\Big)^{1/2} \quad\text{(first order)}:
+    W \ge a\,\Big(\frac{C\sqrt{N}}{2}\Big)^{1/2}, \qquad
+    C = 1 \ \text{(a Gaussian)}, \qquad C = 13.5 \ \text{(within } W \text{ of an unmeasured cell)}:
 
-2.84 and 6.13 times :math:`e + s` at :math:`N = 10^4` and :math:`10^6` photons (second order), and 7.07 and 22.4 (first
-order). :math:`e`, :math:`s` and :math:`N` are the indexer's, so the width is fixed before the fit, like a box's
-half-widths (:eq:`rf-box-width`). It is rounded up to a ladder of fixed widths (powers of 2 times the instrument's
-width), so it changes only where the indexer's numbers cross a step, and :eq:`rf-sandwich` bounds that choice as it
-bounds the boxes'. Where the beam's scale in :eq:`rf-window-norms` is narrower than this width, no window holds the
-population within its noise, and the population is reported as beyond the beam's limit (:math:`\kappa_w \ge 1`).
+7.07 and 22.4 times :math:`a` at :math:`N = 10^4` and :math:`10^6` photons, and 26.0 and 82.2 within the fade
+(:eq:`rf-fade`), a widening of :math:`\sqrt{13.5} = 3.68`. A soft box takes the largest width that any population whose light reaches
+it asks for. :math:`a` and :math:`N` are the indexer's, so the widths are fixed before the fit. The beam's scale in
+:eq:`rf-window-norms` must pass the same test: :math:`a \le W_{\text{beam}}\,(2/\sqrt{N})^{1/2}`. At 1.5 mm from the
+axis, a 1 µm beam and :math:`|\sin\eta| = 0.5`, :math:`W_{\text{beam}} = 1.4 \times 10^{-4}` rad, so a population of
+:math:`10^4` photons there would need :math:`a \le 2.0 \times 10^{-5}` rad. No width achieves that, since the window
+cannot make the beam smoother. Such a population is reported as beyond the beam's limit, with its
+:math:`\kappa_w`. The first moments' and the metric's remainders are bounded by the same terms of :eq:`rf-window` and
+are tested by the doubled widths (:eq:`rf-width-check`).
 
-**Proof:** ``tests/theory/test_refiner.py::test_window_width`` (the two inequalities solved for :math:`W`; the
-numbers).
+**Proof:** ``tests/theory/test_refiner.py::test_window_width`` (the inequality solved for :math:`W`; the numbers),
+``tests/theory/test_refiner.py::test_window_beam_numbers`` (the beam's scale and the extent it allows).
 
-**The beam and the indexer's omega.** In :math:`\nabla\psi(\vec{c})` the beam's factor contributes
+**The beam and the indexer's omega.** In :math:`\nabla\chi(\vec{c})` the beam's factor contributes
 :math:`w'\,\nabla(\text{dty}\circ\omega_h)`: the light moves between rows by its first moment. So the indexer's error in
-a population's mean omega enters :math:`\matr{G}` linearly, through :math:`\vec{m}_1`, with a known coefficient. That is
-the same expansion with :math:`\phi = 1` on a box, so boxes get it too. What remains is second order in
-:math:`\kappa_w` (first-order model) or third (second-order). The second-order model ties a population's counts to its
-spread through :math:`w''`, the beam widened by its own spread (:eq:`rf-beam-gauss`): that is why :doc:`limits` keeps
-free spreads out of the means, and whether to fit :math:`\matr{Y}^{(2)}` here is the maintainer's choice. The
-expansion holds only for :math:`\kappa_w < 1`. At 1.5 mm from the axis with a 1 µm beam at :math:`|\sin\eta| = 0.5`,
-that needs :math:`e + s` below :math:`1.4 \times 10^{-4}` rad (``tests/theory/test_refiner.py::test_window_beam_numbers``). Windows do not relax :math:`\kappa`: the beam crossing a
-population's own omega extent is a sampling limit (:eq:`rf-beam-voxel`). Windows remove the merging, which is set by
-the overlap of many populations, each compact.
+a population's mean omega enters :math:`\matr{G}` linearly, through :math:`\vec{m}_1`, with a known coefficient, and
+only the remainder is bounded. Windows do not relax :math:`\kappa`. The beam crossing a population's own omega extent
+is a sampling limit (:eq:`rf-beam-voxel`). Soft boxes remove the merging, which comes from the overlap of many
+populations, each compact.
 
-**What a window resolves.** Two populations of one voxel are told apart in a reflection by the difference of their
-weights, :math:`\phi(\vec{c}_k) - \phi(\vec{c}_{k'}) \approx \nabla\phi\cdot(\vec{c}_k - \vec{c}_{k'})`: about their
-separation over :math:`W`. Windows narrower than their separation see them apart, as boxes would. Wider windows see
-their sum, with the difference through the gradient, and :eq:`rf-identify` decides what is determined, from the
-weights. Narrower windows resolve more; wider ones leave smaller remainders. The floor is :math:`e + s`.
+**The cut, the choice and the error bars.** The cut's bound for a soft box weights every cell by :math:`|\phi_p|`
+(:eq:`rf-cut-bound`). The weights come from the indexer, fitted to the same data. As for regions (:eq:`rf-sandwich`),
+the choice can change a statistic by at most the recorded light times the weights' change over the indexer's
+uncertainty. The soft boxes overlap, but cells in different frames and rows are independent exactly, so the
+sandwich's blocks (:eq:`rf-harris`) are (row, frame) pairs, whatever the soft boxes.
 
-**The cut and the error bars.** The cut's bound for a window is :eq:`rf-cut-bound` with every cell weighted by
-:math:`|\phi_p|`, :math:`\kappa_c\sum_p|\phi_p(f_p - m)|/(LP)_p`, no more than a box of the same reach. The windows overlap,
-but cells in different frames and rows are independent exactly, so the sandwich's blocks (:eq:`rf-harris`) are (row,
-frame) pairs, whatever the windows.
+**The check.** Every estimate targets the same moments, whatever the widths. So the solve with every width doubled,
+:math:`\hat{\vec{Y}}' = \matr{A}'\vec{T}'`, estimates what :math:`\hat{\vec{Y}} = \matr{A}\vec{T}` does, and the two
+differ only by their remainders and their noise:
 
-**Anri's choice:** which statistic a population gets is decided per reflection and row from the indexer's boxes, with
-no threshold to set. A box that meets no other box, and no unmeasured cell, stays a box: it is complete and has no
-remainder. Every other population gets a soft box (:eq:`rf-window-width`), with every population whose light reaches
-it in its model through :eq:`rf-window`. Which one each population got, its width and its :math:`\kappa_w` are
-reported with it. :eq:`rf-coverage` says how often the second case arises; the order of the expansion is the
-maintainer's choice.
+.. math::
+    :label: rf-width-check
+
+    \operatorname{E}\big[\hat{\vec{Y}} - \hat{\vec{Y}}'\big] = \matr{A}\vec{\Delta} - \matr{A}'\vec{\Delta}', \qquad
+    \operatorname{Cov}\big[\hat{\vec{Y}} - \hat{\vec{Y}}'\big] = \sum_b (\matr{A}_{:b}\vec{\xi}_b - \matr{A}'_{:b}\vec{\xi}'_b)
+    (\matr{A}_{:b}\vec{\xi}_b - \matr{A}'_{:b}\vec{\xi}'_b)^T \text{ in expectation},
+
+with :math:`b` the (row, frame) blocks, :math:`\vec{\xi}` the noise, and the block sandwich estimating the covariance
+from the residuals. A difference beyond :math:`z` of its standard deviations shows a remainder that the bound did not
+hold, and the population is reported as not determined. The check is necessary, not sufficient. Where the beam's
+scale sets :math:`W_{\text{eff}}`, doubling :math:`W` leaves the remainder alone and the check cannot see it, so
+:math:`\kappa_w` is reported beside it.
+
+**Proof:** ``tests/theory/test_refiner.py::test_width_check`` (two left inverses of two systems with the same
+unknowns: the expectation of the difference, and its covariance from shared and separate noise, symbolic).
 
 Cells with no data
 ------------------
 
 On cells that were never measured (the gaps between modules, masked pixels, the area beyond the detector's edges, the
-frames beyond the scan), the data are missing, not zero, and so is the light that fell there. A window that vanishes on
-the whole unmeasured area :math:`U` (as a set of positions, not only of cell centres) makes the mask invisible:
+frames beyond the scan), the data are missing, not zero, and so is the light that fell there. This is not censoring.
+A censored cell was measured and said "below the cut"; an unmeasured one says nothing. A window that vanishes on the
+whole unmeasured area :math:`U` (as a set of positions, not only of cell centres) makes the mask invisible:
 
 .. math::
     :label: rf-mask
@@ -1329,47 +1269,44 @@ the whole unmeasured area :math:`U` (as a set of positions, not only of cell cen
     \phi = 0 \text{ on } U \ \Rightarrow\
     \sum_{p \notin U} r_p\,\phi_p f_p = \sum_p r_p\,\phi_p f_p, \qquad
     \operatorname{E}\Big[\sum_{p \notin U} \frac{r_p\,\phi_p f_p}{(LP)_p}\Big]
-    = \sum_k |F_h|^2 A_{kh}\int\psi\, d\mu_k - (\text{the cut and the group rule}).
+    = \sum_{k'} |F_h|^2 A_{k'h}\int\chi f\, d\mu_{k'} - (\text{the cut and the group rule}).
 
 A photon that lands in :math:`U` is lost, and has weight 0 in the model; any other lands in a measured cell. So the
 statistic is the window's on a detector without gaps, exactly, and :eq:`rf-window` holds as written. A masked pixel is
 never kept, so near :math:`U` the group rule removes more (:eq:`rec-animal` with :math:`a_q = 0`). The window therefore
-vanishes also within the rule's reach of :math:`U`, :math:`m - 1` pixels (:eq:`rec-reach`). The light near the gaps
-costs information, never accuracy.
+vanishes also within the rule's reach of :math:`U`, :math:`m - 1` pixels (:eq:`rec-reach`). A spot that straddles a gap
+keeps the information of its measured part. The light in the gap costs information, never accuracy, and no spot is
+dropped.
 
 **Definition:** the masked window; the two sums agree term by term, and every photon's weight is :math:`\phi` at
 where it lands.
 
-Near :math:`U` the window fades: it falls smoothly from its own value to 0 before each edge of :math:`U`, so that it
-is 0 on :math:`U` and on the cells within the group rule's reach of it, and smooth everywhere. The fade is one fixed
-curve, the C³ step
+The window fades to zero before each edge of :math:`U`, over its own width :math:`W`, so the fade adds no number to
+choose. The fade is one fixed curve, the step
 
 .. math::
     :label: rf-fade
 
-    S(z) = 35z^4 - 84z^5 + 70z^6 - 20z^7 \ \text{on } [0, 1], \qquad
-    S^{(k)}(0) = S^{(k)}(1) = 0\ \ (k = 1, 2, 3), \qquad
-    \|S'\| = \tfrac{35}{16},\quad \|S''\| = \tfrac{84\sqrt{5}}{25} = 7.51,\quad \|S'''\| = \tfrac{105}{2},
+    S(z) = 10z^3 - 15z^4 + 6z^5 \ \text{on } [0, 1], \qquad
+    S^{(k)}(0) = S^{(k)}(1) = 0\ \ (k = 1, 2), \qquad
+    \|S'\| = \tfrac{15}{8}, \quad \|S''\| = \tfrac{10}{\sqrt{3}} = 5.77,
 
-extended by 0 below and 1 above, and it fades over the window's own width :math:`W` (:eq:`rf-window-width`), so it adds
-no number to choose. Let :math:`B` be 1 on an interval (the masked cells, grown by the group rule's reach) and fall to 0
-through :math:`S` over :math:`W` on either side. Then each masked rectangle (a gap, a masked pixel, the detector's edge;
-in omega, the scan's ends) contributes the factor :math:`1 - B_s(s)\,B_f(f)`, which is 0 on it, 1 beyond the fade,
-and C³. The window is :math:`\phi` times their product. Near :math:`U` its derivatives grow by the fade's,
-:math:`\|S^{(k)}\|/W^k` with :math:`\|S^{(3)}\| = 52.5`, so where a population's window fades its :math:`W` from
-:eq:`rf-window-width` is widened by :math:`(52.5/1.380)^{1/3} = 3.36`. A population next to a gap keeps the part of
-its light the fade weights, and its window says how much.
+extended by 0 below and 1 above, twice continuously differentiable, as a first-order expansion needs. Let :math:`B` be
+1 on an interval (the masked cells, grown by the group rule's reach) and fall to 0 through :math:`S` over :math:`W` on
+either side. Then each masked rectangle (a gap, a masked pixel, the detector's edge; in omega, the scan's ends)
+contributes the factor :math:`1 - B_s(s)\,B_f(f)`, which is 0 on it and 1 beyond the fade. Rectangles closer than
+:math:`2W` are first merged into one, so that at most one factor fades at any point. The window is :math:`\phi` times
+the factors. At a rectangle's corner the factor's gradient is at most :math:`\sqrt{2}\|S'\|/W` and its second
+directional derivative :math:`(\|S''\| + \|S'\|^2)/W^2`. So the product rule bounds the faded window's second
+derivative by :math:`C/W^2`, with :math:`C = \|\phi''\|W^2 + 2\|\phi'\|W\cdot\sqrt{2}\|S'\| + \|S''\| + \|S'\|^2 =
+13.5` (9.05 along an edge), the constant of :eq:`rf-window-width`.
 
-**Proof:** ``tests/theory/test_refiner.py::test_fade`` (the end values and derivatives; the factored derivatives;
-their largest values; the widening).
+**Proof:** ``tests/theory/test_refiner.py::test_fade`` (the end values and derivatives; their largest values; the
+corner's derivatives; the product rule's constants).
 
-A box cannot do this: it is an indicator, and a box meeting :math:`U` loses whatever its population put there, by its
-shape (:eq:`rf-forced`).
-
-**Anri's rule:** a box that meets the unmeasured area, dilated by its margins (:eq:`rf-box-margin`) and the group rule's
-reach, is left out, as a box reaching past an end of the omega range is, and its population gets a soft box instead.
-On an Ag2S scan the module gaps hid every ring over :math:`\eta = \pm(65`-86)°, about 10 % of the reflections (the
-indexer's ``detector_coverage``). A soft box loses only the gap and its fade.
+A hard box cannot do this. It is an indicator, and a box meeting :math:`U` loses whatever its population put there, by
+its shape (:eq:`rf-forced`). In a likelihood with a model of every cell's light, such as the indexer's, unmeasured
+cells simply drop out (:doc:`indexing`, :eq:`idx-coverage`).
 
 **Anri's rule:** shared pixels (:eq:`rec-shared`) are merged into their physical pixels before any statistic. The
 merged cell's centre is its physical pixel's, and its binning bound is that of a cell two pixels wide
@@ -2076,18 +2013,16 @@ no weak directions beyond the slice's.
 The guarantee
 -------------
 
-Under (A1)-(A6). Boxes taken from an indexer fitted to the same data are random; their selection bias is at most the
-light in the band between the boxes of the indexer's extreme placements (:eq:`rf-sandwich`), measured from the data
-and added to the bias bound. The indexer's error :math:`e` in :eq:`rf-box-margin` is a statistical bound, not a hard
-one: the completeness of the boxes, and the band's bound, hold with its confidence. The light beyond a box is bounded
-through the population's variance (:eq:`ref-tail`, :eq:`rf-box-width`), taken from the indexer's spread and the
-instrument's width. Light below the cut is not recorded, so no measurement gives that variance: it is an input of the
-bound, from a model, like :math:`e`.
+Under (A1)-(A6). Soft boxes taken from an indexer fitted to the same data are random. Their selection changes a
+statistic by at most the recorded light times the weights' change over the indexer's uncertainty (:eq:`rf-sandwich`),
+measured from the data and added to the bias bound. Each population's extent :math:`a` in :eq:`rf-window-width` comes
+from the indexer's error and spread, and is a statistical bound, not a hard one. Light below the cut is not recorded,
+so no measurement gives that extent: it is an input of the bound, from a model. The doubled widths test it
+(:eq:`rf-width-check`).
 
 1. **Noise** biases nothing (:eq:`rf-linear`). Error bars come from blocks that are independent exactly
    (:eq:`rf-harris`), with no noise model.
-2. **Spot shape** enters nowhere in :math:`\matr{G}`. It enters only through the bounded terms 3-6 and the
-   estimand's definition (light within each box).
+2. **Spot shape** enters nowhere in :math:`\matr{G}`. It enters only through the bounded terms 3-7.
 3. **The cut** biases each region's statistics by at most :math:`\kappa_c \sum_R |f_p - m|/(LP)_p`
    (:eq:`rf-cut-bound`), a number of the geometry. No estimator can do better than bound it (:eq:`rf-no-unbiased`).
 4. **The group rule** biases by at most :eq:`rf-group` where every lit cell's neighbours hold enough light, and by an
@@ -2099,14 +2034,16 @@ bound, from a model, like :math:`e`.
    which a population's own omega profile matters, and it is small only where :math:`\kappa \ll 1`
    (:eq:`rf-beam-closure`). The indexer's error in each population's mean omega enters linearly, and its remainder
    with :math:`\kappa_w` (:eq:`rf-window-norms`).
-7. **Overlap** costs nothing with windows: each window's statistic is linear in the moments of every population it
-   reaches, within the third-order remainder of :eq:`rf-window`; no region has to be complete or merged.
-8. **Unmeasured cells** (module gaps, masked pixels, the detector's and the scan's edges) bias nothing with windows
-   that fade to zero before them (:eq:`rf-mask`); boxes that meet them become soft boxes. Shared pixels are merged into their
+7. **Overlap** costs nothing: each soft box's statistics are linear in the moments of every population they reach,
+   within the remainder of :eq:`rf-window`, held below the noise by the widths (:eq:`rf-window-width`). No region has to
+   be complete or merged.
+8. **Unmeasured cells** (module gaps, masked pixels, the detector's and the scan's edges) bias nothing, since every
+   window fades to zero before them (:eq:`rf-mask`), and no spot is dropped. Shared pixels are merged into their
    physical pixels, with their own binning bound (:eq:`rec-shared`, :eq:`rf-alias-wide`).
 
 The refiner reports, per population, :math:`\hat{\vec{Y}}`, its block-sandwich covariance, and the bias bound
-:math:`\sum_j |A_{ij}|\bar\Delta_j`. That bound is computed from the geometry, the regions and the point spread's
+:math:`\sum_j |A_{ij}|\bar\Delta_j`, and the doubled widths' verdict with :math:`\kappa_w`. That bound is computed from
+the geometry, the soft boxes and the point spread's
 :math:`\chi(2\pi k)`, not from any spot shape, but it needs one solve per reported number and grows as
 :math:`\sqrt{n_{\text{eff}}}` against the noise (:eq:`rf-bias-neff`). At the scale of a map it is computed for chosen
 functionals only, and every voxel gets the sign-probe scale instead (:eq:`rf-probe`). Where the bound exceeds the error
@@ -2127,10 +2064,12 @@ What is left out
 - **The instrument's omega shift** correlated with :math:`\vec{D}` (:eq:`rf-instrument`), at second order.
 - **The beam's weight within a peak, modelled.** Its first-order term is linear in :math:`\matr{Y}^{(2)}`
   (:eq:`rf-beam-first`) but is only bounded here. Deformed populations far from the axis have :math:`\kappa \gtrsim 1`
-  and no moment model holds for them (:eq:`rf-beam-closure`); how to refine them (populations split finer by the
-  indexer, or the occupancy model :eq:`rf-beam-exact` itself) is not decided. Regions that follow the sinogram
-  (:eq:`rf-trace`) bound the move by the merged length and the frame's width instead of the distance from the axis;
-  whether to use them is the maintainer's choice.
+  and no moment model holds for them (:eq:`rf-beam-closure`). With soft boxes held at their noise, the limit is
+  stricter: :math:`a \le W_{\text{beam}}(2/\sqrt{N})^{1/2}` (:eq:`rf-window-width`). How to refine those populations
+  is not decided: populations split finer by the indexer, or the occupancy model :eq:`rf-beam-exact` itself, in which
+  unmeasured cells simply drop out. An earlier version of this page had regions that follow the sinogram, bounding the
+  move by the merged length and the frame's width instead of the distance from the axis; they are in the repository's
+  history, not in the method.
 - **Parallax at second order in** :math:`\epsilon`: :eq:`rf-parallax-exact` is exact, but its expansion is written to
   first order only.
 - **Anisotropic boxes**: the indexer gives only an isotropic spread per population (:doc:`populations`), so
@@ -2155,11 +2094,15 @@ What is left out
   but their own sizes are estimates (runout about 1 µm).
 - **Multi-phase overlaps**: populations of different phases sharing a region add their ray sums like any others;
   nothing more is needed, but nothing is checked.
-- **The windows' order**: the first- or second-order model of :eq:`rf-window` (the second ties counts to spreads
-  through the beam, and allows windows 2.5-3.7 times narrower, :eq:`rf-window-width`) is the maintainer's to choose.
-  The widths, the fades and which populations get boxes follow from the indexer's numbers, with nothing to set.
-- **Each population's extent**: :eq:`rf-window`'s remainder needs a bound on :math:`\int|\vec{g} - \vec{c}|^3`, from
-  the indexer's error and spread, an input of the bound like the variance of :eq:`ref-tail`.
+- **The expansion's order**: the method is first order (:eq:`rf-window`). A second order would add each population's
+  second moments, tie its counts to its spread through the beam (:eq:`rf-beam-gauss`), and allow narrower soft boxes.
+  It is not used. The widths and the fades follow from the indexer's numbers, with nothing to set.
+- **The fade's map**: the fade is defined on the detector, with its width the window's :math:`W` mapped through the
+  detector's angular scale at the spot. The map's curvature adds a term of relative order :math:`W` (radians) to the
+  second derivative, left out.
+- **Each population's extent** :math:`a`: :eq:`rf-window`'s remainder needs it, from the indexer's error and spread,
+  an input of the bound like the variance of :eq:`ref-tail`. The doubled widths test it where the window, not the
+  beam, sets the remainder.
 - **Shared pixels**: the readout's rule for dividing a count is to be confirmed (:eq:`rec-shared`).
 - **The count** (:eq:`rf-count`) is a necessary condition; the conditioning of a merged domain near it is not derived.
 - **Code**: none of the refiner is in anri yet.

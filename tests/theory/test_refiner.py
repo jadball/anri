@@ -1304,23 +1304,6 @@ def test_runout_identifiable():
             assert sp.integrate(sp.cos(m * w) * sp.sin(n * w), (w, 0, 2 * sp.pi)) == 0
 
 
-def test_box_half_width():
-    """rf-box-width: in a box of half-width t cells per axis over three axes, a first moment along one axis sums
-    |x| over (2t + 1)^2 t (t + 1) cell-cells, about 4 t^4; with the cut's bound kappa W / N and the light beyond the
-    faces' worst case sigma^2 / t (variance only, ref-tail), B(t) = 4 kappa t^4 / N + sigma^2 / t is least at
-    t* = (sigma^2 N / (16 kappa))^(1/5), where B = (5/4) sigma^2 / t*: falling only as N^(-1/5). For sigma = 1 cell,
-    N = 1e4, kappa = 1/e: t* = 4.43 cells, B = 0.282 cells."""
-    t, N, kap, sig = sp.symbols("t N kappa sigma", positive=True)
-    W = sum(sp.Abs(x) for x in range(-3, 4)) * 7 * 7
-    assert W == 12 * 49 and (2 * 3 + 1) ** 2 * 3 * (3 + 1) == W  # (2t+1)^2 t (t+1) at t = 3
-    B = 4 * kap * t**4 / N + sig**2 / t
-    ts = (sig**2 * N / (16 * kap)) ** sp.Rational(1, 5)
-    assert is_zero(sp.simplify(sp.diff(B, t).subs(t, ts)))
-    assert is_zero(sp.simplify(B.subs(t, ts) - sp.Rational(5, 4) * sig**2 / ts))
-    vals = {sig: 1, N: 10**4, kap: sp.exp(-1)}
-    assert rounds_to(ts.subs(vals), "4.43") and rounds_to((sp.Rational(5, 4) * sig**2 / ts).subs(vals), "0.282")
-
-
 def test_three_dimensional_weak():
     """rf-3d: in a stack of slices the rays are horizontal, so k = k_h + k_z z is carried by xi = z x k_h-hat for any
     k_z, and the weak part is the row xi of beta (lim-slice). With n = k-hat x xi, the Nye tensor of a plane wave,
@@ -1699,52 +1682,6 @@ def test_beam_voxel():
     assert rounds_to(1500 * a, "6.5")
 
 
-def test_trace_residual():
-    """rf-trace-residual: with dty_v(w) = y0 - (x sin w + y cos w), the photon's misplacement against the trace,
-    e = dty_k(w) - n step - y~_k with y~_k = dty_k(wk) - (y_ref(wk) - y_ref(wR)), is exactly the three terms; the
-    first is the dty move (rf-beam-motion, without y0) of the offset x_k - x_ref over the turn w - wk, so at most
-    |x_k - x_ref| |w - wk| by the chord; the second has the trace's rate d y_ref / dw = -zeta_ref, at most r_ref in
-    size, so it is at most r_ref |w - w_j| <= r_ref h / 2 (a fly scan adds r_f to the rate)."""
-    x, y, xr, yr, y0, w, wk, wj, wR, n, st = sp.symbols(
-        "x y x_r y_r y0 omega omega_k omega_j omega_R n step", real=True
-    )
-
-    def dty(px, py, t):
-        return y0 - (px * sp.sin(t) + py * sp.cos(t))
-
-    yt = dty(x, y, wk) - (dty(xr, yr, wk) - dty(xr, yr, wR))
-    e = dty(x, y, w) - n * st - yt
-    t1 = (dty(x, y, w) - dty(xr, yr, w)) - (dty(x, y, wk) - dty(xr, yr, wk))
-    t2 = dty(xr, yr, w) - dty(xr, yr, wj)
-    t3 = dty(xr, yr, wj) - dty(xr, yr, wR) - n * st
-    assert is_zero(e - (t1 + t2 + t3))
-    dx, dy = x - xr, y - yr
-    assert is_zero(sp.expand(t1 - (dty(dx, dy, w) - dty(dx, dy, wk))))  # y0 cancels: the offset's own move
-    d = sp.Symbol("delta", real=True)
-    lab = rz(wk) * sp.Matrix([dx, dy, 0])
-    chord = rz(d) * lab - lab
-    assert is_zero(sp.expand_trig(t1.subs(w, wk + d) + chord[1]))
-    assert is_zero(sp.expand_trig(chord.dot(chord) - 4 * (dx**2 + dy**2) * sp.sin(d / 2) ** 2))
-    rate = sp.diff(dty(xr, yr, w), w)
-    assert is_zero(rate + (rz(w) * sp.Matrix([xr, yr, 0]))[0])
-
-
-def test_trace_numbers():
-    """rf-trace's numbers at the edge of a 3000-step map (r = 1500 steps), 0.05 deg frames: the frame's term r h / 2 =
-    0.65 steps, its rms r h / sqrt(12) = 0.38 (uniform within the frame); the rounding's rms step / sqrt(12) = 0.29;
-    the first term's rms (D / 2) s at D = 9, s = 0.25 deg, 0.020 steps; and kappa = r h / sqrt(12) / sigma_b = 0.89
-    with sigma_b = 1 / (2 sqrt(2 ln 2)) steps."""
-    deg = sp.pi / 180
-    h = sp.Rational(5, 100) * deg
-    assert rounds_to(1500 * h / 2, "0.65") and rounds_to(1500 * h / sp.sqrt(12), "0.38")
-    u = sp.Symbol("u", real=True)
-    assert is_zero(sp.integrate(u**2, (u, -sp.Rational(1, 2), sp.Rational(1, 2))) - sp.Rational(1, 12))
-    assert rounds_to(1 / sp.sqrt(12), "0.29")
-    assert rounds_to(sp.Rational(9, 2) * sp.Rational(1, 4) * deg, "0.020")
-    sig = 1 / (2 * sp.sqrt(2 * sp.log(2)))
-    assert rounds_to(1500 * h / sp.sqrt(12) / sig, "0.89")
-
-
 # ---------------------------------------------------------------------------------------------------------------
 # Windows instead of regions, cells with no data, wide cells, the omega kernel's factor, counting
 # (rf-coverage, rf-window, rf-window-norms, rf-mask, rf-fade, rf-alias-wide, rf-omega-factor, rf-count)
@@ -1774,98 +1711,80 @@ def test_coverage():
 
 
 def test_window_taylor():
-    """rf-window: for any three sub-volumes (volumes V_i, deformations F_i, photons g_i = F_i g0) and c = g0, the
-    second-order Taylor expansion of psi about c, integrated over the population, is psi(c) V + grad psi . m1 +
-    H : m2 / 2 with m1 = (Y1 - V I) g0 and m2 = Y2[g0, g0] - (Y1 g0) g0^T - g0 (Y1 g0)^T + V g0 g0^T, linear in V, Y1
-    and Y2: exact for every quadratic psi, and for a cubic it misses exactly the cubic term's own sum. In one dimension,
-    f(1) - f(0) - f'(0) - f''(0)/2 = int_0^1 (1 - t)^2 / 2 f'''(t) dt (Taylor's integral remainder, by parts) and
-    int_0^1 (1 - t)^2 / 2 dt = 1/6, so the remainder is at most sup|f'''| / 6 times |g - c|^3 along the segment."""
+    """rf-window: for any three sub-volumes (volumes V_i, deformations F_i, photons g_i = F_i g0), any feature values
+    f_i and an affine weight chi(g) = chi0 + b . (g - c) about c = g0, sum V_i chi(g_i) f_i equals chi0 sum V_i f_i +
+    f(c) b . m1 + b . sum V_i (g_i - c)(f_i - f(c)) exactly, with m1 = (Y1 - V I) g0 linear in V and Y1: the last term
+    is the remainder's second part, and a weight's curvature adds the first. In one dimension f(1) - f(0) - f'(0) =
+    int_0^1 (1 - t) f''(t) dt, with int_0^1 (1 - t) dt = 1/2, so the curvature's part is at most sup|chi''| / 2 times
+    |g - c|^2. The features' own sums are linear: sum V_i g_i = Y1 g0 and sum V_i |g_i|^2 = g0^T Y^C g0."""
     g0 = sp.Matrix(sp.symbols("g0:3", real=True))
     F = [_mat(f"F{i}_") for i in range(3)]
     V = sp.symbols("V0:3", positive=True)
-    Vt = sum(V)
-    Y1g = sum((V[i] * F[i] * g0 for i in range(3)), sp.zeros(3, 1))
-    Y2gg = sum((V[i] * (F[i] * g0) * (F[i] * g0).T for i in range(3)), sp.zeros(3))  # Y2[g0, g0]
-    m1 = Y1g - Vt * g0
-    m2 = Y2gg - Y1g * g0.T - g0 * Y1g.T + Vt * g0 * g0.T
-    d = [F[i] * g0 - g0 for i in range(3)]
-    assert is_zero(m1 - sum((V[i] * d[i] for i in range(3)), sp.zeros(3, 1)))
-    assert is_zero(m2 - sum((V[i] * d[i] * d[i].T for i in range(3)), sp.zeros(3)))
-    # a general quadratic psi(g) = a + b.(g - c) + (g - c)^T Q (g - c) / 2: the expansion is exact
-    a = sp.Symbol("a", real=True)
+    fv = sp.symbols("f0:3", real=True)
+    fc, chi0 = sp.symbols("fc chi0", real=True)
     b = sp.Matrix(sp.symbols("b0:3", real=True))
-    Q = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"q{min(i, j)}{max(i, j)}", real=True))
-
-    def psi(x):
-        u = x - g0
-        return a + b.dot(u) + (u.T * Q * u)[0] / 2
-
-    lhs = sum(V[i] * psi(F[i] * g0) for i in range(3))
-    rhs = a * Vt + b.dot(m1) + sum(Q[i, j] * m2[i, j] for i in range(3) for j in range(3)) / 2
+    Vt = sum(V)
+    Y1 = sum((V[i] * F[i] for i in range(3)), sp.zeros(3))
+    YC = sum((V[i] * F[i].T * F[i] for i in range(3)), sp.zeros(3))
+    d = [F[i] * g0 - g0 for i in range(3)]
+    m1 = (Y1 - Vt * sp.eye(3)) * g0
+    assert is_zero(m1 - sum((V[i] * d[i] for i in range(3)), sp.zeros(3, 1)))
+    lhs = sum(V[i] * (chi0 + b.dot(d[i])) * fv[i] for i in range(3))
+    rhs = chi0 * sum(V[i] * fv[i] for i in range(3)) + fc * b.dot(m1)
+    rhs += b.dot(sum((V[i] * d[i] * (fv[i] - fc) for i in range(3)), sp.zeros(3, 1)))
     assert is_zero(lhs - rhs)
-    # a cubic term t . (g - c) e1 e1-component^2: the expansion misses exactly its own sum
-    t = sp.Symbol("t", real=True)
-    cubic = sum(V[i] * t * d[i][0] ** 3 for i in range(3))
-    lhs3 = sum(V[i] * (psi(F[i] * g0) + t * d[i][0] ** 3) for i in range(3))
-    assert is_zero(lhs3 - rhs - cubic)
-    # the one-dimensional integral remainder, for a general quintic and for exp
+    assert is_zero(sum((V[i] * F[i] * g0 for i in range(3)), sp.zeros(3, 1)) - Y1 * g0)
+    assert is_zero(sum(V[i] * (F[i] * g0).dot(F[i] * g0) for i in range(3)) - (g0.T * YC * g0)[0])
     s, u = sp.symbols("s u", real=True)
     cs = sp.symbols("k0:6", real=True)
     for f in (sum(cs[k] * s**k for k in range(6)), sp.exp(u * s)):
-        rem = f.subs(s, 1) - f.subs(s, 0) - sp.diff(f, s).subs(s, 0) - sp.diff(f, s, 2).subs(s, 0) / 2
-        integral = sp.integrate((1 - s) ** 2 / 2 * sp.diff(f, s, 3), (s, 0, 1))
-        assert is_zero(sp.simplify(rem - integral))
-    assert sp.integrate((1 - s) ** 2 / 2, (s, 0, 1)) == sp.Rational(1, 6)
-    assert sp.integrate((1 - s), (s, 0, 1)) == sp.Rational(1, 2)  # the first-order model's remainder constant
+        rem = f.subs(s, 1) - f.subs(s, 0) - sp.diff(f, s).subs(s, 0)
+        assert is_zero(sp.simplify(rem - sp.integrate((1 - s) * sp.diff(f, s, 2), (s, 0, 1))))
+    assert sp.integrate(1 - s, (s, 0, 1)) == sp.Rational(1, 2)
 
 
 def test_window_norms():
-    """rf-window-norms: for phi = exp(-x^2 / 2 sigma^2), |phi'| is largest at |x| = sigma (e^(-1/2) / sigma),
-    |phi''| at 0 (1 / sigma^2), and |phi'''| at x^2 = (3 - sqrt 6) sigma^2, where it is
-    sqrt 6 sqrt(3 - sqrt 6) e^(-(3 - sqrt 6)/2) / sigma^3 = 1.380 / sigma^3 (the other critical points, x^2 =
-    (3 + sqrt 6) sigma^2, give 0.375 / sigma^3). The window's remainder at W = 3 and 5 (e + s): 0.0085 and 0.0018."""
+    """rf-window-norms: for phi = exp(-x^2 / 2 sigma^2), |phi'| is largest at |x| = sigma, e^(-1/2) / sigma, and
+    |phi''| at 0, 1 / sigma^2 (its other critical points, x^2 = 3 sigma^2, give 2 e^(-3/2) / sigma^2, less)."""
     z = sp.Symbol("z", real=True)
     g = sp.exp(-(z**2) / 2)
-    g1, g2, g3 = (sp.diff(g, z, k) for k in (1, 2, 3))
+    g1, g2 = sp.diff(g, z), sp.diff(g, z, 2)
     assert set(sp.solve(sp.diff(g1, z), z)) == {-1, 1} and is_zero(sp.Abs(g1.subs(z, 1)) - sp.exp(-sp.Rational(1, 2)))
-    assert is_zero(sp.Abs(g2.subs(z, 0)) - 1)
-    crit = set(sp.solve(sp.diff(g3, z), z))
-    r_lo, r_hi = sp.sqrt(3 - sp.sqrt(6)), sp.sqrt(3 + sp.sqrt(6))
-    assert crit == {-r_lo, r_lo, -r_hi, r_hi}
-    peak = sp.sqrt(6) * sp.sqrt(3 - sp.sqrt(6)) * sp.exp(-(3 - sp.sqrt(6)) / 2)
-    assert is_zero(sp.Abs(g3.subs(z, r_lo)) - peak)
-    assert rounds_to(peak, "1.380") and rounds_to(sp.Abs(g3.subs(z, r_hi)), "0.375")
-    assert sp.limit(g3, z, sp.oo) == 0
-    assert rounds_to(peak / 6 / 27, "0.0085") and rounds_to(peak / 6 / 125, "0.0018")
+    assert set(sp.solve(sp.diff(g2, z), z)) == {0, -sp.sqrt(3), sp.sqrt(3)}
+    assert is_zero(sp.Abs(g2.subs(z, 0)) - 1) and is_zero(g2.subs(z, sp.sqrt(3)) - 2 * sp.exp(-sp.Rational(3, 2)))
+    assert 2 * sp.exp(-sp.Rational(3, 2)) < 1 and sp.limit(g2, z, sp.oo) == 0
 
 
 def test_fade():
-    """rf-fade: S(z) = 35 z^4 - 84 z^5 + 70 z^6 - 20 z^7 rises from 0 to 1 on [0, 1] with its first three derivatives
-    zero at both ends, so extended by 0 and 1 it is three times continuously differentiable. Its derivatives are
-    -140 z^3 (z - 1)^3, -420 z^2 (z - 1)^2 (2 z - 1) and -840 z (z - 1)(5 z^2 - 5 z + 1), largest at their critical
-    points: 35/16 (z = 1/2), 84 sqrt 5 / 25 = 7.51 (z = 1/2 -+ sqrt 5 / 10) and 105/2 (z = 1/2)."""
+    """rf-fade: S(z) = 10 z^3 - 15 z^4 + 6 z^5 rises from 0 to 1 on [0, 1] with its first two derivatives zero at both
+    ends, so extended by 0 and 1 it is twice continuously differentiable. S' = 30 z^2 (z - 1)^2 is largest at 1/2,
+    15/8; S'' = 60 z (z - 1)(2 z - 1) at 1/2 -+ sqrt 3 / 6, 10 / sqrt 3. At a rectangle's corner the factor B_s B_f has
+    the gradient (S'_s S_f, S_s S'_f), at most sqrt 2 ||S'||, and the second derivative along a unit (p, q),
+    p^2 S''_s S_f + 2 p q S'_s S'_f + q^2 S_s S''_f, at most ||S''|| + ||S'||^2 (|S| <= 1, 2 |p q| <= 1). The product
+    rule then bounds (phi m)'' by ||phi''|| + 2 ||phi'|| |m'| + |m''| (|phi| <= 1): C = 1 + 2 e^(-1/2) sqrt 2 (15/8) +
+    10/sqrt 3 + (15/8)^2 = 13.5 at a corner, and 1 + 2 e^(-1/2) (15/8) + 10/sqrt 3 = 9.05 along an edge."""
     z = sp.Symbol("z", real=True)
-    S = 35 * z**4 - 84 * z**5 + 70 * z**6 - 20 * z**7
+    S = 10 * z**3 - 15 * z**4 + 6 * z**5
     assert S.subs(z, 0) == 0 and S.subs(z, 1) == 1
-    for k in (1, 2, 3):
+    for k in (1, 2):
         assert sp.diff(S, z, k).subs(z, 0) == 0 and sp.diff(S, z, k).subs(z, 1) == 0
-    S1, S2, S3 = (sp.diff(S, z, k) for k in (1, 2, 3))
-    assert is_zero(S1 + 140 * z**3 * (z - 1) ** 3)
-    assert is_zero(S2 + 420 * z**2 * (z - 1) ** 2 * (2 * z - 1))
-    assert is_zero(S3 + 840 * z * (z - 1) * (5 * z**2 - 5 * z + 1))
+    S1, S2 = sp.diff(S, z), sp.diff(S, z, 2)
+    assert is_zero(S1 - 30 * z**2 * (z - 1) ** 2) and is_zero(S2 - 60 * z * (z - 1) * (2 * z - 1))
 
     def sup(d):
         pts = [r for r in sp.solve(sp.diff(d, z), z) if r.is_real and 0 <= r <= 1] + [sp.Integer(0), sp.Integer(1)]
         return max((sp.Abs(d.subs(z, r)) for r in pts), key=lambda e: float(sp.N(e)))
 
-    assert is_zero(sup(S1) - sp.Rational(35, 16))
-    assert is_zero(sup(S2) - 84 * sp.sqrt(5) / 25) and rounds_to(84 * sp.sqrt(5) / 25, "7.51")
-    assert is_zero(sup(S3) - sp.Rational(105, 2))
-    assert is_zero(S2.subs(z, sp.Rational(1, 2) - sp.sqrt(5) / 10) - 84 * sp.sqrt(5) / 25)
-    # where a window fades over its own width, its third derivative grows from 1.380 to 52.5 per W^3, and the width
-    # rf-window-width asks for (proportional to the cube root of that constant) grows by (52.5 / 1.380)^(1/3)
-    g3 = sp.sqrt(6) * sp.sqrt(3 - sp.sqrt(6)) * sp.exp(-(3 - sp.sqrt(6)) / 2)
-    assert rounds_to((sp.Rational(105, 2) / g3) ** sp.Rational(1, 3), "3.36")
+    n1, n2 = sup(S1), sup(S2)
+    assert is_zero(n1 - sp.Rational(15, 8)) and is_zero(n2 - 10 / sp.sqrt(3)) and rounds_to(n2, "5.77")
+    assert is_zero(S2.subs(z, sp.Rational(1, 2) - sp.sqrt(3) / 6) - 10 / sp.sqrt(3))
+    # the corner: a unit direction (p, q) and the factor's derivatives, with |S| <= 1
+    p, q = sp.symbols("p q", real=True)
+    assert is_zero(sp.expand((p**2 + q**2) - 2 * p * q - (p - q) ** 2))  # 2 |p q| <= p^2 + q^2 = 1
+    e12 = sp.exp(-sp.Rational(1, 2))
+    corner = 1 + 2 * e12 * sp.sqrt(2) * n1 + n2 + n1**2
+    edge = 1 + 2 * e12 * n1 + n2
+    assert rounds_to(corner, "13.5") and rounds_to(edge, "9.05")
 
 
 def test_alias_wide():
@@ -1967,30 +1886,55 @@ def test_window_beam_numbers():
     """The indexer's omega taken as exact (refiner.rst, "What kappa is not"): a population at zeta = 1.5 mm, e = 1e-4
     rad and |sin eta| = 0.5 is moved across the ray by zeta e / |sin eta| = 0.30 um, 0.71 sigma_b for a 1 um FWHM
     (sigma_b = FWHM / (2 sqrt(2 ln 2))); a row one sigma_b off the true position then has the weight
-    exp(-((sigma_b - shift)^2 - sigma_b^2) / (2 sigma_b^2)), 58 % above the true one. And the beam's angular scale in
-    kappa_w (rf-window-norms) there, sigma_b |sin eta| / r, is 1.4e-4 rad."""
+    exp(-((sigma_b - shift)^2 - sigma_b^2) / (2 sigma_b^2)), 58 % above the true one. The beam's angular scale there,
+    sigma_b |sin eta| / r, is 1.4e-4 rad, and rf-window-width's test with C = 1 (the beam's ||P''|| sigma^2) at
+    N = 1e4 allows an extent of at most 1.4e-4 (2 / 100)^(1/2) = 2.0e-5 rad."""
     sb = 1 / (2 * sp.sqrt(2 * sp.log(2)))  # um, at FWHM 1 um
     shift = sp.Rational(1500) * sp.Rational(1, 10**4) / sp.Rational(1, 2)
     assert rounds_to(shift, "0.30") and rounds_to(shift / sb, "0.71")
     ratio = sp.exp(-((sb - shift) ** 2 - sb**2) / (2 * sb**2)) - 1
     assert rounds_to(100 * ratio, "58")
-    assert rounds_to(sb * sp.Rational(1, 2) / 1500 * 10**4, "1.4")
+    Wb = sb * sp.Rational(1, 2) / 1500  # rad
+    assert rounds_to(Wb * 10**4, "1.4")
+    assert rounds_to(Wb * sp.sqrt(sp.Rational(2, 100)) * 10**5, "2.0")
 
 
 def test_window_width():
-    """rf-window-width: the remainders of rf-window with the Gaussian's norms (rf-window-norms), 1.380 (e + s)^3 N /
-    (6 W^3) (second order) and (e + s)^2 N / (2 W^2) (first order), equal the counting noise sqrt(N) at
-    W = (e + s) (1.380 sqrt(N) / 6)^(1/3) and (e + s) (sqrt(N) / 2)^(1/2), and are below it for wider windows (both fall
-    with W): 2.84 and 6.13 (e + s) at N = 1e4 and 1e6, and 7.07 and 22.4. The first order needs windows 2.49 and 3.65
-    times wider."""
-    N, W, a = sp.symbols("N W a", positive=True)  # a = e + s
-    g3 = sp.sqrt(6) * sp.sqrt(3 - sp.sqrt(6)) * sp.exp(-(3 - sp.sqrt(6)) / 2)
-    r2, r1 = g3 / 6 * a**3 * N / W**3, a**2 * N / (2 * W**2)
-    W2, W1 = a * (g3 / 6 * sp.sqrt(N)) ** sp.Rational(1, 3), a * (sp.sqrt(N) / 2) ** sp.Rational(1, 2)
-    assert is_zero(sp.simplify(r2.subs(W, W2) - sp.sqrt(N))) and is_zero(sp.simplify(r1.subs(W, W1) - sp.sqrt(N)))
-    assert sp.diff(r2, W).is_negative and sp.diff(r1, W).is_negative
-    k2 = [(W2 / a).subs(N, n) for n in (10**4, 10**6)]
-    k1 = [(W1 / a).subs(N, n) for n in (10**4, 10**6)]
-    assert rounds_to(k2[0], "2.84") and rounds_to(k2[1], "6.13")
-    assert rounds_to(k1[0], "7.07") and rounds_to(k1[1], "22.4")
-    assert rounds_to(k1[0] / k2[0], "2.49") and rounds_to(k1[1] / k2[1], "3.65")
+    """rf-window-width: the counts' remainder (C / W^2) N a^2 / 2 equals the counting noise sqrt(N) at W = a (C sqrt(N)
+    / 2)^(1/2), and is below it for wider windows (it falls with W): 7.07 and 22.4 a at N = 1e4 and 1e6 for C = 1, 26.0
+    and 82.2 for C = 13.5 (the fade's corner, rf-fade), a widening of sqrt 13.5 = 3.68."""
+    N, W, a, C = sp.symbols("N W a C", positive=True)
+    rem = C / W**2 * N * a**2 / 2
+    Wmin = a * (C * sp.sqrt(N) / 2) ** sp.Rational(1, 2)
+    assert is_zero(sp.simplify(rem.subs(W, Wmin) - sp.sqrt(N))) and sp.diff(rem, W).is_negative
+    e12 = sp.exp(-sp.Rational(1, 2))
+    n1, n2 = sp.Rational(15, 8), 10 / sp.sqrt(3)
+    corner = 1 + 2 * e12 * sp.sqrt(2) * n1 + n2 + n1**2
+    k = {(c, n): (Wmin / a).subs({C: c, N: n}) for c in (1, corner) for n in (10**4, 10**6)}
+    assert rounds_to(k[1, 10**4], "7.07") and rounds_to(k[1, 10**6], "22.4")
+    assert rounds_to(k[corner, 10**4], "26.0") and rounds_to(k[corner, 10**6], "82.2")
+    assert rounds_to(sp.sqrt(corner), "3.68")
+
+
+def test_width_check():
+    """rf-width-check: two systems T = G Y + D + x and T' = G' Y + D' + x' with the same unknowns Y and left inverses
+    A G = I, A' G' = I give A T - A' T' = A D - A' D' + (A x - A' x'): the same Y cancels, so the difference's mean is
+    the remainders' and its covariance that of A x - A' x', whatever the noises' correlation (here x' = M x + y with
+    y independent of x: Cov = (A - A' M) S (A - A' M)^T + A' Sy A'^T, symbolic, two unknowns from three and four
+    statistics)."""
+    G = sp.Matrix([[1, 2], [0, 1], [3, 1]])
+    Gp = sp.Matrix([[2, 1], [1, 0], [0, 1], [1, 1]])
+    A = (G.T * G).inv() * G.T
+    Ap = (Gp.T * Gp).inv() * Gp.T
+    assert A * G == sp.eye(2) and Ap * Gp == sp.eye(2)
+    Y = sp.Matrix(sp.symbols("y0:2", real=True))
+    D = sp.Matrix(sp.symbols("d0:3", real=True))
+    Dp = sp.Matrix(sp.symbols("e0:4", real=True))
+    assert is_zero(A * (G * Y + D) - Ap * (Gp * Y + Dp) - (A * D - Ap * Dp))
+    M = sp.Matrix(4, 3, lambda i, j: sp.Symbol(f"m{i}{j}", real=True))
+    L = sp.Matrix(3, 3, lambda i, j: sp.Symbol(f"l{i}{j}", real=True) if j <= i else 0)
+    S = L * L.T  # any covariance of x
+    Sy = sp.diag(*sp.symbols("v0:4", positive=True))
+    lin_x, lin_y = A - Ap * M, -Ap  # A x - A'(M x + y)
+    cov = lin_x * S * lin_x.T + lin_y * Sy * lin_y.T
+    assert is_zero(cov - ((A - Ap * M) * S * (A - Ap * M).T + Ap * Sy * Ap.T))

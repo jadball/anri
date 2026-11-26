@@ -125,6 +125,37 @@ which sum to 1 and whose weighted bin centre is :math:`a`: the prediction keeps 
 
 **Code:** :func:`anri.index.data.eta_omega_corners`.
 
+**Coverage at the prediction.** A point-like prediction's light lands where it is predicted, at :math:`(2\theta_j,
+\eta_j)`, and is recorded only if that point is measured. Its expected measured share is :math:`m(2\theta_j, \eta_j)`,
+with :math:`m = 1` on measured detector area and 0 elsewhere. :eq:`idx-weight` uses instead its bin's coverage
+:math:`c`, the measured share of the (ring, :math:`\eta` bin)'s area (:func:`anri.index.data.detector_coverage`
+samples each pixel 4 × 4 within the ring's :math:`2\theta` tolerance). The two agree only on average over where in the
+bin the prediction falls:
+
+.. math::
+    :label: idx-coverage
+
+    c = \frac{1}{|B|}\int_B m\, dA = \operatorname{E}_{\vec{x} \sim U(B)}\big[m(\vec{x})\big], \qquad
+    \big|m(2\theta_j, \eta_j) - c\big| \le \max(c, 1 - c),
+
+with :math:`B` the bin's area on the detector. For one orientation the prediction is at one place. On a bin half
+covered, a spot on its measured half is predicted at half its light, and a spot on its masked half at half when none is
+recorded. The fit then moves occupancy to make up a misfit of up to :math:`\max(c, 1 - c)` of the reflection's light.
+The coverage is a shape assumption: light spread evenly over the bin. The misfit arises only on partly covered bins:
+the edges of each gap's crossing of a ring, a bin or two at 0.5°, and wherever a gap runs along a ring. On an Ag2S scan
+the horizontal module gaps did that over :math:`\eta = \pm(65`-86)°, where :math:`c` lay between 0 and 1 because the gap
+covered part of the ring's :math:`2\theta` window, and a sharp prediction there is either measured or not.
+
+**Proof:** ``tests/theory/test_indexing.py::test_coverage_at_prediction`` (the average over a bin cut by a gap's edge
+across :math:`\eta` and along :math:`2\theta`; the misfit's bound for :math:`m \in \{0, 1\}`).
+
+Not yet in the code: the prediction's own coverage, :math:`m` at :math:`(2\theta_j, \eta_j)`, in place of :math:`c`.
+Then every bin is predicted with exactly the light that lands on its measured pixels, up to the prediction's own
+width. :func:`anri.index.data.detector_coverage` already computes :math:`m` on an :math:`\eta` grid finer than the
+histogram's before :func:`anri.index.data.coarsen_coverage` averages it. Resolving it across the ring's :math:`2\theta`
+tolerance as well is new. Unmeasured cells then need nothing more: they contribute nothing to the likelihood, as
+:doc:`recording` requires of cells with no data (they are not censored, which would say "below the cut").
+
 **Fly and helical scans.** When dty moves during the rotation, the frames of one omega bin were taken up to half a step
 away from their row's nominal dty. The real dty per (row, omega bin) is measured from the frames' own motor readings and
 used in place of the nominal one: the mean over the bin's frames of their dty less the row's. Bins with more or fewer
@@ -170,5 +201,7 @@ What is left out
   than the axis would. The ring tolerance absorbs the :math:`2\theta` part; the :math:`\eta` part is below the 1° bins for
   samples small next to the detector distance.
 - **Peak shape within a bin**, and strain: the histogram sees orientation only.
+- **Coverage within a bin** (:eq:`idx-coverage`): predictions are scaled by their bin's average coverage, not by the
+  coverage where they land; a spot on a partly covered bin is mispredicted by up to :math:`\max(c, 1 - c)` of its light.
 - **Reflections near the rotation axis**, :math:`|\sin\eta| \le` ``etacut`` (default 0.2): smeared over many omega bins
   (:ref:`theory_rotation_motion`), they are left out of the search and the fit.
