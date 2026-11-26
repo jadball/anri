@@ -1747,7 +1747,7 @@ def test_trace_numbers():
 
 # ---------------------------------------------------------------------------------------------------------------
 # Windows instead of regions, cells with no data, wide cells, the omega kernel's factor, counting
-# (rf-coverage, rf-window, rf-window-norms, rf-mask, rf-taper, rf-alias-wide, rf-omega-factor, rf-count)
+# (rf-coverage, rf-window, rf-window-norms, rf-mask, rf-fade, rf-alias-wide, rf-omega-factor, rf-count)
 
 
 def test_coverage():
@@ -1839,8 +1839,8 @@ def test_window_norms():
     assert rounds_to(peak / 6 / 27, "0.0085") and rounds_to(peak / 6 / 125, "0.0018")
 
 
-def test_taper():
-    """rf-taper: S(z) = 35 z^4 - 84 z^5 + 70 z^6 - 20 z^7 rises from 0 to 1 on [0, 1] with its first three derivatives
+def test_fade():
+    """rf-fade: S(z) = 35 z^4 - 84 z^5 + 70 z^6 - 20 z^7 rises from 0 to 1 on [0, 1] with its first three derivatives
     zero at both ends, so extended by 0 and 1 it is three times continuously differentiable. Its derivatives are
     -140 z^3 (z - 1)^3, -420 z^2 (z - 1)^2 (2 z - 1) and -840 z (z - 1)(5 z^2 - 5 z + 1), largest at their critical
     points: 35/16 (z = 1/2), 84 sqrt 5 / 25 = 7.51 (z = 1/2 -+ sqrt 5 / 10) and 105/2 (z = 1/2)."""
@@ -1862,6 +1862,10 @@ def test_taper():
     assert is_zero(sup(S2) - 84 * sp.sqrt(5) / 25) and rounds_to(84 * sp.sqrt(5) / 25, "7.51")
     assert is_zero(sup(S3) - sp.Rational(105, 2))
     assert is_zero(S2.subs(z, sp.Rational(1, 2) - sp.sqrt(5) / 10) - 84 * sp.sqrt(5) / 25)
+    # where a window fades over its own width, its third derivative grows from 1.380 to 52.5 per W^3, and the width
+    # rf-window-width asks for (proportional to the cube root of that constant) grows by (52.5 / 1.380)^(1/3)
+    g3 = sp.sqrt(6) * sp.sqrt(3 - sp.sqrt(6)) * sp.exp(-(3 - sp.sqrt(6)) / 2)
+    assert rounds_to((sp.Rational(105, 2) / g3) ** sp.Rational(1, 3), "3.36")
 
 
 def test_alias_wide():
@@ -1971,3 +1975,22 @@ def test_window_beam_numbers():
     ratio = sp.exp(-((sb - shift) ** 2 - sb**2) / (2 * sb**2)) - 1
     assert rounds_to(100 * ratio, "58")
     assert rounds_to(sb * sp.Rational(1, 2) / 1500 * 10**4, "1.4")
+
+
+def test_window_width():
+    """rf-window-width: the remainders of rf-window with the Gaussian's norms (rf-window-norms), 1.380 (e + s)^3 N /
+    (6 W^3) (second order) and (e + s)^2 N / (2 W^2) (first order), equal the counting noise sqrt(N) at
+    W = (e + s) (1.380 sqrt(N) / 6)^(1/3) and (e + s) (sqrt(N) / 2)^(1/2), and are below it for wider windows (both fall
+    with W): 2.84 and 6.13 (e + s) at N = 1e4 and 1e6, and 7.07 and 22.4. The first order needs windows 2.49 and 3.65
+    times wider."""
+    N, W, a = sp.symbols("N W a", positive=True)  # a = e + s
+    g3 = sp.sqrt(6) * sp.sqrt(3 - sp.sqrt(6)) * sp.exp(-(3 - sp.sqrt(6)) / 2)
+    r2, r1 = g3 / 6 * a**3 * N / W**3, a**2 * N / (2 * W**2)
+    W2, W1 = a * (g3 / 6 * sp.sqrt(N)) ** sp.Rational(1, 3), a * (sp.sqrt(N) / 2) ** sp.Rational(1, 2)
+    assert is_zero(sp.simplify(r2.subs(W, W2) - sp.sqrt(N))) and is_zero(sp.simplify(r1.subs(W, W1) - sp.sqrt(N)))
+    assert sp.diff(r2, W).is_negative and sp.diff(r1, W).is_negative
+    k2 = [(W2 / a).subs(N, n) for n in (10**4, 10**6)]
+    k1 = [(W1 / a).subs(N, n) for n in (10**4, 10**6)]
+    assert rounds_to(k2[0], "2.84") and rounds_to(k2[1], "6.13")
+    assert rounds_to(k1[0], "7.07") and rounds_to(k1[1], "22.4")
+    assert rounds_to(k1[0] / k2[0], "2.49") and rounds_to(k1[1] / k2[1], "3.65")

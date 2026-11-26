@@ -103,9 +103,19 @@ Shared pixels
 -------------
 
 The Eiger2's pixels along its chips' edges are 75 × 150 µm, twice the others, and the readout divides each one's count
-between two pixels of the output image, one of them over the gap between the chips (a *virtual pixel*). How it divides
-an integer count (evenly with a rule for the odd photon, at random, or as non-integer values after a correction) is
-not stated here: it is the maintainer's to confirm, and everything below holds for any rule that conserves the count.
+between two pixels of the output image, one of them over the gap between the chips (a *virtual pixel*). pyFAI's
+detector definitions (``src/pyFAI/detectors/_dectris.py``, upstream commit ``aae0b3a``, read 2026-11-26) give the
+layout, not the rule. An Eiger module of 2 × 4 chips of 256 × 256 pixels is 514 × 1030 pixels, "two missing pixels are
+interpolated at each sub-module boundary"; an Eiger2 module is 512 × 1028. Module gaps are 37 × 10 pixels (Eiger) and
+38 × 12 (Eiger2), masked. The Eiger2 CdTe also masks a 2-pixel column in the middle of each module. pyFAI places every
+output pixel on one regular 75 µm grid ("images are re-built to be contiguous"), and models neither the large pixels'
+area nor how their counts are divided. So the Eiger2's 512 rows hold no extra pixels at its chips' horizontal
+boundary, and which boundaries carry virtual pixels is not settled by pyFAI.
+
+How the readout divides an integer count (evenly with a rule for the odd photon, at random, or as non-integer values
+after a correction) is not stated here. Everything below holds for any rule that conserves the count. The rule can be
+measured from the data: wherever both outputs of a shared pixel are recorded, halving keeps their counts within one of
+each other, with the odd photon always on the same side, while a random split spreads them binomially.
 
 Take a physical pixel :math:`P`, its light :math:`\lambda_P` integrated over its whole area (:eq:`rec-cell`), its count
 :math:`n \sim \operatorname{Poisson}(\lambda_P)`, and its output pixels :math:`o \in O(P)` with counts :math:`n_o`
