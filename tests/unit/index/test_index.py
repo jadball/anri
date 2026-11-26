@@ -545,9 +545,18 @@ class TestFitStage(unittest.TestCase):
         quiet = lambda m: None
         with tempfile.TemporaryDirectory() as tmp:
             sparse = os.path.join(tmp, "sparse.h5")
-            anri.simulate.stages.simulate_sparse(sparse, entries, rings["hkls"], np.ones(len(rings["hkls"])),
-                                                 geometry(), omega, dty, (2162, 2068), window=(5, 9, 9),
-                                                 pixels_in_spot=1)  # fmt: skip (spots of 1-2 pixels: see test_two_grains)
+            anri.simulate.stages.simulate_sparse(
+                sparse,
+                entries,
+                rings["hkls"],
+                np.ones(len(rings["hkls"])),
+                geometry(),
+                omega,
+                dty,
+                (2162, 2068),
+                window=(5, 9, 9),
+                pixels_in_spot=1,
+            )  # fmt: skip (spots of 1-2 pixels: see test_two_grains)
             parfile = anri.io.imaged11.write_pars(os.path.join(tmp, "pars"), PARS, {"Fe": cell})
             anri.io.imaged11.write_dataset(sparse, tmp, "fe", "half", y0=0.0, parfile=parfile)
             hist = ix.stages.stage_histogram(tmp, "fe", "half", os.path.join(tmp, "h.h5"), rings=3, log=quiet)
@@ -784,7 +793,6 @@ class TestDatasetGroups(unittest.TestCase):
 
 
 class TestDiscMask(unittest.TestCase):
-
     def test_back_projection_grid(self):
         """The back-projection is on the histogram's grid (with --grid-pad), as the disc and the fit; else voxel_grid."""
         scan = {"dty0": -5.0, "ystep": 1.0, "n_rows": 11, "om0": -90.0}
@@ -932,6 +940,36 @@ class TestDetectorCoverage(unittest.TestCase):
         np.testing.assert_allclose(cropped, extended, atol=0.05)
         whole = {**geom, "det_origin_lab": jnp.array([100.0, -30.0, -30.0])}
         np.testing.assert_allclose(ix.data.detector_coverage(np.ones((61, 61), bool), whole, tth, [1.0], 10.0, 36), 1.0)
+
+    def test_point_coverage_masked_half(self):
+        """The point table is 0 or 1, float32, [n_rings, n_c]; with half the columns masked, half of each ring's points
+        are measured, and its average over each bin of 16 points is the bin's measured share (detector_coverage), up to
+        the bins the mask's edge crosses."""
+        geom = geometry()
+        tth = np.degrees(np.arctan(np.array([300.0, 600.0]) * 75.0 / PARS["distance"]))
+        good = np.ones((2200, 2100), bool)
+        good[:, : int(PARS["y_center"])] = False
+        pt = ix.data.point_coverage(good, geom, tth, 360 * 16)
+        self.assertEqual(pt.shape, (2, 360 * 16))
+        self.assertEqual(pt.dtype, np.float32)
+        self.assertTrue(set(np.unique(pt)) <= {0.0, 1.0})
+        np.testing.assert_allclose(pt.mean(1), 0.5, atol=0.01)
+        cov = ix.data.detector_coverage(good, geom, tth, np.full(2, 0.05), 1.0, 360, sub=1)
+        avg = ix.data.coarsen_coverage(pt, 360)
+        self.assertLessEqual(np.sum(np.abs(avg - cov) > 0.1), 8)
+
+    def test_coverage_at_its_own_eta(self):
+        """A prediction on the measured half of a half-covered bin keeps all its weight, one on the masked half none
+        (the bin's average would give both 1/2); a bin table (older files) gives its bin's share at the prediction."""
+        from anri.index.data import coverage_at
+
+        pt = np.zeros((1, 360 * 16), np.float32)
+        pt[0, 8:16] = 1.0  # the second half of eta bin 0 (-180 to -179 deg) measured
+        eta = jnp.array([[-179.75, -179.25]], jnp.float32)  # in the first and the second half of bin 0
+        ring_j = jnp.array([0, 0])
+        np.testing.assert_array_equal(np.asarray(coverage_at(jnp.asarray(pt), ring_j, eta)), [[0.0, 1.0]])
+        bins = jnp.asarray(ix.data.coarsen_coverage(pt, 360))
+        np.testing.assert_allclose(np.asarray(coverage_at(bins, ring_j, eta)), [[0.5, 0.5]])
 
     def test_scales_the_system(self):
         """Coverage 1 changes nothing; coverage 0 on a ring removes its predictions' weight."""

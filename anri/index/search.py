@@ -23,7 +23,7 @@ from anri.diffract.scatter import k_out_to_tth_eta
 from anri.fwd.peak import hkl_to_k_omega
 from anri.geom.gonio import wrap_omega
 
-from .data import B_E, B_O, coarsen_coverage, eta_bin, lit_table, omega_bin
+from .data import B_E, B_O, coarsen_coverage, coverage_at, eta_bin, lit_table, omega_bin
 
 GRID_STEPS = (3.0, 2.5, 2.0, 1.5, 1.0)  # tried by choose_grid, coarsest first
 
@@ -140,7 +140,8 @@ def completeness(
     n_e, n_o
         The lit map's numbers of eta and omega bins
     cov
-        [n_rings, n_e] measured share of each (ring, eta bin) (:func:`anri.index.data.detector_coverage`), or None
+        [n_rings, n_c] coverage on n_c eta bins, taken where each prediction lands (:func:`anri.index.data.coverage_at`),
+        or None
 
     Returns
     -------
@@ -151,8 +152,8 @@ def completeness(
     de = jnp.minimum(jnp.ceil(tol_e / b_e).astype(jnp.int32), n_e - 1)
     do = jnp.ceil(tol_o / b_o).astype(jnp.int32)
     inside = ok & (io >= 0) & (io < n_o)
-    if cov is not None:
-        inside = inside & (cov[ring_j[None, :], ie] >= 0.5)
+    if cov is not None:  # a prediction counts only where it lands on measured pixels (idx-coverage)
+        inside = inside & (coverage_at(cov, ring_j, eta) >= 0.5)
     e0, e1 = ie + n_e - de, ie + n_e + de + 1
     o0, o1 = jnp.clip(io - do, 0, n_o), jnp.clip(io + do + 1, 0, n_o)
     r = ring_j[None, :]
@@ -193,8 +194,11 @@ def completeness_of(
     b_e, b_o, n_e, n_o = lit["bins"]
     hkls, ring_j = jnp.asarray(rings["hkls"]), jnp.asarray(rings["ring_j"])
     tth, hw = jnp.asarray(rings["tth"], jnp.float32), jnp.asarray(rings["hw"], jnp.float32)
-    cov = rings.get("coverage")
-    cov = None if cov is None else jnp.asarray(coarsen_coverage(cov, n_e), jnp.float32)
+    if rings.get("coverage_point") is not None:  # where each prediction lands; else its bin's share (older files)
+        cov = jnp.asarray(rings["coverage_point"], jnp.float32)
+    else:
+        cov = rings.get("coverage")
+        cov = None if cov is None else jnp.asarray(coarsen_coverage(cov, n_e), jnp.float32)
     U = np.asarray(U, np.float32)
     out = []
     for s0 in range(0, len(U), chunk):

@@ -17,7 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax.typing import ArrayLike
 
-from .data import coarsen_coverage, eta_omega_corners
+from .data import coarsen_coverage, coverage_at, eta_omega_corners
 from .occupancy import (
     add_cells,
     censored_below,
@@ -37,16 +37,17 @@ def _system(
 ) -> tuple[jax.Array, jax.Array]:  # fmt: skip
     """(cell index, weight) [Q, Nj, 4] of orientations U [Q, 3, 3] in a row-summed (ring, eta, omega) histogram.
 
-    cov: [n_rings, n_e] measured share of each (ring, eta bin) (:func:`anri.index.data.detector_coverage`), or None.
+    cov: [n_rings, n_c] coverage on n_c eta bins, taken where each prediction lands (:func:`anri.index.data.coverage_at`),
+    or None.
     """
     b_e, b_o, n_e, n_o, om0 = bins
     eta, om, ok, lp = predict(U, B, hkls, geom)
     w = lp * F2[None]
     use = ok & (jnp.abs(jnp.sin(jnp.radians(eta))) > etacut)
+    if cov is not None:  # measured or not where the prediction lands (idx-coverage)
+        w = w * coverage_at(cov, ring_j, eta)
     idx, wt = [], []
     for ie, io, we, wo, inside in eta_omega_corners(eta, om, om0, b_e, b_o, n_e, n_o):
-        if cov is not None:
-            we = we * cov[ring_j[None], ie]
         good = use & inside
         idx.append(jnp.where(good, (ring_j[None] * n_e + ie) * n_o + io, -1))
         wt.append(jnp.where(good, w * we * wo, 0.0))
@@ -54,7 +55,12 @@ def _system(
 
 
 def _coverage(rings: dict, n_e: int) -> jax.Array | None:
-    """Return the rings' detector coverage in n_e eta bins, or None without one."""
+    """Return the rings' coverage where predictions land, else their bins' coverage in n_e eta bins, or None.
+
+    The first is :func:`anri.index.data.point_coverage`'s table; histogram files from before it carry only the second.
+    """
+    if rings.get("coverage_point") is not None:
+        return jnp.asarray(rings["coverage_point"], jnp.float32)
     if rings.get("coverage") is None:
         return None
     return jnp.asarray(coarsen_coverage(rings["coverage"], n_e), jnp.float32)

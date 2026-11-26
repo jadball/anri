@@ -11,6 +11,7 @@ from tests.theory.common import (
     cayley,
     ev,
     evaluate,
+    float64,
     is_zero,
     rng,
 )
@@ -367,3 +368,34 @@ def test_coverage_at_prediction():
         assert is_zero(sp.simplify(area.subs(c, sp.Rational(7, 10)) - sp.Rational(7, 10)))
     for cv in (sp.Rational(1, 10), sp.Rational(1, 2), sp.Rational(4, 5)):
         assert max(abs(1 - cv), abs(0 - cv)) == max(cv, 1 - cv)
+
+
+def test_point_coverage_code():
+    """idx-coverage's point coverage, against the geometry worked out by hand: a detector normal to a beam along x at
+    distance 100 pixels, pixel (s, f) at y = f - 10, z = s - 10 (21 x 21 pixels). A point of 2theta, eta lands at
+    y = -100 tan 2theta sin eta, z = 100 tan 2theta cos eta (k_out = (cos 2theta, -sin 2theta sin eta, sin 2theta
+    cos eta)), so on pixel (round(z + 10), round(y + 10)); with every pixel moved by dx along f, on the pixel whose
+    corrected position it is, round(y + 10 - dx). Columns f <= 9 are masked. Points within 1e-3 px of a pixel's edge,
+    where float32 may round either way, are not compared."""
+    from anri.index.data import point_coverage
+
+    geom = {"det_origin_lab": jnp.array([100.0, -10.0, -10.0]), "s_step_lab": jnp.array([0.0, 0.0, 1.0]),
+            "f_step_lab": jnp.array([0.0, 1.0, 0.0]), "k_in_lab": jnp.array([1.0, 0.0, 0.0])}  # fmt: skip
+    good = np.ones((21, 21), bool)
+    good[:, :10] = False
+    t2 = sp.Rational(7, 100)  # tan 2theta: a ring of radius 7 pixels
+    tth = float(sp.N(sp.deg(sp.atan(t2)), 30))
+    n_c = 72
+    for dx in (0.0, 0.3):
+        spatial = None if dx == 0.0 else (np.full((21, 21), dx, np.float32), np.zeros((21, 21), np.float32))
+        with float64():
+            got = point_coverage(good, geom, [tth], n_c, spatial)[0]
+        for i in range(n_c):
+            eta = sp.pi * (-180 + (i + sp.Rational(1, 2)) * sp.Rational(360, n_c)) / 180
+            y, z = -100 * t2 * sp.sin(eta), 100 * t2 * sp.cos(eta)
+            fc, sc = sp.N(y + 10 - sp.Rational(str(dx)), 30), sp.N(z + 10, 30)
+            if min(abs(fc - sp.floor(fc) - sp.Rational(1, 2)), abs(sc - sp.floor(sc) - sp.Rational(1, 2))) < 1e-3:
+                continue
+            si, fi = int(sp.floor(sc + sp.Rational(1, 2))), int(sp.floor(fc + sp.Rational(1, 2)))
+            expected = 1.0 if (0 <= si < 21 and 0 <= fi < 21 and good[si, fi]) else 0.0
+            assert got[i] == expected, (dx, i, got[i], expected)

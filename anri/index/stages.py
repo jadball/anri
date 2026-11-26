@@ -348,9 +348,11 @@ def stage_histogram(
         are recorded, and the fit takes their data as a lower bound (:func:`anri.index.occupancy.censored_ratio`)
     detector_mask
         Detector mask as ImageD11's segmenter reads it (non-zero: masked; :func:`anri.io.imaged11.read_mask`).
-        Default: the DataSet's maskfile. The measured share of each (ring, eta bin), off the detector's edges and
-        masked pixels, is recorded ("coverage"); the later stages scale predictions by it, so that a reflection on a
-        module gap is not taken as missing
+        Default: the DataSet's maskfile. Whether each point of each ring's centre line is measured, off the detector's
+        edges and masked pixels, is recorded ("coverage_point", :func:`anri.index.data.point_coverage`); the later
+        stages scale each prediction by it where it lands, so that a reflection on a module gap is not taken as
+        missing, and one beside a gap is not taken as weak. The measured share of each (ring, eta bin) is recorded
+        too ("coverage", for the logs and plots)
     pol_factor
         Degree of horizontal polarisation of the beam, for the predicted intensities of the later stages
         (:func:`anri.diffract.factors.polarisation`; default 1, a synchrotron's horizontally polarised beam)
@@ -370,7 +372,15 @@ def stage_histogram(
 
     import anri.io
 
-    from .data import detector_coverage, dty_offsets, histogram_pixels, ring_profile, ring_table
+    from .data import (
+        N_POINT,
+        detector_coverage,
+        dty_offsets,
+        histogram_pixels,
+        point_coverage,
+        ring_profile,
+        ring_table,
+    )
 
     log, lines = recorder(log)
     options = {"analysisroot": analysisroot, "sample": sample, "dataset": dataset, "phase": phase, "parfile": parfile,
@@ -423,6 +433,8 @@ def stage_histogram(
         good = np.ones(shape, bool) if good is None else good
         cov = detector_coverage(good, geom, ring_t["tth"], tol, B_E, n_e, d["spatial"])
         ring_t["coverage"] = cov.astype(np.float32)
+        # where a point-like prediction lands, measured or not (idx-coverage): what the later stages scale by
+        ring_t["coverage_point"] = point_coverage(good, geom, ring_t["tth"], n_e * N_POINT, d["spatial"])
         away = np.abs(np.sin(np.radians((np.arange(n_e) + 0.5) * B_E - 180.0))) > 0.2  # away from the rotation axis
         log(f"detector coverage ({mask_file or 'no mask'}; {time.perf_counter() - t1:.0f} s): measured share of each "
             "ring (|sin eta| > 0.2): " + ", ".join(f"{c:.2f}" for c in cov[:, away].mean(1))
@@ -1039,7 +1051,9 @@ def _fit_setup(filter_file: str, y0: float | str | None, beam: float, mask: str 
         off = offsets(pairs["s"], pairs["c"], sc)
         scan["ddty"] = jnp.asarray(off + (np.asarray(scan["ddty"]) if "ddty" in scan else 0.0), jnp.float32)
     dims = (B_E * R_E, B_O * R_O, sc["n_e"] // R_E, sc["n_o"] // R_O)
-    if rings.get("coverage") is not None:  # the measured share of each (ring, eta bin): masks and detector edges
+    if rings.get("coverage_point") is not None:  # measured or not where each prediction lands (idx-coverage)
+        scan["coverage"] = jnp.asarray(rings["coverage_point"], jnp.float32)
+    elif rings.get("coverage") is not None:  # older files: each (ring, eta bin)'s measured share
         scan["coverage"] = jnp.asarray(coarsen_coverage(rings["coverage"], dims[2]), jnp.float32)
     if beam > 0:  # the beam's profile across dty, over voxels of YSTEP; summed rows widen its flat top
         scan.update({"sig_beam": fwhm_to_sigma(beam), "width_beam": sc["width_beam"], "voxel": sc["voxel"]})

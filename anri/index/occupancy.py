@@ -27,7 +27,7 @@ from anri.geom.paths import edge_distances, ray_directions, transmission
 from anri.geom.scan import recon_positions
 from anri.io.imaged11 import PIXELS_IN_SPOT
 
-from .data import eta_omega_corners, omega_bin, scan_beam
+from .data import coverage_at, eta_omega_corners, omega_bin, scan_beam
 
 _TINY = 1e-30  # below this a regularised gamma is taken from its series (float32's smallest normal is 1.2e-38)
 
@@ -245,8 +245,10 @@ def system(
     scan
         "y0", "dty0", "ystep", "n_rows" and "om0": the rows are at dty = dty0 + k ystep; optionally "ddty" [n_rows,
         n_o], each row's offset from that per omega bin (fly, helical scans: :func:`anri.index.data.dty_offsets`), and
-        "exposure" [n_rows, n_o] (or [n_rows, 1], per row), each (row, omega bin)'s frames relative to a full one; "coverage" [n_rings, n_e],
-        the measured share of each (ring, eta bin) (:func:`anri.index.data.detector_coverage`); with a beam profile also
+        "exposure" [n_rows, n_o] (or [n_rows, 1], per row), each (row, omega bin)'s frames relative to a full one; "coverage" [n_rings, n_c],
+        the coverage on n_c eta bins, taken where each prediction lands (:func:`anri.index.data.coverage_at`): from
+        :func:`anri.index.data.point_coverage`, or each (ring, eta bin)'s measured share
+        (:func:`anri.index.data.detector_coverage`) for files without it; with a beam profile also
         "sig_beam", "width_beam" and "voxel" (:func:`beam_rows`)
     b_e, b_o, n_e, n_o
         Bin widths and counts of the histogram in eta and omega
@@ -290,10 +292,10 @@ def system(
                                                  scan["sig_beam"], scan["width_beam"]), 0.0))
             for dk in range(n_beam)
         )  # fmt: skip
+    if "coverage" in scan:  # measured or not where the prediction lands (idx-coverage), once per prediction
+        w = w * coverage_at(scan["coverage"], ring_j, eta)
     idx, wt = [], []
     for ie, io, we, wo, inside in eta_omega_corners(eta, om, scan["om0"], b_e, b_o, n_e, n_o):
-        if "coverage" in scan:  # the share of the bin's detector area that is measured
-            we = we * scan["coverage"][ring_j[None, None, :], ie]
         for dk, wk in rows:
             kk = k0 + dk
             good = use & inside & (kk >= 0) & (kk < n_k)

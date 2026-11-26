@@ -23,6 +23,7 @@ from anri.geom.scan import dty_to_row
 from anri.maths.utils import float64
 
 B_E, B_O = 0.5, 0.25  # lit histogram bins (deg): eta, omega
+N_POINT = 16  # point_coverage's points per eta bin of B_E: 0.031 deg, half a pixel at 900 pixels from the beam
 R_E, R_O = 2, 4  # fit histogram bins = lit bins x these (1 x 1 deg)
 
 
@@ -442,6 +443,88 @@ def coarsen_coverage(cov: ArrayLike, n_e: int) -> np.ndarray:
     """Average a [Nr, m n_e] coverage (:func:`detector_coverage`) into n_e eta bins."""
     cov = np.asarray(cov)
     return cov.reshape(cov.shape[0], n_e, -1).mean(2)
+
+
+def point_coverage(
+    good: ArrayLike, geom: dict, ring_tth: ArrayLike, n_c: int, spatial: tuple | None = None, n_iter: int = 3
+) -> np.ndarray:
+    """Whether each point of each ring's centre line falls on a measured pixel: 1 or 0, at n_c eta points.
+
+    The coverage a point-like prediction sees where it lands (``idx-coverage``), in place of its bin's average
+    (:func:`detector_coverage`). Point i of a ring is at its 2theta and eta = -180 + (i + 1/2) 360 / n_c degrees, seen
+    from the lab origin; it is traced to the detector plane and, with a distortion, to the pixel whose corrected
+    position it is (pixel (s, f) is at (s + dy, f + dx), so the pixel is found by fixed-point iteration from the
+    corrected position).
+
+    Parameters
+    ----------
+    good
+        [n_slow, n_fast] True where a pixel is measured
+    geom
+        Geometry dict, see :func:`pixel_angles`
+    ring_tth
+        [Nr] the rings' 2theta (degrees)
+    n_c
+        Points per ring, over 360 degrees of eta
+    spatial
+        Detector distortion (dx, dy) as :func:`anri.io.imaged11.read_spatial`, or None
+    n_iter
+        Fixed-point iterations of the distortion's inverse
+
+    Returns
+    -------
+    np.ndarray
+        [Nr, n_c] float32, 1 where the point is on a measured pixel, else 0
+    """
+    good = np.asarray(good, bool)
+    n_s, n_f = good.shape
+    eta = -180.0 + (np.arange(n_c) + 0.5) * (360.0 / n_c)
+    tth = np.asarray(ring_tth, float)
+    tt, ee = (x.ravel() for x in np.meshgrid(tth, eta, indexing="ij"))
+    k_in = geom["k_in_lab"]
+    k = jax.vmap(tth_eta_to_k_out, in_axes=(0, 0, None, None))(jnp.asarray(tt), jnp.asarray(ee), 1.0, k_in)
+    trace = jax.vmap(raytrace_to_det, in_axes=(0, None, None, None, None))
+    sc, fc = (np.asarray(x, float) for x in trace(k, jnp.zeros(3), geom["s_step_lab"], geom["f_step_lab"],
+                                                  geom["det_origin_lab"]))  # fmt: skip
+    normal = np.cross(np.asarray(geom["s_step_lab"]), np.asarray(geom["f_step_lab"]))
+    ahead = np.asarray(k) @ normal * float(normal @ np.asarray(geom["det_origin_lab"])) > 0
+    s, f = sc.copy(), fc.copy()
+    if spatial is not None:
+        dx, dy = spatial
+        for _ in range(n_iter):
+            si = np.clip(np.round(s).astype(np.int64), 0, n_s - 1)
+            fi = np.clip(np.round(f).astype(np.int64), 0, n_f - 1)
+            s, f = sc - dy[si, fi], fc - dx[si, fi]
+    si, fi = np.round(s).astype(np.int64), np.round(f).astype(np.int64)
+    inside = ahead & (si >= 0) & (si < n_s) & (fi >= 0) & (fi < n_f)
+    on = np.zeros(len(si), bool)
+    on[inside] = good[si[inside], fi[inside]]
+    return on.reshape(len(tth), n_c).astype(np.float32)
+
+
+def coverage_at(cov: jax.Array, ring_j: jax.Array, eta: jax.Array) -> jax.Array:
+    """Return the coverage at each prediction's own eta, from a [n_rings, n_c] table on n_c eta bins from -180 deg.
+
+    With :func:`point_coverage`'s table, the coverage where each prediction lands (``idx-coverage``); with a bin
+    table (:func:`detector_coverage`), its bin's average, as before.
+
+    Parameters
+    ----------
+    cov
+        [n_rings, n_c] coverage
+    ring_j
+        [Nj] ring of each prediction
+    eta
+        [..., Nj] predictions' eta (degrees)
+
+    Returns
+    -------
+    jax.Array
+        [..., Nj] coverage of each prediction
+    """
+    n_c = cov.shape[1]
+    ic = jnp.floor((eta + 180.0) * (n_c / 360.0)).astype(jnp.int32) % n_c
+    return cov[jnp.broadcast_to(ring_j, eta.shape), ic]
 
 
 def eta_bin(eta: jax.Array, b_e: float, n_e: int) -> jax.Array:
