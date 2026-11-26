@@ -97,6 +97,64 @@ each photon is counted once. A photon counted twice (its fluorescence above the 
 its remaining energy above it in its own pixel) would correlate neighbours; whether the Eiger's thresholds allow that
 is a question for the maintainer.
 
+.. _theory_shared_pixels:
+
+Shared pixels
+-------------
+
+The Eiger2's pixels along its chips' edges are 75 × 150 µm, twice the others, and the readout divides each one's count
+between two pixels of the output image, one of them over the gap between the chips (a *virtual pixel*). How it divides
+an integer count (evenly with a rule for the odd photon, at random, or as non-integer values after a correction) is
+not stated here: it is the maintainer's to confirm, and everything below holds for any rule that conserves the count.
+
+Take a physical pixel :math:`P`, its light :math:`\lambda_P` integrated over its whole area (:eq:`rec-cell`), its count
+:math:`n \sim \operatorname{Poisson}(\lambda_P)`, and its output pixels :math:`o \in O(P)` with counts :math:`n_o`
+given by a rule that, given :math:`n`, depends on nothing else and keeps :math:`\sum_o n_o = n`. Then
+
+.. math::
+    :label: rec-shared
+
+    \sum_{o \in O(P)} n_o = n \sim \operatorname{Poisson}(\lambda_P), \qquad
+    P\big(n_{o_1} = 2,\ n_{o_2} = 0\big) = 0 < P(n_{o_1} = 2)\, P(n_{o_2} = 0) \quad \text{(halving)}:
+
+merged, the outputs are one cell of :eq:`rec-poisson`, with the physical pixel's area, whatever the rule. Apart they
+are not independent cells: under halving (:math:`\lceil n/2 \rceil` to one, :math:`\lfloor n/2 \rfloor` to the other)
+their counts differ by at most one.
+
+**Proof:** ``tests/theory/test_recording.py::test_shared_pixel_merge`` (the sum, for halving into two and three; the
+halving's joint law against its marginals, exactly).
+
+**Anri's rule:** every function of the data, and every model, is computed on physical pixels. The outputs of a shared
+pixel are summed into one cell, whose area is the physical pixel's and whose position is its centre (the mean of its
+outputs' centres where they tile it), for data and model alike, as :eq:`rec-cell` requires. The output pixels' grid
+is the readout's, not the sensor's.
+
+The segmentation runs on the output image, so the cut and the group rule act on the divided counts, not on
+:math:`n`. With the group rule left aside (:math:`m = 1`), the merged cell's recorded value and the light it loses are
+
+.. math::
+    :label: rec-shared-recorded
+
+    r_P = \sum_{o \in O(P)} n_o\, \mathbb{1}(n_o > c), \qquad
+    \lambda_P - \operatorname{E}[r_P] = \sum_n P(n \mid \lambda_P)\, \ell(n), \qquad
+    \ell(n) = \sum_{o \in O(P)} n_o\, \mathbb{1}(n_o \le c).
+
+Under halving at :math:`c = 1`, :math:`\ell = 0, 1, 2, 1, 0` for :math:`n = 0, \dots, 4`, and 0 beyond (both halves
+exceed :math:`c` once :math:`n \ge 2(c + 1)`). So the loss is :math:`e^{-\lambda}(\lambda + \lambda^2 +
+\lambda^3/6)`, largest at :math:`\lambda = 1.882`, the root of :math:`\lambda^3 + 3\lambda^2 - 6\lambda - 6`, where it
+is 0.995 photons: against :math:`e^{-1} = 0.368` for an ordinary pixel and 0.736 for two pixels of half the light each.
+At :math:`c = 2` it is 2.156. The cut on a halved pixel removes a count of :math:`2c + 1` in part and fewer whole,
+like a cut near :math:`2c + 1` on the physical pixel. Each half is non-decreasing in :math:`n`, so the recorded
+values stay non-decreasing functions of the physical counts, and :eq:`rf-harris` holds.
+
+**Proof:** ``tests/theory/test_recording.py::test_shared_pixel_cut`` (the losses at :math:`c = 1, 2`; the deficit, its
+derivative and maximum; the monotonicity of each half).
+
+The group rule sees the outputs: a shared pixel's two outputs are 8-neighbours, kept or not by one count, so their kept
+events are dependent, and both kept count as two pixels of a group. :eq:`rec-animal` holds with the outputs of each
+shared pixel taken as one node, whose kept pattern is a function of its :math:`n`. A lone bright shared pixel is a
+group of two by itself.
+
 Monitor normalisation
 ---------------------
 
@@ -383,6 +441,10 @@ What is left out
 - **Counting losses.** The Eiger's count-rate limit (pile-up at high rates) and pixel-to-pixel gain differences are
   not modelled; nor is a photon counted twice (above).
 - **The cap and background subtraction** of the segmentation (above).
+- **Shared pixels** (:eq:`rec-shared`): the readout's rule for dividing a count, and whether a flatfield or
+  count-rate correction makes the outputs non-integer before segmentation (then they are not Poisson at all), are to
+  be confirmed. :func:`anri.io.imaged11.recorded_moments` treats every output as an independent pixel; the group
+  rule's shared node is not computed by anything in anri, and nothing in :mod:`anri.io` merges shared outputs yet.
 - :math:`Z_m(U)` of :eq:`rec-likelihood` is not computed by anything in anri.
 - Code: :eq:`rec-expected` is :func:`anri.io.imaged11.recorded_moments` for :math:`m \le 3`; the covariances
   :eq:`rec-cov-pair` and :eq:`rec-joint` are not yet in anri (sandbox: ``anri/sandbox/refine/cutexact.py``, which

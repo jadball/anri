@@ -373,3 +373,59 @@ def test_compact_spot_numbers():
         for n_ph, quoted in zip((10, 30, 100), row):
             got = [_spot_share(n_ph, sd, off, m, wing) for m in (1, 3)]
             assert quoted == " / ".join(f"{g:.3f}" for g in got), (sd, off, wing, n_ph, got)
+
+
+def _halve(n: int, k: int = 2) -> list:
+    """A count n divided evenly between k output pixels, the remainder to the first ones (the halving example)."""
+    q, b = divmod(n, k)
+    return [q + (1 if i < b else 0) for i in range(k)]
+
+
+def test_shared_pixel_merge():
+    """rec-shared: whatever the rule dividing a physical pixel's count n between its outputs (deterministic or random
+    given n), the outputs sum to n, Poisson(lambda_P) by rec-poisson. Under halving, the joint law of (floor(n/2),
+    ceil(n/2)) puts no mass on (0, 2), though each output alone has mass there (P(floor = 0) = P(n <= 1), P(ceil = 2) =
+    P(n in {3, 4})): the outputs are not independent cells."""
+    lam = sp.Symbol("lambda", positive=True)
+    pois = [sp.exp(-lam) * lam**n / sp.factorial(n) for n in range(12)]
+    for n in range(12):
+        assert sum(_halve(n)) == n and sum(_halve(n, 3)) == n
+    joint = sum(pois[n] for n in range(12) if _halve(n) == [2, 0] or _halve(n)[::-1] == [0, 2])
+    assert joint == 0
+    p_lo0 = sum(pois[n] for n in range(12) if min(_halve(n)) == 0)
+    p_hi2 = sum(pois[n] for n in range(12) if max(_halve(n)) == 2)
+    assert is_zero(p_lo0 - (pois[0] + pois[1])) and is_zero(p_hi2 - (pois[3] + pois[4]))
+    assert (p_lo0 * p_hi2).subs(lam, 1) > 0
+
+
+def test_shared_pixel_cut():
+    """rec-shared-recorded: under halving the cut removes l(n) = sum over outputs of n_o 1(n_o <= c): 0, 1, 2, 1, 0 for
+    n = 0..4 at c = 1 and 0 beyond (both halves exceed c once n >= 2 (c + 1)). So D_P = e^-lam (lam + lam^2 +
+    lam^3 / 6), whose derivative is -e^-lam (lam^3 + 3 lam^2 - 6 lam - 6) / 6, zero at lam = 1.882, where D_P = 0.995;
+    an ordinary pixel's lam e^-lam peaks at e^-1 = 0.368, and two pixels of half the light at 2 e^-1 = 0.736. At c = 2
+    the losses are 0, 1, 2, 3, 4, 2, 0 and the largest deficit 2.156. Each half is non-decreasing in n, so the
+    recorded values stay non-decreasing functions of the physical counts (rf-harris)."""
+    import mpmath as mp
+
+    lam = sp.Symbol("lambda", positive=True)
+
+    def loss(n, c):
+        return sum(o for o in _halve(n) if o <= c)
+
+    assert [loss(n, 1) for n in range(8)] == [0, 1, 2, 1, 0, 0, 0, 0]
+    assert [loss(n, 2) for n in range(10)] == [0, 1, 2, 3, 4, 2, 0, 0, 0, 0]
+    for c in (1, 2, 3):
+        assert all(min(_halve(n)) > c for n in range(2 * (c + 1), 40))
+    D1 = sum(sp.exp(-lam) * lam**n / sp.factorial(n) * loss(n, 1) for n in range(4))
+    assert is_zero(D1 - sp.exp(-lam) * (lam + lam**2 + lam**3 / 6))
+    assert is_zero(sp.diff(D1, lam) + sp.exp(-lam) * (lam**3 + 3 * lam**2 - 6 * lam - 6) / 6)
+    root = sp.nsolve(lam**3 + 3 * lam**2 - 6 * lam - 6, lam, 1.9, prec=30)
+    assert rounds_to(root, "1.882") and rounds_to(D1.subs(lam, root), "0.995")
+    assert rounds_to(sp.exp(-1), "0.368") and rounds_to(2 * sp.exp(-1), "0.736")
+    D2 = sum(sp.exp(-lam) * lam**n / sp.factorial(n) * loss(n, 2) for n in range(6))
+    mp.mp.dps = 30
+    f2 = sp.lambdify(lam, D2, "mpmath")
+    x2 = mp.findroot(sp.lambdify(lam, sp.diff(D2, lam), "mpmath"), 3.2)
+    assert rounds_to(sp.Float(str(f2(x2)), 30), "2.156")
+    for n in range(30):
+        assert all(a <= b for a, b in zip(_halve(n), _halve(n + 1)))  # each output, not only their sum
