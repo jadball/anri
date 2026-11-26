@@ -1938,3 +1938,31 @@ def test_width_check():
     lin_x, lin_y = A - Ap * M, -Ap  # A x - A'(M x + y)
     cov = lin_x * S * lin_x.T + lin_y * Sy * lin_y.T
     assert is_zero(cov - ((A - Ap * M) * S * (A - Ap * M).T + Ap * Sy * Ap.T))
+
+
+def test_mean_omega():
+    """rf-mean-omega: with g_bar = sum V_i g_i / sum V_i (= Y1 g0 / V for g_i = F_i g0), sum V_i (g_i - g_bar) = 0 for
+    any three sub-volumes, so an affine weight chi(g) = chi0 + b . (g - g_bar) gives sum V_i chi(g_i) f_i = chi0 sum V_i
+    f_i + b . sum V_i (g_i - g_bar)(f_i - f(g_bar)): no first-order term, only the covariance part of the remainder.
+    For P(u) = exp(-u^2 / 2 sigma^2), P' = -u P / sigma^2 and P'' = (u^2 - sigma^2) P / sigma^4. An instrument-limited
+    spread of 0.01 deg is 1.7e-4 rad."""
+    g0 = sp.Matrix(sp.symbols("g0:3", real=True))
+    F = [_mat(f"F{i}_") for i in range(3)]
+    V = sp.symbols("V0:3", positive=True)
+    fv = sp.symbols("f0:3", real=True)
+    fb, chi0 = sp.symbols("fb chi0", real=True)
+    b = sp.Matrix(sp.symbols("b0:3", real=True))
+    Vt = sum(V)
+    Y1 = sum((V[i] * F[i] for i in range(3)), sp.zeros(3))
+    gb = Y1 * g0 / Vt
+    g = [F[i] * g0 for i in range(3)]
+    assert is_zero(sum((V[i] * (g[i] - gb) for i in range(3)), sp.zeros(3, 1)))
+    lhs = sum(V[i] * (chi0 + b.dot(g[i] - gb)) * fv[i] for i in range(3))
+    rhs = chi0 * sum(V[i] * fv[i] for i in range(3))
+    rhs += b.dot(sum((V[i] * (g[i] - gb) * (fv[i] - fb) for i in range(3)), sp.zeros(3, 1)))
+    assert is_zero(lhs - rhs)
+    u, sg = sp.Symbol("u", real=True), sp.Symbol("sigma", positive=True)
+    P = sp.exp(-(u**2) / (2 * sg**2))
+    assert is_zero(sp.diff(P, u) + u * P / sg**2)
+    assert is_zero(sp.diff(P, u, 2) - (u**2 - sg**2) * P / sg**4)
+    assert rounds_to(sp.pi / 180 * sp.Rational(1, 100) * 10**4, "1.7")

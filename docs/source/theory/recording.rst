@@ -134,10 +134,12 @@ their counts differ by at most one.
 **Proof:** ``tests/theory/test_recording.py::test_shared_pixel_merge`` (the sum, for halving into two and three; the
 halving's joint law against its marginals, exactly).
 
-**Anri's rule:** every function of the data, and every model, is computed on physical pixels. The outputs of a shared
-pixel are summed into one cell, whose area is the physical pixel's and whose position is its centre (the mean of its
-outputs' centres where they tile it), for data and model alike, as :eq:`rec-cell` requires. The output pixels' grid
-is the readout's, not the sensor's.
+Which pixels are shared is known from the detector: its layout of chips and modules (pyFAI's definitions, above).
+Only the dividing rule is not. Anri does not correct for shared pixels yet, and treats their outputs as ordinary
+cells. That is a small effect, and it is local. On pyFAI's Eiger2 layout the module's four extra columns and their
+partners are 8 of its 1028, about 1 % of the pixels, if the rows carry none. The correction, when it is wanted, is the
+merge above: the outputs of a shared pixel summed into one cell with the physical pixel's area and centre, for data
+and model alike.
 
 The segmentation runs on the output image, so the cut and the group rule act on the divided counts, not on
 :math:`n`. With the group rule left aside (:math:`m = 1`), the merged cell's recorded value and the light it loses are
@@ -451,7 +453,8 @@ What is left out
 - **Counting losses.** The Eiger's count-rate limit (pile-up at high rates) and pixel-to-pixel gain differences are
   not modelled; nor is a photon counted twice (above).
 - **The cap and background subtraction** of the segmentation (above).
-- **Shared pixels** (:eq:`rec-shared`): the readout's rule for dividing a count, and whether a flatfield or
+- **Shared pixels** (:eq:`rec-shared`) are not corrected for (about 1 % of the pixels). The readout's rule for
+  dividing a count, and whether a flatfield or
   count-rate correction makes the outputs non-integer before segmentation (then they are not Poisson at all), are to
   be confirmed. :func:`anri.io.imaged11.recorded_moments` treats every output as an independent pixel; the group
   rule's shared node is not computed by anything in anri, and nothing in :mod:`anri.io` merges shared outputs yet.

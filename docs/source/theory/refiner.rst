@@ -58,6 +58,9 @@ the shape of the detector's point spread beyond (A5). The assumptions are:
   the refinement: such a Si scan, with reflections on at least two rings, is measured with every experiment
   (:eq:`rf-omega-identify`). The kernel is never fitted to the sample.
 
+- **(A7) A focused beam is Gaussian across dty.** Its profile is :eq:`int-profile` with no flat top, of sd
+  :math:`\sigma_b` measured per experiment, so its weight and every derivative of it are known in closed form.
+
 The geometry (detector, beam profile across dty, wavelength) is known from calibration (:doc:`calibration`).
 
 The method
@@ -65,19 +68,20 @@ The method
 
 In the order it runs. The rest of the chapter derives each step and what it costs.
 
-1. Shared pixels are merged into their physical pixels (:eq:`rec-shared`).
-2. Each population gets, in each reflection, one soft box: a Gaussian weight centred on its predicted spot, which
+1. Each population gets, in each reflection, one soft box: a Gaussian weight centred on its predicted spot, which
    fades to zero before every unmeasured cell (:eq:`rf-fade`). Soft boxes overlap freely. Nothing is merged, and no
    spot is dropped for touching a gap.
-3. A soft box's width is computed, not chosen: the narrowest that keeps the error of every photon's weight below the
+2. A soft box's width is computed, not chosen: the narrowest that keeps the error of every photon's weight below the
    counting noise of every population whose light reaches it (:eq:`rf-window-width`), from the indexer's error,
    spread and photon count.
-4. Each soft box gives, per dty row, the counts, first moments and :math:`|\vec{g}|^2` of its cells, each cell divided
+3. Each soft box gives, per dty row, the counts, first moments and :math:`|\vec{g}|^2` of its cells, each cell divided
    by its Lorentz and polarisation factors and its frame's monitor (:eq:`rf-statistic`).
-5. Their expectation is linear in every population's volume, first moment and metric, with coefficients from the
+4. Their expectation is linear in every population's volume, first moment and metric, with coefficients from the
    geometry and the beam, to first order in each population's extent about its prediction (:eq:`rf-window`). One
    linear least-squares solve gives them all (:eq:`rf-linear`). Error bars come from the residuals, in blocks of one
    row and frame (:eq:`rf-harris`).
+5. The beam's weights are moved to each population's own mean omega, from its fitted first moment, and the solve is
+   repeated until the means stop moving (:eq:`rf-mean-omega`): the indexer's error then leaves the model.
 6. The solve is repeated with every width doubled. Where the two disagree beyond their noise, the expansion has
    failed, and the population is reported as not determined (:eq:`rf-width-check`). Its beam parameter
    :math:`\kappa_w`, which doubling cannot test, is reported with it (:eq:`rf-window-norms`).
@@ -1212,20 +1216,44 @@ for a population of :math:`N` photons in the row and reflection. Holding it belo
 7.07 and 22.4 times :math:`a` at :math:`N = 10^4` and :math:`10^6` photons, and 26.0 and 82.2 within the fade
 (:eq:`rf-fade`), a widening of :math:`\sqrt{13.5} = 3.68`. A soft box takes the largest width that any population whose light reaches
 it asks for. :math:`a` and :math:`N` are the indexer's, so the widths are fixed before the fit. The beam's scale in
-:eq:`rf-window-norms` must pass the same test: :math:`a \le W_{\text{beam}}\,(2/\sqrt{N})^{1/2}`. At 1.5 mm from the
-axis, a 1 µm beam and :math:`|\sin\eta| = 0.5`, :math:`W_{\text{beam}} = 1.4 \times 10^{-4}` rad, so a population of
-:math:`10^4` photons there would need :math:`a \le 2.0 \times 10^{-5}` rad. No width achieves that, since the window
-cannot make the beam smoother. Such a population is reported as beyond the beam's limit, with its
-:math:`\kappa_w`. The first moments' and the metric's remainders are bounded by the same terms of :eq:`rf-window` and
+:eq:`rf-window-norms` must pass the same test, for the population's spread alone once the beam is taken at its own mean
+(:eq:`rf-mean-omega`): :math:`s \le W_{\text{beam}}\,(2/\sqrt{N})^{1/2}`. At 1.5 mm from the axis, a 1 µm beam and
+:math:`|\sin\eta| = 0.5`, :math:`W_{\text{beam}} = 1.4 \times 10^{-4}` rad, so a population of :math:`10^4` photons there
+would need :math:`s \le 2.0 \times 10^{-5}` rad, against :math:`1.7 \times 10^{-4}` for an instrument-limited one
+(0.01°). No width achieves that, since the window cannot make the beam smoother. Such a population is reported as
+beyond the beam's limit, with its :math:`\kappa_w`. The first moments' and the metric's remainders are bounded by the same terms of :eq:`rf-window` and
 are tested by the doubled widths (:eq:`rf-width-check`).
 
 **Proof:** ``tests/theory/test_refiner.py::test_window_width`` (the inequality solved for :math:`W`; the numbers),
 ``tests/theory/test_refiner.py::test_window_beam_numbers`` (the beam's scale and the extent it allows).
 
-**The beam and the indexer's omega.** In :math:`\nabla\chi(\vec{c})` the beam's factor contributes
+**The beam at each population's own mean.** In :math:`\nabla\chi(\vec{c})` the beam's factor contributes
 :math:`w'\,\nabla(\text{dty}\circ\omega_h)`: the light moves between rows by its first moment. So the indexer's error in
-a population's mean omega enters :math:`\matr{G}` linearly, through :math:`\vec{m}_1`, with a known coefficient, and
-only the remainder is bounded. Windows do not relax :math:`\kappa`. The beam crossing a population's own omega extent
+a population's mean omega enters :math:`\matr{G}` linearly, through :math:`\vec{m}_1`, with a known coefficient. Its
+remainder, though, still holds that error: :math:`a^2 = e^2 + s^2`, and far from the axis :math:`e` alone fails the
+beam's test. Under (A7) the weight is known in closed form at any omega, so it need not be expanded about the indexer's
+prediction at all. Taken instead about the population's own mean scattering vector, from its first moment,
+
+.. math::
+    :label: rf-mean-omega
+
+    \bar{\vec{g}}_k = \frac{\matr{Y}^{(1)}_k\vec{g}_0}{V_k}
+    \ \Rightarrow\ \int(\vec{g} - \bar{\vec{g}}_k)\, d\mu_k = \vec{0}, \qquad
+    \int\chi f\, d\mu_k = \chi(\bar{\vec{g}}_k)\int f\, d\mu_k + R, \qquad
+    P' = -\frac{u}{\sigma_b^2}P, \quad P'' = \frac{u^2 - \sigma_b^2}{\sigma_b^4}P,
+
+the first-order term of :eq:`rf-window` vanishes identically. :math:`R` is :eq:`rf-window`'s remainder with
+:math:`\vec{c}` replaced by :math:`\bar{\vec{g}}_k`, and the extent :math:`a` is the spread :math:`s` alone. The
+indexer's error is gone from the model and from its remainder. The means come from the fit, so the solve is
+iterated: solve with the weights at the current means, take each population's new mean from its fitted first moment,
+and repeat. Each step is the linear solve of :eq:`rf-window` expanded about the current means, whose first-order term
+is the weights' derivative: Gauss-Newton on the exact Gaussian weight. The soft boxes stay where the indexer put
+them; only :math:`\matr{G}`'s weights move. Its convergence is local and is not proved here: each run reports the
+means' last step against their error bars, and the first step starts within the indexer's :math:`\kappa_w`. Windows
+do not relax :math:`\kappa`, which the spread alone now sets.
+
+**Proof:** ``tests/theory/test_refiner.py::test_mean_omega`` (the first moment about the mean vanishes for any three
+sub-volumes; an affine weight about the mean leaves only the covariance term; the Gaussian's derivatives). The beam crossing a population's own omega extent
 is a sampling limit (:eq:`rf-beam-voxel`). Soft boxes remove the merging, which comes from the overlap of many
 populations, each compact.
 
@@ -1308,9 +1336,9 @@ A hard box cannot do this. It is an indicator, and a box meeting :math:`U` loses
 its shape (:eq:`rf-forced`). In a likelihood with a model of every cell's light, such as the indexer's, unmeasured
 cells simply drop out (:doc:`indexing`, :eq:`idx-coverage`).
 
-**Anri's rule:** shared pixels (:eq:`rec-shared`) are merged into their physical pixels before any statistic. The
-merged cell's centre is its physical pixel's, and its binning bound is that of a cell two pixels wide
-(:eq:`rf-alias-wide`).
+Shared pixels (:eq:`rec-shared`) are not corrected for yet: their outputs are cells like any other. Where it matters,
+on about 1 % of the pixels, the cut can remove more light from them, their binning bound is that of a cell two pixels
+wide (:eq:`rf-alias-wide`), and their noise is correlated.
 
 One linear solve, and its split
 -------------------------------
@@ -2038,8 +2066,8 @@ so no measurement gives that extent: it is an input of the bound, from a model. 
    within the remainder of :eq:`rf-window`, held below the noise by the widths (:eq:`rf-window-width`). No region has to
    be complete or merged.
 8. **Unmeasured cells** (module gaps, masked pixels, the detector's and the scan's edges) bias nothing, since every
-   window fades to zero before them (:eq:`rf-mask`), and no spot is dropped. Shared pixels are merged into their
-   physical pixels, with their own binning bound (:eq:`rec-shared`, :eq:`rf-alias-wide`).
+   window fades to zero before them (:eq:`rf-mask`), and no spot is dropped. Shared pixels are not corrected for
+   (:eq:`rec-shared`, :eq:`rf-alias-wide`).
 
 The refiner reports, per population, :math:`\hat{\vec{Y}}`, its block-sandwich covariance, and the bias bound
 :math:`\sum_j |A_{ij}|\bar\Delta_j`, and the doubled widths' verdict with :math:`\kappa_w`. That bound is computed from
@@ -2103,6 +2131,11 @@ What is left out
 - **Each population's extent** :math:`a`: :eq:`rf-window`'s remainder needs it, from the indexer's error and spread,
   an input of the bound like the variance of :eq:`ref-tail`. The doubled widths test it where the window, not the
   beam, sets the remainder.
-- **Shared pixels**: the readout's rule for dividing a count is to be confirmed (:eq:`rec-shared`).
+- **Shared pixels** (:eq:`rec-shared`) are not corrected for: about 1 % of the pixels, where the cut, the binning and
+  the noise's correlation are those of a divided pixel. Their layout is known from the detector; the readout's rule
+  for dividing a count is not.
+- **The mean-omega iteration's convergence** (:eq:`rf-mean-omega`) is local, reported per run, not proved.
+- **A beam that is not Gaussian** (a slit-defined flat top, or a focused beam's tails) breaks (A7): the weight and
+  its derivatives are then :eq:`int-profile`'s, and its tails' are not modelled.
 - **The count** (:eq:`rf-count`) is a necessary condition; the conditioning of a merged domain near it is not derived.
 - **Code**: none of the refiner is in anri yet.
